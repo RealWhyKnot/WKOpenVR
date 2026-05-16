@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "CalibrationMetrics.h"
 #include "BuildStamp.h"
 #include "LogPaths.h"

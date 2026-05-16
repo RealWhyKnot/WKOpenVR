@@ -1,5 +1,4 @@
-﻿#include "stdafx.h"
-#include "UserInterface.h"
+﻿#include "UserInterface.h"
 #include "Calibration.h"
 #include "Configuration.h"
 #include "DeviceFilters.h"

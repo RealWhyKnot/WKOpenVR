@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "UserInterfaceBanners.h"
 #include "UserInterface.h"
 #include "Calibration.h"

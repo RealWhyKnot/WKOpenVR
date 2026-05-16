@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "Wizard.h"
 #include "Calibration.h"
 #include "Configuration.h"

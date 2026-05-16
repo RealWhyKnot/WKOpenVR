@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "Configuration.h"
 #include "CalibrationMetrics.h"   // WriteLogAnnotation -- profile_loaded_calibration
                                   // diagnostic line on launch.

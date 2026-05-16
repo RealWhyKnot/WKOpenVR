@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "MotionRecording.h"
 
 #include <windows.h>

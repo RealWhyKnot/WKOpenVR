@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "IPCClient.h"
 #include "CalibrationMetrics.h"   // WriteLogAnnotation -- see Connect() for why
                                   // we trace the IPC handshake outcomes.

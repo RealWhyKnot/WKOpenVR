@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "Calibration.h"
 #include "CalibrationMetrics.h"
 #include "DebugLogging.h"

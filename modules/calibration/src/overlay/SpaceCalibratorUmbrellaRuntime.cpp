@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "SpaceCalibratorUmbrellaRuntime.h"
 
 #include "Calibration.h"
