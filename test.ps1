@@ -67,5 +67,16 @@ if ($LASTEXITCODE -ne 0) {
 	throw "Captions host self-test failed (exit $LASTEXITCODE)"
 }
 
+$phantomSidecar = Join-Path $PSScriptRoot "build\driver_wkopenvr\resources\phantom\host\WKOpenVRPhantomSidecar.exe"
+if (-not (Test-Path -LiteralPath $phantomSidecar)) {
+	throw "Phantom sidecar missing at $phantomSidecar"
+}
+Write-Host ""
+Write-Host "== Running WKOpenVRPhantomSidecar.exe --self-test =="
+Invoke-NativeQuiet { & $phantomSidecar --self-test }
+if ($LASTEXITCODE -ne 0) {
+	throw "Phantom sidecar self-test failed (exit $LASTEXITCODE)"
+}
+
 Write-Host ""
 Write-Host ("All {0} test binaries passed." -f $tests.Count)
