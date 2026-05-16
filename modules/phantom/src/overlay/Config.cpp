@@ -72,6 +72,11 @@ PhantomConfig LoadPhantomConfig()
             const std::string serial(key + 12);
             const phantom::BodyRole r = phantom::BodyRoleFromKey(val);
             if (r != phantom::BodyRole::None) cfg.device_role[serial] = r;
+        } else if (std::strncmp(key, "virtual_enabled.", 16) == 0) {
+            const phantom::BodyRole r = phantom::BodyRoleFromKey(key + 16);
+            if (r != phantom::BodyRole::None) {
+                cfg.virtual_enabled[r] = (std::atoi(val) != 0);
+            }
         } else if (std::strncmp(key, "role_offset.", 12) == 0) {
             // role_offset.<role>.<field>=<value>
             const char* rest = key + 12;
@@ -119,6 +124,12 @@ void SavePhantomConfig(const PhantomConfig& cfg)
         if (kv.second != phantom::BodyRole::None) {
             std::fprintf(f, "device_role.%s=%s\n", kv.first.c_str(),
                          phantom::BodyRoleToKey(kv.second));
+        }
+    }
+    for (const auto& kv : cfg.virtual_enabled) {
+        if (kv.second) {
+            std::fprintf(f, "virtual_enabled.%s=1\n",
+                         phantom::BodyRoleToKey(kv.first));
         }
     }
     for (const auto& kv : cfg.role_offset) {

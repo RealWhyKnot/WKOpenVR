@@ -22,6 +22,10 @@ add_library(openvr_pair_feature_phantom_driver STATIC
 	DropoutState.h
 	IkFallback.cpp
 	IkFallback.h
+	VirtualTrackerDevice.cpp
+	VirtualTrackerDevice.h
+	VirtualTrackerManager.cpp
+	VirtualTrackerManager.h
 	# Module entry point + IPC dispatch + state ownership. Hot-path entry
 	# points are declared in core/src/driver/DriverModule.h next to the
 	# CreateDriverModule forward decl so the umbrella driver can call them

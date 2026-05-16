@@ -15,6 +15,7 @@
 #include "IkFallback.h"
 #include "PoseHistory.h"
 #include "RoleCatalog.h"
+#include "VirtualTrackerManager.h"
 
 #include <openvr_driver.h>
 
@@ -118,6 +119,7 @@ private:
     bool             last_hmd_valid_ = false;
 
     IkFallback ik_fallback_;
+    VirtualTrackerManager virtual_trackers_;
 
     // Per-openVRID device state. The hot path runs without locking these
     // because openVRID assignments are stable for the lifetime of the
@@ -184,6 +186,7 @@ bool PhantomModule::Init(DriverModuleContext& context)
 {
     context_ = context;
     g_active = this;
+    virtual_trackers_.OnDriverInit();
     if (!shmem_.Create(OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME)) {
         // Non-fatal: badge readout is a nice-to-have. Driver still synthesises.
         LOG("[phantom] PhantomStateShmem.Create('%s') failed; overlay badges disabled",
@@ -284,6 +287,13 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
             response.type = protocol::ResponseSuccess;
             return true;
         }
+        case protocol::RequestSetPhantomVirtualEnabled: {
+            const auto& e = request.setPhantomVirtualEnabled;
+            const BodyRole role = static_cast<BodyRole>(e.body_role);
+            virtual_trackers_.SetEnabled(role, e.enabled != 0);
+            response.type = protocol::ResponseSuccess;
+            return true;
+        }
         default:
             return false;
     }
@@ -305,6 +315,11 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID,
         && pose.result == vr::TrackingResult_Running_OK) {
         last_hmd_pose_ = pose;
         last_hmd_valid_ = true;
+        // Drive any absent-mode virtual trackers off the HMD's pose
+        // cadence. Each HMD update -> one virtual-pose update per
+        // enabled role. Activation is deferred inside the manager until
+        // the openvr#1536 settle window has elapsed.
+        virtual_trackers_.Tick(last_hmd_pose_, ik_fallback_);
     }
 }
 

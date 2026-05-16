@@ -58,6 +58,13 @@ struct PhantomConfig
     // T-pose wizard. Keyed by BodyRole. Roles absent from the map are
     // treated as uncalibrated and the driver falls back to dead reckoning.
     std::unordered_map<phantom::BodyRole, PhantomRoleOffset> role_offset;
+
+    // Phase 2: per-body-role absent-mode toggle. When true (and the role
+    // has a calibration on file), the driver publishes a virtual
+    // GenericTracker for the role with the vive_tracker_<role> controller
+    // type so VRChat / Resonite / Neos pick it up automatically as a
+    // body-bound tracker.
+    std::unordered_map<phantom::BodyRole, bool> virtual_enabled;
 };
 
 // Load from disk. On any read / parse error the on-disk file is ignored and

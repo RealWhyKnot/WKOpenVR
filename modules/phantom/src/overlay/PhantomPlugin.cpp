@@ -119,6 +119,10 @@ void PhantomPlugin::DrawTab(openvr_pair::overlay::ShellContext&)
             DrawCalibrationTab();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Absent")) {
+            DrawAbsentTab();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Diagnostics")) {
             DrawDiagnosticsTab();
             ImGui::EndTabItem();
@@ -410,6 +414,18 @@ void PhantomPlugin::SendTrackerOffset(phantom::BodyRole role,
     catch (const std::exception& e) { connectError_ = e.what(); }
 }
 
+void PhantomPlugin::SendVirtualEnabled(phantom::BodyRole role, bool enabled)
+{
+    if (!ipc_.IsConnected()) return;
+    protocol::Request req(protocol::RequestSetPhantomVirtualEnabled);
+    req.setPhantomVirtualEnabled.body_role = static_cast<uint8_t>(role);
+    req.setPhantomVirtualEnabled.enabled = enabled ? 1u : 0u;
+    std::memset(req.setPhantomVirtualEnabled._reserved, 0,
+                sizeof(req.setPhantomVirtualEnabled._reserved));
+    try { ipc_.SendBlocking(req); }
+    catch (const std::exception& e) { connectError_ = e.what(); }
+}
+
 void PhantomPlugin::ReplayCalibration()
 {
     if (!ipc_.IsConnected()) return;
@@ -418,6 +434,9 @@ void PhantomPlugin::ReplayCalibration()
     }
     for (const auto& kv : cfg_.role_offset) {
         if (kv.second.calibrated) SendTrackerOffset(kv.first, kv.second);
+    }
+    for (const auto& kv : cfg_.virtual_enabled) {
+        if (kv.second) SendVirtualEnabled(kv.first, true);
     }
 }
 
@@ -616,6 +635,55 @@ void PhantomPlugin::DrawCalibrationTab()
                 phantom::BodyRoleLabel(kv.first),
                 kv.second.calibrated ? "calibrated" : "not captured");
         }
+    }
+}
+
+void PhantomPlugin::DrawAbsentTab()
+{
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Add body trackers you do not physically own. The driver creates a "
+        "virtual SteamVR tracker for each enabled role and feeds it from the "
+        "T-pose calibration in the Calibration tab. VRChat / Resonite / Neos "
+        "pick the role up automatically because the virtual device reports "
+        "the published vive_tracker_<role> controller type.");
+    ImGui::Spacing();
+    ImGui::TextDisabled(
+        "Note: SteamVR does not allow live retraction. Disabling a role here "
+        "stops pose publishing immediately but the SteamVR device entry stays "
+        "until the next vrserver restart.");
+    ImGui::Spacing();
+
+    ImGui::SeparatorText("Per-role virtual trackers");
+    const phantom::BodyRole roles[] = {
+        phantom::BodyRole::Waist,
+        phantom::BodyRole::Chest,
+        phantom::BodyRole::LeftFoot,  phantom::BodyRole::RightFoot,
+        phantom::BodyRole::LeftKnee,  phantom::BodyRole::RightKnee,
+        phantom::BodyRole::LeftElbow, phantom::BodyRole::RightElbow,
+        phantom::BodyRole::LeftShoulder, phantom::BodyRole::RightShoulder,
+    };
+    for (auto role : roles) {
+        const auto offsetIt = cfg_.role_offset.find(role);
+        const bool calibrated = (offsetIt != cfg_.role_offset.end()
+            && offsetIt->second.calibrated);
+        bool enabled = cfg_.virtual_enabled.count(role)
+            ? cfg_.virtual_enabled[role]
+            : false;
+
+        ImGui::PushID(static_cast<int>(role));
+        ImGui::BeginDisabled(!calibrated);
+        if (ImGui::Checkbox("##en", &enabled)) {
+            cfg_.virtual_enabled[role] = enabled;
+            SendVirtualEnabled(role, enabled);
+            SavePhantomConfig(cfg_);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::Text("%-18s %s",
+            phantom::BodyRoleLabel(role),
+            calibrated ? "" : "(needs T-pose calibration)");
+        ImGui::PopID();
     }
 }
 

@@ -247,6 +247,18 @@ Section "Install"
         DetailPrint "CaptionsHost not embedded in this installer (OPENVR_PAIR_BUILD_CAPTIONS_HOST=OFF or build missing); Captions feature will run inert until the host is staged manually."
     !endif
 
+    ; Phantom-tracker input-profile JSONs (one per vive_tracker_<role>).
+    ; VirtualTrackerDevice references each via Prop_InputProfilePath_String =
+    ; "{wkopenvr}/input/vive_tracker_<role>_profile.json". Required for
+    ; SteamVR's tracker manager + VRChat / Resonite role auto-binding to
+    ; recognise absent-mode virtual trackers.
+    !if /FileExists "${DRIVER_BASEDIR}\resources\input\vive_tracker_waist_profile.json"
+        SetOutPath "$vrRuntimePath\drivers\01wkopenvr\resources\input"
+        File /r "${DRIVER_BASEDIR}\resources\input\vive_tracker_*_profile.json"
+    !else
+        DetailPrint "Phantom input profiles missing from build; absent-mode virtual trackers will not auto-bind."
+    !endif
+
     ; Drop the feature enable flag when building a per-feature installer.
     ; Content matches what ShellContext::SetFlagPresent writes:
     ;   Set-Content -Value enabled -NoNewline
@@ -380,6 +392,7 @@ Section "Uninstall"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\facetracking"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\translator"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\captions"
+    RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\input"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr"
 
     ; ---- Best-effort legacy driver cleanup (pre-rename product) -----------

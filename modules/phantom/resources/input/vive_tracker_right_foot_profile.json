@@ -1,0 +1,6 @@
+{
+	"jsonid": "input_profile",
+	"controller_type": "vive_tracker_right_foot",
+	"input_bindingui_mode": "single_device",
+	"input_source": {}
+}

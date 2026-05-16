@@ -141,3 +141,24 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 	${CMAKE_SOURCE_DIR}/${DRIVER_NAME}
 	${CMAKE_BINARY_DIR}/${DRIVER_NAME})
+
+# Stage the phantom module's vive_tracker_<role>_profile.json files into
+# the deployable driver tree's resources/input/ directory. Phase 2's
+# VirtualTrackerDevice references these via Prop_InputProfilePath_String
+# with the "{wkopenvr}/input/<file>" macro so SteamVR resolves them
+# under <SteamVR>\drivers\01wkopenvr\resources\input\.
+file(GLOB PHANTOM_INPUT_PROFILES
+	"${CMAKE_SOURCE_DIR}/modules/phantom/resources/input/vive_tracker_*_profile.json")
+add_custom_command(
+	TARGET OpenVRPairDriver
+	POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E make_directory
+		${CMAKE_BINARY_DIR}/${DRIVER_NAME}/resources/input)
+foreach(_profile ${PHANTOM_INPUT_PROFILES})
+	add_custom_command(
+		TARGET OpenVRPairDriver
+		POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${_profile}"
+			"${CMAKE_BINARY_DIR}/${DRIVER_NAME}/resources/input/")
+endforeach()

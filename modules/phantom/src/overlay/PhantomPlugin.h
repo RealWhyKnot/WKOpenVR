@@ -44,12 +44,14 @@ private:
     void DrawDiagnosticsTab();
     void DrawAdvancedTab();
     void DrawCalibrationTab();
+    void DrawAbsentTab();
 
     bool ConnectIfNeeded();
     void SendConfig();
     void SendDeviceOptIn(const std::string& serial, bool enabled);
     void SendDeviceRole(const std::string& serial, phantom::BodyRole role);
     void SendTrackerOffset(phantom::BodyRole role, const PhantomRoleOffset& offset);
+    void SendVirtualEnabled(phantom::BodyRole role, bool enabled);
     void ReplayCalibration();
     void CaptureTPose();
 };

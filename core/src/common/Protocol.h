@@ -243,7 +243,15 @@ namespace protocol
 	// file; IkFallback rebuilds a synth pose by applying the rigid offset
 	// to the live HMD pose. Both new structs are smaller than
 	// SetDeviceTransform; static_asserts pin the union size.
-	const uint32_t Version = 20;
+	//
+	// v21 (2026-05-16): phantom Phase 2 absent-mode virtual trackers. Adds
+	// RequestSetPhantomVirtualEnabled -- a per-role toggle for users who
+	// do not physically own a tracker for the role. The driver creates an
+	// ITrackedDeviceServerDriver for each enabled role with the published
+	// Valve "vive_tracker_<role>" controller type, and pushes IK-derived
+	// poses every time the HMD pose updates. Gated on the user having a
+	// T-pose calibration for the role.
+	const uint32_t Version = 21;
 
 	// Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 	// "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -327,6 +335,13 @@ namespace protocol
 		// keeps the values until cleared.
 		RequestSetPhantomDeviceRole,
 		RequestSetPhantomTrackerOffset,
+		// v21 (2026-05-16): phantom Phase 2 absent-mode toggle. Per-role
+		// boolean; setting true causes the driver to create a virtual
+		// generic tracker with the published vive_tracker_<role> controller
+		// type. Idempotent; flipping to false retracts the virtual device
+		// on the next vrserver restart (SteamVR does not allow live
+		// TrackedDeviceRemoved without re-Init).
+		RequestSetPhantomVirtualEnabled,
 	};
 
 	enum ResponseType
@@ -901,6 +916,19 @@ namespace protocol
 		vr::HmdQuaternion_t rel_rotation;
 	};
 
+	// POD payload for RequestSetPhantomVirtualEnabled. Per-role boolean for
+	// absent-mode virtual trackers. The driver only honours the request
+	// when the role has a T-pose calibration on file (otherwise the
+	// virtual tracker would have no pose source). Flipping off removes
+	// the virtual device from future creation; the live instance lives
+	// out the current vrserver process.
+	struct PhantomVirtualEnabled
+	{
+		uint8_t body_role;
+		uint8_t enabled;
+		uint8_t _reserved[6];
+	};
+
 	struct Request
 	{
 		RequestType type;
@@ -950,6 +978,8 @@ namespace protocol
 			// than SetDeviceTransform; static_asserts pin the size.
 			PhantomDeviceRole     setPhantomDeviceRole;
 			PhantomTrackerOffset  setPhantomTrackerOffset;
+			// v21: phantom Phase 2 absent-mode virtual-tracker toggle.
+			PhantomVirtualEnabled setPhantomVirtualEnabled;
 		};
 
 		Request() : type(RequestInvalid), setAlignmentSpeedParams({}) { }
@@ -981,6 +1011,8 @@ namespace protocol
 		"PhantomDeviceRole must not grow Request");
 	static_assert(sizeof(PhantomTrackerOffset) <= sizeof(SetDeviceTransform),
 		"PhantomTrackerOffset must not grow Request");
+	static_assert(sizeof(PhantomVirtualEnabled) <= sizeof(SetDeviceTransform),
+		"PhantomVirtualEnabled must not grow Request");
 
 	struct Response
 	{
