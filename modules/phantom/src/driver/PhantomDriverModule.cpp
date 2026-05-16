@@ -13,8 +13,11 @@
 #include "DeadReckoner.h"
 #include "DropoutState.h"
 #include "IkFallback.h"
+#include "PhantomInferenceShmem.h"
 #include "PoseHistory.h"
 #include "RoleCatalog.h"
+#include "SidecarBridge.h"
+#include "SidecarSupervisor.h"
 #include "VirtualTrackerManager.h"
 
 #include <openvr_driver.h>
@@ -121,6 +124,16 @@ private:
     IkFallback ik_fallback_;
     VirtualTrackerManager virtual_trackers_;
 
+    // Phase 3 scaffold: out-of-process inference sidecar. Supervisor spawns
+    // and restarts WKOpenVRPhantomSidecar.exe; bridge reads its OUT shmem
+    // when DropoutState selects SYNTH_ML. Both are inert no-ops when the
+    // sidecar binary is missing.
+    SidecarSupervisor sidecar_supervisor_;
+    SidecarBridge     sidecar_bridge_;
+    phantom::PhantomInferenceInShmem inference_in_shmem_;
+    uint32_t inference_frame_id_ = 0;
+    float    ml_min_confidence_  = 0.6f;   // overlay-tunable in a later pass
+
     // Per-openVRID device state. The hot path runs without locking these
     // because openVRID assignments are stable for the lifetime of the
     // device and the hook is single-threaded per device; the IPC handler
@@ -192,6 +205,14 @@ bool PhantomModule::Init(DriverModuleContext& context)
         LOG("[phantom] PhantomStateShmem.Create('%s') failed; overlay badges disabled",
             OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME);
     }
+    // Phase 3: open the inference IN shmem the sidecar will read.
+    // Non-fatal: when this fails the sidecar simply never sees inputs and
+    // the bridge stays inert. The supervisor still spawns the sidecar.
+    if (!inference_in_shmem_.Create(OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_IN_SHMEM_NAME)) {
+        LOG("[phantom] PhantomInferenceInShmem.Create('%s') failed; ML inference disabled",
+            OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_IN_SHMEM_NAME);
+    }
+    sidecar_supervisor_.Start();
     LOG("[phantom] PhantomModule initialised; ladder defaults silence=%u blend_out=%u blend_in=%u reckon=%u synth=%u lost=%u (ms)",
         (unsigned)timings_.dropout_silence_ms,
         (unsigned)timings_.blend_out_ms,
@@ -205,6 +226,9 @@ bool PhantomModule::Init(DriverModuleContext& context)
 void PhantomModule::Shutdown()
 {
     g_active = nullptr;
+    sidecar_supervisor_.Stop();
+    sidecar_bridge_.Close();
+    inference_in_shmem_.Close();
     shmem_.Close();
     LOG("[phantom] PhantomModule shutdown");
 }
@@ -320,6 +344,52 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID,
         // enabled role. Activation is deferred inside the manager until
         // the openvr#1536 settle window has elapsed.
         virtual_trackers_.Tick(last_hmd_pose_, ik_fallback_);
+
+        // Phase 3: refresh the inference-IN shmem so the sidecar has a
+        // current frame to consume. Per-role slots carry the latest pose
+        // we have for each device that has a body-role assignment, plus
+        // a has_real_pose flag the sidecar uses to gate inference. The
+        // sidecar's OUT shmem is consulted in MaybeOverridePose's
+        // SYNTH_ML branch.
+        if (auto* L = inference_in_shmem_.layout()) {
+            L->epoch = L->epoch + 1;
+            MemoryBarrier();
+            ++inference_frame_id_;
+            L->frame_id = inference_frame_id_;
+            L->hmd_position[0] = pose.vecPosition[0];
+            L->hmd_position[1] = pose.vecPosition[1];
+            L->hmd_position[2] = pose.vecPosition[2];
+            L->hmd_rotation[0] = pose.qRotation.w;
+            L->hmd_rotation[1] = pose.qRotation.x;
+            L->hmd_rotation[2] = pose.qRotation.y;
+            L->hmd_rotation[3] = pose.qRotation.z;
+            for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+                auto& slot = L->trackers[i];
+                slot.role = i;
+                slot.has_real_pose = 0;
+                slot.has_offset = ik_fallback_.HasOffset(static_cast<BodyRole>(i)) ? 1 : 0;
+            }
+            for (uint32_t idx = 0; idx < slots_.size(); ++idx) {
+                const auto& slot = slots_[idx];
+                if (slot.role == BodyRole::None) continue;
+                const auto& cur = slot.last_published_valid
+                    ? slot.last_published
+                    : slot.history.Size() > 0
+                        ? slot.history.GetNewest(0)->pose
+                        : vr::DriverPose_t{};
+                auto& dst = L->trackers[static_cast<uint8_t>(slot.role)];
+                dst.has_real_pose = (slot.ladder.state() == TrackerState::REAL) ? 1 : 0;
+                dst.position[0] = cur.vecPosition[0];
+                dst.position[1] = cur.vecPosition[1];
+                dst.position[2] = cur.vecPosition[2];
+                dst.rotation[0] = cur.qRotation.w;
+                dst.rotation[1] = cur.qRotation.x;
+                dst.rotation[2] = cur.qRotation.y;
+                dst.rotation[3] = cur.qRotation.z;
+            }
+            MemoryBarrier();
+            L->epoch = L->epoch + 1;
+        }
     }
 }
 
@@ -375,32 +445,40 @@ bool PhantomModule::MaybeOverridePose(uint32_t openVRID,
             return true;
         }
 
-        case TrackerState::SYNTH_IK: {
-            // Phase 1.5: rigid-offset IK. Requires a live HMD pose and a
-            // calibration on file for this device's role; if either is
-            // missing, fall through to dead reckoning.
+        case TrackerState::SYNTH_RECKON:
+        case TrackerState::SYNTH_IK:
+        case TrackerState::SYNTH_ML:
+        case TrackerState::OUT_OF_RANGE: {
+            // Cascade: ML sidecar (Phase 3) -> rigid-offset IK (Phase 1.5)
+            // -> dead reckoner (Phase 1). Each layer is independently
+            // optional; the cascade falls through to the next when its
+            // input is missing or below confidence. The ladder state is
+            // mostly a hint for the diagnostics badge -- the actual
+            // dispatch picks the best source available regardless.
             vr::DriverPose_t synth{};
-            if (last_hmd_valid_
+            bool produced = false;
+            (void)sidecar_bridge_.TryOpen();
+            if (!produced
+                && s.role != BodyRole::None
+                && sidecar_bridge_.IsReady()
+                && sidecar_bridge_.FetchPose(s.role, ml_min_confidence_, synth)) {
+                produced = true;
+            }
+            if (!produced
+                && last_hmd_valid_
                 && s.role != BodyRole::None
                 && ik_fallback_.Solve(s.role, last_hmd_pose_, synth)) {
-                synth.result = s.ladder.tracking_result_override();
-                pose = synth;
-                cachePublished(pose);
-                return true;
+                produced = true;
             }
-            // Falls through to reckoner below.
-            [[fallthrough]];
-        }
-        case TrackerState::SYNTH_RECKON:
-        case TrackerState::SYNTH_ML:    // Phase 3 hook stays in reckoner today.
-        case TrackerState::OUT_OF_RANGE: {
-            vr::DriverPose_t synth{};
-            if (reckoner_.Project(s.history, qpc_freq, qpc_ns, synth)) {
+            if (!produced) {
+                produced = reckoner_.Project(s.history, qpc_freq, qpc_ns, synth);
+            }
+            if (produced) {
                 synth.result = s.ladder.tracking_result_override();
                 pose = synth;
             } else {
-                // No real history to project from -- keep whatever the source
-                // gave us but stamp the override result so consumers still
+                // No source produced a pose -- keep whatever the upstream
+                // driver gave us but stamp the override result so consumers
                 // see the degradation signal.
                 pose.result = s.ladder.tracking_result_override();
             }

@@ -63,6 +63,11 @@ add_subdirectory(modules/facetracking/src/host)
 # Captions native C++ host sidecar. Toggleable via OPENVR_PAIR_BUILD_CAPTIONS_HOST.
 add_subdirectory(modules/captions/src/host)
 
+# Phantom inference sidecar (Phase 3 scaffold). Toggleable via
+# OPENVR_PAIR_BUILD_PHANTOM_SIDECAR; off lets contributors who only touch
+# the driver/overlay skip the sidecar build.
+add_subdirectory(modules/phantom/src/host)
+
 # Test suites. Unit tests stay in their owning module folders; cross-module E2E
 # tests live under tests/e2e and are registered alongside the rest.
 add_subdirectory(tests)
