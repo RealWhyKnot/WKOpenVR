@@ -37,9 +37,9 @@ public sealed class HostOptions
         var opts = new HostOptions();
 
         // Override from env vars first (lower priority than args).
-        if (Environment.GetEnvironmentVariable("OPENVR_PAIR_FACE_PIPE") is { } envPipe)
+        if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_PIPE") is { } envPipe)
             opts.DriverHandshakePipe = envPipe;
-        if (Environment.GetEnvironmentVariable("OPENVR_PAIR_FACE_SHMEM") is { } envShmem)
+        if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_SHMEM") is { } envShmem)
             opts.ShmemName = envShmem;
         if (Environment.GetEnvironmentVariable("WKOPENVR_DEBUG_LOGGING") is { } envDebug)
             opts.DebugLoggingEnabled = IsTruthy(envDebug);
