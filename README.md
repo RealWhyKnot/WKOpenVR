@@ -1,11 +1,13 @@
 # WKOpenVR
 
-Umbrella SteamVR overlay + driver. One binary (`WKOpenVR.exe`) and one driver DLL (`driver_wkopenvr.dll`) host four feature modules under `modules/`:
+Umbrella SteamVR overlay + driver. One binary (`WKOpenVR.exe`) and one driver DLL (`driver_wkopenvr.dll`) host six feature modules under `modules/`:
 
 - **calibration** -- continuous calibration of HMDs against lighthouse-tracked full-body trackers. Forked from the original OpenVR-SpaceCalibrator. Mirrors releases to [WKOpenVR-SpaceCalibrator](https://github.com/RealWhyKnot/WKOpenVR-SpaceCalibrator).
 - **smoothing** -- One-Euro finger smoothing and per-device pose-prediction suppression for Valve Index Knuckles. Mirrors releases to [WKOpenVR-Smoothing](https://github.com/RealWhyKnot/WKOpenVR-Smoothing).
 - **inputhealth** -- per-button / per-axis / per-finger drift and degradation detection with learned compensation. Mirrors releases to [WKOpenVR-InputHealth](https://github.com/RealWhyKnot/WKOpenVR-InputHealth).
 - **facetracking** -- face and eye tracking via a C# .NET 10 host sidecar that loads hardware-vendor modules, normalises against Unified Expressions, and feeds the driver over a shared-memory ring. Mirrors releases to [WKOpenVR-VRCFT](https://github.com/RealWhyKnot/WKOpenVR-VRCFT).
+- **captions** -- on-device speech recognition and translation via a whisper.cpp + ctranslate2 host sidecar with Silero VAD, OSC chatbox routing, and per-pack model download / install. Mirrors releases to [WKOpenVR-Captions](https://github.com/RealWhyKnot/WKOpenVR-Captions).
+- **phantom** -- tracker dropout dead-reckoning, IK fallback, and virtual-tracker placeholders for missing hardware, with an out-of-process ML pose-completion sidecar. Mirrors releases to [WKOpenVR-Phantom](https://github.com/RealWhyKnot/WKOpenVR-Phantom).
 
 Each feature is wired up at SteamVR startup based on a marker file in the driver's `resources/` directory:
 
@@ -13,12 +15,14 @@ Each feature is wired up at SteamVR startup based on a marker file in the driver
 - `enable_smoothing.flag` -- skeletal hook + smoothing IPC pipe
 - `enable_inputhealth.flag` -- boolean / scalar input hooks + input-health IPC pipe
 - `enable_facetracking.flag` -- face-tracking host sidecar + IPC pipe + shmem ring
+- `enable_captions.flag` -- captions host sidecar + OSC chatbox publisher + IPC pipe
+- `enable_phantom.flag` -- dropout detector + dead-reckoning + virtual-tracker device adds + sidecar bridge
 
 The umbrella overlay's Modules tab toggles these flags at runtime.
 
-## Why one DLL instead of four
+## Why one DLL instead of six
 
-A SteamVR driver hooks into `vrserver.exe` via MinHook. MinHook is process-global: only one detour can exist per target function. Four independently-installed driver DLLs trying to patch the same slot of `IVRDriverContext::GetGenericInterface` would collide; the second install silently fails and that driver's detours never fire. Sharing one DLL means one MinHook install per target function regardless of which features are enabled.
+A SteamVR driver hooks into `vrserver.exe` via MinHook. MinHook is process-global: only one detour can exist per target function. Six independently-installed driver DLLs trying to patch the same slot of `IVRDriverContext::GetGenericInterface` would collide; the second install silently fails and that driver's detours never fire. Sharing one DLL means one MinHook install per target function regardless of which features are enabled.
 
 ## Build
 

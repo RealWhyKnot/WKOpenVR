@@ -554,7 +554,8 @@ $steamVrProcessNames = @(
 	"WKOpenVR",
 	"WKOpenVR.FaceModuleHost",
 	"WKOpenVR.FaceModuleProcess",
-	"WKOpenVR.CaptionsHost"
+	"WKOpenVR.CaptionsHost",
+	"WKOpenVRPhantomSidecar"
 )
 $steamWasRunning = Test-NamedProcess -Names $steamProcessNames
 $steamVrWasRunning = Test-NamedProcess -Names $steamVrProcessNames
@@ -596,7 +597,8 @@ $required = @(
 	@("WKOpenVR.CaptionsHost.exe", (Join-Path $driverSourceDir "resources\captions\host\WKOpenVR.CaptionsHost.exe")),
 	@("captions host openvr_api.dll", (Join-Path $driverSourceDir "resources\captions\host\openvr_api.dll")),
 	@("captions-packs.json", (Join-Path $driverSourceDir "resources\captions\host\resources\captions-packs.json")),
-	@("install-captions-pack.ps1", (Join-Path $driverSourceDir "resources\captions\host\resources\install-captions-pack.ps1"))
+	@("install-captions-pack.ps1", (Join-Path $driverSourceDir "resources\captions\host\resources\install-captions-pack.ps1")),
+	@("WKOpenVRPhantomSidecar.exe", (Join-Path $driverSourceDir "resources\phantom\host\WKOpenVRPhantomSidecar.exe"))
 )
 
 Write-Step "Checking artifacts"

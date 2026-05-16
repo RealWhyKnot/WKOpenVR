@@ -150,7 +150,8 @@ jobs:
             'build/driver_wkopenvr/resources/captions/host/WKOpenVR.CaptionsHost.exe',
             'build/driver_wkopenvr/resources/captions/host/openvr_api.dll',
             'build/driver_wkopenvr/resources/captions/host/resources/captions-packs.json',
-            'build/driver_wkopenvr/resources/captions/host/resources/install-captions-pack.ps1'
+            'build/driver_wkopenvr/resources/captions/host/resources/install-captions-pack.ps1',
+            'build/driver_wkopenvr/resources/phantom/host/WKOpenVRPhantomSidecar.exe'
           )
           $missing = @()
           foreach ($p in $required) {
