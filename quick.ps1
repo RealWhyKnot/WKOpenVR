@@ -538,6 +538,30 @@ function Restart-SteamVR {
 	Start-Process "steam://rungameid/250820" | Out-Null
 }
 
+function Restart-Steam {
+	param(
+		[string]$ResolvedSteamExe,
+		[bool]$ShouldRestart
+	)
+
+	if ($NoRestart) {
+		return
+	}
+
+	if (-not $ShouldRestart) {
+		return
+	}
+
+	Write-Step "Restarting Steam"
+	if ($ResolvedSteamExe -and (Test-Path -LiteralPath $ResolvedSteamExe)) {
+		Write-Host "Starting Steam..."
+		Start-Process -FilePath $ResolvedSteamExe | Out-Null
+		return
+	}
+
+	Write-Host "steam.exe was not found; cannot restart Steam."
+}
+
 $steamExeResolved = Resolve-SteamExe -Override $SteamExe
 $driversDirResolved = Resolve-SteamVRDriversDir -Override $SteamVRDriversDir -ResolvedSteamExe $steamExeResolved
 $driverDestDir = Join-Path $driversDirResolved "01wkopenvr"
@@ -677,6 +701,7 @@ if ($overlayLockers.Count -gt 0) {
 }
 
 $driverLockers = @(Get-ProcessesUsingModulePath -Path $deployedDriverDll)
+$steamWasStopped = $false
 if ($driverLockers.Count -gt 0) {
 	$lockNames = (($driverLockers | Select-Object -ExpandProperty ProcessName -Unique) -join ", ")
 	Write-Host "Driver DLL is still loaded by: $lockNames"
@@ -685,6 +710,7 @@ if ($driverLockers.Count -gt 0) {
 		Write-Step "Stopping Steam"
 		Stop-NamedProcesses -Label "Steam processes holding the driver DLL" -Names $steamProcessNames
 		Wait-ForNoNamedProcesses -Label "Steam processes holding the driver DLL" -Names $steamProcessNames
+		$steamWasStopped = $true
 	} else {
 		throw "Driver DLL is still loaded by non-Steam process(es): $lockNames"
 	}
@@ -713,6 +739,14 @@ if ($mismatches.Count -gt 0) {
 Write-Host ("Verified {0} deployed files." -f $entries.Count)
 
 Restart-SteamVR -ResolvedSteamExe $steamExeResolved -ShouldRestart $restartSteamVrAfterDeploy
+
+# Steam-only relaunch: when Steam was running at script start but SteamVR was
+# not, the SteamVR restart path above is a no-op, and the Stopping-Steam step
+# (driver DLL was held by Steam) left Steam dead. Without this the user keeps
+# coming back to find Steam closed after a deploy. SteamVR-restart already
+# launches Steam as a side effect, so only fire when that path didn't run.
+$shouldRestartSteamPlain = $steamWasStopped -and -not $restartSteamVrAfterDeploy
+Restart-Steam -ResolvedSteamExe $steamExeResolved -ShouldRestart $shouldRestartSteamPlain
 
 Write-Step "Done"
 Write-Host "Deploy verified. Installed build: $(Resolve-Version (Join-Path $InstallDir "WKOpenVR.exe"))"
