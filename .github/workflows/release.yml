@@ -128,19 +128,17 @@ jobs:
           path: 'C:\Program Files (x86)\NSIS'
           key: nsis-${{ runner.os }}-3.12
 
-      - name: Configure
-        # The minhook submodule declares cmake_minimum_required(2.8.12) which
-        # CMake 4.x rejects. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 lets us configure
-        # without forking. -Wno-dev silences developer-mode warnings from minhook.
-        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -S . -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
-
-      - name: Stamp version and build
+      - name: Stamp generated headers + gl3w sources
+        # CMake registers the three gitignored channel headers as sources, so
+        # they must exist BEFORE the Configure step or CMake aborts with
+        # "No SOURCES given to target: openvr_pair_common". The same step
+        # pre-runs lib/gl3w's generator (with retry) so the runner's
+        # one-time Khronos download race doesn't kill the configure either.
         shell: pwsh
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           $version = $env:TAG_NAME -replace '^v', ''
-          # Stamp version.txt and BuildStamp.h (same logic as build.ps1).
           Set-Content -Path version.txt -Value $version -NoNewline
 
           $CommonBuildChannel = "core/src/common/BuildChannel.h"
@@ -180,6 +178,48 @@ jobs:
           "@
           }
 
+          # gl3w_gen.py fetches the Khronos OpenGL registry to generate
+          # include/GL/gl3w.h + src/gl3w.c. The Khronos endpoint occasionally
+          # returns 403 to the runner's default urllib User-Agent. Retry up
+          # to 3 times with backoff so a transient block doesn't break the
+          # release. CMake's gl3w block only invokes the generator when the
+          # output files are missing, so doing it here is idempotent.
+          $gl3wH = "lib/gl3w/include/GL/gl3w.h"
+          $gl3wC = "lib/gl3w/src/gl3w.c"
+          if (-not (Test-Path $gl3wH) -or -not (Test-Path $gl3wC)) {
+            Push-Location lib/gl3w
+            $maxAttempts = 3
+            $attempt = 1
+            while ($attempt -le $maxAttempts) {
+              Write-Host "gl3w_gen.py attempt $attempt/$maxAttempts..."
+              python gl3w_gen.py
+              if ($LASTEXITCODE -eq 0 -and (Test-Path "include/GL/gl3w.h") -and (Test-Path "src/gl3w.c")) {
+                Write-Host "gl3w sources generated on attempt $attempt"
+                break
+              }
+              if ($attempt -lt $maxAttempts) {
+                Write-Host "gl3w_gen.py failed (exit $LASTEXITCODE); sleeping 15s before retry..."
+                Start-Sleep -Seconds 15
+              }
+              $attempt++
+            }
+            Pop-Location
+            if (-not (Test-Path $gl3wH) -or -not (Test-Path $gl3wC)) {
+              throw "gl3w_gen.py failed after $maxAttempts attempts. Khronos OpenGL registry blocked or unavailable. Re-run the workflow once the network clears."
+            }
+          } else {
+            Write-Host "gl3w sources already present at $gl3wH and $gl3wC -- skipping generator."
+          }
+
+      - name: Configure
+        # The minhook submodule declares cmake_minimum_required(2.8.12) which
+        # CMake 4.x rejects. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 lets us configure
+        # without forking. -Wno-dev silences developer-mode warnings from minhook.
+        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -S . -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
+
+      - name: Build
+        shell: pwsh
+        run: |
           cmake --build build --config Release --parallel
           if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 
