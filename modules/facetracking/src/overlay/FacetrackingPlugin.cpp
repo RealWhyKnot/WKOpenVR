@@ -420,11 +420,15 @@ void FacetrackingPlugin::OnDebugLoggingChanged(bool enabled)
 
 void FacetrackingPlugin::ProvidePresence(WKOpenVR::PresenceComposer &composer)
 {
-    // Count warm (receiving data) shapes from the telemetry snapshot.
-    // shape_warm has 65 entries; we count all that are true.
+    // Priority is gated on real signal:
+    //   - no telemetry parsed yet OR mtime > 5s old           -> idle (0)
+    //   - telemetry fresh but zero shapes are warm            -> waiting (30)
+    //   - one or more shapes carrying data                    -> active (50)
+    // Without these gates, Discord would claim "Tracking facial expressions"
+    // even with no upstream module loaded and zero data flowing.
     const auto &snap = driver_telemetry_.Snapshot();
     int warmShapes = 0;
-    if (snap.valid) {
+    if (snap.valid && !snap.stale) {
         for (bool w : snap.shape_warm) {
             if (w) ++warmShapes;
         }
@@ -433,9 +437,19 @@ void FacetrackingPlugin::ProvidePresence(WKOpenVR::PresenceComposer &composer)
     const bool oscOn = profile_.current.output_osc_enabled;
 
     WKOpenVR::PresenceUpdate u;
-    u.priority = 50;
-    u.details  = "Tracking facial expressions";
-    u.state    = std::to_string(warmShapes) + " shapes | osc " + (oscOn ? "on" : "off");
+    if (!snap.valid || snap.stale) {
+        u.priority = 0;
+        u.details  = "Face Tracking";
+        u.state    = snap.valid ? "telemetry stale" : "idle";
+    } else if (warmShapes == 0) {
+        u.priority = 30;
+        u.details  = "Face Tracking";
+        u.state    = "waiting for upstream module";
+    } else {
+        u.priority = 50;
+        u.details  = "Tracking facial expressions";
+        u.state    = std::to_string(warmShapes) + " shapes | osc " + (oscOn ? "on" : "off");
+    }
 
     composer.Submit("Face Tracking", std::move(u));
 }
