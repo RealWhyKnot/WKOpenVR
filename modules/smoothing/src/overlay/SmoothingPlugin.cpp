@@ -83,6 +83,11 @@ void SmoothingPlugin::SendConfig()
 {
 	if (!ipc_.IsConnected()) return;
 	protocol::Request req(protocol::RequestSetFingerSmoothing);
+	// master_enabled is deprecated on the wire (see Protocol.h) -- the
+	// resources/enable_smoothing.flag file is the real master toggle, gated
+	// at driver load. Sending 1 unconditionally so the driver's reseed-mask
+	// computation in SetFingerSmoothingConfig treats the connection as
+	// "smoothing is live" for diff purposes.
 	req.setFingerSmoothing.master_enabled = 1;
 	cfg_.smoothness = std::clamp(cfg_.smoothness, 0, 100);
 	req.setFingerSmoothing.smoothness = (uint8_t)cfg_.smoothness;

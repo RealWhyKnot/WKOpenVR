@@ -4,6 +4,10 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 namespace
 {
@@ -78,22 +82,44 @@ void SaveConfig(const SmoothingConfig &cfg)
     std::wstring path = ConfigPath();
     if (path.empty()) return;
 
-    FILE *f = _wfopen(path.c_str(), L"w");
-    if (!f) return;
-    fprintf(f, "smoothness=%d\n", cfg.smoothness);
-    fprintf(f, "finger_mask=%u\n", (unsigned)cfg.finger_mask);
-    fprintf(f, "smart_smoothing=%d\n", cfg.smart_smoothing ? 1 : 0);
+    // Serialize to an in-memory buffer first. Writing to <path>.tmp and then
+    // MoveFileExW(REPLACE_EXISTING) gives us atomicity: a crash mid-write
+    // leaves the existing smoothing.txt untouched rather than truncated.
+    std::string body;
+    body.reserve(512);
+    auto appendf = [&](const char *fmt, auto&&... args) {
+        char buf[256];
+        int n = std::snprintf(buf, sizeof buf, fmt, std::forward<decltype(args)>(args)...);
+        if (n > 0) body.append(buf, (size_t)n);
+    };
+    appendf("smoothness=%d\n", cfg.smoothness);
+    appendf("finger_mask=%u\n", (unsigned)cfg.finger_mask);
+    appendf("smart_smoothing=%d\n", cfg.smart_smoothing ? 1 : 0);
     for (int i = 0; i < 10; ++i) {
         // Only write non-zero entries so the on-disk file stays small and a
         // hand-edit removing a line restores the global-fallback default.
         if (cfg.per_finger_smoothness[i] > 0) {
-            fprintf(f, "per_finger_smoothness.%d=%d\n", i, cfg.per_finger_smoothness[i]);
+            appendf("per_finger_smoothness.%d=%d\n", i, cfg.per_finger_smoothness[i]);
         }
     }
     for (const auto &kv : cfg.trackerSmoothness) {
         // 0 values are dropped from the map on slider release; anything
         // still here is meaningful and should round-trip.
-        fprintf(f, "tracker_smoothness.%s=%d\n", kv.first.c_str(), kv.second);
+        appendf("tracker_smoothness.%s=%d\n", kv.first.c_str(), kv.second);
     }
-    fclose(f);
+
+    std::wstring tmpPath = path + L".tmp";
+    HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
+    CloseHandle(h);
+    if (!ok || written != (DWORD)body.size()) {
+        DeleteFileW(tmpPath.c_str());
+        return;
+    }
+    // Atomic replace. Logs nothing on failure -- the existing file is intact;
+    // the next SaveConfig will retry.
+    MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
 }

@@ -476,9 +476,12 @@ namespace protocol
 	// feature is unused.
 	struct FingerSmoothingConfig
 	{
-		// Master kill-switch. When false the IVRDriverInputInternal::
-		// UpdateSkeletonComponent detour forwards bone arrays untouched —
-		// no per-bone slerp, no state lookup. Default false (opt-in).
+		// Master kill-switch. DEPRECATED: the overlay always sends 1 here
+		// (presence of resources/enable_smoothing.flag is the real master
+		// toggle, gated at module load time). Driver-side reseed logic still
+		// reads it for the wasOn/isOn diff; layout retained so existing
+		// driver builds keep IPC compatibility across this rev. Do not gate
+		// new logic on it -- treat it as always-true once the pipe is open.
 		bool     master_enabled;
 
 		// Smoothing strength on a 0..100 scale. 0 = pass-through (alpha=1.0,
