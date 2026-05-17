@@ -3190,7 +3190,18 @@ void CalibrationTick(double time)
 		bool refOfflineNow = false;
 		bool tgtOfflineNow = false;
 		tickOne(ctx.referenceID, "reference", g_refLiveness, refOfflineNow);
-		tickOne(ctx.targetID,    "target",    g_tgtLiveness, tgtOfflineNow);
+		// When "Hide tracker" is on, the driver freezes the target's pose at
+		// the last good calibrated value with TrackingResult_Calibrating_OutOfRange.
+		// The frozen pose would otherwise trip the liveness detector's
+		// frozen-pose path after a few seconds of HMD movement; reset the
+		// state and skip so a hide-driven freeze doesn't masquerade as a
+		// disconnect.
+		if (ctx.quashTargetInContinuous) {
+			spacecal::liveness::Reset(g_tgtLiveness);
+			tgtOfflineNow = false;
+		} else {
+			tickOne(ctx.targetID, "target", g_tgtLiveness, tgtOfflineNow);
+		}
 
 		// Online -> offline edge fires above. Detect the reverse edge here
 		// (was offline last tick, online this tick) so we can fire a clean

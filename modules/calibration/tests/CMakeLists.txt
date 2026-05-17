@@ -46,6 +46,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_translation_solve_direct.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_common_helpers.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_device_filters.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_quash_pose_flags.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs.cpp
     ${CMAKE_SOURCE_DIR}/core/src/overlay/DeviceFilters.cpp
     ${SPACECAL_SRC}/overlay/CalibrationCalc.cpp

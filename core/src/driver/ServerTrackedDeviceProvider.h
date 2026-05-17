@@ -169,6 +169,16 @@ private:
 		Eigen::Vector3d lastBlendWorldPos = Eigen::Vector3d::Zero();
 		Eigen::Quaterniond lastBlendWorldRot = Eigen::Quaterniond::Identity();
 		bool blendMotionInitialized = false;
+
+		// Last fully-calibrated pose seen on this slot, captured at the end of
+		// every non-quashed frame. When quash kicks in (SC's "Hide tracker
+		// during cal" toggle), the quash branch replays this cached pose so
+		// the device freezes at its last good position instead of emitting
+		// raw vendor pose (which is typically the floor or some arbitrary
+		// origin and shows up as a ghost tracker). lastGoodPoseValid is set
+		// true once the cache has been populated at least once.
+		vr::DriverPose_t lastGoodPose{};
+		bool             lastGoodPoseValid = false;
 	};
 
 	struct FallbackTransform
