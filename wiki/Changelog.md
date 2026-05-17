@@ -37,6 +37,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **phantom:** Absent-mode virtual body trackers (Phase 2) (a3ce058)
 - **phantom:** Rigid IK fallback past dead-reckon window (Phase 1.5) (d0a3c62)
 - **phantom:** Add Phantom Trackers module for dropout bridging (7daa1de)
+- **release:** Per-module disable-in-release gate (edfca53)
 
 ### Changed
 - host(facetracking): extend shmem to v2 with head data (2813401)
@@ -60,6 +61,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **captions:** Reuse downmix scratch across WASAPI capture packets (97fd32e)
 - **rename:** Align C# face-tracking projects with WKOpenVR brand (e0d998e)
 - **facetracking:** Rename OPENVR_PAIR_FACE_* env vars to WKOPENVR_FACE_* (21833da)
+- **overlay:** Remove Discord rich presence (f151015)
 
 ### Fixed
 - **smoothing:** Lock out per-tracker prediction on the calibration anchor (e87f318)
