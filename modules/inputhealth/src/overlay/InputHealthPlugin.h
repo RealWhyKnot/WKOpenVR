@@ -6,6 +6,7 @@
 #include "Profiles.h"
 #include "Protocol.h"
 #include "SnapshotReader.h"
+#include "inputhealth/PresenceCounting.h"
 
 #include <chrono>
 #include <cstdint>
@@ -70,6 +71,11 @@ private:
 	uint64_t observed_ipc_generation_ = 0;
 	std::chrono::steady_clock::time_point last_refresh_{};
 	std::chrono::steady_clock::time_point last_connection_check_{};
+
+	// Last presence counts pushed in ProvidePresence, used to skip duplicate
+	// debug-mode log lines when nothing about the count has changed.
+	inputhealth::PresenceCounts last_presence_counts_{};
+	bool last_presence_counts_logged_ = false;
 
 	void MaintainDriverConnection();
 	void DrawStatusBanner();
