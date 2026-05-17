@@ -11,6 +11,9 @@
 #include <fstream>
 #include <sstream>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 // ShellContext is forward-declared in FeaturePlugin.h; include the header
 // so the definition is visible for field access.
 #include "ShellContext.h"
@@ -34,6 +37,45 @@ static int ReadProfileSendPort()
 
     int port = openvr_pair::common::json::IntAt(root, "send_port", 9000);
     return (port > 0 && port <= 65535) ? port : 9000;
+}
+
+// Atomic write of send_port to %LocalAppDataLow%\WKOpenVR\profiles\
+// oscrouter.json. Merges with any existing keys so a richer router profile
+// (future fields) survives. Writes to .tmp then MoveFileExW so a crash
+// mid-write doesn't corrupt the existing file.
+static bool WriteProfileSendPort(int port)
+{
+    std::wstring profileDir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
+    if (profileDir.empty()) return false;
+    std::wstring path = profileDir + L"\\oscrouter.json";
+
+    picojson::object obj;
+    {
+        std::ifstream in(path);
+        if (in) {
+            std::stringstream ss;
+            ss << in.rdbuf();
+            picojson::value root;
+            if (openvr_pair::common::json::ParseObject(root, ss.str())) {
+                obj = root.get<picojson::object>();
+            }
+        }
+    }
+    obj["send_port"] = picojson::value(static_cast<double>(port));
+    std::string body = picojson::value(obj).serialize(true);
+
+    std::wstring tmpPath = path + L".tmp";
+    HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
+    CloseHandle(h);
+    if (!ok || written != (DWORD)body.size()) {
+        DeleteFileW(tmpPath.c_str());
+        return false;
+    }
+    return MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
 }
 
 void RouterTab::EnsureIpc()
@@ -63,15 +105,27 @@ void RouterTab::Draw(openvr_pair::overlay::ShellContext &ctx)
         return;
     }
 
-    // Read the target port from the profile at draw time. The read is cheap
-    // (one ifstream + small JSON parse); the function short-circuits early if
-    // the file is absent.  A future RequestOscRouterSetConfig IPC call will
-    // allow editing this from the UI without a restart.
-    int profilePort = ReadProfileSendPort();
-    ImGui::Text("Send target: 127.0.0.1:%d", profilePort);
+    // Send-port editor. Hydrated once from the profile on the first draw;
+    // user edits commit on focus-out (IsItemDeactivatedAfterEdit) so dragging
+    // through intermediate values doesn't fire a write per increment.
+    if (!portLoaded_) {
+        portEdit_   = ReadProfileSendPort();
+        portLoaded_ = true;
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Send target: 127.0.0.1:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80.0f);
+    ImGui::InputInt("##oscrouter_send_port", &portEdit_, 0, 0);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        // Clamp to a valid UDP range; 0 and >65535 are nonsense.
+        if (portEdit_ < 1)     portEdit_ = 1;
+        if (portEdit_ > 65535) portEdit_ = 65535;
+        SendPortChanged(portEdit_);
+    }
     openvr_pair::overlay::ui::TooltipOnHover(
-        "Outbound OSC target port. Set via the router profile (oscrouter.json).\n"
-        "Migrated from FaceTracking OSC port if non-default on first upgrade.");
+        "Outbound OSC target port. Edits write to profiles\\oscrouter.json\n"
+        "and push to the live driver immediately when SteamVR is running.");
 
     DrawConnectedModules(ctx);
 
@@ -178,6 +232,31 @@ void RouterTab::DrawTestPublish()
     }
     if (testStatus_[0] != '\0') {
         ImGui::TextUnformatted(testStatus_);
+    }
+}
+
+void RouterTab::SendPortChanged(int newPort)
+{
+    // Persist first so the value survives a crash before the driver round-
+    // trips. WriteProfileSendPort is best-effort -- a write failure leaves
+    // the existing oscrouter.json intact and the UI keeps the new value in
+    // memory so the next edit will retry the write.
+    WriteProfileSendPort(newPort);
+
+    // Push live if the IPC pipe is open. When the driver isn't running yet,
+    // the on-disk write above is sufficient -- the driver reads send_port
+    // from oscrouter.json at init time.
+    EnsureIpc();
+    if (!ipc_.IsConnected()) return;
+
+    protocol::Request req(protocol::RequestSetOscRouterConfig);
+    req.setOscRouterConfig.send_port = (uint16_t)newPort;
+    for (int i = 0; i < 6; ++i) req.setOscRouterConfig._reserved[i] = 0;
+    try {
+        ipc_.SendBlocking(req);
+    } catch (...) {
+        ipc_.Close();
+        ipcConnectAttempted_ = false;
     }
 }
 

@@ -261,7 +261,14 @@ namespace protocol
 	// Valve "vive_tracker_<role>" controller type, and pushes IK-derived
 	// poses every time the HMD pose updates. Gated on the user having a
 	// T-pose calibration for the role.
-	const uint32_t Version = 21;
+	//
+	// v22 (2026-05-17): OSC router live send-port edit. Adds
+	// RequestSetOscRouterConfig (OscRouterConfig payload, 8 bytes) so the
+	// overlay can push a new outbound UDP target port without round-
+	// tripping through the profile-migration code at next driver init.
+	// Backwards-compatible at the wire level; drivers that ignore the new
+	// request continue to read send_port from oscrouter.json at startup.
+	const uint32_t Version = 22;
 
 	// Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 	// "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -352,6 +359,12 @@ namespace protocol
 		// on the next vrserver restart (SteamVR does not allow live
 		// TrackedDeviceRemoved without re-Init).
 		RequestSetPhantomVirtualEnabled,
+		// v22 (2026-05-17): OSC router live send-port edit. Lets the overlay
+		// push a new outbound port without round-tripping through the
+		// profile-migration code at next startup. Driver applies immediately
+		// to the UDP send socket; overlay also writes profiles/oscrouter.json
+		// so the value survives a restart even if the driver isn't running.
+		RequestSetOscRouterConfig,
 	};
 
 	enum ResponseType
@@ -792,6 +805,18 @@ namespace protocol
 		uint32_t _reserved;
 	};
 
+	// POD payload for RequestSetOscRouterConfig (v22). Live edit of the
+	// outbound OSC target port from the overlay. The driver applies the new
+	// port immediately to its UDP send socket; if the IPC isn't connected at
+	// the moment the user edits the value, the overlay still writes
+	// profiles/oscrouter.json so the next driver init picks it up. Default
+	// (and historical) port is 9000.
+	struct OscRouterConfig
+	{
+		uint16_t send_port;
+		uint8_t  _reserved[6];
+	};
+
 	// =========================================================================
 	// Captions module protocol additions (no version bump; appended after v16)
 	// =========================================================================
@@ -993,6 +1018,9 @@ namespace protocol
 			PhantomTrackerOffset  setPhantomTrackerOffset;
 			// v21: phantom Phase 2 absent-mode virtual-tracker toggle.
 			PhantomVirtualEnabled setPhantomVirtualEnabled;
+			// v22: OSC router live send-port edit. Tiny (8 bytes); does not
+			// grow the union.
+			OscRouterConfig       setOscRouterConfig;
 		};
 
 		Request() : type(RequestInvalid), setAlignmentSpeedParams({}) { }

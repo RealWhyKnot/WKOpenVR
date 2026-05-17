@@ -166,6 +166,8 @@ bool OscRouter::HandleRequest(const protocol::Request &req, protocol::Response &
         return HandlePublish(req.oscPublish, resp);
     case protocol::RequestOscGetStats:
         return HandleGetStats(resp);
+    case protocol::RequestSetOscRouterConfig:
+        return HandleSetConfig(req.setOscRouterConfig, resp);
     default:
         return false;
     }
@@ -212,6 +214,23 @@ bool OscRouter::HandleGetStats(protocol::Response &resp)
     return true;
 }
 
+bool OscRouter::HandleSetConfig(const protocol::OscRouterConfig &req, protocol::Response &resp)
+{
+    // Defer the socket re-open to the send-worker thread -- UdpSender is
+    // documented as single-thread-owned, and the worker checks pendingSendPort_
+    // once per loop iteration. Reject obvious garbage (0 / >65535 handled by
+    // type, but 0 here means "no port" so treat as invalid).
+    if (req.send_port == 0) {
+        resp.type = protocol::ResponseInvalid;
+        return true;
+    }
+    pendingSendPort_.store(req.send_port, std::memory_order_release);
+    OR_LOG("[OscRouter] HandleSetConfig: queued send_port=%u (was %u)",
+        (unsigned)req.send_port, (unsigned)sendPort_);
+    resp.type = protocol::ResponseSuccess;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Send worker
 // ---------------------------------------------------------------------------
@@ -234,6 +253,23 @@ void OscRouter::SendWorkerMain()
     SendEntry entry;
 
     while (!stop_.load(std::memory_order_acquire)) {
+        // Live send-port re-open. Checked before each send attempt so the
+        // first packet after a UI edit lands on the new port. Single-thread
+        // owned socket -- this is the only place that closes/reopens it.
+        uint16_t newPort = pendingSendPort_.exchange(0, std::memory_order_acq_rel);
+        if (newPort != 0 && newPort != sendPort_) {
+            OR_LOG("[OscRouter] send worker: re-opening socket %u -> %u",
+                (unsigned)sendPort_, (unsigned)newPort);
+            sender_.Close();
+            if (sender_.Open(sendHost_.c_str(), newPort)) {
+                sendPort_ = newPort;
+                socket_not_open_logged_ = false;
+            } else {
+                OR_LOG("[OscRouter] send worker: re-open to port %u failed; old socket closed",
+                    (unsigned)newPort);
+            }
+        }
+
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
             queueCv_.wait_for(lk, std::chrono::milliseconds(50), [this]{

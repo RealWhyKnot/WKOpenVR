@@ -63,6 +63,13 @@ private:
     uint16_t    sendPort_  = 9000;
     bool        enabled_   = true;
 
+    // Live port edit signal: when the overlay pushes a new send_port via
+    // RequestSetOscRouterConfig, the IPC thread bumps this atomic and the
+    // send-worker thread re-opens its socket on the next loop iteration. 0
+    // (the default) means "no pending change". Keeps the UdpSender confined
+    // to the send-worker thread per its threading contract.
+    std::atomic<uint16_t> pendingSendPort_ {0};
+
     RouteTable routeTable_;
     UdpSender  sender_;
 
@@ -104,6 +111,7 @@ private:
     bool HandleUnsubscribe(const protocol::OscRouteUnsubscribe &req, protocol::Response &resp);
     bool HandlePublish(const protocol::OscPublish &req, protocol::Response &resp);
     bool HandleGetStats(protocol::Response &resp);
+    bool HandleSetConfig(const protocol::OscRouterConfig &req, protocol::Response &resp);
 
     // Publish shmem stats (called from send worker ~10 Hz).
     void PublishStats();
