@@ -49,6 +49,13 @@ private:
     std::string lastDetails_;
     std::string lastState_;
     std::string lastLargeImageText_;
+
+    // Last winning entry's identifying metadata. Used by the debug-mode
+    // "winner change" audit log so transitions between equally-formatted
+    // submissions (e.g. two modules at priority 50 with the same details)
+    // are still flagged.
+    std::string lastWinnerModule_;
+    int         lastWinnerPriority_ = -1;
 };
 
 } // namespace WKOpenVR

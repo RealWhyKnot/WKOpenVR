@@ -1,6 +1,8 @@
 #include "DiscordPresenceComposer.h"
 #include "DiscordPresence.h"
 
+#include "DebugLogging.h"
+
 #include <chrono>
 #include <cstring>
 #include <string>
@@ -65,10 +67,17 @@ void PresenceComposer::Tick()
         const std::string state   = "No modules enabled";
         const std::string imgText = "WKOpenVR";
         if (details != lastDetails_ || state != lastState_ || imgText != lastLargeImageText_) {
+            if (openvr_pair::common::IsDebugLoggingEnabled()) {
+                DiscordPresence_LogInfo(
+                    "[composer] no-submission idle fallback -> details='%s' state='%s'",
+                    details.c_str(), state.c_str());
+            }
             DiscordPresence_SetState(state.c_str(), details.c_str());
             lastDetails_        = details;
             lastState_          = state;
             lastLargeImageText_ = imgText;
+            lastWinnerModule_   = "";
+            lastWinnerPriority_ = -1;
         }
         return;
     }
@@ -110,11 +119,36 @@ void PresenceComposer::Tick()
         : winner.update.largeImageText;
     imgText = ClampUtf8(imgText, kDiscordMaxTextBytes);
 
-    if (details != lastDetails_ || state != lastState_ || imgText != lastLargeImageText_) {
+    const bool winnerChanged =
+        winner.moduleName != lastWinnerModule_ ||
+        winner.update.priority != lastWinnerPriority_ ||
+        details != lastDetails_ ||
+        state   != lastState_   ||
+        imgText != lastLargeImageText_;
+
+    if (winnerChanged) {
+        // Debug-mode audit trail: when the composer's winner changes, dump
+        // every submission this frame. Future "Discord card looks wrong"
+        // bug reports can be answered from the log without rerunning.
+        if (openvr_pair::common::IsDebugLoggingEnabled()) {
+            DiscordPresence_LogInfo(
+                "[composer] winner change: %s pri=%d details='%s' state='%s' (%zu submissions)",
+                winner.moduleName.c_str(), winner.update.priority,
+                details.c_str(), state.c_str(), entries_.size());
+            for (const auto &e : entries_) {
+                const char marker = (&e == &winner) ? '*' : ' ';
+                DiscordPresence_LogInfo(
+                    "[composer]  %c %s pri=%d details='%s' state='%s'",
+                    marker, e.moduleName.c_str(), e.update.priority,
+                    e.update.details.c_str(), e.update.state.c_str());
+            }
+        }
         DiscordPresence_SetState(state.c_str(), details.c_str());
         lastDetails_        = details;
         lastState_          = state;
         lastLargeImageText_ = imgText;
+        lastWinnerModule_   = winner.moduleName;
+        lastWinnerPriority_ = winner.update.priority;
     }
 }
 
