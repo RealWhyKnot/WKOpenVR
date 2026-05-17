@@ -8,6 +8,14 @@
 #include "MotionGate.h"  // ClassifyCorrection / StillFloor -- option 3 per user 2026-05-04
 #include "quash/QuashPose.h"
 
+// Forward declaration of the per-finger reseed entry point. Defined in
+// modules/smoothing/src/driver/SkeletalHookInjector.cpp; the smoothing
+// driver library is linked into this DLL via OPENVR_PAIR_FEATURE_LIBS.
+// Including SkeletalHookInjector.h directly would require adding the
+// smoothing module's source directory to this target's include path; one
+// forward declaration here keeps the dependency edge narrow.
+namespace skeletal { void MarkFingersNeedReseed(uint16_t fingerBits); }
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -1103,6 +1111,35 @@ void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::Finge
 	// flood the log file.
 	if (oldHeader != newHeader || oldLow != newLow) {
 		const protocol::FingerSmoothingConfig prev = UnpackFingerSmoothing(oldHeader, oldLow);
+
+		// Compute which fingers transitioned from "not smoothed" to
+		// "smoothed" so the detour can reseed its per-finger state.previous
+		// from live input on the next frame. Without this, the first
+		// smoothed frame after a toggle slerps from whatever the cached
+		// previous-frame value happens to be -- visible as a snap or
+		// transient spasm.
+		//
+		// A finger is "not smoothed" if any of: master disabled, mask bit
+		// clear, or effective smoothness (per-finger > 0 wins, else
+		// global) is zero. The IPC reconnect path arrives with
+		// prev.master_enabled == 0 (atomics start at zero), so the very
+		// first SetFingerSmoothingConfig after driver init reseeds every
+		// currently-enabled finger automatically.
+		auto isSmoothedIn = [](const protocol::FingerSmoothingConfig &c, int idx) {
+			if (!c.master_enabled) return false;
+			if (((c.finger_mask >> idx) & 1u) == 0) return false;
+			const uint8_t perFinger = c.per_finger_smoothness[idx];
+			const uint8_t effective = perFinger != 0 ? perFinger : c.smoothness;
+			return effective != 0;
+		};
+		uint16_t reseedBits = 0;
+		for (int i = 0; i < 10; ++i) {
+			const bool wasOn = isSmoothedIn(prev, i);
+			const bool isOn  = isSmoothedIn(cfg,  i);
+			if (!wasOn && isOn) reseedBits |= (uint16_t)(1u << i);
+		}
+		if (reseedBits) skeletal::MarkFingersNeedReseed(reseedBits);
+
 		LOG("[skeletal] SetFingerSmoothingConfig via IPC: enabled=%d global=%u mask=0x%04x per_finger=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u] (was: enabled=%d global=%u mask=0x%04x)",
 			(int)cfg.master_enabled, (unsigned)cfg.smoothness, (unsigned)cfg.finger_mask,
 			(unsigned)cfg.per_finger_smoothness[0], (unsigned)cfg.per_finger_smoothness[1],

@@ -36,6 +36,13 @@ static ServerTrackedDeviceProvider *g_driver = nullptr;
 struct HandState
 {
     bool                  initialized = false;
+    // Per-finger "snap the next smoothed frame to live input" bits. Bits map
+    // 0..4 = thumb..pinky for this hand. Set by MarkFingersNeedReseed in
+    // response to IPC config transitions (a finger going from passthrough to
+    // smoothed). Cleared at the end of the bone loop after one frame -- one
+    // frame of snap is enough to overwrite state.previous with the live pose
+    // before the slerp loop resumes its normal blend.
+    bool                  reseed_pending[5] = {};
     vr::VRBoneTransform_t previous[31] = {};
 };
 static HandState g_handState[2];
@@ -108,6 +115,34 @@ static std::atomic<bool>     g_firstUnknownHandleLogged{false};
 // matches /left or /right, so we can see if there are paths we're not
 // recognising. Beyond that, only matched paths get logged (existing behavior).
 static std::atomic<bool>     g_firstCreateSkeletonLogged{false};
+
+// Enable-transition diagnostics. Reported finger spasms on toggle are hard
+// to root-cause from logs alone; this surface fires one detailed log line on
+// every false->true transition of `anySmoothing` per hand, then a delta
+// summary every 5 frames for the first 30 frames after the transition. After
+// that the diagnostic goes silent. Re-arms whenever anySmoothing flips back
+// to false (typically when the user disables smoothing).
+//
+// What the lines record:
+//   - On transition: alpha-per-finger array, plus the first wrist + thumb-meta
+//     + index-meta bones so we can compare the seeded state.previous against
+//     the live pTransforms (would surface "state.previous holds stale data").
+//   - Each post-enable sample: max per-bone position delta vs prior frame, and
+//     the worst (smallest) quaternion dot product across all 31 bones, which
+//     flags spinning / sign-flipped slerp.
+static std::atomic<bool>     g_lastAnySmoothing[2]     = {{false}, {false}};
+static std::atomic<int>      g_postEnableFramesLeft[2] = {{0}, {0}};
+static constexpr int         kPostEnableFrames         = 30;
+static constexpr int         kPostEnableLogStride      = 5;
+// Per-hand snapshot of the bone array as we emitted it on the previous
+// smoothed frame. Guarded by g_handStateMutex so accesses serialize with the
+// hot path. Filled on each smoothed frame post-transition, read on the next.
+struct PostEnableSnapshot
+{
+    bool                  valid = false;
+    vr::VRBoneTransform_t bones[31] = {};
+};
+static PostEnableSnapshot g_postEnableSnap[2];
 
 static void MaybeLogStats(const char *callerTag)
 {
@@ -514,7 +549,19 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
         if (s != 0) anySmoothing = true;
     }
 
+    // Detect anySmoothing transitions for enable-diagnostic logging. Cheap atomic
+    // exchange; only fires the log path when the value flips.
+    const bool prevAnySmoothing = g_lastAnySmoothing[handedness].exchange(
+        anySmoothing, std::memory_order_relaxed);
+
     if (!anySmoothing) {
+        // Re-arm post-enable diagnostic when smoothing turns off, so the next
+        // false->true transition will log again.
+        if (prevAnySmoothing) {
+            g_postEnableFramesLeft[handedness].store(0, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lk(g_handStateMutex);
+            g_postEnableSnap[handedness].valid = false;
+        }
         g_stats[handedness].passthroughCalls.fetch_add(1, std::memory_order_relaxed);
         MaybeLogStats("UpdateSkeleton");
         return PublicUpdateSkeletonHook.originalFunc(_this, ulComponent, eMotionRange, pTransforms, unTransformCount);
@@ -525,6 +572,36 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
     {
         std::lock_guard<std::mutex> lk(g_handStateMutex);
         HandState &state = g_handState[handedness];
+
+        if (anySmoothing && !prevAnySmoothing) {
+            // False->true transition: log alpha + seeded state.previous vs the
+            // live input so we can see if state.previous is stale at the moment
+            // smoothing kicks in. Bones 1, 2, 7 = wrist, thumb-meta, index-meta
+            // -- three reference points without dumping all 31 bones.
+            const auto &p1 = pTransforms[1];
+            const auto &p2 = pTransforms[2];
+            const auto &p7 = pTransforms[7];
+            const auto &s1 = state.previous[1];
+            const auto &s2 = state.previous[2];
+            const auto &s7 = state.previous[7];
+            LOG("[smoothing-diag] enable transition on %s hand: alpha=[%.3f %.3f %.3f %.3f %.3f] "
+                "init=%d prev_bone1=(%.3f,%.3f,%.3f) in_bone1=(%.3f,%.3f,%.3f) "
+                "prev_bone2=(%.3f,%.3f,%.3f) in_bone2=(%.3f,%.3f,%.3f) "
+                "prev_bone7=(%.3f,%.3f,%.3f) in_bone7=(%.3f,%.3f,%.3f)",
+                handedness == 0 ? "left" : "right",
+                alphaPerFinger[0], alphaPerFinger[1], alphaPerFinger[2],
+                alphaPerFinger[3], alphaPerFinger[4],
+                (int)state.initialized,
+                s1.position.v[0], s1.position.v[1], s1.position.v[2],
+                p1.position.v[0], p1.position.v[1], p1.position.v[2],
+                s2.position.v[0], s2.position.v[1], s2.position.v[2],
+                p2.position.v[0], p2.position.v[1], p2.position.v[2],
+                s7.position.v[0], s7.position.v[1], s7.position.v[2],
+                p7.position.v[0], p7.position.v[1], p7.position.v[2]);
+            g_postEnableFramesLeft[handedness].store(kPostEnableFrames, std::memory_order_relaxed);
+            g_postEnableSnap[handedness].valid = false;
+        }
+
         if (!state.initialized) {
             // First frame for this hand: seed previous-state from the incoming
             // pose and forward unmodified. Avoids a visible "snap from
@@ -537,6 +614,17 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
                 int finger = FingerIndexForBone(i);
                 bool inMask = finger >= 0 && (((cfg.finger_mask >> (handBase + finger)) & 1u) != 0);
                 if (!inMask) {
+                    smoothed[i] = pTransforms[i];
+                    state.previous[i] = pTransforms[i];
+                    continue;
+                }
+                // Reseed transition: a finger that wasn't smoothed last frame
+                // (mask bit was off, or effective smoothness was 0, or fresh
+                // IPC reconnect) needs state.previous reseeded from the live
+                // input to avoid blending against a stale cached value on the
+                // first smoothed frame. One frame of snap-to-raw, then the
+                // slerp loop resumes normal behaviour.
+                if (finger >= 0 && state.reseed_pending[finger]) {
                     smoothed[i] = pTransforms[i];
                     state.previous[i] = pTransforms[i];
                     continue;
@@ -559,6 +647,51 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
                 smoothed[i]       = out;
                 state.previous[i] = out;
             }
+            // One frame of reseed is enough; clear after the bone loop so the
+            // next call resumes normal slerp. Doing this at end-of-loop avoids
+            // half-clearing a finger that has multiple bones still in flight.
+            for (int f = 0; f < 5; ++f) {
+                state.reseed_pending[f] = false;
+            }
+        }
+
+        // Post-enable sample log: every kPostEnableLogStride frames after a
+        // false->true transition, log the worst per-bone position delta and
+        // worst orientation dot-product against the snapshot of the last
+        // smoothed frame. Detects oscillation / sign-flipped slerp / chain
+        // incoherence visually as spasm. Silent once the counter hits zero.
+        int framesLeft = g_postEnableFramesLeft[handedness].load(std::memory_order_relaxed);
+        if (framesLeft > 0) {
+            const int frameIdx = kPostEnableFrames - framesLeft + 1;  // 1..30
+            const bool shouldLog = (frameIdx % kPostEnableLogStride) == 0;
+            PostEnableSnapshot &snap = g_postEnableSnap[handedness];
+            if (shouldLog && snap.valid) {
+                float maxPosDelta = 0.0f;
+                float minQuatDot  = 1.0f;
+                int   worstBone   = -1;
+                for (uint32_t i = 0; i < 31; ++i) {
+                    const auto &a = smoothed[i];
+                    const auto &b = snap.bones[i];
+                    const float dx = a.position.v[0] - b.position.v[0];
+                    const float dy = a.position.v[1] - b.position.v[1];
+                    const float dz = a.position.v[2] - b.position.v[2];
+                    const float d  = std::sqrt(dx*dx + dy*dy + dz*dz);
+                    if (d > maxPosDelta) { maxPosDelta = d; worstBone = (int)i; }
+                    const float dot = a.orientation.w * b.orientation.w
+                                    + a.orientation.x * b.orientation.x
+                                    + a.orientation.y * b.orientation.y
+                                    + a.orientation.z * b.orientation.z;
+                    const float absDot = dot < 0.0f ? -dot : dot;
+                    if (absDot < minQuatDot) minQuatDot = absDot;
+                }
+                LOG("[smoothing-diag] post-enable %s hand frame %d/%d: "
+                    "maxPosDelta=%.4fm (bone=%d) minQuatDot=%.4f",
+                    handedness == 0 ? "left" : "right",
+                    frameIdx, kPostEnableFrames, maxPosDelta, worstBone, minQuatDot);
+            }
+            std::memcpy(snap.bones, smoothed, sizeof(snap.bones));
+            snap.valid = true;
+            g_postEnableFramesLeft[handedness].store(framesLeft - 1, std::memory_order_relaxed);
         }
     }
 
@@ -598,6 +731,10 @@ void Init(ServerTrackedDeviceProvider *driver)
         for (int h = 0; h < 2; ++h) {
             g_handState[h].initialized = false;
             std::memset(g_handState[h].previous, 0, sizeof(g_handState[h].previous));
+            std::memset(g_handState[h].reseed_pending, 0, sizeof(g_handState[h].reseed_pending));
+            g_postEnableSnap[h].valid = false;
+            g_postEnableFramesLeft[h].store(0, std::memory_order_relaxed);
+            g_lastAnySmoothing[h].store(false, std::memory_order_relaxed);
         }
     }
     LOG("[skeletal] Init: subsystem armed (driver=%p), awaiting IVRDriverInput interface queries", (void*)driver);
@@ -638,7 +775,26 @@ void Shutdown()
         std::unique_lock<std::shared_mutex> hlk(g_handednessMutex);
         std::lock_guard<std::mutex>         slk(g_handStateMutex);
         g_handleToHandedness.clear();
-        for (int h = 0; h < 2; ++h) g_handState[h].initialized = false;
+        for (int h = 0; h < 2; ++h) {
+            g_handState[h].initialized = false;
+            std::memset(g_handState[h].reseed_pending, 0, sizeof(g_handState[h].reseed_pending));
+            g_postEnableSnap[h].valid = false;
+            g_postEnableFramesLeft[h].store(0, std::memory_order_relaxed);
+            g_lastAnySmoothing[h].store(false, std::memory_order_relaxed);
+        }
+    }
+}
+
+void MarkFingersNeedReseed(uint16_t fingerBits)
+{
+    if (fingerBits == 0) return;
+    std::lock_guard<std::mutex> lk(g_handStateMutex);
+    for (int h = 0; h < 2; ++h) {
+        for (int f = 0; f < 5; ++f) {
+            if ((fingerBits >> (h * 5 + f)) & 1u) {
+                g_handState[h].reseed_pending[f] = true;
+            }
+        }
     }
 }
 

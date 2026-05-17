@@ -54,4 +54,16 @@ void Shutdown();
 // chase encountered).
 void TryInstallPublicHooks(void *iface);
 
+// Mark the per-finger smoothing state as needing a fresh seed on the next
+// UpdateSkeleton frame for each finger whose bit is set in `fingerBits`.
+// Bit layout matches finger_mask: bits 0..4 = left thumb..pinky, 5..9 = right.
+//
+// The reseed makes the next call snap state.previous to the live raw input
+// for those bones instead of slerping from the existing cached value. Used
+// by the IPC config handler to avoid a "stale state.previous -> spasm"
+// transient when a finger transitions from passthrough (effective
+// smoothness 0 / mask bit clear) to actively smoothed. Internally guarded
+// by the same mutex as the per-hand state buffer.
+void MarkFingersNeedReseed(uint16_t fingerBits);
+
 } // namespace skeletal
