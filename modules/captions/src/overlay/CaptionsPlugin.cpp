@@ -406,13 +406,36 @@ void CaptionsPlugin::ProvidePresence(WKOpenVR::PresenceComposer &composer)
         ? kStateLabels[stateIdx]
         : "idle";
 
-    std::string state = std::string(stateLabel) +
-                        " | " + std::to_string(snap.packets_sent) + " sent";
-
     WKOpenVR::PresenceUpdate u;
-    u.priority = 50;
-    u.details  = "Local speech pipeline";
-    u.state    = std::move(state);
+
+    // Halted (circuit-breaker tripped by the driver supervisor) is a hard
+    // failure that should surface as a warning, not as "Local speech pipeline
+    // | translating" -- which is the most common cause of "Discord stats look
+    // wrong" because the host crashed minutes ago but the snapshot froze.
+    if (snap.host_halted) {
+        u.priority = 100;
+        u.details  = "Captions host stopped";
+        if (snap.last_exit_code != 0) {
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "exit 0x%X", snap.last_exit_code);
+            u.state = buf;
+        } else {
+            u.state = "not running";
+        }
+    } else if (!snap.valid || snap.stale) {
+        u.priority = 0;
+        u.details  = "Captions";
+        u.state    = snap.valid ? "status stale" : "no host status";
+    } else if (stateIdx == 0) {
+        u.priority = 0;
+        u.details  = "Captions";
+        u.state    = "idle";
+    } else {
+        u.priority = 50;
+        u.details  = "Local speech pipeline";
+        u.state    = std::string(stateLabel) +
+                     " | " + std::to_string(snap.packets_sent) + " sent";
+    }
 
     composer.Submit("Captions", std::move(u));
 }
