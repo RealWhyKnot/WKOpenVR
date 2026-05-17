@@ -46,6 +46,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **smoothing:** Split skeletal lock; shared_mutex for handedness lookup (8a81897)
 - **driver:** Drop hot-path string allocations in detours (cad7ace)
 - **inputhealth:** Drop try_lock from detours; single-pass StageSnapshots (dfa388f)
+- **captions:** Rename translator module to captions (edf78cc)
 
 ### Fixed
 - **smoothing:** Lock out per-tracker prediction on the calibration anchor (e87f318)
