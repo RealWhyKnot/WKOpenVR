@@ -2,6 +2,7 @@
 #include "DiscordPresenceComposer.h"
 #include "ShellContext.h"
 
+#include <cstdio>
 #include <memory>
 #include <string>
 
@@ -19,12 +20,28 @@ void OscRouterPlugin::ProvidePresence(WKOpenVR::PresenceComposer &composer)
 {
     const auto &s = tab_.LastStats();
 
-    // Format packet counts: use "k" suffix when >= 1000 for readability.
-    std::string pkts;
-    if (s.packets_sent >= 1000) {
-        pkts = std::to_string(s.packets_sent / 1000) + "k";
+    WKOpenVR::PresenceUpdate u;
+    if (s.active_routes == 0 && s.packets_sent == 0) {
+        // Driver not loaded, or no routes registered yet -- showing
+        // "Routing OSC | 0 routes | 0 packets" was the user-confusing
+        // case where Discord claimed activity that did not exist.
+        u.priority = 0;
+        u.details  = "OSC Router";
+        u.state    = "no routes";
+        composer.Submit("OSC Router", std::move(u));
+        return;
+    }
+
+    // Format packet counts. Use one decimal place at the k/M boundary so
+    // "1500 packets" reads as "1.5k" instead of "1k" (integer truncation
+    // collapses the 1000-1999 range into a single misleading label).
+    char pkts[32];
+    if (s.packets_sent >= 1'000'000) {
+        std::snprintf(pkts, sizeof(pkts), "%.1fM", static_cast<double>(s.packets_sent) / 1'000'000.0);
+    } else if (s.packets_sent >= 1'000) {
+        std::snprintf(pkts, sizeof(pkts), "%.1fk", static_cast<double>(s.packets_sent) / 1'000.0);
     } else {
-        pkts = std::to_string(s.packets_sent);
+        std::snprintf(pkts, sizeof(pkts), "%llu", static_cast<unsigned long long>(s.packets_sent));
     }
 
     std::string state = std::to_string(s.active_routes) + " routes | " + pkts + " packets";
@@ -32,7 +49,6 @@ void OscRouterPlugin::ProvidePresence(WKOpenVR::PresenceComposer &composer)
         state += " | " + std::to_string(s.packets_dropped) + " dropped";
     }
 
-    WKOpenVR::PresenceUpdate u;
     u.priority = 40;
     u.details  = "Routing OSC";
     u.state    = std::move(state);
