@@ -111,6 +111,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **ci:** Vendor Khronos GL + EGL headers alongside gl3w outputs (d3be8f8)
 - **ci:** Keep release intact when the post-publish changelog push hits a stale OID (869192f)
 - **ci:** Write placeholder BuildChannel.h + BuildStamp.h at configure (064d7ca)
+- **ci:** Build release changelog payload in Python to dodge jq argv limit (d0ec477)
 
 ---
 
