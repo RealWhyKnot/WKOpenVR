@@ -106,6 +106,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **facetracking:** Defense-in-depth NaN/Inf guard on OSC publish (e450835)
 - **ci:** Stamp generated headers + retry gl3w before configure (b2d1367)
 - **ci:** Vendor gl3w generated sources instead of fetching at configure (b189ad5)
+- **ci:** Vendor Khronos GL + EGL headers alongside gl3w outputs (d3be8f8)
 
 ---
 

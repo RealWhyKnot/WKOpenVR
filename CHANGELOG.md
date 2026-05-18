@@ -108,6 +108,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Defense-in-depth NaN/Inf guard on OSC publish (e450835)
 - **ci:** Stamp generated headers + retry gl3w before configure (b2d1367)
 - **ci:** Vendor gl3w generated sources instead of fetching at configure (b189ad5)
+- **ci:** Vendor Khronos GL + EGL headers alongside gl3w outputs (d3be8f8)
 
 ---
 
