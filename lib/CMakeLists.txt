@@ -21,31 +21,15 @@ if(TARGET update_mappings)
 endif()
 
 # gl3w -- OpenGL extension loader.
-# The gl3w submodule is a generator repo; run gl3w_gen.py at configure time
-# to produce include/GL/gl3w.h and src/gl3w.c from the Khronos registry headers.
+# The generated outputs (gl3w.h + gl3w.c) are vendored under lib/gl3w-vendored/
+# so the build is network-free and immune to the Khronos registry rate-limiting
+# that occasionally returns 403 to GitHub Actions runner IPs. The lib/gl3w
+# submodule remains as an upstream pointer; to refresh against a newer OpenGL
+# extension surface, run `python lib/gl3w/gl3w_gen.py` locally and copy the
+# resulting include/GL/gl3w.h + src/gl3w.c into lib/gl3w-vendored/.
 message("Adding gl3w...")
-set(GL3W_ROOT "${CMAKE_SOURCE_DIR}/lib/gl3w")
-set(GL3W_GENERATED_H "${GL3W_ROOT}/include/GL/gl3w.h")
-set(GL3W_GENERATED_C "${GL3W_ROOT}/src/gl3w.c")
-if(NOT EXISTS "${GL3W_GENERATED_H}" OR NOT EXISTS "${GL3W_GENERATED_C}")
-    find_package(Python3 COMPONENTS Interpreter)
-    if(Python3_FOUND)
-        message(STATUS "gl3w: running generator (Python ${Python3_VERSION})")
-        execute_process(
-            COMMAND "${Python3_EXECUTABLE}" "${GL3W_ROOT}/gl3w_gen.py"
-            WORKING_DIRECTORY "${GL3W_ROOT}"
-            RESULT_VARIABLE GL3W_GEN_RESULT)
-        if(NOT GL3W_GEN_RESULT EQUAL 0)
-            message(WARNING "gl3w generator failed (exit ${GL3W_GEN_RESULT}); build will fail if headers are missing")
-        endif()
-    else()
-        message(WARNING "gl3w: Python3 not found; pre-generated headers not present -- build will fail")
-    endif()
-else()
-    message(STATUS "gl3w: using submodule pre-generated headers (Python generator not invoked)")
-endif()
-add_library(pair_gl3w STATIC ${GL3W_GENERATED_C})
-target_include_directories(pair_gl3w PUBLIC ${GL3W_ROOT}/include)
+add_library(pair_gl3w STATIC ${CMAKE_SOURCE_DIR}/lib/gl3w-vendored/src/gl3w.c)
+target_include_directories(pair_gl3w PUBLIC ${CMAKE_SOURCE_DIR}/lib/gl3w-vendored/include)
 set_property(TARGET pair_gl3w PROPERTY FOLDER "lib")
 
 # Dear ImGui (core + GLFW/OpenGL3 backends).
