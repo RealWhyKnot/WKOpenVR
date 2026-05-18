@@ -62,6 +62,13 @@ jobs:
           submodules: recursive
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Detect beta tag
+        id: beta
+        shell: pwsh
+        run: |
+          $isBeta = '${{ github.ref_name }}' -like '*-beta*'
+          "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
       - name: Validate workflow / script PowerShell syntax
         # Fails the run in seconds if any committed .ps1 or inline pwsh
         # block in the workflow YAML has a parser error. Designed to
@@ -584,7 +591,9 @@ jobs:
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-body-input.md'
           $notes | Out-File -LiteralPath $notesPath -Encoding utf8 -NoNewline
           "input_path=$notesPath" >> $env:GITHUB_OUTPUT
-          gh release create $tag $zip $installer --title $tag --notes-file $notesPath
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --title $tag --notes-file $notesPath @extra
 
       - name: Verify published release body matches input
         env:
@@ -670,7 +679,9 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_calibration }}"
           $repo  = "RealWhyKnot/WKOpenVR-SpaceCalibrator"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_calibration.flag so calibration activates immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Mirror release to WKOpenVR-Smoothing
         env:
@@ -683,7 +694,9 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_smoothing }}"
           $repo  = "RealWhyKnot/WKOpenVR-Smoothing"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_smoothing.flag so smoothing activates immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Mirror release to WKOpenVR-InputHealth
         env:
@@ -696,7 +709,9 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_inputhealth }}"
           $repo  = "RealWhyKnot/WKOpenVR-InputHealth"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_inputhealth.flag so input health monitoring activates immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Mirror release to WKOpenVR-VRCFT
         if: ${{ steps.zips.outputs.mirror_facetracking != '' }}
@@ -710,7 +725,9 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_facetracking }}"
           $repo  = "RealWhyKnot/WKOpenVR-VRCFT"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_facetracking.flag so face and eye tracking activate immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Mirror release to WKOpenVR-OSCRouter
         if: ${{ steps.zips.outputs.mirror_oscrouter != '' }}
@@ -724,7 +741,9 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_oscrouter }}"
           $repo  = "RealWhyKnot/WKOpenVR-OSCRouter"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_oscrouter.flag so OSC fan-out activates immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Mirror release to WKOpenVR-Captions
         if: ${{ steps.zips.outputs.mirror_captions != '' }}
@@ -738,7 +757,9 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_captions }}"
           $repo  = "RealWhyKnot/WKOpenVR-Captions"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_captions.flag so live captions activate immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Mirror release to WKOpenVR-Phantom
         if: ${{ steps.zips.outputs.mirror_phantom != '' }}
@@ -752,9 +773,12 @@ jobs:
           $installer = "${{ steps.feature_installers.outputs.installer_phantom }}"
           $repo  = "RealWhyKnot/WKOpenVR-Phantom"
           $notes = "Mirror of WKOpenVR release $tag. Zip includes enable_phantom.flag so phantom-tracker dropout bridging activates immediately. Source: https://github.com/RealWhyKnot/WKOpenVR/commit/$env:GITHUB_SHA"
-          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes
+          $extra = @()
+          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $tag $zip $installer --repo $repo --title $tag --notes $notes @extra
 
       - name: Push promoted changelog back to main (verified)
+        if: ${{ steps.beta.outputs.is_beta != 'true' }}
         # Use the GraphQL createCommitOnBranch mutation so the promotion
         # commit is signed server-side with GitHub's bot key. Done last so a
         # build or release failure does not push a phantom-promoted CHANGELOG.
