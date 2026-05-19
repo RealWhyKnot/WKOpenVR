@@ -66,6 +66,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **rename:** Align C# face-tracking projects with WKOpenVR brand (e0d998e)
 - **facetracking:** Rename OPENVR_PAIR_FACE_* env vars to WKOPENVR_FACE_* (21833da)
 - **overlay:** Remove Discord rich presence (f151015)
+- diag(calibration): instrument restart-loop suspects (cf67f99)
 
 ### Fixed
 - **smoothing:** Lock out per-tracker prediction on the calibration anchor (e87f318)
@@ -117,6 +118,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **smoothing:** Evict superseded skeletal handles for the same hand (a7cf30c)
 - **calibration:** Hold AUTO Lock across reanchor; tag reset cause (d69d2b5)
 - **ci:** Wait for SUBSYSTEM:WINDOWS captions-host self-test (301374a)
+- **calibration:** Break the AUTO Lock blackout and the restart loop (fcd8816)
 
 ---
 
