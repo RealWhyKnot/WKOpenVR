@@ -214,8 +214,14 @@ jobs:
           if (-not (Test-Path -LiteralPath $hostExe)) {
             throw "Captions host missing at $hostExe"
           }
-          & $hostExe --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Captions host self-test failed (exit $LASTEXITCODE)" }
+          # The captions host links as SUBSYSTEM:WINDOWS to avoid a console flash
+          # on driver-side spawn. PowerShell's `& exe` does not wait for
+          # SUBSYSTEM:WINDOWS processes -- it starts them detached and leaves
+          # $LASTEXITCODE unset. Start-Process -Wait blocks until exit and
+          # exposes the real exit code on the returned process object.
+          $p = Start-Process -FilePath $hostExe -ArgumentList '--self-test' `
+              -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "Captions host self-test failed (exit $($p.ExitCode))" }
 
       - name: Package umbrella and mirror zips
         id: zips
