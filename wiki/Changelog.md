@@ -113,6 +113,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **ci:** Write placeholder BuildChannel.h + BuildStamp.h at configure (064d7ca)
 - **ci:** Build release changelog payload in Python to dodge jq argv limit (d0ec477)
 - **smoothing:** Evict superseded skeletal handles for the same hand (a7cf30c)
+- **calibration:** Hold AUTO Lock across reanchor; tag reset cause (d69d2b5)
 
 ---
 
