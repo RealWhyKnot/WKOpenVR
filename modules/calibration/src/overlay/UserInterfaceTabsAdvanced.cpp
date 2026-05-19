@@ -5,6 +5,7 @@
 #include "Wizard.h"
 #include "UiHelpers.h"
 
+#include <openvr.h>
 #include <string>
 #include <imgui/imgui.h>
 #include "imgui_extensions.h"
@@ -131,6 +132,132 @@ static void DrawDiagnosticsPanel(ImVec2 panelSize) {
 	ImGui::EndGroupPanel();
 }
 
+// Trackers list: per-device "Hide" checkbox + a brief diagnostic note. Drives
+// the persistent CalCtx.alwaysHideSerials set; toggling a row flips that set
+// and saves the profile, so the hide survives overlay restarts, SteamVR
+// restarts, profile reloads, and continuous-cal state transitions (the bug
+// the prior "Hide tracker (during cal)" toggle could not fix).
+//
+// HMD rows are intentionally rendered with the checkbox disabled -- hiding
+// the HMD would translate the user's view by ~14 km and blind them. The
+// payload-build site in Calibration.cpp also rejects HMD-class hides as a
+// belt-and-braces guard.
+//
+// Per-tracker dropout statistics live in the Phantom plugin's tab; surfacing
+// the same data here would duplicate the phantom shmem reader in the
+// calibration module. The footer of this panel points the user there.
+static void DrawTrackersPanel(ImVec2 panelSize) {
+	ImGui::BeginGroupPanel("Trackers", panelSize);
+
+	if (!vr::VRSystem()) {
+		ImGui::TextDisabled("(Waiting for SteamVR.)");
+		ImGui::EndGroupPanel();
+		return;
+	}
+
+	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+	ImGui::TextWrapped(
+		"Hide trackers you don't want visible in your play space (e.g. a tracker "
+		"glued to your headset used as the calibration anchor). Hidden trackers "
+		"are translated ~14 km outside the play space and continue tracking "
+		"normally -- no disconnect, no SteamVR timeout. The hide persists across "
+		"overlay restarts and continuous-calibration state transitions.");
+	ImGui::PopStyleColor();
+	ImGui::Spacing();
+
+	if (ImGui::BeginTable("##trackers_grid", 3,
+			ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody
+			| ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+		ImGui::TableSetupColumn("Device", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("Class",  ImGuiTableColumnFlags_WidthFixed, 110.0f);
+		ImGui::TableSetupColumn("Hide",   ImGuiTableColumnFlags_WidthFixed, 60.0f);
+		ImGui::TableHeadersRow();
+
+		bool anyDevice = false;
+		for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
+			auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(id);
+			if (deviceClass == vr::TrackedDeviceClass_Invalid) continue;
+			anyDevice = true;
+
+			char serialBuf[256] = {};
+			char modelBuf[256]  = {};
+			vr::ETrackedPropertyError perr = vr::TrackedProp_Success;
+			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, serialBuf, sizeof serialBuf, &perr);
+			perr = vr::TrackedProp_Success;
+			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_ModelNumber_String, modelBuf, sizeof modelBuf, &perr);
+
+			std::string serial = serialBuf[0] ? std::string(serialBuf) : std::string();
+			std::string model  = modelBuf[0]  ? std::string(modelBuf)  : std::string("(unknown)");
+
+			const char* className = "?";
+			switch (deviceClass) {
+			case vr::TrackedDeviceClass_HMD:              className = "HMD"; break;
+			case vr::TrackedDeviceClass_Controller:       className = "Controller"; break;
+			case vr::TrackedDeviceClass_GenericTracker:   className = "Tracker"; break;
+			case vr::TrackedDeviceClass_TrackingReference: className = "Base Station"; break;
+			default: className = "Other"; break;
+			}
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::AlignTextToFramePadding();
+			if (serial.empty()) {
+				ImGui::Text("id %u %s", id, model.c_str());
+			} else {
+				ImGui::Text("%s %s", model.c_str(), serial.c_str());
+			}
+
+			ImGui::TableSetColumnIndex(1);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(className);
+
+			ImGui::TableSetColumnIndex(2);
+			const bool isHmd = (deviceClass == vr::TrackedDeviceClass_HMD);
+			bool hidden = !serial.empty() && CalCtx.alwaysHideSerials.count(serial) != 0;
+			if (isHmd) ImGui::BeginDisabled();
+			ImGui::PushID((int)id);
+			if (ImGui::Checkbox("##hide", &hidden)) {
+				if (!serial.empty() && !isHmd) {
+					if (hidden) CalCtx.alwaysHideSerials.insert(serial);
+					else        CalCtx.alwaysHideSerials.erase(serial);
+					SaveProfile(CalCtx);
+				}
+			}
+			ImGui::PopID();
+			if (isHmd) ImGui::EndDisabled();
+			if (ImGui::IsItemHovered()) {
+				if (isHmd) {
+					ImGui::SetTooltip("HMDs cannot be hidden -- the +14 km offset would translate your view.");
+				} else if (serial.empty()) {
+					ImGui::SetTooltip("Device has no serial yet (still enumerating). Try again in a moment.");
+				} else {
+					ImGui::SetTooltip("Translate this tracker's published pose by ~14 km so its rendered\n"
+					                  "model sits well outside your play space. Tracking continues; no\n"
+					                  "disconnect. Persists across overlay/SteamVR restarts.");
+				}
+			}
+		}
+
+		if (!anyDevice) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextDisabled("(No devices detected yet.)");
+		}
+		ImGui::EndTable();
+	}
+
+	ImGui::Spacing();
+	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+	ImGui::TextWrapped(
+		"Tracker dropout statistics (count, max gap, recent state) live in the "
+		"Phantom tab once phantom dropout bridging is enabled for a tracker. "
+		"That data tells you whether brief dropouts are hardware (tracker going "
+		"silent at the source) or software (a downstream gate suppressing pose).");
+	ImGui::PopStyleColor();
+
+	ImGui::EndGroupPanel();
+}
+
 // Tip strip for both tabs. Reminds the user that hover = tooltip and
 // right-click on sliders = reset to default. Light-weight, identical between
 // Basic and Advanced so the hint is always reachable.
@@ -154,6 +281,13 @@ void CCal_DrawSettings() {
 	// behind another collapsing header) so a user with a problem can copy
 	// the numbers into a bug report without spelunking.
 	DrawDiagnosticsPanel(panel_size);
+
+	// Trackers panel: per-device persistent Hide checkbox + pointer to the
+	// Phantom tab for dropout stats. Lives in Advanced (shared between
+	// continuous and one-shot tabs) since Hide-tracker is a tracker-level
+	// preference rather than a mode-level toggle.
+	ImGui::Spacing();
+	DrawTrackersPanel(panel_size);
 
 	// === Toggles panel ====================================================
 	// Hide tracker + Ignore outliers also live in the one-shot Settings tab

@@ -282,6 +282,20 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 	// these set to false despite the struct defaults being true.
 	if (obj["quash_target_in_continuous"].is<bool>())
 		ctx.quashTargetInContinuous = obj["quash_target_in_continuous"].get<bool>();
+	// Persistent per-serial hide list. Array of string serials; missing key or
+	// empty array means no trackers are always-hidden. HMD-class serials are
+	// loaded as-is (defense in depth lives at the payload-build site, not
+	// here) so a manually-edited profile with an HMD serial doesn't crash but
+	// also doesn't blank the user's view.
+	ctx.alwaysHideSerials.clear();
+	if (obj["always_hide_serials"].is<picojson::array>()) {
+		for (const auto& v : obj["always_hide_serials"].get<picojson::array>()) {
+			if (v.is<std::string>()) {
+				const auto& s = v.get<std::string>();
+				if (!s.empty()) ctx.alwaysHideSerials.insert(s);
+			}
+		}
+	}
 	if (obj["require_trigger_press_to_apply"].is<bool>())
 		ctx.requireTriggerPressToApply = obj["require_trigger_press_to_apply"].get<bool>();
 	if (obj["ignore_outliers"].is<bool>())
@@ -613,6 +627,19 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	do { if (ctx.FIELD != defaults.FIELD) { double _v = (double)ctx.FIELD; profile[KEY].set<double>(_v); } } while (0)
 
 	WRITE_IF_CHANGED_BOOL  ("quash_target_in_continuous",   quashTargetInContinuous);
+
+	// Persistent per-serial hide list. Skip the key entirely when the set is
+	// empty so default profiles stay clean. picojson's set<picojson::array>
+	// requires a non-const lvalue.
+	if (!ctx.alwaysHideSerials.empty()) {
+		picojson::array serials;
+		for (const auto& s : ctx.alwaysHideSerials) {
+			picojson::value v;
+			v.set<std::string>(const_cast<std::string&>(s));
+			serials.push_back(std::move(v));
+		}
+		profile["always_hide_serials"].set<picojson::array>(serials);
+	}
 	WRITE_IF_CHANGED_BOOL  ("require_trigger_press_to_apply", requireTriggerPressToApply);
 	WRITE_IF_CHANGED_BOOL  ("ignore_outliers",              ignoreOutliers);
 	WRITE_IF_CHANGED_BOOL  ("static_calibration",           enableStaticRecalibration);

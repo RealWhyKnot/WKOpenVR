@@ -367,11 +367,32 @@ struct CalibrationContext
 
 	// Auto-lock detector state.  Tracks the most recent relative-pose samples
 	// (ref^-1 * target) on a sliding window.  When their variance stays below
-	// the rigidity thresholds for kAutoLockSamplesNeeded consecutive accepted
-	// samples, autoLockEffectivelyLocked flips true.  Cleared on profile
-	// reload / Clear() so a fresh calibration starts unlocked.
+	// the rigidity thresholds (see AutoLockHysteresis.h) for the full window,
+	// autoLockEffectivelyLocked flips true.  Cleared on profile reload /
+	// Clear() so a fresh calibration starts unlocked.
 	std::deque<Eigen::AffineCompact3d> autoLockHistory;
 	bool autoLockEffectivelyLocked = false;
+
+	// AUTO lock-mode pending-flip queue. The detector produces a target value
+	// (`autoLockPendingFlipTo`) when the hysteresis verdict changes; the flip
+	// is held until the next CalibrationTick observes the HMD nearly still
+	// (kAutoLockStationaryHmdMps). This hides the visible calibration jump
+	// that accompanies a locked<->unlocked regime change inside the user's
+	// next stillness window. `autoLockHasPendingFlip` is false when the
+	// detector and effective state agree.
+	bool autoLockHasPendingFlip = false;
+	bool autoLockPendingFlipTo = false;
+
+	// Persistent per-serial hide list, applied independently of cal state.
+	// Keyed by Prop_SerialNumber_String value (never by openVRID -- IDs are
+	// reassigned across SteamVR restarts and device reconnects). When a
+	// device's serial appears in this set, the next ScanAndApplyProfile
+	// payload carries quash=true + updateQuash=true regardless of whether
+	// the device is the cal target or what the cal state machine is doing.
+	// Loaded from / saved to the calibration profile (key
+	// `always_hide_serials`). HMD class serials are never honoured (the
+	// build-payload site forces quash=false for k_unTrackedDeviceIndex_Hmd).
+	std::set<std::string> alwaysHideSerials;
 
 	// Multi-ecosystem extras: each entry aligns an additional non-HMD tracking
 	// system to the HMD's tracking system. Empty for the typical 1-or-2-system
@@ -559,6 +580,11 @@ struct CalibrationContext
 		lockRelativePosition = false;
 		autoLockHistory.clear();
 		autoLockEffectivelyLocked = false;
+		autoLockHasPendingFlip = false;
+		autoLockPendingFlipTo = false;
+		// alwaysHideSerials is a user preference, NOT calibration data --
+		// intentionally NOT reset here. A profile-clear shouldn't un-hide
+		// trackers the user has explicitly marked as always-hidden.
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
 		// user preference that spans profiles.
 		// No calibration was performed — relative pose is NOT calibrated. The
@@ -661,6 +687,13 @@ struct CalibrationContext
 };
 
 extern CalibrationContext CalCtx;
+
+// Commits a queued AUTO-Lock-mode flip (held by UpdateAutoLockDetector to
+// hide visible jumps) when the HMD is nearly still. No-op when the queue is
+// empty or the user is currently moving. See AutoLockHysteresis.h for the
+// stationary-speed threshold; called once per CalibrationTick in
+// continuous-cal mode. Public so unit tests can drive it directly.
+bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSpeedMps);
 
 void InitCalibrator();
 void CalibrationTick(double time);

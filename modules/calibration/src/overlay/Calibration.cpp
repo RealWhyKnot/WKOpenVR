@@ -21,6 +21,8 @@
                              // going silent under SteamVR's "Running_OK + poseIsValid stays true
                              // while pose hash is frozen" disconnect path.
 #include "RotationMatrix3.h" // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
+#include "AutoLockHysteresis.h" // spacecal::autolock::VerdictWithHysteresis -- AUTO Lock
+                             // hysteresis + stationary-gate constants and pure helpers.
 
 #include <string>
 #include <vector>
@@ -189,35 +191,30 @@ static bool g_snapNextProfileApply = false;
 // CalibrationCalc is complete at the include point, so the implicitly-defined
 // destructor handles the unique_ptr just fine.
 
-// Auto-lock detector tuning. The window must be long enough that brief tracking
-// glitches don't push us into "rigidly attached" mode prematurely, but short
-// enough that a real change (user repositioned the tracker) flips us back to
-// unlocked within a few seconds. With samples coming in at the continuous-cal
-// cadence (~2 Hz post-buffer-fill), a 30-sample window is ~15 seconds.
-namespace {
-	constexpr size_t kAutoLockHistoryMax = 30;
-	constexpr size_t kAutoLockSamplesNeeded = 30;
-	constexpr double kAutoLockTranslThreshM = 0.005;            // 5 mm
-	constexpr double kAutoLockRotThreshRad = 1.0 * EIGEN_PI / 180.0; // 1 deg
-}
+// AUTO Lock hysteresis + stationary-gate constants and pure helpers live in
+// AutoLockHysteresis.h so they can be unit-tested without instantiating
+// CalibrationContext. See that header for the why behind the threshold pair.
 
 void CalibrationContext::UpdateAutoLockDetector(
 	const Eigen::AffineCompact3d& refWorld,
 	const Eigen::AffineCompact3d& targetWorld)
 {
+	using namespace spacecal::autolock;
+
 	// Relative pose: target expressed in the reference's local frame. For a
 	// rigidly attached pair (tracker glued to HMD), this is constant; for an
 	// independent pair (tracker on hip vs HMD on head), it varies as the
 	// user moves.
 	const Eigen::AffineCompact3d rel = refWorld.inverse() * targetWorld;
 	autoLockHistory.push_back(rel);
-	while (autoLockHistory.size() > kAutoLockHistoryMax) autoLockHistory.pop_front();
+	while (autoLockHistory.size() > kHistoryMax) autoLockHistory.pop_front();
 
-	if (autoLockHistory.size() < kAutoLockSamplesNeeded) {
+	if (autoLockHistory.size() < kSamplesNeeded) {
 		// Not enough data yet -- stay in "not detected" state. AUTO mode
 		// users see the calibration unlocked and re-solving until the
 		// detector earns confidence.
 		autoLockEffectivelyLocked = false;
+		autoLockHasPendingFlip = false;
 		return;
 	}
 
@@ -249,26 +246,56 @@ void CalibrationContext::UpdateAutoLockDetector(
 		if (angle > rotMaxAngle) rotMaxAngle = angle;
 	}
 
-	const bool prevLocked = autoLockEffectivelyLocked;
-	autoLockEffectivelyLocked =
-		(translStdDev < kAutoLockTranslThreshM) &&
-		(rotMaxAngle < kAutoLockRotThreshRad);
+	const bool verdict = spacecal::autolock::VerdictWithHysteresis(
+		translStdDev, rotMaxAngle, autoLockEffectivelyLocked);
 
-	// Forensic diagnostic for audit row #11 (project_upstream_regression_audit_2026-05-04).
-	// Fork-only AUTO mode flips lockRelativePosition mid-session based on
-	// observed relative-pose stability. A flip while the user thinks they're
-	// in OFF mode (e.g. from misreading the UI) would change which constraint
-	// CalibrateByRelPose is gated against. Fires only on transitions, so
-	// healthy AUTO sessions produce one annotation per actual flip -- not a
-	// flood. Use grep `auto_lock_flip:` on session logs to spot any flapping.
-	if (prevLocked != autoLockEffectivelyLocked) {
-		char flipbuf[200];
-		snprintf(flipbuf, sizeof flipbuf,
-			"auto_lock_flip: previous=%d now=%d translStdDev=%.4fm rotMaxAng=%.4frad samples=%zu",
-			(int)prevLocked, (int)autoLockEffectivelyLocked,
-			translStdDev, rotMaxAngle, autoLockHistory.size());
-		Metrics::WriteLogAnnotation(flipbuf);
+	// Queue rather than commit when the verdict differs from the currently
+	// effective state. CommitPendingAutoLockFlipIfStationary in
+	// CalibrationTick promotes the queued value once the HMD speed drops
+	// below kStationaryHmdMps -- visible jumps on flip then land during a
+	// natural pause in motion rather than mid-gesture.
+	if (verdict != autoLockEffectivelyLocked) {
+		const bool prevPending = autoLockHasPendingFlip;
+		const bool prevTarget  = autoLockPendingFlipTo;
+		autoLockHasPendingFlip = true;
+		autoLockPendingFlipTo = verdict;
+		// Log only on transitions in the queue state to avoid per-tick
+		// spam while the user is moving and the flip is held. Captures
+		// both new-queue and changed-target events.
+		if (!prevPending || prevTarget != verdict) {
+			char buf[224];
+			snprintf(buf, sizeof buf,
+				"auto_lock_flip_pending: target=%d current=%d translStdDev=%.4fm rotMaxAng=%.4frad samples=%zu",
+				(int)verdict, (int)autoLockEffectivelyLocked,
+				translStdDev, rotMaxAngle, autoLockHistory.size());
+			Metrics::WriteLogAnnotation(buf);
+		}
+	} else if (autoLockHasPendingFlip) {
+		// The detector swung back to agreement with the effective state
+		// before the stationary gate fired -- drop the pending flip so we
+		// don't commit a change the user wouldn't see as warranted.
+		autoLockHasPendingFlip = false;
 	}
+}
+
+// Commit a queued AUTO Lock flip when the user is still enough that the
+// resulting calibration jump won't be jarring. Returns true if a commit
+// happened this call (caller may want to log / kick the calibration math).
+bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSpeedMps)
+{
+	if (!ctx.autoLockHasPendingFlip) return false;
+	if (!spacecal::autolock::HmdIsStationary(hmdSpeedMps)) return false;
+
+	const bool prev = ctx.autoLockEffectivelyLocked;
+	ctx.autoLockEffectivelyLocked = ctx.autoLockPendingFlipTo;
+	ctx.autoLockHasPendingFlip = false;
+
+	char buf[200];
+	snprintf(buf, sizeof buf,
+		"auto_lock_flip: previous=%d now=%d hmdSpeed=%.3fmps committed_under_stationary_gate=1",
+		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps);
+	Metrics::WriteLogAnnotation(buf);
+	return true;
 }
 
 void CalibrationContext::ResolveLockMode()
@@ -894,6 +921,7 @@ namespace {
 		if (a.updateScale != b.updateScale) return false;
 		if (a.lerp != b.lerp) return false;
 		if (a.quash != b.quash) return false;
+		if (a.updateQuash != b.updateQuash) return false;
 		if (a.predictionSmoothness != b.predictionSmoothness) return false;
 		if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
 		if (a.scale != b.scale) return false;
@@ -2305,6 +2333,18 @@ void DumpDriftSubsystemState() {
 	}
 }
 
+// Resolve the persistent-hide intent for a device. Returns the quash bit
+// the driver should hold for this id, honouring CalCtx.alwaysHideSerials but
+// never agreeing to hide the HMD class (defense in depth -- hiding the HMD
+// would zero the user's view via the +10 km offset).
+static bool ResolvePersistentHide(uint32_t id)
+{
+	if (id == vr::k_unTrackedDeviceIndex_Hmd) return false;
+	const std::string& serial = g_lastSeenSerial[id];
+	if (serial.empty()) return false;
+	return CalCtx.alwaysHideSerials.count(serial) != 0;
+}
+
 void ResetAndDisableOffsets(uint32_t id, const std::string& trackingSystem = "")
 {
 	vr::HmdVector3d_t zeroV;
@@ -2315,6 +2355,14 @@ void ResetAndDisableOffsets(uint32_t id, const std::string& trackingSystem = "")
 
 	protocol::SetDeviceTransform payload{ id, false, zeroV, zeroQ, 1.0 };
 	SetTargetSystemField(payload, trackingSystem);
+	// Carry the persistent-hide intent on the disable payload too. Without
+	// this, disabling cal for an always-hidden tracker would still preserve
+	// the prior hide via updateQuash=false -- but only as long as the driver
+	// has a non-default `tf.quash`. For first-session devices (driver fresh,
+	// tf.quash defaults to false) we need the disable payload to actively
+	// set quash=true so the hide takes effect from the user's first toggle.
+	payload.updateQuash = true;
+	payload.quash = ResolvePersistentHide(id);
 	SendDeviceTransformIfChanged(id, payload);
 }
 
@@ -2457,14 +2505,20 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, serialBuf, sizeof serialBuf, &serialErr);
 			std::string serial = (serialErr == vr::TrackedProp_Success) ? std::string(serialBuf) : std::string();
 			if (g_lastSeenSerial[id] != serial) {
-				if (!g_lastSeenSerial[id].empty()) {
+				const bool hadPriorSerial = !g_lastSeenSerial[id].empty();
+				// Update the seen-serial BEFORE the disable send so
+				// ResolvePersistentHide inside ResetAndDisableOffsets sees the
+				// new serial -- otherwise a freshly-connected always-hidden
+				// tracker would appear in the play space for one scan cycle
+				// before the next tick caught up.
+				g_lastSeenSerial[id] = serial;
+				if (hadPriorSerial) {
 					// ID reassigned. Force a clean disable on the slot before any new
 					// transform takes effect. Clear our local cache so the disable is
 					// guaranteed to be sent (no dedupe match).
 					g_lastApplied[id].valid = false;
 					ResetAndDisableOffsets(id);
 				}
-				g_lastSeenSerial[id] = serial;
 			}
 		}
 
@@ -2569,7 +2623,17 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 			/*inContinuousState=*/CalCtx.state == CalibrationState::Continuous,
 			/*isFreshlyAdopted=*/isFreshlyAdopted,
 			/*snapThisCycle=*/snapThisCycle);
-		payload.quash = CalCtx.state == CalibrationState::Continuous && id == CalCtx.targetID && CalCtx.quashTargetInContinuous;
+		// Final hide intent: OR the persistent per-serial hide list with the
+		// legacy "during continuous cal" toggle. HMD class is rejected inside
+		// ResolvePersistentHide so the user can't accidentally blank their own
+		// view. updateQuash=true so the driver actually writes the bit rather
+		// than holding the previous value.
+		const bool legacyDuringCal =
+			CalCtx.state == CalibrationState::Continuous
+			&& (int32_t)id == CalCtx.targetID
+			&& CalCtx.quashTargetInContinuous;
+		payload.quash = ResolvePersistentHide(id) || legacyDuringCal;
+		payload.updateQuash = true;
 		SetTargetSystemField(payload, ctx.targetTrackingSystem);
 
 		// predictionSmoothness moved to the Smoothing overlay on 2026-05-11
@@ -3152,6 +3216,14 @@ void CalibrationTick(double time)
 			hmdRaw.vecVelocity[1] * hmdRaw.vecVelocity[1] +
 			hmdRaw.vecVelocity[2] * hmdRaw.vecVelocity[2]);
 
+		// Commit any queued AUTO-Lock flip if the user is paused enough to
+		// hide the resulting calibration jump. Re-resolve lockRelativePosition
+		// afterward so the same tick's downstream `calibration.lockRelativePosition`
+		// write below reflects the new state.
+		if (CommitPendingAutoLockFlipIfStationary(ctx, hmdSpeedMps)) {
+			ctx.ResolveLockMode();
+		}
+
 		auto tickOne = [&](int32_t id,
 		                   const char* whichLabel,
 		                   spacecal::liveness::TrackerLivenessState& state,
@@ -3220,17 +3292,38 @@ void CalibrationTick(double time)
 		}
 
 		if (refReturned || tgtReturned) {
-			char buf[160];
-			snprintf(buf, sizeof buf,
-				"tracker_reconnected: which=%s%s StartContinuousCalibration",
-				refReturned ? "reference" : "",
-				tgtReturned ? (refReturned ? "+target" : "target") : "");
-			Metrics::WriteLogAnnotation(buf);
-			// StartContinuousCalibration internally Resets both liveness
-			// states + the edge-tracking flags, so the next tick starts
-			// from a clean baseline.
-			StartContinuousCalibration();
-			return;
+			char buf[200];
+			const char* whichLabel = refReturned
+				? (tgtReturned ? "reference+target" : "reference")
+				: "target";
+			// For rigidly-locked setups (head-mounted anchor, AUTO-locked or
+			// manual Lock=ON with a valid relative pose), the existing cal is
+			// still correct through a brief silence -- restarting only causes
+			// a visible jump and pollutes the log with "Collecting initial
+			// samples..." every time the user's wireless tracker briefly drops.
+			// Reset the liveness state in place and continue.
+			if (CalCtx.lockRelativePosition && CalCtx.relativePosCalibrated) {
+				snprintf(buf, sizeof buf,
+					"tracker_reconnected: which=%s skip_restart=locked_rel_pose",
+					whichLabel);
+				Metrics::WriteLogAnnotation(buf);
+				spacecal::liveness::Reset(g_refLiveness);
+				spacecal::liveness::Reset(g_tgtLiveness);
+				g_refWasOffline = false;
+				g_tgtWasOffline = false;
+				// Don't return -- let the normal CollectSample path resume
+				// this tick now that the anchors are confirmed alive again.
+			} else {
+				snprintf(buf, sizeof buf,
+					"tracker_reconnected: which=%s StartContinuousCalibration",
+					whichLabel);
+				Metrics::WriteLogAnnotation(buf);
+				// StartContinuousCalibration internally Resets both liveness
+				// states + the edge-tracking flags, so the next tick starts
+				// from a clean baseline.
+				StartContinuousCalibration();
+				return;
+			}
 		}
 	}
 

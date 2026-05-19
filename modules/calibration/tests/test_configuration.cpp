@@ -99,6 +99,83 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields) {
 // carry every field; missing keys reload as the in-code defaults, which
 // matches the in-code defaults baked into CalibrationContext.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Persistent per-serial hide list survives save/load. The hide is keyed by
+// serial so it stays attached to a specific physical tracker even when
+// SteamVR reassigns OpenVR IDs across restarts.
+// ---------------------------------------------------------------------------
+TEST(ConfigurationTest, AlwaysHideSerialsRoundTrip) {
+    CalibrationContext src;
+    src.referenceTrackingSystem = "lighthouse";
+    src.targetTrackingSystem = "oculus";
+    src.validProfile = true;
+    src.alwaysHideSerials.insert("LHR-SAMPLE-1");
+    src.alwaysHideSerials.insert("LHR-SAMPLE-2");
+
+    std::stringstream io;
+    WriteProfile(src, io);
+
+    CalibrationContext dst;
+    ParseProfile(dst, io);
+
+    ASSERT_EQ(dst.alwaysHideSerials.size(), 2u);
+    EXPECT_EQ(dst.alwaysHideSerials.count("LHR-SAMPLE-1"), 1u);
+    EXPECT_EQ(dst.alwaysHideSerials.count("LHR-SAMPLE-2"), 1u);
+}
+
+// An empty hide list is the default. The save path must skip the JSON key
+// entirely so default profiles stay compact (and so a downgrade reading the
+// profile doesn't see a meaningless empty array). The load path must also
+// leave the in-memory set empty when the key is absent.
+TEST(ConfigurationTest, AlwaysHideSerialsEmptyByDefaultAfterRoundTrip) {
+    CalibrationContext src;
+    src.referenceTrackingSystem = "lighthouse";
+    src.targetTrackingSystem = "oculus";
+    src.validProfile = true;
+
+    std::stringstream io;
+    WriteProfile(src, io);
+
+    EXPECT_EQ(io.str().find("always_hide_serials"), std::string::npos)
+        << "save path should not emit the key when the set is empty";
+
+    CalibrationContext dst;
+    ParseProfile(dst, io);
+    EXPECT_TRUE(dst.alwaysHideSerials.empty());
+}
+
+// Clear() is the profile-reset path the Recalibrate-from-scratch button
+// uses. It must NOT touch the persistent hide set -- the user's "this
+// tracker should never be visible" preference is independent of the
+// calibration data.
+TEST(ConfigurationTest, ClearDoesNotResetAlwaysHideSerials) {
+    CalibrationContext ctx;
+    ctx.alwaysHideSerials.insert("LHR-KEEPME");
+    ctx.calibratedTranslation = Eigen::Vector3d(1.0, 2.0, 3.0);
+
+    ctx.Clear();
+
+    EXPECT_EQ(ctx.alwaysHideSerials.count("LHR-KEEPME"), 1u)
+        << "profile clear must not wipe user-marked always-hidden trackers";
+    EXPECT_DOUBLE_EQ(ctx.calibratedTranslation.x(), 0.0);
+}
+
+// Clear() should reset the AUTO-Lock pending-flip queue along with the
+// detector state, so a profile-reload doesn't carry a stale committed-flip
+// intention across the boundary.
+TEST(ConfigurationTest, ClearResetsAutoLockPendingFlip) {
+    CalibrationContext ctx;
+    ctx.autoLockEffectivelyLocked = true;
+    ctx.autoLockHasPendingFlip = true;
+    ctx.autoLockPendingFlipTo = false;
+
+    ctx.Clear();
+
+    EXPECT_FALSE(ctx.autoLockEffectivelyLocked);
+    EXPECT_FALSE(ctx.autoLockHasPendingFlip);
+    EXPECT_FALSE(ctx.autoLockPendingFlipTo);
+}
+
 TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults) {
     CalibrationContext src; // fresh defaults
     src.referenceTrackingSystem = "lighthouse";
