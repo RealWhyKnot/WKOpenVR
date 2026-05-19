@@ -928,11 +928,46 @@ void LoadProfile(CalibrationContext &ctx)
 
 void SaveProfile(CalibrationContext &ctx)
 {
-	std::cout << "Saving profile to registry" << std::endl;
-
 	std::stringstream io;
 	WriteProfile(ctx, io);
 	const std::string serialized = io.str();
+
+	// Hash-and-skip: SaveProfile is invoked on every cal convergence tick
+	// (~3.5 Hz), and most consecutive saves are byte-identical (the cal
+	// is converged and steady-state). Live sessions logged 8000+ saves in
+	// 37 min with mostly-identical content. Compute a cheap FNV-1a-64
+	// hash of the serialized payload and skip both the registry write and
+	// the annotation when it matches the last successful save. Cleared by
+	// CalCtx.Clear() via the `lastSavedProfileHash = 0` reset there.
+	static uint64_t s_lastSavedHash = 0;
+	uint64_t hash = 0xcbf29ce484222325ULL;
+	for (unsigned char c : serialized) {
+		hash ^= c;
+		hash *= 0x100000001b3ULL;
+	}
+	const bool unchanged = (hash != 0 && hash == s_lastSavedHash);
+	if (unchanged) {
+		// Skip the actual write -- nothing to persist. Suppress the
+		// per-tick annotation flood; emit a throttled one-shot so the
+		// log shows the cumulative skip rate without per-save noise.
+		static int s_skipBurstCount = 0;
+		static double s_lastSkipLogTime = -1e9;
+		++s_skipBurstCount;
+		const double nowSec = Metrics::CurrentTime;
+		if ((nowSec - s_lastSkipLogTime) >= 30.0) {
+			s_lastSkipLogTime = nowSec;
+			char skipBuf[200];
+			snprintf(skipBuf, sizeof skipBuf,
+				"[profile-save][skipped] count_since_last_log=%d hash_unchanged=1",
+				s_skipBurstCount);
+			Metrics::WriteLogAnnotation(skipBuf);
+			s_skipBurstCount = 0;
+		}
+		return;
+	}
+	s_lastSavedHash = hash;
+
+	std::cout << "Saving profile to registry" << std::endl;
 	WriteRegistryKey(serialized);
 
 	// Annotate the save event so the log lets a reader correlate writes
@@ -946,7 +981,8 @@ void SaveProfile(CalibrationContext &ctx)
 		        + ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z()) * 100.0;
 	char saveBuf[256];
 	snprintf(saveBuf, sizeof saveBuf,
-		"profile_saved: bytes=%zu valid=%d trans_mag_cm=%.2f",
-		serialized.size(), (int)ctx.validProfile, transMagCm);
+		"profile_saved: bytes=%zu valid=%d trans_mag_cm=%.2f hash=0x%016llx",
+		serialized.size(), (int)ctx.validProfile, transMagCm,
+		(unsigned long long)hash);
 	Metrics::WriteLogAnnotation(saveBuf);
 }

@@ -1427,6 +1427,30 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold, double re
 						(int)m_relativePosCalibrated, (int)lockRelativePosition);
 					Metrics::WriteLogAnnotation(rpbuf);
 				}
+
+				// Recovery-convergence watchdog: one-shot log on the first
+				// usingRelPose_fired after a quest_relocalization_recovery so
+				// triage can see the physical jump severity alongside the
+				// time-to-recover and the first usable relPoseError. Cleared
+				// on emit so subsequent fires don't log spuriously. Uses
+				// Metrics::CurrentTime (set by RecordTimestamp() above) for
+				// the same clock epoch as the arming site in Calibration.cpp.
+				if (CalCtx.recoveryWaitingSince > 0.0) {
+					const double convergenceSec =
+						Metrics::CurrentTime - CalCtx.recoveryWaitingSince;
+					char recBuf[280];
+					snprintf(recBuf, sizeof recBuf,
+						"[recovery][converged] hmdDelta_m=%.3f hmdDelta_cm=%.1f"
+						" convergence_sec=%.2f first_relPoseError_mm=%.3f"
+						" relPosCal=%d lockRel=%d",
+						CalCtx.recoveryHmdDeltaAtStart,
+						CalCtx.recoveryHmdDeltaAtStart * 100.0,
+						convergenceSec, relPoseError * 1000.0,
+						(int)m_relativePosCalibrated, (int)lockRelativePosition);
+					Metrics::WriteLogAnnotation(recBuf);
+					CalCtx.recoveryWaitingSince = 0.0;
+					CalCtx.recoveryHmdDeltaAtStart = 0.0;
+				}
 			}
 		}
 	}

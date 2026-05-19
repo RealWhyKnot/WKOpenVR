@@ -68,6 +68,19 @@ constexpr double kReanchorSuppressSeconds = 0.6;
 // blocker. Throttled by the caller; this is just the threshold value.
 constexpr double kAutoLockGateHeldWarnSeconds = 2.0;
 
+// Asymmetric unlock-gate timeout (seconds). Lock commits require the user
+// to be stationary so the resulting calibration jump is hidden under
+// natural stillness. Unlock commits semantically don't need the same gate
+// -- the user is in motion (which IS why the unlock was queued) and waiting
+// for them to be stationary is exactly backwards. If a pending unlock has
+// been held longer than this, commit it without the stationary check. Lock
+// commits are unaffected.
+//
+// 5 s is long enough to ride through a quick gesture without releasing
+// (the swing-back path catches those) but short enough that real sustained
+// motion releases the lock promptly.
+constexpr double kAutoLockUnlockMaxWaitSeconds = 5.0;
+
 // Returns the verdict the detector should produce given the current
 // (translStdDev, rotMaxAngle) and the previously committed lock state.
 // Single owner of the hysteresis decision; unit tests pin the contract.

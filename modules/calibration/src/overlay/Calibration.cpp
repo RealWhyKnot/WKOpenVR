@@ -306,13 +306,26 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 	const bool stationary = spacecal::autolock::HmdIsStationary(hmdSpeedMps);
 	const bool suppressed = spacecal::autolock::ShouldSuppressForReanchor(
 		now, ctx.autoLockReanchorSuppressUntil);
+	const double heldSec = now - ctx.autoLockPendingFlipFirstSeen;
 
-	if (!stationary || suppressed) {
+	// Unlock commits get an asymmetric escape hatch: if the pending target is
+	// false (release lock) AND it has been held for longer than the unlock
+	// max-wait, commit even if the stationary gate would otherwise block.
+	// The stationary requirement exists so the cal-jump under a state change
+	// is hidden by user stillness, but for unlock the user is BY DEFINITION
+	// not still (otherwise the detector would not have flipped its verdict).
+	// Without this escape hatch, sustained-motion unlocks pile up as pending
+	// without ever committing -- log analysis showed 84 pending target=0
+	// events but only 24 commits, a 71% drop rate.
+	const bool isUnlock = (ctx.autoLockPendingFlipTo == false);
+	const bool unlockTimeoutFired = isUnlock
+		&& heldSec >= spacecal::autolock::kAutoLockUnlockMaxWaitSeconds;
+
+	if ((!stationary || suppressed) && !unlockTimeoutFired) {
 		// Held by a gate. Emit a one-shot diagnostic per pending flip once
 		// the hold exceeds the warn threshold, so a chronic block becomes
 		// visible without per-tick log noise. Re-armed by the !pending
 		// path above.
-		const double heldSec = now - ctx.autoLockPendingFlipFirstSeen;
 		if (!ctx.autoLockGateHeldWarned
 			&& heldSec >= spacecal::autolock::kAutoLockGateHeldWarnSeconds) {
 			ctx.autoLockGateHeldWarned = true;
@@ -332,16 +345,18 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 	}
 
 	const bool prev = ctx.autoLockEffectivelyLocked;
-	const double heldSecCommit = now - ctx.autoLockPendingFlipFirstSeen;
 	ctx.autoLockEffectivelyLocked = ctx.autoLockPendingFlipTo;
 	ctx.autoLockHasPendingFlip = false;
 	ctx.autoLockPendingFlipFirstSeen = 0.0;
 	ctx.autoLockGateHeldWarned = false;
 
-	char buf[240];
+	const char* commitMode = unlockTimeoutFired ? "unlock_timeout"
+		: stationary                            ? "stationary_gate"
+		:                                          "unknown";
+	char buf[280];
 	snprintf(buf, sizeof buf,
-		"auto_lock_flip: previous=%d now=%d hmdSpeed=%.3fmps held_sec=%.2f committed_under_stationary_gate=1",
-		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps, heldSecCommit);
+		"auto_lock_flip: previous=%d now=%d hmdSpeed=%.3fmps held_sec=%.2f committed_via=%s",
+		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps, heldSec, commitMode);
 	Metrics::WriteLogAnnotation(buf);
 	return true;
 }
@@ -2008,6 +2023,13 @@ namespace {
 			snprintf(uimsg, sizeof uimsg,
 				"Quest re-localized (%.0f cm jump). Recalibrating...\n",
 				hmdDelta * 100.0);
+			// Arm the recovery-convergence watch so the next post-recovery
+			// usingRelPose_fired event can emit a `[recovery][converged]`
+			// line tying physical jump severity to convergence time. Uses
+			// Metrics::CurrentTime so the CalibrationCalc reader sees the
+			// same clock epoch (it doesn't include GLFW).
+			CalCtx.recoveryWaitingSince = Metrics::CurrentTime;
+			CalCtx.recoveryHmdDeltaAtStart = hmdDelta;
 			RecoverFromWedgedCalibration(uimsg, "quest_relocalization_recovery");
 
 			s.lastAutoRecoverTime = now;
@@ -2235,6 +2257,45 @@ static void TickRestLockedYaw(double now) {
 	}
 }
 
+// Rolling chi-square history (most-recent first), populated each time the
+// chi-square reanchor detector fires. Used by the geometry-shift fire log
+// to print a `chi_sq_tail` field so a reader can see the recent magnitudes
+// without having to grep across many lines of preceding events. Capped at
+// kChiSqTailMax so growth is bounded; eviction is by age (only the last
+// kChiSqTailMax values are kept).
+namespace {
+	constexpr size_t kChiSqTailMax = 8;
+	std::deque<std::pair<double, double>> g_recentChiSquaredFires; // (t, chi_sq)
+}
+
+// Append a chi-square fire value to the rolling tail buffer. Pops from the
+// front whenever capacity is exceeded so the buffer never grows past
+// kChiSqTailMax entries.
+static void PushChiSqTail(double t, double chiSq) {
+	g_recentChiSquaredFires.emplace_back(t, chiSq);
+	while (g_recentChiSquaredFires.size() > kChiSqTailMax) {
+		g_recentChiSquaredFires.pop_front();
+	}
+}
+
+// Render the chi-square tail as `[v1@t1,v2@t2,...]` for the geometry-shift
+// fire log. Entries are oldest-first. Empty buffer renders as `[]`.
+static std::string RenderChiSqTail() {
+	std::string out;
+	out.reserve(160);
+	out.push_back('[');
+	bool first = true;
+	for (const auto& entry : g_recentChiSquaredFires) {
+		if (!first) out.push_back(',');
+		first = false;
+		char tbuf[40];
+		snprintf(tbuf, sizeof tbuf, "%.0f@%.2f", entry.second, entry.first);
+		out += tbuf;
+	}
+	out.push_back(']');
+	return out;
+}
+
 // Chi-square re-anchor sub-detector tick. Detection-only: fires the freeze
 // window for recs A and C so they suspend for 500 ms after a candidate. The
 // existing 30 cm relocalization detector remains the only path to actual
@@ -2244,6 +2305,32 @@ static bool TickReanchorChiSquare(double now) {
 		spacecal::reanchor_chi::Reset(g_reanchorChiState);
 		g_reanchorChiLastTickTime = -1.0;
 		return false;
+	}
+
+	// Quest re-localization recovery cooldown. The relocalization path
+	// (auto_recover_from_relocalization -> StartContinuousCalibration with
+	// reason=quest_relocalization_recovery) is the canonical handler for
+	// large pose jumps. During the cooldown window the chi-square detector
+	// is skipped entirely -- otherwise the post-relocalization residual
+	// (32 cm+ against a freshly-reset variance EWMA) produces chi-sq
+	// values in the 1e6-1e8 range that trip the autolock_suppress chain
+	// and double-handle the event. The cooldown still permits PushPose
+	// updates via the regular CalibrationTick path; what gets skipped is
+	// the candidate evaluation and the freeze-window arming.
+	if (CalCtx.relocalizationCooldownUntil > 0.0 && now < CalCtx.relocalizationCooldownUntil) {
+		static double s_lastRelocCooldownLogTime = -1e9;
+		if ((now - s_lastRelocCooldownLogTime) >= 1.0) {
+			s_lastRelocCooldownLogTime = now;
+			char buf[200];
+			snprintf(buf, sizeof buf,
+				"[drift][reanchor-cooldown-skip] reason=quest_relocalization_recovery"
+				" cooldown_until=%.3f now=%.3f remaining=%.3fs",
+				CalCtx.relocalizationCooldownUntil, now,
+				CalCtx.relocalizationCooldownUntil - now);
+			Metrics::WriteLogAnnotation(buf);
+		}
+		g_reanchorChiLastTickTime = now;
+		return spacecal::reanchor_chi::IsFrozen(g_reanchorChiState, now);
 	}
 
 	double dt = 0.0;
@@ -2282,6 +2369,9 @@ static bool TickReanchorChiSquare(double now) {
 		// stopping at the first one.
 		CalCtx.autoLockReanchorSuppressUntil =
 			now + spacecal::autolock::kReanchorSuppressSeconds;
+		// Append to the rolling chi_sq tail for downstream diagnostics
+		// (geometry-shift fire log reads this as `chi_sq_tail=[...]`).
+		PushChiSqTail(now, g_reanchorChiState.lastChiSquared);
 	}
 	if (fired && (now - g_reanchorChiLastLogTime) >= 1.0) {
 		g_reanchorChiLastLogTime = now;
@@ -2294,6 +2384,27 @@ static bool TickReanchorChiSquare(double now) {
 			CalCtx.autoLockReanchorSuppressUntil);
 		Metrics::WriteLogAnnotation(buf);
 	}
+
+	// Freeze-cleared edge log. When the detector transitions from frozen=1
+	// (inside the kFreezeWindowSec post-fire window) to frozen=0, emit a
+	// one-shot annotation so a reader can see when the gate releases without
+	// having to subtract freeze_until from elapsed time. Paired with the
+	// geometry-shift `[suppressed-by-reanchor]` log: the suppression window
+	// closes exactly when this fires.
+	{
+		static bool s_wasFrozen = false;
+		const bool nowFrozen = spacecal::reanchor_chi::IsFrozen(g_reanchorChiState, now);
+		if (s_wasFrozen && !nowFrozen) {
+			char fcBuf[200];
+			snprintf(fcBuf, sizeof fcBuf,
+				"[drift][reanchor-frozen-cleared] freeze_until=%.3f now=%.3f autolock_suppress_until=%.3f",
+				g_reanchorChiState.freezeUntil, now,
+				CalCtx.autoLockReanchorSuppressUntil);
+			Metrics::WriteLogAnnotation(fcBuf);
+		}
+		s_wasFrozen = nowFrozen;
+	}
+
 	return spacecal::reanchor_chi::IsFrozen(g_reanchorChiState, now);
 }
 
@@ -2844,10 +2955,21 @@ void StartCalibration(const char* reason) {
 	Metrics::posOffset_currentCal.Clear();
 	Metrics::posOffset_byRelPose.Clear();
 	Metrics::posOffset_rawComputed.Clear();
-	char resetBuf[200];
+	// Arm the geometry-shift grace window. While `time < this deadline` the
+	// shift detector is skipped entirely so the first dozen samples of the
+	// fresh cal cycle (during which the solver is settling and error
+	// naturally fluctuates more) can't trip a back-to-back fire. 3 s at the
+	// observed ~3.5 Hz sample cadence covers ~10 samples -- enough for the
+	// rolling median to populate against post-restart data. Uses
+	// glfwGetTime() to match CalibrationTick's `time` parameter epoch.
+	constexpr double kGeometryShiftGraceSeconds = 3.0;
+	CalCtx.geometryShiftGraceUntil = glfwGetTime() + kGeometryShiftGraceSeconds;
+	char resetBuf[240];
 	snprintf(resetBuf, sizeof resetBuf,
-		"StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1",
-		(reason && reason[0]) ? reason : "unknown");
+		"StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1"
+		" geometry_shift_grace_until=%.3f",
+		(reason && reason[0]) ? reason : "unknown",
+		CalCtx.geometryShiftGraceUntil);
 	Metrics::WriteLogAnnotation(resetBuf);
 }
 
@@ -3033,6 +3155,30 @@ void CalibrationTick(double time)
 		static double s_lastErrorTs = 0.0;
 		static spacecal::geometry_shift::CusumState s_cusumState;
 		static double s_lastSpikeLogTime = -1e9;  // throttle per-tick spike-candidate logging to ~1/s
+		static double s_lastGraceLogTime = -1e9;  // throttle the grace-active log to ~1/s
+
+		// Grace window: while a recent cal restart is still settling, skip
+		// the detector entirely. The solver's first ~10 samples of a fresh
+		// cycle naturally fluctuate as it converges from zero buffer; treating
+		// that fluctuation as a geometry shift triggers the back-to-back-
+		// fire pattern that contaminates the error history for several cycles
+		// thereafter. The deadline is set at StartCalibration and naturally
+		// expires.
+		const bool inGeometryShiftGrace =
+			(ctx.geometryShiftGraceUntil > 0.0 && time < ctx.geometryShiftGraceUntil);
+		if (inGeometryShiftGrace) {
+			s_consecutiveBadTicks = 0;
+			s_cusumState.S = 0.0;
+			if ((time - s_lastGraceLogTime) >= 1.0) {
+				s_lastGraceLogTime = time;
+				char gBuf[200];
+				snprintf(gBuf, sizeof gBuf,
+					"[geometry-shift][grace-active] grace_until=%.3f now=%.3f remaining=%.3fs",
+					ctx.geometryShiftGraceUntil, time,
+					ctx.geometryShiftGraceUntil - time);
+				Metrics::WriteLogAnnotation(gBuf);
+			}
+		} else {
 		const auto& errSeries = Metrics::error_currentCal;
 		const int N = errSeries.size();
 		if (N >= 5 && calibration.isValid()) {
@@ -3182,19 +3328,22 @@ void CalibrationTick(double time)
 						spacecal::reanchor_chi::IsFrozen(g_reanchorChiState, time);
 					const double secSinceReanchor = (g_reanchorChiLastLogTime > -1e8)
 						? (time - g_reanchorChiLastLogTime) : -1.0;
-					char fireBuf[640];
+					const std::string chiSqTail = RenderChiSqTail();
+					char fireBuf[800];
 					snprintf(fireBuf, sizeof fireBuf,
 						"[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
 						" ratio=%.2fx sustained=%d cusum_S_at_fire=%.3f mode=%s"
 						" reanchor_frozen=%d sec_since_reanchor=%.3f"
 						" lockRelativePosition=%d lockMode=%d"
-						" errTail_slope_mm_per_sample=%.3f errTail=[%s]",
+						" errTail_slope_mm_per_sample=%.3f errTail=[%s]"
+						" chi_sq_tail=%s",
 						current, median, ratio,
 						s_consecutiveBadTicks, cusumValueAtFire,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,
-						slopeMmPerSample, tailStr.c_str());
+						slopeMmPerSample, tailStr.c_str(),
+						chiSqTail.c_str());
 					Metrics::WriteLogAnnotation(fireBuf);
 
 					CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
@@ -3221,6 +3370,7 @@ void CalibrationTick(double time)
 			s_consecutiveBadTicks = 0;
 			s_cusumState.S = 0.0;
 		}
+		}  // close `if (inGeometryShiftGrace) ... else { ...`
 	}
 
 	// Latency cross-correlation. Once per second, if the rolling speed buffers
@@ -3268,6 +3418,40 @@ void CalibrationTick(double time)
 						lagMs, sampleRateHz, intervals, dur,
 						prevEma, ctx.estimatedLatencyOffsetMs);
 					Metrics::WriteLogAnnotation(latbuf);
+
+					// Latency anomaly: physically lagMs cannot be negative
+					// (samples can't arrive before their reference timestamp).
+					// When it crosses the zero negative threshold, log a
+					// dedicated diagnostic so the cause can be hunted (clock
+					// skew, post-stall sample-rate deflation, timestamp
+					// domain mismatch). Edge-triggered: emit on the
+					// transition from prev_ema >= -1.0 to new_ema < -1.0,
+					// not every tick while negative.
+					if (prevEma >= -1.0 && ctx.estimatedLatencyOffsetMs < -1.0) {
+						char anomBuf[280];
+						snprintf(anomBuf, sizeof anomBuf,
+							"[latency][anomaly] lagMs=%.2f new_ema=%.2f prev_ema=%.2f"
+							" sampleRateHz=%.2f intervals=%zu dur=%.2fs"
+							" sampleRateOk=%d durOk=%d note=negative_ema_crossed",
+							lagMs, ctx.estimatedLatencyOffsetMs, prevEma,
+							sampleRateHz, intervals, dur,
+							(int)(sampleRateHz >= 9.0),
+							(int)(dur < 20.0));
+						Metrics::WriteLogAnnotation(anomBuf);
+					}
+
+					// Sample-rate dropout: log when sampleRateHz drops below
+					// 9 Hz (well under the ~11 Hz typical). This catches the
+					// post-stall buffer-not-reset case where `dur` inflates
+					// without `intervals` keeping up.
+					if (sampleRateHz < 9.0) {
+						char rateBuf[240];
+						snprintf(rateBuf, sizeof rateBuf,
+							"[latency][rate-dropout] sampleRateHz=%.2f intervals=%zu dur=%.2fs"
+							" lagMs=%.2f note=below_9hz_threshold",
+							sampleRateHz, intervals, dur, lagMs);
+						Metrics::WriteLogAnnotation(rateBuf);
+					}
 				}
 			}
 		}
@@ -3328,6 +3512,18 @@ void CalibrationTick(double time)
 		// Counter is preserved for the existing diagnostic UI in
 		// UserInterface.cpp ("Stall purge: N events") and the
 		// "hmd_stall_recovered after N ticks" log annotation below.
+		if (ctx.consecutiveHmdStalls == 0) {
+			// Stall-entered edge: companion to the existing recovered log so
+			// a reader can compute the wall-clock stall duration without
+			// having to guess the start by subtracting tick count from the
+			// recovered timestamp. One line per stall, no per-tick noise.
+			char enterBuf[200];
+			snprintf(enterBuf, sizeof enterBuf,
+				"[hmd-stall][entered] t=%.3f hmd_pos=(%.4f,%.4f,%.4f) prev=(%.4f,%.4f,%.4f)",
+				time, p[0], p[1], p[2],
+				(double)ctx.xprev, (double)ctx.yprev, (double)ctx.zprev);
+			Metrics::WriteLogAnnotation(enterBuf);
+		}
 		ctx.consecutiveHmdStalls++;
 		// REVERTED 2026-05-04: previously, after MaxHmdStalls=30 ticks of stalled
 		// HMD tracking, the sample buffer was purged via calibration.Clear() and
@@ -3354,10 +3550,17 @@ void CalibrationTick(double time)
 		return;
 	}
 	if (ctx.consecutiveHmdStalls > 0) {
-		// Annotate recovery so the log shows the gap clearly.
-		char buf[128];
+		// Annotate recovery with both the legacy tick count and the
+		// approximate duration in seconds (computed from tick rate).
+		// Most stalls in normal sessions are 1-2 ticks; the long ones
+		// (200+) are the interesting cases worth investigating, and
+		// having a seconds value next to the tick count saves a
+		// conversion step during triage.
+		char buf[200];
+		const double approxDurSec = (double)ctx.consecutiveHmdStalls / 90.0; // ~90 Hz typical
 		snprintf(buf, sizeof buf,
-		         "hmd_stall_recovered after %d ticks", ctx.consecutiveHmdStalls);
+		         "hmd_stall_recovered after %d ticks (approx %.2fs at 90Hz, t=%.3f)",
+		         ctx.consecutiveHmdStalls, approxDurSec, time);
 		Metrics::WriteLogAnnotation(buf);
 	}
 	ctx.consecutiveHmdStalls = 0;
@@ -4148,6 +4351,25 @@ static void RecoverFromWedgedCalibration(const char* userFacingMessage,
 	// interpolated through the driver's stale cached transform -- which
 	// defeats the point of recovery (we WANT a discontinuity here).
 	g_snapNextProfileApply = true;
+
+	// Arm a chi-square reanchor cooldown so the detector doesn't double-handle
+	// the same physical event. The relocalization recovery already cleared the
+	// cal and is about to restart it; the post-restart residual against the
+	// freshly-reset variance EWMA would otherwise trip the chi-square gate at
+	// magnitudes in the 1e6-1e8 range and cascade a suppress-chain. Sized to
+	// 3.0 s -- enough for the variance EWMA (5 s tau) to start tracking real
+	// motion residuals.
+	const double cooldownSec = 3.0;
+	const double nowQpc = glfwGetTime();
+	CalCtx.relocalizationCooldownUntil = nowQpc + cooldownSec;
+	{
+		char cdBuf[200];
+		snprintf(cdBuf, sizeof cdBuf,
+			"[drift][reanchor-cooldown-armed] reason=%s now=%.3f until=%.3f duration=%.1fs",
+			(recoverReason && recoverReason[0]) ? recoverReason : "unknown",
+			nowQpc, CalCtx.relocalizationCooldownUntil, cooldownSec);
+		Metrics::WriteLogAnnotation(cdBuf);
+	}
 
 	StartContinuousCalibration(recoverReason);
 

@@ -406,6 +406,34 @@ struct CalibrationContext
 	// the same target verdict. Cleared whenever a new pending flip starts.
 	bool autoLockGateHeldWarned = false;
 
+	// Quest re-localization recovery cooldown. Set by RecoverFromWedgedCalibration
+	// to a deadline a few seconds in the future. While now < this value, the
+	// chi-square reanchor sub-detector is skipped entirely -- the relocalization
+	// already triggered the full recovery path (auto_recover_from_relocalization),
+	// so re-firing the chi-square detector on the same physical event just
+	// produces redundant 1e6+ chi_sq values whose suppress-windows cascade and
+	// re-extend autoLockReanchorSuppressUntil. Cleared (set to 0) only via Clear();
+	// otherwise it naturally expires when `now` passes the deadline.
+	double relocalizationCooldownUntil = 0.0;
+
+	// Recovery-convergence watch: set by RecoverFromWedgedCalibration to the
+	// recovery timestamp + recorded hmdDelta. The first post-recovery
+	// usingRelPose_fired emits a `[recovery][converged]` line carrying the
+	// convergence duration and first relPoseError; this lets a reader tie
+	// the physical jump severity to the time it took the cal to recover a
+	// usable relative-pose constraint. Both fields zero out after emission.
+	double recoveryWaitingSince = 0.0;     // Metrics::CurrentTime basis
+	double recoveryHmdDeltaAtStart = 0.0;  // metres of the originating jump
+
+	// Geometry-shift detector grace deadline. Set by StartCalibration to
+	// `now + kGeometryShiftGraceSeconds` so the detector is skipped while the
+	// cal converges from zero samples after a restart. Without the grace,
+	// the first 5-10 samples can spike error_currentCal as the solver
+	// settles -- the detector then sees that as a "5x median" excursion and
+	// fires another restart, producing the back-to-back-fire pattern that
+	// errTail wrap-around already aggravates. Zero means no active grace.
+	double geometryShiftGraceUntil = 0.0;
+
 	// Persistent per-serial hide list, applied independently of cal state.
 	// Keyed by Prop_SerialNumber_String value (never by openVRID -- IDs are
 	// reassigned across SteamVR restarts and device reconnects). When a
@@ -608,6 +636,10 @@ struct CalibrationContext
 		autoLockReanchorSuppressUntil = 0.0;
 		autoLockPendingFlipFirstSeen = 0.0;
 		autoLockGateHeldWarned = false;
+		relocalizationCooldownUntil = 0.0;
+		recoveryWaitingSince = 0.0;
+		recoveryHmdDeltaAtStart = 0.0;
+		geometryShiftGraceUntil = 0.0;
 		// alwaysHideSerials is a user preference, NOT calibration data --
 		// intentionally NOT reset here. A profile-clear shouldn't un-hide
 		// trackers the user has explicitly marked as always-hidden.
