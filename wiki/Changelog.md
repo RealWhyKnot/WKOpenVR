@@ -65,6 +65,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **facetracking:** Rename OPENVR_PAIR_FACE_* env vars to WKOPENVR_FACE_* (21833da)
 - **overlay:** Remove Discord rich presence (f151015)
 - diag(calibration): instrument restart-loop suspects (cf67f99)
+- diag(observability): cal heartbeat, ipc retry-status, inputhealth coalesce (64cf6d3)
 
 ### Fixed
 - **smoothing:** Lock out per-tracker prediction on the calibration anchor (e87f318)
