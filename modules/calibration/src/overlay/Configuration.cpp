@@ -985,4 +985,28 @@ void SaveProfile(CalibrationContext &ctx)
 		serialized.size(), (int)ctx.validProfile, transMagCm,
 		(unsigned long long)hash);
 	Metrics::WriteLogAnnotation(saveBuf);
+
+	// Anomaly detection: when the saved magnitude differs from the previous
+	// saved magnitude by more than the threshold, that's either a real
+	// big-change event (legitimate big move OR a relocalization) OR a
+	// degenerate post-recovery save where the solver hasn't converged. Log
+	// the anomaly so a reader can spot the case where a wedged value got
+	// persisted -- the per-session 2026-05-19 trace showed exactly that
+	// failure mode (`bytes=2261 trans_mag_cm=30392.05` after a Quest
+	// relocalization, ~2 km from the steady-state magnitude). The save
+	// itself is not blocked -- the hash-skip path will catch repeats.
+	static double s_lastSavedTransMagCm = 0.0;
+	constexpr double kProfileSaveDeltaWarnCm = 5.0;
+	if (s_lastSavedTransMagCm > 0.0
+		&& std::abs(transMagCm - s_lastSavedTransMagCm) > kProfileSaveDeltaWarnCm) {
+		char anomBuf[280];
+		snprintf(anomBuf, sizeof anomBuf,
+			"[profile-save][anomaly] trans_mag_cm=%.2f prev_trans_mag_cm=%.2f"
+			" delta_cm=%.2f bytes=%zu valid=%d (large_delta_warning)",
+			transMagCm, s_lastSavedTransMagCm,
+			std::abs(transMagCm - s_lastSavedTransMagCm),
+			serialized.size(), (int)ctx.validProfile);
+		Metrics::WriteLogAnnotation(anomBuf);
+	}
+	s_lastSavedTransMagCm = transMagCm;
 }

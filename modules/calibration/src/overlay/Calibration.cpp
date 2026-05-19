@@ -3054,6 +3054,45 @@ void CalibrationTick(double time)
 		}
 	}
 
+	// Tracker pose-freshness check. The driver writes a QPC timestamp into
+	// devicePoseSampleTimes[] each time a pose is published. If the ref or
+	// target sample timestamp hasn't advanced in the last 5 s, that device
+	// has gone silent (the pose value may still appear valid because the
+	// last-known position is still in the array, but no new data has
+	// arrived). Log throttled to once per 30 s per device so a chronic
+	// silence doesn't flood. ID < 0 (unassigned) is skipped.
+	if (ctx.state == CalibrationState::Continuous
+		|| ctx.state == CalibrationState::ContinuousStandby) {
+		static double s_lastFreshnessLogTime = -1e9;
+		const double freshnessWarnSec = 5.0;
+		LARGE_INTEGER freq;
+		QueryPerformanceFrequency(&freq);
+		LARGE_INTEGER nowCounter;
+		QueryPerformanceCounter(&nowCounter);
+
+		auto checkFresh = [&](int id, const char* whichLabel) {
+			if (id < 0 || id >= (int)vr::k_unMaxTrackedDeviceCount) return;
+			const auto& sampleTime = ctx.devicePoseSampleTimes[id];
+			if (sampleTime.QuadPart == 0) return;  // never sampled
+			const double ageSec =
+				double(nowCounter.QuadPart - sampleTime.QuadPart) / double(freq.QuadPart);
+			if (ageSec >= freshnessWarnSec
+				&& (time - s_lastFreshnessLogTime) >= 30.0) {
+				s_lastFreshnessLogTime = time;
+				char freshBuf[200];
+				snprintf(freshBuf, sizeof freshBuf,
+					"[tracker-pose-stale] which=%s id=%d age_sec=%.2f"
+					" result=%d poseIsValid=%d",
+					whichLabel, id, ageSec,
+					(int)ctx.devicePoses[id].result,
+					(int)ctx.devicePoses[id].poseIsValid);
+				Metrics::WriteLogAnnotation(freshBuf);
+			}
+		};
+		checkFresh(ctx.referenceID, "reference");
+		checkFresh(ctx.targetID, "target");
+	}
+
 	// Stuck-cal watchdog. If we've been in Continuous state for >60 s but
 	// error_currentCal has not received a new sample in the last 30 s, the
 	// cal solver is not actually running -- ComputeIncremental isn't being
