@@ -13,7 +13,7 @@ void OpenLogFile()
 	if (!openvr_pair::common::IsDebugLoggingEnabled()) return;
 	if (LogFile) return;
 
-	std::wstring path = openvr_pair::common::TimestampedLogPath(L"overlay_log");
+	std::wstring path = openvr_pair::common::TimestampedLogPath(L"inputhealth_log");
 	if (!path.empty()) {
 		LogFile = _wfopen(path.c_str(), L"a");
 		if (LogFile) return;

@@ -147,7 +147,8 @@ void IPCServer::RunThread(IPCServer *_this)
 				}
 			}
 
-			LOG("IPC[%s] client connected", _this->pipeName.c_str());
+			LOG("IPC[%s] client connected (our_protocol=%u)",
+				_this->pipeName.c_str(), (unsigned)protocol::Version);
 
 			auto pipeInst = _this->CreatePipeInstance(nextPipe);
 			CompletedWriteCallback(0, sizeof protocol::Response, (LPOVERLAPPED) pipeInst);

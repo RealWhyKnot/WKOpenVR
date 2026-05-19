@@ -63,7 +63,7 @@ void DrawLogsTab(InputHealthPlugin &ui)
 			: "Debug logging is off. Enable it at the top of this Logs tab before reproducing an issue.");
 	ImGui::Spacing();
 	ImGui::TextWrapped("Driver:   %%LocalAppDataLow%%\\WKOpenVR\\Logs\\driver_log.<ts>.txt");
-	ImGui::TextWrapped("Overlay:  %%LocalAppDataLow%%\\WKOpenVR\\Logs\\overlay_log.<ts>.txt");
+	ImGui::TextWrapped("Overlay:  %%LocalAppDataLow%%\\WKOpenVR\\Logs\\inputhealth_log.<ts>.txt");
 	ImGui::TextWrapped("Profiles: %%LocalAppDataLow%%\\WKOpenVR\\profiles\\<hash>.json");
 }
 
