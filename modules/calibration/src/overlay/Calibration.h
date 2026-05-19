@@ -392,6 +392,20 @@ struct CalibrationContext
 	// the pending-flip fields above this is reset on Clear().
 	double autoLockReanchorSuppressUntil = 0.0;
 
+	// Time the current pending AUTO Lock flip was first observed. Used by
+	// CommitPendingAutoLockFlipIfStationary to compute how long the commit
+	// gate has held a target verdict, so a chronic block becomes visible in
+	// the log via [autolock][gate-held]. Zero means no pending flip is
+	// currently being tracked. Reset along with the rest of the AUTO Lock
+	// state in Clear() and whenever the pending flip is committed or
+	// abandoned.
+	double autoLockPendingFlipFirstSeen = 0.0;
+
+	// Has the held-too-long warning for the current pending flip already
+	// fired? Prevents a per-tick flood while the gate continues to block
+	// the same target verdict. Cleared whenever a new pending flip starts.
+	bool autoLockGateHeldWarned = false;
+
 	// Persistent per-serial hide list, applied independently of cal state.
 	// Keyed by Prop_SerialNumber_String value (never by openVRID -- IDs are
 	// reassigned across SteamVR restarts and device reconnects). When a
@@ -592,6 +606,8 @@ struct CalibrationContext
 		autoLockHasPendingFlip = false;
 		autoLockPendingFlipTo = false;
 		autoLockReanchorSuppressUntil = 0.0;
+		autoLockPendingFlipFirstSeen = 0.0;
+		autoLockGateHeldWarned = false;
 		// alwaysHideSerials is a user preference, NOT calibration data --
 		// intentionally NOT reset here. A profile-clear shouldn't un-hide
 		// trackers the user has explicitly marked as always-hidden.

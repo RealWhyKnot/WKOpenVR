@@ -407,14 +407,19 @@ static void OneShot_DrawSettings() {
 				const auto prev = CalCtx.lockRelativePositionMode;
 				CalCtx.lockRelativePositionMode = lockModes[i];
 				SaveProfile(CalCtx);
-				// Diagnostic: trace user toggles of the Lock-mode tristate so a
-				// post-session log shows when the user attempted to change Lock
-				// and what the previous mode was. Helps distinguish "the user
-				// never clicked" from "the click took but didn't help."
-				char lmbuf[160];
+				// Force the resolved value to update immediately and clear any
+				// active reanchor-suppression so a user-driven mode change
+				// isn't held off by the gate. The gate exists to prevent
+				// reanchor noise from flapping the lock; a deliberate UI
+				// action is the opposite -- explicit intent that should
+				// take effect this frame.
+				CalCtx.autoLockReanchorSuppressUntil = 0.0;
+				CalCtx.ResolveLockMode();
+				char lmbuf[200];
 				snprintf(lmbuf, sizeof lmbuf,
-					"lock_mode_ui_write: site=oneshot prev=%d now=%d",
-					(int)prev, (int)CalCtx.lockRelativePositionMode);
+					"lock_mode_ui_write: site=oneshot prev=%d now=%d resolved_lockRel=%d (suppress_cleared)",
+					(int)prev, (int)CalCtx.lockRelativePositionMode,
+					(int)CalCtx.lockRelativePosition);
 				Metrics::WriteLogAnnotation(lmbuf);
 			}
 		}

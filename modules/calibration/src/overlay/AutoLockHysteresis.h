@@ -53,11 +53,20 @@ constexpr double kStationaryHmdMps = 0.05;
 // hasn't already fired. This gate holds the commit for kReanchorSuppressSeconds
 // after each reanchor, giving the swing-back path time to absorb the spike.
 //
-// 2.0 s comfortably covers the existing reanchor freeze window (~0.5 s) plus
-// the ~1-2 sample-history ticks needed for the autolock detector's variance
-// to re-converge. Tightening this risks re-opening the flap; loosening it
-// risks delaying a legitimate state change by a noticeable interval.
-constexpr double kReanchorSuppressSeconds = 2.0;
+// Sized to ~0.6 s -- just above the reanchor's own freezeUntil window
+// (kFreezeWindowSec = 0.5 in ReanchorChiSquareDetector.h). Originally 2.0 s,
+// but at the observed reanchor cadence of ~25 fires/min (one every ~2.4 s),
+// a 2.0 s window unconditionally re-extended on every fire kept the
+// suppression chain continuous for entire multi-hour sessions, locking AUTO
+// Lock out completely. 0.6 s keeps the chain broken in steady state while
+// still covering the reanchor's own dispersion window.
+constexpr double kReanchorSuppressSeconds = 0.6;
+
+// AUTO Lock commit-gate "pending flip held too long" threshold (seconds).
+// When a target verdict has been queued but the commit gate has held it for
+// this long, emit a diagnostic so we can see whether the gate is the dominant
+// blocker. Throttled by the caller; this is just the threshold value.
+constexpr double kAutoLockGateHeldWarnSeconds = 2.0;
 
 // Returns the verdict the detector should produce given the current
 // (translStdDev, rotMaxAngle) and the previously committed lock state.

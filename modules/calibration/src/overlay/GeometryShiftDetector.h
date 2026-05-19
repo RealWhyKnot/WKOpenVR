@@ -82,15 +82,24 @@ struct CusumState {
 // start fresh. The baseline argument is the running mean residual under the
 // no-shift hypothesis -- caller can supply a rolling EMA, the rolling
 // median already maintained by the legacy detector, or 0.0 for a raw test.
+//
+// `outValueAtFire` (optional, write-only): when this function returns true,
+// the caller-supplied pointer is set to S's value at the moment the fire
+// decision was made, BEFORE the internal reset to 0. Without this, the
+// diagnostic log at the fire site can only ever read S=0 (post-reset) and
+// has no way to confirm which decision arm actually triggered the fire or
+// how far past threshold the accumulator climbed.
 constexpr bool UpdateCusumGeometryShift(CusumState& state,
                                          double currentErrorMm,
                                          double baselineMm,
                                          double driftMm = kCusumDriftMm,
-                                         double threshold = kCusumThreshold) {
+                                         double threshold = kCusumThreshold,
+                                         double* outValueAtFire = nullptr) {
     const double increment = (currentErrorMm - baselineMm) - driftMm;
     state.S = state.S + increment;
     if (state.S < 0.0) state.S = 0.0;
     if (state.S > threshold) {
+        if (outValueAtFire) *outValueAtFire = state.S;
         state.S = 0.0;
         return true;
     }

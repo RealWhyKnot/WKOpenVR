@@ -244,14 +244,17 @@ void CCal_BasicInfo() {
 				const auto prev = CalCtx.lockRelativePositionMode;
 				CalCtx.lockRelativePositionMode = lockModes[i];
 				SaveProfile(CalCtx);
-				// Diagnostic: trace user toggles of the Lock-mode tristate. The
-				// Basic tab is the more common toggle path; we trace both so a
-				// post-session log shows when the user attempted to change Lock
-				// and what the previous mode was.
-				char lmbuf[160];
+				// Force-resolve and clear suppression so a deliberate UI
+				// action takes effect this frame instead of waiting for the
+				// reanchor-suppression chain to lapse. See the matching block
+				// in UserInterface.cpp for the longer comment.
+				CalCtx.autoLockReanchorSuppressUntil = 0.0;
+				CalCtx.ResolveLockMode();
+				char lmbuf[200];
 				snprintf(lmbuf, sizeof lmbuf,
-					"lock_mode_ui_write: site=basic prev=%d now=%d",
-					(int)prev, (int)CalCtx.lockRelativePositionMode);
+					"lock_mode_ui_write: site=basic prev=%d now=%d resolved_lockRel=%d (suppress_cleared)",
+					(int)prev, (int)CalCtx.lockRelativePositionMode,
+					(int)CalCtx.lockRelativePosition);
 				Metrics::WriteLogAnnotation(lmbuf);
 			}
 		}

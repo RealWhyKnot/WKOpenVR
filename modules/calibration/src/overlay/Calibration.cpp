@@ -288,18 +288,60 @@ void CalibrationContext::UpdateAutoLockDetector(
 // reanchor noise needs to be held off the lock-state decision.
 bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSpeedMps, double now)
 {
-	if (!ctx.autoLockHasPendingFlip) return false;
-	if (!spacecal::autolock::HmdIsStationary(hmdSpeedMps)) return false;
-	if (spacecal::autolock::ShouldSuppressForReanchor(now, ctx.autoLockReanchorSuppressUntil)) return false;
+	if (!ctx.autoLockHasPendingFlip) {
+		// Pending dropped or never queued -- reset hold tracking so the
+		// next pending starts a fresh held-duration measurement.
+		ctx.autoLockPendingFlipFirstSeen = 0.0;
+		ctx.autoLockGateHeldWarned = false;
+		return false;
+	}
+
+	// Track when the current pending flip first appeared so we can attribute
+	// long holds to the right gate. Don't overwrite if already tracking.
+	if (ctx.autoLockPendingFlipFirstSeen <= 0.0) {
+		ctx.autoLockPendingFlipFirstSeen = now;
+		ctx.autoLockGateHeldWarned = false;
+	}
+
+	const bool stationary = spacecal::autolock::HmdIsStationary(hmdSpeedMps);
+	const bool suppressed = spacecal::autolock::ShouldSuppressForReanchor(
+		now, ctx.autoLockReanchorSuppressUntil);
+
+	if (!stationary || suppressed) {
+		// Held by a gate. Emit a one-shot diagnostic per pending flip once
+		// the hold exceeds the warn threshold, so a chronic block becomes
+		// visible without per-tick log noise. Re-armed by the !pending
+		// path above.
+		const double heldSec = now - ctx.autoLockPendingFlipFirstSeen;
+		if (!ctx.autoLockGateHeldWarned
+			&& heldSec >= spacecal::autolock::kAutoLockGateHeldWarnSeconds) {
+			ctx.autoLockGateHeldWarned = true;
+			char gbuf[280];
+			snprintf(gbuf, sizeof gbuf,
+				"[autolock][gate-held] pending_target=%d current=%d held_sec=%.2f"
+				" reason=%s hmdSpeed=%.3fmps suppress_until=%.3f now=%.3f",
+				(int)ctx.autoLockPendingFlipTo, (int)ctx.autoLockEffectivelyLocked,
+				heldSec,
+				(!stationary && suppressed) ? "motion+suppress"
+					: !stationary           ? "motion"
+					:                          "suppress",
+				hmdSpeedMps, ctx.autoLockReanchorSuppressUntil, now);
+			Metrics::WriteLogAnnotation(gbuf);
+		}
+		return false;
+	}
 
 	const bool prev = ctx.autoLockEffectivelyLocked;
+	const double heldSecCommit = now - ctx.autoLockPendingFlipFirstSeen;
 	ctx.autoLockEffectivelyLocked = ctx.autoLockPendingFlipTo;
 	ctx.autoLockHasPendingFlip = false;
+	ctx.autoLockPendingFlipFirstSeen = 0.0;
+	ctx.autoLockGateHeldWarned = false;
 
-	char buf[200];
+	char buf[240];
 	snprintf(buf, sizeof buf,
-		"auto_lock_flip: previous=%d now=%d hmdSpeed=%.3fmps committed_under_stationary_gate=1",
-		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps);
+		"auto_lock_flip: previous=%d now=%d hmdSpeed=%.3fmps held_sec=%.2f committed_under_stationary_gate=1",
+		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps, heldSecCommit);
 	Metrics::WriteLogAnnotation(buf);
 	return true;
 }
@@ -2788,9 +2830,23 @@ void StartCalibration(const char* reason) {
 	// drive the translation solver to a NaN result.
 	CalCtx.pairedMotionPrevRefPos = Eigen::Vector3d::Zero();
 	CalCtx.pairedMotionPrevTgtPos = Eigen::Vector3d::Zero();
+	// Error / offset time-series. The TimeSeries deques would otherwise carry
+	// last-cycle samples into the new cycle's rolling window -- a 30s window
+	// at 3.5 Hz holds ~100 samples, so a fresh-start cal that ran for only a
+	// few seconds before another spike would have the geometry-shift detector
+	// compare its first few new samples against a median computed mostly from
+	// pre-restart history. The errTail wrap-around shape ("first 3 entries
+	// are identical to the previous fire's last 3 entries") observed in
+	// session logs is exactly that artifact.
+	Metrics::error_currentCal.Clear();
+	Metrics::error_byRelPose.Clear();
+	Metrics::error_rawComputed.Clear();
+	Metrics::posOffset_currentCal.Clear();
+	Metrics::posOffset_byRelPose.Clear();
+	Metrics::posOffset_rawComputed.Clear();
 	char resetBuf[200];
 	snprintf(resetBuf, sizeof resetBuf,
-		"StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos",
+		"StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1",
 		(reason && reason[0]) ? reason : "unknown");
 	Metrics::WriteLogAnnotation(resetBuf);
 }
@@ -2844,6 +2900,37 @@ void CalibrationTick(double time)
 	// CollectSample further down; this just transcribes mode + detector
 	// state into the resolved field.
 	ctx.ResolveLockMode();
+
+	// Propagate the resolved lock bool to the CalibrationCalc instance the
+	// solver actually reads. Without this, calibration.lockRelativePosition
+	// only updates at StartContinuousCalibration time (once per cal cycle),
+	// so an AUTO Lock engagement that happens mid-cycle never reaches the
+	// ComputeIncremental relPose-constraint branch until the next restart.
+	// The geometry-shift fire annotation also reads this bool, which is why
+	// post-fix log readers will see lockRelativePosition=1 in fires after
+	// AUTO Lock engages (previously stuck at 0).
+	calibration.lockRelativePosition = ctx.lockRelativePosition;
+
+	// Diagnostic: trace relPose-cal validity flips. The flag is set/cleared
+	// from several call sites and is currently only externally visible inside
+	// the rate-limited usingRelPose_fired event. Catching every change is
+	// cheap (one bool compare per tick) and reveals the cycle: cal converges
+	// -> relPosCal=1 -> geometry-shift fire historically cleared it -> 0.
+	// After the T1.5 fix this trace tells us whether the constraint actually
+	// survives geometry-shift events.
+	{
+		static bool s_lastRelPosCal = false;
+		const bool nowRelPosCal = ctx.relativePosCalibrated;
+		if (nowRelPosCal != s_lastRelPosCal) {
+			char rpcBuf[160];
+			snprintf(rpcBuf, sizeof rpcBuf,
+				"[relposcal-change] prev=%d now=%d state=%d lockMode=%d",
+				(int)s_lastRelPosCal, (int)nowRelPosCal,
+				(int)ctx.state, (int)ctx.lockRelativePositionMode);
+			Metrics::WriteLogAnnotation(rpcBuf);
+			s_lastRelPosCal = nowRelPosCal;
+		}
+	}
 
 	// One-shot session-start config dump. Fires on the first non-skipped
 	// CalibrationTick after the profile has been loaded, so the annotation
@@ -2966,14 +3053,20 @@ void CalibrationTick(double time)
 
 				bool fire = false;
 				bool isSpike = false;
+				double cusumValueAtFire = 0.0;  // captured before the in-function reset
 				if (ctx.useCusumGeometryShift) {
 					// Page CUSUM: accumulates (current - baseline - drift) per
 					// tick, fires when the running sum crosses threshold. Median
 					// stays as the baseline so the test is centered on the recent
 					// no-shift behavior. Fire path resets the CUSUM state to zero
-					// inside UpdateCusumGeometryShift.
+					// inside UpdateCusumGeometryShift -- we capture the pre-reset
+					// value via the out-param so the fire log can show what S
+					// climbed to before the reset, rather than the post-reset 0.
 					fire = spacecal::geometry_shift::UpdateCusumGeometryShift(
-						s_cusumState, current, median);
+						s_cusumState, current, median,
+						spacecal::geometry_shift::kCusumDriftMm,
+						spacecal::geometry_shift::kCusumThreshold,
+						&cusumValueAtFire);
 					// Mirror the consecutive-bad-tick counter to zero in this path
 					// so a toggle flip mid-session doesn't leave stale state.
 					s_consecutiveBadTicks = 0;
@@ -2988,6 +3081,36 @@ void CalibrationTick(double time)
 					// Reset CUSUM accumulator when the legacy path is active so a
 					// later toggle flip starts from a clean state rather than a
 					// stale running-sum from before the toggle change.
+					s_cusumState.S = 0.0;
+				}
+
+				// Reanchor-gate: when the chi-square reanchor is frozen, the
+				// underlying worldFromDriver was just reset and the cal solver
+				// is naturally producing larger residuals as it re-anchors
+				// against the new frame. Treating that transient as a real
+				// geometry shift triggers a cascade -- demote to Standby,
+				// promote back, clear error history, then the next reanchor
+				// finds the EWMA variance at floor and fires again. In the
+				// pre-fix session 29 of 32 geometry-shift fires landed
+				// inside a reanchor frozen window; gating those out is the
+				// single biggest unblocker for AUTO Lock engagement.
+				if (fire && spacecal::reanchor_chi::IsFrozen(g_reanchorChiState, time)) {
+					char supBuf[280];
+					const double secSinceReanchor = (g_reanchorChiLastLogTime > -1e8)
+						? (time - g_reanchorChiLastLogTime) : -1.0;
+					snprintf(supBuf, sizeof supBuf,
+						"[geometry-shift][suppressed-by-reanchor] current_mm=%.3f median_mm=%.3f"
+						" ratio=%.2fx cusum_S_at_fire=%.3f mode=%s sec_since_reanchor=%.3f"
+						" lockRelativePosition=%d",
+						current, median, ratio, cusumValueAtFire,
+						ctx.useCusumGeometryShift ? "cusum" : "legacy",
+						secSinceReanchor, (int)ctx.lockRelativePosition);
+					Metrics::WriteLogAnnotation(supBuf);
+					fire = false;
+					// Reset both accumulators so the next genuine excursion
+					// starts from a clean baseline rather than carrying the
+					// reanchor-noise contribution.
+					s_consecutiveBadTicks = 0;
 					s_cusumState.S = 0.0;
 				}
 
@@ -3035,28 +3158,61 @@ void CalibrationTick(double time)
 							errSeries[i].second, (i + 1 < N) ? "," : "");
 						tailStr += tbuf;
 					}
+					// errTail slope (mm per sample, linear-fit over the tail).
+					// Discriminates a sudden single-tick spike (slope near 0
+					// with one outlier) from a sustained drift (positive
+					// slope). Computed against the tail-window index because
+					// the time series's per-sample dt is not exposed here.
+					double slopeMmPerSample = 0.0;
+					if (tailLen >= 2) {
+						const double n = (double)tailLen;
+						double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXX = 0.0;
+						for (int i = 0; i < tailLen; ++i) {
+							const double x = (double)i;
+							const double y = errSeries[N - tailLen + i].second;
+							sumX += x; sumY += y;
+							sumXY += x * y; sumXX += x * x;
+						}
+						const double denom = n * sumXX - sumX * sumX;
+						if (std::abs(denom) > 1e-12) {
+							slopeMmPerSample = (n * sumXY - sumX * sumY) / denom;
+						}
+					}
 					const bool reanchorFrozen =
 						spacecal::reanchor_chi::IsFrozen(g_reanchorChiState, time);
 					const double secSinceReanchor = (g_reanchorChiLastLogTime > -1e8)
 						? (time - g_reanchorChiLastLogTime) : -1.0;
-					char fireBuf[480];
+					char fireBuf[640];
 					snprintf(fireBuf, sizeof fireBuf,
 						"[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
-						" ratio=%.2fx sustained=%d cusum_S=%.3f mode=%s"
+						" ratio=%.2fx sustained=%d cusum_S_at_fire=%.3f mode=%s"
 						" reanchor_frozen=%d sec_since_reanchor=%.3f"
-						" lockRelativePosition=%d lockMode=%d errTail=[%s]",
+						" lockRelativePosition=%d lockMode=%d"
+						" errTail_slope_mm_per_sample=%.3f errTail=[%s]",
 						current, median, ratio,
-						s_consecutiveBadTicks, s_cusumState.S,
+						s_consecutiveBadTicks, cusumValueAtFire,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,
-						tailStr.c_str());
+						slopeMmPerSample, tailStr.c_str());
 					Metrics::WriteLogAnnotation(fireBuf);
 
 					CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
 					calibration.Clear();
 					ctx.state = CalibrationState::ContinuousStandby;
-					ctx.relativePosCalibrated = false;
+					// Intentionally NOT clearing ctx.relativePosCalibrated here.
+					// Previously this path set it false, which wiped the
+					// relative-pose constraint that AUTO Lock would have used
+					// against the next cycle's noise. Log analysis showed
+					// every restart killed the constraint permanently: only
+					// the session-opening cal ever reached relPosCal=1. With
+					// the constraint preserved, AUTO Lock can re-engage
+					// quickly post-restart instead of waiting another full
+					// convergence (and another ~290 s blackout). If a true
+					// geometry shift occurred, the next cal cycle's solver
+					// will overwrite refToTargetPose against fresh samples
+					// anyway -- the value flowing back from CalibrationCalc
+					// becomes the new "trusted" relative pose.
 					s_consecutiveBadTicks = 0;
 					s_cusumState.S = 0.0;
 				}

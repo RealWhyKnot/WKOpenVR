@@ -45,6 +45,14 @@ namespace Metrics {
 		const double lastTs() const {
 			return Data.size() > 0 ? Data.back().first : 0;
 		}
+
+		// Drop every retained sample. Used at calibration-restart sites so the
+		// post-restart rolling window doesn't see values from the previous
+		// cycle (which would let pre-restart spikes feed back into spike-vs-
+		// median tests on the first few samples of the new cycle).
+		void Clear() {
+			Data.clear();
+		}
 	};
 
 
