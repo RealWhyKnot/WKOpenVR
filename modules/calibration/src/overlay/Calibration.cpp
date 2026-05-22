@@ -196,6 +196,22 @@ static bool g_snapNextProfileApply = false;
 // AutoLockHysteresis.h so they can be unit-tested without instantiating
 // CalibrationContext. See that header for the why behind the threshold pair.
 
+// Diagnostic snapshot of the most recent AUTO Lock detector readings and
+// the geometry-shift detector accumulator state. The AUTO Lock pair is
+// written by UpdateAutoLockDetector each time the rigidity verdict is
+// recomputed; the geometry-shift pair is owned by the detector block in
+// CalibrationTick (promoted from function-block static so the [cal-
+// heartbeat] log emitter, which runs earlier in the same tick, can see
+// the latest values from the previous tick).
+//
+// These are diagnostics only -- no consumer reads them for control flow.
+// Their job is to make the next session log self-describing without
+// requiring an instrumentation pass.
+static double g_lastAutoLockTranslMad = 0.0;
+static double g_lastAutoLockRotMad = 0.0;
+static int g_geomShiftConsecutiveBadTicks = 0;
+static spacecal::geometry_shift::CusumState g_cusumState;
+
 void CalibrationContext::UpdateAutoLockDetector(
 	const Eigen::AffineCompact3d& refWorld,
 	const Eigen::AffineCompact3d& targetWorld)
@@ -226,6 +242,8 @@ void CalibrationContext::UpdateAutoLockDetector(
 	// got cancelled within a tick. See AutoLockHysteresis.h for the why.
 	const double translStdDev = RobustTranslDeviation(autoLockHistory);
 	const double rotMaxAngle  = RobustRotDeviation(autoLockHistory);
+	g_lastAutoLockTranslMad = translStdDev;
+	g_lastAutoLockRotMad = rotMaxAngle;
 
 	const bool verdict = spacecal::autolock::VerdictWithHysteresis(
 		translStdDev, rotMaxAngle, autoLockEffectivelyLocked);
@@ -3120,19 +3138,37 @@ void CalibrationTick(double time)
 			const double errLast = errSeries.size() > 0 ? errSeries.last() : 0.0;
 			const double secSinceReanchor = (g_reanchorChiLastLogTime > -1e8)
 				? (time - g_reanchorChiLastLogTime) : -1.0;
-			char hbBuf[400];
+			// Geometry-shift cooldown remaining (0 when no active cooldown).
+			// The deadline ctx.geometryShiftCooldownUntil is wall-clock-style
+			// time matching CalibrationTick's `time` argument; the heartbeat
+			// log shows seconds until expiry so a reader doesn't have to
+			// subtract the session time themselves.
+			const double cooldownRemaining =
+				(ctx.geometryShiftCooldownUntil > time)
+					? (ctx.geometryShiftCooldownUntil - time)
+					: 0.0;
+			const double translMadMm = g_lastAutoLockTranslMad * 1000.0;
+			const double rotMadDeg = g_lastAutoLockRotMad * 180.0 / EIGEN_PI;
+			char hbBuf[560];
 			snprintf(hbBuf, sizeof hbBuf,
 				"[cal-heartbeat] state=%d lockMode=%d lockRel=%d autoLockEff=%d"
-				" autoLockHistory=%zu/%zu err_last_mm=%.2f err_samples=%d"
+				" autoLockHistory=%zu/%zu translMad_mm=%.3f rotMad_deg=%.3f"
+				" err_last_mm=%.2f err_samples=%d"
 				" sec_since_reanchor=%.2f autolock_suppress_until=%.3f"
 				" reloc_cooldown_until=%.3f grace_until=%.3f"
+				" geom_cusumS=%.3f geom_sustain=%d/%d"
+				" geom_cooldown_remaining_sec=%.1f"
 				" relPosCal=%d hmdStalls=%d",
 				(int)ctx.state, (int)ctx.lockRelativePositionMode,
 				(int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked,
 				ctx.autoLockHistory.size(), spacecal::autolock::kSamplesNeeded,
+				translMadMm, rotMadDeg,
 				errLast, errSeries.size(),
 				secSinceReanchor, ctx.autoLockReanchorSuppressUntil,
 				ctx.relocalizationCooldownUntil, ctx.geometryShiftGraceUntil,
+				g_cusumState.S, g_cusumState.sustainedAboveThreshold,
+				spacecal::geometry_shift::kMinSustainedSpikes,
+				cooldownRemaining,
 				(int)ctx.relativePosCalibrated, ctx.consecutiveHmdStalls);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
@@ -3235,9 +3271,11 @@ void CalibrationTick(double time)
 	// fresh calibration. Done from the overlay side (not CalibrationCalc) so we don't
 	// touch shared math code.
 	{
-		static int s_consecutiveBadTicks = 0;
+		// Detector accumulator state lives at file scope (g_geomShiftConsecutiveBadTicks,
+		// g_cusumState) so the [cal-heartbeat] emitter further up in this tick
+		// can include them in its periodic dump. Throttle timestamps stay
+		// block-local -- they're only consulted from inside this block.
 		static double s_lastErrorTs = 0.0;
-		static spacecal::geometry_shift::CusumState s_cusumState;
 		static double s_lastSpikeLogTime = -1e9;  // throttle per-tick spike-candidate logging to ~1/s
 		static double s_lastGraceLogTime = -1e9;  // throttle the grace-active log to ~1/s
 
@@ -3251,8 +3289,8 @@ void CalibrationTick(double time)
 		const bool inGeometryShiftGrace =
 			(ctx.geometryShiftGraceUntil > 0.0 && time < ctx.geometryShiftGraceUntil);
 		if (inGeometryShiftGrace) {
-			s_consecutiveBadTicks = 0;
-			s_cusumState.Reset();
+			g_geomShiftConsecutiveBadTicks = 0;
+			g_cusumState.Reset();
 			if ((time - s_lastGraceLogTime) >= 1.0) {
 				s_lastGraceLogTime = time;
 				char gBuf[200];
@@ -3293,25 +3331,25 @@ void CalibrationTick(double time)
 					// value via the out-param so the fire log can show what S
 					// climbed to before the reset, rather than the post-reset 0.
 					fire = spacecal::geometry_shift::UpdateCusumGeometryShift(
-						s_cusumState, current, median,
+						g_cusumState, current, median,
 						spacecal::geometry_shift::kCusumDriftMm,
 						spacecal::geometry_shift::kCusumThreshold,
 						&cusumValueAtFire);
 					// Mirror the consecutive-bad-tick counter to zero in this path
 					// so a toggle flip mid-session doesn't leave stale state.
-					s_consecutiveBadTicks = 0;
+					g_geomShiftConsecutiveBadTicks = 0;
 				} else {
 					isSpike = spacecal::geometry_shift::IsCurrentErrorSpike(current, median);
 					if (isSpike) {
-						s_consecutiveBadTicks++;
+						g_geomShiftConsecutiveBadTicks++;
 					} else {
-						s_consecutiveBadTicks = 0;
+						g_geomShiftConsecutiveBadTicks = 0;
 					}
-					fire = spacecal::geometry_shift::ShouldFireGeometryShiftRecovery(s_consecutiveBadTicks);
+					fire = spacecal::geometry_shift::ShouldFireGeometryShiftRecovery(g_geomShiftConsecutiveBadTicks);
 					// Reset CUSUM accumulator when the legacy path is active so a
 					// later toggle flip starts from a clean state rather than a
 					// stale running-sum from before the toggle change.
-					s_cusumState.Reset();
+					g_cusumState.Reset();
 				}
 
 				// Reanchor-gate: when the chi-square reanchor is frozen, the
@@ -3340,8 +3378,8 @@ void CalibrationTick(double time)
 					// Reset both accumulators so the next genuine excursion
 					// starts from a clean baseline rather than carrying the
 					// reanchor-noise contribution.
-					s_consecutiveBadTicks = 0;
-					s_cusumState.Reset();
+					g_geomShiftConsecutiveBadTicks = 0;
+					g_cusumState.Reset();
 				}
 
 				// Diagnostic: per-tick spike candidate trace. Throttled to ~1/s
@@ -3350,7 +3388,7 @@ void CalibrationTick(double time)
 				// median + cusum state + reanchor proximity) so the next
 				// session log can show what was building toward a fire that
 				// did or did not happen.
-				const bool spikeWorthLogging = isSpike || s_cusumState.S > 0.5;
+				const bool spikeWorthLogging = isSpike || g_cusumState.S > 0.5;
 				if (spikeWorthLogging && (time - s_lastSpikeLogTime) >= 1.0) {
 					s_lastSpikeLogTime = time;
 					const bool reanchorFrozen =
@@ -3363,8 +3401,8 @@ void CalibrationTick(double time)
 						" ratio=%.2fx sustained=%d/%d cusum_S=%.3f cusum_h=%.3f mode=%s"
 						" reanchor_frozen=%d sec_since_reanchor=%.3f",
 						current, median, ratio,
-						s_consecutiveBadTicks, spacecal::geometry_shift::kMinSustainedSpikes,
-						s_cusumState.S, spacecal::geometry_shift::kCusumThreshold,
+						g_geomShiftConsecutiveBadTicks, spacecal::geometry_shift::kMinSustainedSpikes,
+						g_cusumState.S, spacecal::geometry_shift::kCusumThreshold,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor);
 					Metrics::WriteLogAnnotation(spikeBuf);
@@ -3390,8 +3428,8 @@ void CalibrationTick(double time)
 						ctx.geometryShiftCooldownUntil - time);
 					Metrics::WriteLogAnnotation(cdBuf);
 					fire = false;
-					s_consecutiveBadTicks = 0;
-					s_cusumState.Reset();
+					g_geomShiftConsecutiveBadTicks = 0;
+					g_cusumState.Reset();
 				}
 
 				if (fire) {
@@ -3448,7 +3486,7 @@ void CalibrationTick(double time)
 						" errTail_slope_mm_per_sample=%.3f errTail=[%s]"
 						" chi_sq_tail=%s cooldown_until=%.3f",
 						current, median, ratio,
-						s_consecutiveBadTicks, cusumValueAtFire,
+						g_geomShiftConsecutiveBadTicks, cusumValueAtFire,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,
@@ -3474,13 +3512,13 @@ void CalibrationTick(double time)
 					// becomes the new "trusted" relative pose.
 					ctx.geometryShiftCooldownUntil =
 						time + spacecal::geometry_shift::kPostFireCooldownSeconds;
-					s_consecutiveBadTicks = 0;
-					s_cusumState.Reset();
+					g_geomShiftConsecutiveBadTicks = 0;
+					g_cusumState.Reset();
 				}
 			}
 		} else {
-			s_consecutiveBadTicks = 0;
-			s_cusumState.Reset();
+			g_geomShiftConsecutiveBadTicks = 0;
+			g_cusumState.Reset();
 		}
 		}  // close `if (inGeometryShiftGrace) ... else { ...`
 	}
