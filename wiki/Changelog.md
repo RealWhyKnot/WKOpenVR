@@ -4,7 +4,13 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Changed
+- **calibration:** Drop the per-serial Always-Hide list (68f0cf7)
+- diag(calibration): surface AUTO Lock MAD + geometry-shift state in heartbeat (1a6638a)
+
+### Fixed
+- **calibration:** Geometry-shift CUSUM sustain gate + post-fire cooldown (d41c811)
+- **calibration:** MAD-based AUTO Lock deviation metric (32a7d2e)
 
 ---
 
