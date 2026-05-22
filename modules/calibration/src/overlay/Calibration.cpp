@@ -299,6 +299,22 @@ void CalibrationContext::UpdateAutoLockDetector(
 	}
 }
 
+// HMD linear speed in m/s from the latest device-pose snapshot. Single
+// source of truth for both the primary AUTO Lock commit path and the
+// extras detector loop in CalibrationTick. Both call sites used to inline
+// the same sqrt-of-dot-product, which created a scope trap: the two
+// `if (ctx.state == Continuous)` blocks in CalibrationTick are textually
+// separate, so the primary block's local was invisible to the extras
+// block. Centralising prevents future blocks from tripping the same trap.
+static double ComputeHmdSpeedMps(const CalibrationContext& ctx)
+{
+	const auto& hmd = ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
+	return std::sqrt(
+		hmd.vecVelocity[0] * hmd.vecVelocity[0] +
+		hmd.vecVelocity[1] * hmd.vecVelocity[1] +
+		hmd.vecVelocity[2] * hmd.vecVelocity[2]);
+}
+
 // Commit a queued AUTO Lock flip when the user is still enough that the
 // resulting calibration jump won't be jarring. Returns true if a commit
 // happened this call (caller may want to log / kick the calibration math).
@@ -3887,11 +3903,7 @@ void CalibrationTick(double time)
 	// (control flow falls through to all three immediately below), which
 	// stops the on-disk profile from drifting during the offline window.
 	if (ctx.state == CalibrationState::Continuous) {
-		const auto& hmdRaw = ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
-		const double hmdSpeedMps = std::sqrt(
-			hmdRaw.vecVelocity[0] * hmdRaw.vecVelocity[0] +
-			hmdRaw.vecVelocity[1] * hmdRaw.vecVelocity[1] +
-			hmdRaw.vecVelocity[2] * hmdRaw.vecVelocity[2]);
+		const double hmdSpeedMps = ComputeHmdSpeedMps(ctx);
 
 		// Commit any queued AUTO-Lock flip if the user is paused enough to
 		// hide the resulting calibration jump. Re-resolve lockRelativePosition
@@ -4116,11 +4128,7 @@ void CalibrationTick(double time)
 		calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition;
 
-		const auto& hmdRawForExtras = CalCtx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
-		const double hmdSpeedMps = std::sqrt(
-			hmdRawForExtras.vecVelocity[0] * hmdRawForExtras.vecVelocity[0] +
-			hmdRawForExtras.vecVelocity[1] * hmdRawForExtras.vecVelocity[1] +
-			hmdRawForExtras.vecVelocity[2] * hmdRawForExtras.vecVelocity[2]);
+		const double hmdSpeedMps = ComputeHmdSpeedMps(CalCtx);
 
 		// User-toggled "Pause updates" from the continuous-cal UI: keep the
 		// already-applied driver offset live, skip any new solve cycle so the

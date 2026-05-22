@@ -30,6 +30,14 @@
 
 namespace spacecal::autolock {
 
+// Forward declarations for the leaf inline helpers. Lets composite helpers
+// (EvaluateCommitGate and any future addition) call HmdIsStationary /
+// ShouldSuppressForReanchor regardless of where the composite is placed in
+// this file. Without these, defining a composite above its callees would
+// fail to compile -- the d1a7e9e -> 988bbf8 work hit exactly that.
+inline bool HmdIsStationary(double hmdSpeedMps);
+inline bool ShouldSuppressForReanchor(double now, double suppressUntil);
+
 // Window size of the relative-pose history. With samples arriving at the
 // continuous-cal cadence (~2 Hz post-buffer-fill), 30 samples ~ 15 s.
 constexpr size_t kHistoryMax = 30;
