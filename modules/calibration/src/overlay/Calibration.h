@@ -85,6 +85,18 @@ struct AdditionalCalibration {
 	std::deque<Eigen::AffineCompact3d> autoLockHistory;
 	bool autoLockEffectivelyLocked = false;
 
+	// Per-extra pending-flip queue. Mirrors CalibrationContext's primary
+	// fields (autoLockHasPendingFlip / autoLockPendingFlipTo /
+	// autoLockPendingFlipFirstSeen / autoLockGateHeldWarned); see
+	// UpdateAutoLockDetector and CommitPendingAutoLockFlipIfStationary in
+	// Calibration.cpp for the rationale. Extras have no reanchor concept
+	// of their own, so no per-extra autoLockReanchorSuppressUntil field --
+	// the gate helper receives 0.0 for that argument.
+	bool autoLockHasPendingFlip = false;
+	bool autoLockPendingFlipTo = false;
+	double autoLockPendingFlipFirstSeen = 0.0;
+	bool autoLockGateHeldWarned = false;
+
 	// Resolved (effective) lock state -- ResolveLockMode mirror for extras.
 	bool lockRelativePosition = false;
 

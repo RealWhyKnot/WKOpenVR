@@ -150,6 +150,43 @@ inline bool ShouldSuppressForReanchor(double now, double suppressUntil)
     return now < suppressUntil;
 }
 
+// Per-tick commit-gate decision for a pending AUTO Lock flip. Captures the
+// three-way logic shared between the primary and extras detectors:
+//   - HMD stationary lets any pending flip commit (lock or unlock).
+//   - Reanchor-suppress window blocks commits regardless (primary only;
+//     extras pass suppressUntil = 0.0 since they have no reanchor concept).
+//   - Asymmetric unlock-timeout escape: pending unlocks commit after
+//     kAutoLockUnlockMaxWaitSeconds regardless of motion. Lock-direction
+//     flips have no escape -- locking under sustained motion is exactly
+//     the case the stationary gate exists to prevent.
+//
+// The `mode` field carries a static string literal suitable for the
+// "committed_via" diagnostic. Callers must not free it.
+struct CommitGateDecision {
+    bool commit;
+    const char* mode;
+};
+
+inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo,
+                                             double hmdSpeedMps,
+                                             double now,
+                                             double reanchorSuppressUntil,
+                                             double pendingHeldSec)
+{
+    const bool stationary = HmdIsStationary(hmdSpeedMps);
+    const bool suppressed = ShouldSuppressForReanchor(now, reanchorSuppressUntil);
+    const bool isUnlock = (pendingFlipTo == false);
+    const bool unlockTimeoutFired = isUnlock
+        && pendingHeldSec >= kAutoLockUnlockMaxWaitSeconds;
+
+    if ((!stationary || suppressed) && !unlockTimeoutFired) {
+        return { false, "held" };
+    }
+    if (unlockTimeoutFired) return { true, "unlock_timeout" };
+    if (stationary)         return { true, "stationary_gate" };
+    return { true, "unknown" };
+}
+
 // MAD-based robust translation deviation over a window of relative-pose
 // samples. Returns a stddev-equivalent value (MAD scaled by 1.4826, the
 // Gaussian consistency factor) that ignores single-sample outliers.

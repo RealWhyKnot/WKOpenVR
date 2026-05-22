@@ -430,3 +430,90 @@ TEST(AutoLockPanicTest, DoesNotSubsumeHysteresis)
     EXPECT_FALSE(al::IsPanicLevelDeviation(0.002, 0.0));
     EXPECT_TRUE(al::VerdictWithHysteresis(0.002, 0.0, /*prevLocked=*/true));
 }
+
+// --- Commit-gate decision ---------------------------------------------------
+
+// Shared between the primary and extras detectors. Pin the three-way
+// decision: stationary lets any flip through, unlock-timeout escapes
+// sustained motion, reanchor-suppress blocks even when stationary, and
+// lock-direction flips have no escape.
+
+TEST(AutoLockCommitGateTest, StationaryCommitsImmediately)
+{
+    const auto d = al::EvaluateCommitGate(
+        /*pendingFlipTo=*/true,
+        /*hmdSpeedMps=*/0.02,        // below kStationaryHmdMps (0.05)
+        /*now=*/100.0,
+        /*reanchorSuppressUntil=*/0.0,
+        /*pendingHeldSec=*/0.1);
+    EXPECT_TRUE(d.commit);
+    EXPECT_STREQ(d.mode, "stationary_gate");
+}
+
+TEST(AutoLockCommitGateTest, HmdMotionHoldsLockFlipForever)
+{
+    // Lock direction (pendingFlipTo=true) has no timeout escape. Even with
+    // a huge held duration, sustained motion keeps the flip pending.
+    const auto d = al::EvaluateCommitGate(
+        /*pendingFlipTo=*/true,
+        /*hmdSpeedMps=*/0.50,        // well above stationary
+        /*now=*/1000.0,
+        /*reanchorSuppressUntil=*/0.0,
+        /*pendingHeldSec=*/30.0);    // way past kAutoLockUnlockMaxWaitSeconds
+    EXPECT_FALSE(d.commit);
+    EXPECT_STREQ(d.mode, "held");
+}
+
+TEST(AutoLockCommitGateTest, UnlockTimeoutEscapesMotion)
+{
+    const auto d = al::EvaluateCommitGate(
+        /*pendingFlipTo=*/false,     // unlock direction
+        /*hmdSpeedMps=*/0.50,        // moving
+        /*now=*/1000.0,
+        /*reanchorSuppressUntil=*/0.0,
+        /*pendingHeldSec=*/al::kAutoLockUnlockMaxWaitSeconds);
+    EXPECT_TRUE(d.commit);
+    EXPECT_STREQ(d.mode, "unlock_timeout");
+}
+
+TEST(AutoLockCommitGateTest, UnlockBelowTimeoutStaysHeld)
+{
+    const double half = al::kAutoLockUnlockMaxWaitSeconds * 0.5;
+    const auto d = al::EvaluateCommitGate(
+        /*pendingFlipTo=*/false,
+        /*hmdSpeedMps=*/0.50,
+        /*now=*/1000.0,
+        /*reanchorSuppressUntil=*/0.0,
+        /*pendingHeldSec=*/half);
+    EXPECT_FALSE(d.commit);
+    EXPECT_STREQ(d.mode, "held");
+}
+
+TEST(AutoLockCommitGateTest, ReanchorSuppressBlocksEvenStationary)
+{
+    // Stationary + reanchor still active -> held. The reanchor window
+    // exists to hide post-reanchor stddev spikes from the lock decision.
+    const auto d = al::EvaluateCommitGate(
+        /*pendingFlipTo=*/true,
+        /*hmdSpeedMps=*/0.0,
+        /*now=*/100.0,
+        /*reanchorSuppressUntil=*/100.5,   // still suppressing
+        /*pendingHeldSec=*/0.2);
+    EXPECT_FALSE(d.commit);
+    EXPECT_STREQ(d.mode, "held");
+}
+
+TEST(AutoLockCommitGateTest, UnlockTimeoutBeatsStationaryInTag)
+{
+    // When both conditions could commit, the tag should reflect the
+    // timeout escape rather than the stationary gate. Matches the
+    // committed_via shape of the existing diagnostic.
+    const auto d = al::EvaluateCommitGate(
+        /*pendingFlipTo=*/false,
+        /*hmdSpeedMps=*/0.0,                // stationary
+        /*now=*/1000.0,
+        /*reanchorSuppressUntil=*/0.0,
+        /*pendingHeldSec=*/al::kAutoLockUnlockMaxWaitSeconds + 1.0);
+    EXPECT_TRUE(d.commit);
+    EXPECT_STREQ(d.mode, "unlock_timeout");
+}

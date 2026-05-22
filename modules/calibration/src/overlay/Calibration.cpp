@@ -323,32 +323,24 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 		ctx.autoLockGateHeldWarned = false;
 	}
 
-	const bool stationary = spacecal::autolock::HmdIsStationary(hmdSpeedMps);
-	const bool suppressed = spacecal::autolock::ShouldSuppressForReanchor(
-		now, ctx.autoLockReanchorSuppressUntil);
 	const double heldSec = now - ctx.autoLockPendingFlipFirstSeen;
+	const auto gate = spacecal::autolock::EvaluateCommitGate(
+		ctx.autoLockPendingFlipTo, hmdSpeedMps, now,
+		ctx.autoLockReanchorSuppressUntil, heldSec);
 
-	// Unlock commits get an asymmetric escape hatch: if the pending target is
-	// false (release lock) AND it has been held for longer than the unlock
-	// max-wait, commit even if the stationary gate would otherwise block.
-	// The stationary requirement exists so the cal-jump under a state change
-	// is hidden by user stillness, but for unlock the user is BY DEFINITION
-	// not still (otherwise the detector would not have flipped its verdict).
-	// Without this escape hatch, sustained-motion unlocks pile up as pending
-	// without ever committing -- log analysis showed 84 pending target=0
-	// events but only 24 commits, a 71% drop rate.
-	const bool isUnlock = (ctx.autoLockPendingFlipTo == false);
-	const bool unlockTimeoutFired = isUnlock
-		&& heldSec >= spacecal::autolock::kAutoLockUnlockMaxWaitSeconds;
-
-	if ((!stationary || suppressed) && !unlockTimeoutFired) {
+	if (!gate.commit) {
 		// Held by a gate. Emit a one-shot diagnostic per pending flip once
 		// the hold exceeds the warn threshold, so a chronic block becomes
 		// visible without per-tick log noise. Re-armed by the !pending
-		// path above.
+		// path above. The reason string needs the raw stationary/suppressed
+		// pair so a reader can distinguish motion from reanchor-suppress;
+		// the gate helper collapses both into mode="held".
 		if (!ctx.autoLockGateHeldWarned
 			&& heldSec >= spacecal::autolock::kAutoLockGateHeldWarnSeconds) {
 			ctx.autoLockGateHeldWarned = true;
+			const bool stationary = spacecal::autolock::HmdIsStationary(hmdSpeedMps);
+			const bool suppressed = spacecal::autolock::ShouldSuppressForReanchor(
+				now, ctx.autoLockReanchorSuppressUntil);
 			char gbuf[280];
 			snprintf(gbuf, sizeof gbuf,
 				"[autolock][gate-held] pending_target=%d current=%d held_sec=%.2f"
@@ -370,13 +362,10 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 	ctx.autoLockPendingFlipFirstSeen = 0.0;
 	ctx.autoLockGateHeldWarned = false;
 
-	const char* commitMode = unlockTimeoutFired ? "unlock_timeout"
-		: stationary                            ? "stationary_gate"
-		:                                          "unknown";
 	char buf[280];
 	snprintf(buf, sizeof buf,
 		"auto_lock_flip: previous=%d now=%d hmdSpeed=%.3fmps held_sec=%.2f committed_via=%s",
-		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps, heldSec, commitMode);
+		(int)prev, (int)ctx.autoLockEffectivelyLocked, hmdSpeedMps, heldSec, gate.mode);
 	Metrics::WriteLogAnnotation(buf);
 	return true;
 }
@@ -2956,6 +2945,20 @@ void StartCalibration(const char* reason) {
 	Metrics::posOffset_currentCal.Clear();
 	Metrics::posOffset_byRelPose.Clear();
 	Metrics::posOffset_rawComputed.Clear();
+	// Reset per-extra AUTO Lock detector state so the post-restart history
+	// can't be contaminated by samples from the previous cal cycle. Same
+	// boundary-state hazard class as the primary's pairedMotionPrev* reset
+	// above. Without this, the first post-restart MAD computation can
+	// include up to 30 pre-restart samples and produce a stale verdict.
+	for (auto& extra : CalCtx.additionalCalibrations) {
+		extra.autoLockHistory.clear();
+		extra.autoLockEffectivelyLocked = false;
+		extra.autoLockHasPendingFlip = false;
+		extra.autoLockPendingFlipTo = false;
+		extra.autoLockPendingFlipFirstSeen = 0.0;
+		extra.autoLockGateHeldWarned = false;
+	}
+
 	// Arm the geometry-shift grace window. While `time < this deadline` the
 	// shift detector is skipped entirely so the first dozen samples of the
 	// fresh cal cycle (during which the solver is settling and error
@@ -4112,6 +4115,13 @@ void CalibrationTick(double time)
 		CalCtx.messages.clear();
 		calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition;
+
+		const auto& hmdRawForExtras = CalCtx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
+		const double hmdSpeedMps = std::sqrt(
+			hmdRawForExtras.vecVelocity[0] * hmdRawForExtras.vecVelocity[0] +
+			hmdRawForExtras.vecVelocity[1] * hmdRawForExtras.vecVelocity[1] +
+			hmdRawForExtras.vecVelocity[2] * hmdRawForExtras.vecVelocity[2]);
+
 		// User-toggled "Pause updates" from the continuous-cal UI: keep the
 		// already-applied driver offset live, skip any new solve cycle so the
 		// math doesn't fight the user trying to inspect the current result.
@@ -4188,28 +4198,90 @@ void CalibrationTick(double time)
 			tgtW.translation() = ConvertPose(tgtPose).trans;
 			const Eigen::AffineCompact3d rel = refW.inverse() * tgtW;
 			extra.autoLockHistory.push_back(rel);
-			while (extra.autoLockHistory.size() > 30) extra.autoLockHistory.pop_front();
-			// (mirrors the primary detector; a tiny duplication is fine for now)
-			if (extra.autoLockHistory.size() >= 30) {
-				Eigen::Vector3d meanT = Eigen::Vector3d::Zero();
-				for (const auto& a : extra.autoLockHistory) meanT += a.translation();
-				meanT /= (double)extra.autoLockHistory.size();
-				double translVar = 0.0;
-				for (const auto& a : extra.autoLockHistory) {
-					translVar += (a.translation() - meanT).squaredNorm();
-				}
-				translVar /= (double)extra.autoLockHistory.size();
-				const double translStd = std::sqrt(translVar);
-				const auto& medRot = extra.autoLockHistory[extra.autoLockHistory.size() / 2].rotation();
-				Eigen::Quaterniond medQ(medRot);
-				double rotMaxAng = 0.0;
-				for (const auto& a : extra.autoLockHistory) {
-					double ang = medQ.angularDistance(Eigen::Quaterniond(a.rotation()));
-					if (ang > rotMaxAng) rotMaxAng = ang;
-				}
-				extra.autoLockEffectivelyLocked =
-					(translStd < 0.005) && (rotMaxAng < 1.0 * EIGEN_PI / 180.0);
+			while (extra.autoLockHistory.size() > spacecal::autolock::kHistoryMax) {
+				extra.autoLockHistory.pop_front();
 			}
+
+			// Mirrors CalibrationContext::UpdateAutoLockDetector. MAD-based
+			// robust deviation + enter/leave hysteresis + panic-unlock +
+			// pending-flip queue + stationary-HMD commit gate. The previous
+			// raw-stddev + single-threshold path flapped on cross-system
+			// extras for the same reasons the primary did pre-d1a7e9e.
+			if (extra.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
+				extra.autoLockEffectivelyLocked = false;
+				extra.autoLockHasPendingFlip = false;
+			} else {
+				const double translMad =
+					spacecal::autolock::RobustTranslDeviation(extra.autoLockHistory);
+				const double rotMad =
+					spacecal::autolock::RobustRotDeviation(extra.autoLockHistory);
+
+				if (extra.autoLockEffectivelyLocked &&
+					spacecal::autolock::IsPanicLevelDeviation(translMad, rotMad)) {
+					extra.autoLockEffectivelyLocked = false;
+					extra.autoLockHasPendingFlip = false;
+					extra.autoLockPendingFlipFirstSeen = 0.0;
+					extra.autoLockGateHeldWarned = false;
+					char buf[224];
+					snprintf(buf, sizeof buf,
+						"auto_lock_panic_unlock extra=%s: translMad=%.4fm rotMad=%.4frad",
+						extra.targetTrackingSystem.c_str(), translMad, rotMad);
+					Metrics::WriteLogAnnotation(buf);
+				} else {
+					const bool verdict = spacecal::autolock::VerdictWithHysteresis(
+						translMad, rotMad, extra.autoLockEffectivelyLocked);
+
+					if (verdict != extra.autoLockEffectivelyLocked) {
+						const bool prevPending = extra.autoLockHasPendingFlip;
+						const bool prevTarget  = extra.autoLockPendingFlipTo;
+						extra.autoLockHasPendingFlip = true;
+						extra.autoLockPendingFlipTo  = verdict;
+						if (!prevPending || prevTarget != verdict) {
+							char buf[240];
+							snprintf(buf, sizeof buf,
+								"auto_lock_flip_pending extra=%s: target=%d current=%d"
+								" translMad=%.4fm rotMad=%.4frad",
+								extra.targetTrackingSystem.c_str(),
+								(int)verdict, (int)extra.autoLockEffectivelyLocked,
+								translMad, rotMad);
+							Metrics::WriteLogAnnotation(buf);
+						}
+					} else if (extra.autoLockHasPendingFlip) {
+						extra.autoLockHasPendingFlip = false;
+					}
+
+					if (extra.autoLockHasPendingFlip) {
+						if (extra.autoLockPendingFlipFirstSeen <= 0.0) {
+							extra.autoLockPendingFlipFirstSeen = time;
+							extra.autoLockGateHeldWarned = false;
+						}
+						const double heldSec = time - extra.autoLockPendingFlipFirstSeen;
+						// Extras have no reanchor concept -- suppressUntil = 0.0.
+						const auto gate = spacecal::autolock::EvaluateCommitGate(
+							extra.autoLockPendingFlipTo, hmdSpeedMps, time,
+							/*reanchorSuppressUntil=*/0.0, heldSec);
+						if (gate.commit) {
+							const bool prev = extra.autoLockEffectivelyLocked;
+							extra.autoLockEffectivelyLocked = extra.autoLockPendingFlipTo;
+							extra.autoLockHasPendingFlip = false;
+							extra.autoLockPendingFlipFirstSeen = 0.0;
+							extra.autoLockGateHeldWarned = false;
+							char buf[256];
+							snprintf(buf, sizeof buf,
+								"auto_lock_flip extra=%s: previous=%d now=%d hmdSpeed=%.3fmps"
+								" held_sec=%.2f committed_via=%s",
+								extra.targetTrackingSystem.c_str(),
+								(int)prev, (int)extra.autoLockEffectivelyLocked,
+								hmdSpeedMps, heldSec, gate.mode);
+							Metrics::WriteLogAnnotation(buf);
+						}
+					} else {
+						extra.autoLockPendingFlipFirstSeen = 0.0;
+						extra.autoLockGateHeldWarned = false;
+					}
+				}
+			}
+
 			// Resolve effective lock for this extra.
 			switch (extra.lockMode) {
 			case 0:  extra.lockRelativePosition = false; break;
