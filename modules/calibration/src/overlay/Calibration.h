@@ -434,6 +434,18 @@ struct CalibrationContext
 	// errTail wrap-around already aggravates. Zero means no active grace.
 	double geometryShiftGraceUntil = 0.0;
 
+	// Geometry-shift post-fire cooldown deadline. Set whenever a recovery
+	// action commits; while CalibrationTick's `time` is less than this,
+	// subsequent fires are suppressed and the accumulators reset (so noise
+	// from the cooldown window doesn't immediately re-fire when the gate
+	// releases). The 2026-05-21 session log had 52 fires in 2.2 h on
+	// Quest+Lighthouse cross-system noise -- the cooldown drops the
+	// false-fire cadence without affecting response time on a real shift
+	// (which fires at full sensitivity once the deadline passes). Zero
+	// means no active cooldown. See GeometryShiftDetector.h::
+	// kPostFireCooldownSeconds for the duration.
+	double geometryShiftCooldownUntil = 0.0;
+
 	// Persistent per-serial hide list, applied independently of cal state.
 	// Keyed by Prop_SerialNumber_String value (never by openVRID -- IDs are
 	// reassigned across SteamVR restarts and device reconnects). When a
@@ -640,6 +652,7 @@ struct CalibrationContext
 		recoveryWaitingSince = 0.0;
 		recoveryHmdDeltaAtStart = 0.0;
 		geometryShiftGraceUntil = 0.0;
+		geometryShiftCooldownUntil = 0.0;
 		// alwaysHideSerials is a user preference, NOT calibration data --
 		// intentionally NOT reset here. A profile-clear shouldn't un-hide
 		// trackers the user has explicitly marked as always-hidden.

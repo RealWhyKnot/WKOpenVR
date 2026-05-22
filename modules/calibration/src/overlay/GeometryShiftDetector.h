@@ -73,8 +73,45 @@ constexpr double kCusumDriftMm = 0.5;
 // rolling-median rule but still well-tunable if a user reports false fires.
 constexpr double kCusumThreshold = 5.0;
 
+// Post-fire cooldown (seconds). After a geometry-shift recovery fires,
+// suppress further fires for this long. Real geometry shifts (lighthouse
+// bumped, tracker remounted) happen at minute-or-hour cadence; a window of
+// rapid fires (the 2026-05-21 session had 52 in 2.2 h, one every ~2.4 min)
+// is noise, not signal. Cooldown drops the false-fire rate without
+// affecting real-shift response time -- a genuine shift after the cooldown
+// expires still fires on the same fast cycle.
+//
+// CalibrationContext owns the deadline timestamp; this constant is the
+// value to add on fire.
+constexpr double kPostFireCooldownSeconds = 30.0;
+
 struct CusumState {
+    // Cumulative-sum statistic. Per-tick increment is
+    //   (currentError - baseline) - drift
+    // clamped at zero from below. When this exceeds kCusumThreshold the
+    // detector is a candidate for firing; the sustain gate below decides
+    // whether it actually fires this tick.
     double S = 0.0;
+
+    // Consecutive ticks the S statistic has been above kCusumThreshold.
+    // The CUSUM math alone fires on the first threshold breach, which on
+    // cross-tracking-system rigs (Quest+Lighthouse) trips on routine
+    // transient excursions. The sustain gate requires kMinSustainedSpikes
+    // consecutive above-threshold ticks before firing -- same semantics as
+    // the legacy 5x-median rule, which has not produced the same
+    // firestorm pattern in observed logs.
+    //
+    // Reset to zero whenever S drops back to or below threshold (a
+    // transient spike doesn't latch the counter) or when a fire commits.
+    int sustainedAboveThreshold = 0;
+
+    // Clear both fields together. Used at every reset site (grace window,
+    // toggle flip, reanchor suppression, cooldown suppression, post-fire,
+    // not-enough-samples) so the two counters never drift apart.
+    constexpr void Reset() {
+        S = 0.0;
+        sustainedAboveThreshold = 0;
+    }
 };
 
 // Update the CUSUM statistic with a new residual reading and return whether
@@ -89,6 +126,13 @@ struct CusumState {
 // diagnostic log at the fire site can only ever read S=0 (post-reset) and
 // has no way to confirm which decision arm actually triggered the fire or
 // how far past threshold the accumulator climbed.
+//
+// Sustain gate: S crossing threshold on a single tick increments the
+// state's sustain counter but does not fire. Fire requires
+// kMinSustainedSpikes consecutive above-threshold ticks. A single tick at
+// or below threshold resets the sustain counter without disturbing S
+// (the accumulated evidence stays; only the "is this sustained?" flag
+// drops). When the fire commits, both S and the sustain counter reset.
 constexpr bool UpdateCusumGeometryShift(CusumState& state,
                                          double currentErrorMm,
                                          double baselineMm,
@@ -99,11 +143,29 @@ constexpr bool UpdateCusumGeometryShift(CusumState& state,
     state.S = state.S + increment;
     if (state.S < 0.0) state.S = 0.0;
     if (state.S > threshold) {
-        if (outValueAtFire) *outValueAtFire = state.S;
-        state.S = 0.0;
-        return true;
+        state.sustainedAboveThreshold++;
+        if (state.sustainedAboveThreshold >= kMinSustainedSpikes) {
+            if (outValueAtFire) *outValueAtFire = state.S;
+            state.S = 0.0;
+            state.sustainedAboveThreshold = 0;
+            return true;
+        }
+    } else {
+        state.sustainedAboveThreshold = 0;
     }
     return false;
+}
+
+// Post-fire cooldown gate. Returns true when `now` sits inside the
+// cooldown window (now < cooldownUntil); caller should skip the recovery
+// action for this tick. A zero/unset cooldownUntil never suppresses.
+//
+// Wired at the fire site in CalibrationTick: when this returns true, the
+// recovery (Clear + demote to Standby + restart) is skipped, but the
+// per-tick sustain counters still advance so the next fire decision after
+// cooldown expires reflects the current state of the world.
+constexpr bool ShouldSuppressForCooldown(double now, double cooldownUntil) {
+    return now < cooldownUntil;
 }
 
 } // namespace spacecal::geometry_shift

@@ -134,28 +134,74 @@ TEST(CusumGeometryShiftTest, BelowDriftDoesNotFire) {
     EXPECT_DOUBLE_EQ(s.S, 0.0);
 }
 
-TEST(CusumGeometryShiftTest, SustainedShiftFiresWithinExpectedTicks) {
+TEST(CusumGeometryShiftTest, SustainedShiftFiresAfterSustainGate) {
     using spacecal::geometry_shift::CusumState;
     using spacecal::geometry_shift::UpdateCusumGeometryShift;
     using spacecal::geometry_shift::kCusumDriftMm;
     using spacecal::geometry_shift::kCusumThreshold;
+    using spacecal::geometry_shift::kMinSustainedSpikes;
     CusumState s{};
-    // 5 mm sustained shift: increment per tick = (5 - 0) - 0.5 = 4.5 mm.
-    // Threshold 5.0 mm reached on the 2nd tick. (After tick 1: S = 4.5; not
-    // yet > 5.0. After tick 2: S = 9.0; FIRE; S resets to 0.)
+    // 5 mm sustained shift: per-tick increment = (5 - 0) - 0.5 = 4.5 mm.
+    // tick 1: S = 4.5, still below threshold (5.0), sustain counter stays 0.
+    // tick 2: S = 9.0, above threshold, sustain = 1, no fire (need 3).
+    // tick 3: S = 13.5, above threshold, sustain = 2, no fire.
+    // tick 4: S = 18.0, above threshold, sustain = 3 -> FIRE; reset.
     EXPECT_FALSE(UpdateCusumGeometryShift(s, /*current=*/5.0, /*baseline=*/0.0));
     EXPECT_NEAR(s.S, 4.5, 1e-9);
+    EXPECT_EQ(s.sustainedAboveThreshold, 0);
+
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+    EXPECT_EQ(s.sustainedAboveThreshold, 1);
+
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+    EXPECT_EQ(s.sustainedAboveThreshold, 2);
+
     EXPECT_TRUE(UpdateCusumGeometryShift(s, 5.0, 0.0));
-    EXPECT_DOUBLE_EQ(s.S, 0.0) << "CUSUM must reset to 0 after firing";
+    EXPECT_DOUBLE_EQ(s.S, 0.0) << "CUSUM must reset S to 0 after firing";
+    EXPECT_EQ(s.sustainedAboveThreshold, 0)
+        << "Sustain counter must reset along with S";
+}
+
+TEST(CusumGeometryShiftTest, SingleSpikeAboveThresholdDoesNotFire) {
+    using spacecal::geometry_shift::CusumState;
+    using spacecal::geometry_shift::UpdateCusumGeometryShift;
+    CusumState s{};
+    // One huge tick well above threshold. Old behaviour: fire immediately.
+    // New behaviour: sustain counter = 1, no fire. This is the failure mode
+    // the 2026-05-21 log surfaced -- the CUSUM detector fired on routine
+    // transient excursions that legacy 5x-median would have ignored.
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, /*current=*/100.0, /*baseline=*/0.0));
+    EXPECT_EQ(s.sustainedAboveThreshold, 1);
+    EXPECT_GT(s.S, 5.0) << "S did cross threshold; sustain gate is what holds the fire";
+}
+
+TEST(CusumGeometryShiftTest, SpikeThenNormalResetsSustainCounter) {
+    using spacecal::geometry_shift::CusumState;
+    using spacecal::geometry_shift::UpdateCusumGeometryShift;
+    CusumState s{};
+    // Spike, spike, normal, spike, spike, spike (3 in a row at the end) -> fire.
+    UpdateCusumGeometryShift(s, /*current=*/100.0, /*baseline=*/0.0);
+    EXPECT_EQ(s.sustainedAboveThreshold, 1);
+    UpdateCusumGeometryShift(s, 100.0, 0.0);
+    EXPECT_EQ(s.sustainedAboveThreshold, 2);
+    // Drop below baseline so S clamps back to 0 -- sustain counter must reset.
+    UpdateCusumGeometryShift(s, /*current=*/-1000.0, /*baseline=*/0.0);
+    EXPECT_DOUBLE_EQ(s.S, 0.0);
+    EXPECT_EQ(s.sustainedAboveThreshold, 0)
+        << "Single tick at or below threshold must reset the sustain counter";
 }
 
 TEST(CusumGeometryShiftTest, RecoversFromSpike_ResumesQuiet) {
     using spacecal::geometry_shift::CusumState;
     using spacecal::geometry_shift::UpdateCusumGeometryShift;
     CusumState s{};
-    // Sustained shift fires.
+    // Sustained shift fires after 4 ticks (1 to reach threshold + 3 sustain).
     UpdateCusumGeometryShift(s, 5.0, 0.0);
     UpdateCusumGeometryShift(s, 5.0, 0.0);
+    UpdateCusumGeometryShift(s, 5.0, 0.0);
+    UpdateCusumGeometryShift(s, 5.0, 0.0);
+    EXPECT_DOUBLE_EQ(s.S, 0.0);
+    EXPECT_EQ(s.sustainedAboveThreshold, 0);
     // Now post-fire: error returns to baseline. State is at 0; no further fires.
     for (int i = 0; i < 100; i++) {
         EXPECT_FALSE(UpdateCusumGeometryShift(s, 0.0, 0.0));
@@ -167,9 +213,16 @@ TEST(CusumGeometryShiftTest, ManualThresholdTuningWorks) {
     using spacecal::geometry_shift::CusumState;
     using spacecal::geometry_shift::UpdateCusumGeometryShift;
     CusumState s{};
-    // Tighter threshold (1.0 mm) fires sooner on the same shift.
-    EXPECT_TRUE(UpdateCusumGeometryShift(s, /*current=*/3.0, /*baseline=*/0.0,
+    // Tighter threshold (1.0 mm) crosses sooner on the same shift; still
+    // requires the 3-tick sustain gate to fire.
+    // Increment per tick = (3.0 - 0) - 0.5 = 2.5 mm.
+    //   tick 1: S=2.5, > 1.0, sustain=1
+    //   tick 2: S=5.0, > 1.0, sustain=2
+    //   tick 3: S=7.5, > 1.0, sustain=3 -> FIRE
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, /*current=*/3.0, /*baseline=*/0.0,
                                           /*driftMm=*/0.5, /*threshold=*/1.0));
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 3.0, 0.0, 0.5, 1.0));
+    EXPECT_TRUE(UpdateCusumGeometryShift(s, 3.0, 0.0, 0.5, 1.0));
     EXPECT_DOUBLE_EQ(s.S, 0.0);
 }
 
@@ -183,7 +236,48 @@ TEST(CusumGeometryShiftTest, ResetClampPreventsNegativeAccumulation) {
     // shift would need to overcome that before firing.
     for (int i = 0; i < 1000; i++) UpdateCusumGeometryShift(s, 0.0, 0.0);
     EXPECT_DOUBLE_EQ(s.S, 0.0);
-    // Now a real shift fires within 2 ticks (same as the fresh-state case).
+    EXPECT_EQ(s.sustainedAboveThreshold, 0);
+    // Now a real shift fires after 4 ticks (1 to reach threshold + 3 sustain).
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
     EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
     EXPECT_TRUE(UpdateCusumGeometryShift(s, 5.0, 0.0));
 }
+
+// ---------------------------------------------------------------------------
+// Post-fire cooldown gate. After a recovery fires, suppress further fires
+// for kPostFireCooldownSeconds. The fire site at CalibrationTick checks
+// ShouldSuppressForCooldown(now, cooldownUntil) before running the recovery
+// path; the helper itself is pure.
+// ---------------------------------------------------------------------------
+TEST(GeometryShiftCooldownTest, UnsetDeadlineNeverSuppresses) {
+    using spacecal::geometry_shift::ShouldSuppressForCooldown;
+    EXPECT_FALSE(ShouldSuppressForCooldown(/*now=*/0.0, /*cooldownUntil=*/0.0));
+    EXPECT_FALSE(ShouldSuppressForCooldown(/*now=*/1e9, 0.0));
+}
+
+TEST(GeometryShiftCooldownTest, HoldsInsideWindow) {
+    using spacecal::geometry_shift::ShouldSuppressForCooldown;
+    using spacecal::geometry_shift::kPostFireCooldownSeconds;
+    const double firedAt = 1000.0;
+    const double until = firedAt + kPostFireCooldownSeconds;
+    EXPECT_TRUE(ShouldSuppressForCooldown(firedAt, until));
+    EXPECT_TRUE(ShouldSuppressForCooldown(firedAt + 1.0, until));
+    EXPECT_TRUE(ShouldSuppressForCooldown(until - 1e-6, until));
+}
+
+TEST(GeometryShiftCooldownTest, ReleasesAtAndAfterDeadline) {
+    using spacecal::geometry_shift::ShouldSuppressForCooldown;
+    const double until = 1000.0;
+    EXPECT_FALSE(ShouldSuppressForCooldown(until, until));
+    EXPECT_FALSE(ShouldSuppressForCooldown(until + 1e-6, until));
+    EXPECT_FALSE(ShouldSuppressForCooldown(until + 30.0, until));
+}
+
+// constexpr pins for the cooldown contract.
+static_assert(!spacecal::geometry_shift::ShouldSuppressForCooldown(0.0, 0.0),
+    "unset cooldown deadline must never suppress");
+static_assert(spacecal::geometry_shift::ShouldSuppressForCooldown(5.0, 10.0),
+    "now < cooldownUntil must suppress");
+static_assert(!spacecal::geometry_shift::ShouldSuppressForCooldown(10.0, 10.0),
+    "now == cooldownUntil releases (strict less-than)");

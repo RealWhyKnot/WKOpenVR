@@ -3252,7 +3252,7 @@ void CalibrationTick(double time)
 			(ctx.geometryShiftGraceUntil > 0.0 && time < ctx.geometryShiftGraceUntil);
 		if (inGeometryShiftGrace) {
 			s_consecutiveBadTicks = 0;
-			s_cusumState.S = 0.0;
+			s_cusumState.Reset();
 			if ((time - s_lastGraceLogTime) >= 1.0) {
 				s_lastGraceLogTime = time;
 				char gBuf[200];
@@ -3311,7 +3311,7 @@ void CalibrationTick(double time)
 					// Reset CUSUM accumulator when the legacy path is active so a
 					// later toggle flip starts from a clean state rather than a
 					// stale running-sum from before the toggle change.
-					s_cusumState.S = 0.0;
+					s_cusumState.Reset();
 				}
 
 				// Reanchor-gate: when the chi-square reanchor is frozen, the
@@ -3341,7 +3341,7 @@ void CalibrationTick(double time)
 					// starts from a clean baseline rather than carrying the
 					// reanchor-noise contribution.
 					s_consecutiveBadTicks = 0;
-					s_cusumState.S = 0.0;
+					s_cusumState.Reset();
 				}
 
 				// Diagnostic: per-tick spike candidate trace. Throttled to ~1/s
@@ -3368,6 +3368,30 @@ void CalibrationTick(double time)
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor);
 					Metrics::WriteLogAnnotation(spikeBuf);
+				}
+
+				// Cooldown gate: after a previous fire, suppress further fires
+				// for kPostFireCooldownSeconds. Real geometry shifts happen
+				// rarely; a burst of fires inside the cooldown window is noise
+				// (the 2026-05-21 session showed 52 fires in 2.2 h, one every
+				// ~2.4 min on Quest+Lighthouse cross-system pose noise). When
+				// suppressed, log the inputs that would have fired and reset
+				// the accumulators so the post-cooldown decision starts fresh.
+				if (fire && spacecal::geometry_shift::ShouldSuppressForCooldown(
+						time, ctx.geometryShiftCooldownUntil))
+				{
+					char cdBuf[280];
+					snprintf(cdBuf, sizeof cdBuf,
+						"[geometry-shift][suppressed-by-cooldown] current_mm=%.3f"
+						" median_mm=%.3f ratio=%.2fx cusum_S_at_fire=%.3f mode=%s"
+						" cooldown_remaining_sec=%.1f",
+						current, median, ratio, cusumValueAtFire,
+						ctx.useCusumGeometryShift ? "cusum" : "legacy",
+						ctx.geometryShiftCooldownUntil - time);
+					Metrics::WriteLogAnnotation(cdBuf);
+					fire = false;
+					s_consecutiveBadTicks = 0;
+					s_cusumState.Reset();
 				}
 
 				if (fire) {
@@ -3413,6 +3437,8 @@ void CalibrationTick(double time)
 					const double secSinceReanchor = (g_reanchorChiLastLogTime > -1e8)
 						? (time - g_reanchorChiLastLogTime) : -1.0;
 					const std::string chiSqTail = RenderChiSqTail();
+					const double cooldownStarts =
+						time + spacecal::geometry_shift::kPostFireCooldownSeconds;
 					char fireBuf[800];
 					snprintf(fireBuf, sizeof fireBuf,
 						"[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
@@ -3420,14 +3446,14 @@ void CalibrationTick(double time)
 						" reanchor_frozen=%d sec_since_reanchor=%.3f"
 						" lockRelativePosition=%d lockMode=%d"
 						" errTail_slope_mm_per_sample=%.3f errTail=[%s]"
-						" chi_sq_tail=%s",
+						" chi_sq_tail=%s cooldown_until=%.3f",
 						current, median, ratio,
 						s_consecutiveBadTicks, cusumValueAtFire,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,
 						slopeMmPerSample, tailStr.c_str(),
-						chiSqTail.c_str());
+						chiSqTail.c_str(), cooldownStarts);
 					Metrics::WriteLogAnnotation(fireBuf);
 
 					CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
@@ -3446,13 +3472,15 @@ void CalibrationTick(double time)
 					// will overwrite refToTargetPose against fresh samples
 					// anyway -- the value flowing back from CalibrationCalc
 					// becomes the new "trusted" relative pose.
+					ctx.geometryShiftCooldownUntil =
+						time + spacecal::geometry_shift::kPostFireCooldownSeconds;
 					s_consecutiveBadTicks = 0;
-					s_cusumState.S = 0.0;
+					s_cusumState.Reset();
 				}
 			}
 		} else {
 			s_consecutiveBadTicks = 0;
-			s_cusumState.S = 0.0;
+			s_cusumState.Reset();
 		}
 		}  // close `if (inGeometryShiftGrace) ... else { ...`
 	}
