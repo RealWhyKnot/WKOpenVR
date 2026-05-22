@@ -3,6 +3,7 @@
 #include "InterfaceHookInjector.h"
 #include "IsometryTransform.h"
 #include "Logging.h"
+#include "ServerTrackedDeviceProviderConfigPacking.h"
 #include "inputhealth/PathClassifier.h"
 #include "inputhealth/SerialHash.h"
 #include "MotionGate.h"  // ClassifyCorrection / StillFloor -- option 3 per user 2026-05-04
@@ -383,164 +384,8 @@ namespace {
 }
 
 
-/**
- * This function heuristically evaluates the amount of drift between the src and target playspace transforms,
- * evaluated centered on the `pose` device transform. This is then used to control the speed of realignment.
- */
-ServerTrackedDeviceProvider::DeltaSize ServerTrackedDeviceProvider::GetTransformDeltaSize(
-	DeltaSize prior_delta,
-	const IsoTransform& deviceWorldPose,
-	const IsoTransform& src,
-	const IsoTransform& target
-) const {
-	const auto src_pose = src * deviceWorldPose;
-	const auto target_pose = target * deviceWorldPose;
-
-	// Use .norm() (linear metres) here, NOT .squaredNorm(). The thresholds
-	// (alignmentSpeedParams.thr_trans_*) are populated everywhere -- driver
-	// Init(), overlay defaults, the user-tunable UI sliders -- as linear
-	// distances in metres. Comparing squaredNorm against linear thresholds
-	// silently squared the gate: a 20 mm threshold required a 141 mm offset
-	// to trip, so currentRate was permanently TINY (= 0.05 lerp) for any
-	// realistic continuous-cal correction. The runtime cost of the sqrt is
-	// well under 1 us per call; this hot path runs at ~kHz, the math budget
-	// is microseconds. .angularDistance() is already linear (radians).
-	const auto trans_delta = (src_pose.translation - target_pose.translation).norm();
-	const auto rot_delta = src_pose.rotation.angularDistance(target_pose.rotation);
-
-	DeltaSize trans_level, rot_level;
-
-	if (trans_delta > alignmentSpeedParams.thr_trans_large) trans_level = DeltaSize::LARGE;
-	else if (trans_delta > alignmentSpeedParams.thr_trans_small) trans_level = DeltaSize::SMALL;
-	else trans_level = DeltaSize::TINY;
-
-	if (rot_delta > alignmentSpeedParams.thr_rot_large) rot_level = DeltaSize::LARGE;
-	else if (rot_delta > alignmentSpeedParams.thr_rot_small) rot_level = DeltaSize::SMALL;
-	else rot_level = DeltaSize::TINY;
-
-	if (trans_level == DeltaSize::TINY && rot_level == DeltaSize::TINY) return DeltaSize::TINY;
-	else return std::max(prior_delta, std::max(trans_level, rot_level));
-}
-
-double ServerTrackedDeviceProvider::GetTransformRate(DeltaSize delta) const {
-	switch (delta) {
-	case DeltaSize::TINY: return alignmentSpeedParams.align_speed_tiny;
-	case DeltaSize::SMALL: return alignmentSpeedParams.align_speed_small;
-	default: return alignmentSpeedParams.align_speed_large;
-	}
-}
-
-/**
- * Smoothly interpolates the device active transform towards the target transform.
- * When recalibrateOnMovement is enabled on the slot, the lerp rate is gated by
- * per-frame motion magnitude -- a stationary device gets ~zero blend progress, a
- * moving one gets the full time-based rate. This hides calibration shifts in
- * the user's natural motion instead of producing visible "phantom drift" while
- * the user is still (a noticeable issue when lying down).
- *
- * 2026-05-04: per option 3 of feedback_calibration_blending_request.md, the
- * gate is now max(motionGate, regimeFloor) where regimeFloor depends on the
- * pending correction size (|targetTransform - transform|). This unfreezes
- * the lerp when the user is still -- small corrections drift slowly (10%
- * floor), normal corrections at moderate speed (50%), and catastrophic
- * corrections (post-stall, Quest re-localization) effectively snap (90%).
- * Previously the lerp froze at 0 when the user wasn't moving and they had
- * to wave a controller before convergence resumed.
- */
-void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const IsoTransform &deviceWorldPose) const {
-	LARGE_INTEGER timestamp;
-	QueryPerformanceCounter(&timestamp);
-
-	// qpcFreq captured once in Init(); QPF is constant per boot so re-querying
-	// here would be wasted work on the pose-update hot path.
-	double lerp = (timestamp.QuadPart - device.lastPoll.QuadPart) / (double)qpcFreq.QuadPart;
-	device.lastPoll = timestamp;
-
-	lerp *= GetTransformRate(device.currentRate);
-
-	if (device.recalibrateOnMovement) {
-		if (!device.blendMotionInitialized) {
-			// First frame since the flag was enabled: capture the reference pose
-			// and skip blend progress this tick -- there's nothing to compute a
-			// meaningful delta against yet, and we don't want a stale prior pose
-			// (from before re-enable) to produce a giant phantom motion gate.
-			device.lastBlendWorldPos = deviceWorldPose.translation;
-			device.lastBlendWorldRot = deviceWorldPose.rotation;
-			device.blendMotionInitialized = true;
-			lerp = 0.0;
-		} else {
-			// Per-frame motion magnitude in normalized units. kPosFullScale and
-			// kRotFullScale are the per-frame deltas at which the gate is fully
-			// open -- small typical-jitter motions produce partial gate, sustained
-			// natural motion produces gate=1 (full time-based rate).
-			constexpr double kPosFullScale = 0.005;   // 5 mm
-			constexpr double kRotFullScale = 0.0175;  // ~1 deg in radians
-			const double devPosDelta = (deviceWorldPose.translation - device.lastBlendWorldPos).norm();
-			const double devRotDelta = deviceWorldPose.rotation.angularDistance(device.lastBlendWorldRot);
-			const double motionGate = std::min(1.0,
-				std::max(devPosDelta / kPosFullScale, devRotDelta / kRotFullScale));
-
-			// Correction magnitude -- how far the active transform has to travel
-			// to reach the target. Distinct from the device-motion deltas above:
-			// motionGate asks "is the user moving?", regime asks "how big is the
-			// pending shift?". Convert to mm + degrees to match the thresholds
-			// in MotionGate.h.
-			const double correctionPosMm =
-				(device.targetTransform.translation - device.transform.translation).norm() * 1000.0;
-			const double correctionRotDeg =
-				device.targetTransform.rotation.angularDistance(device.transform.rotation) * 180.0 / M_PI;
-			const auto regime = spacecal::motiongate::ClassifyCorrection(
-				correctionPosMm, correctionRotDeg);
-			const double regimeFloor = spacecal::motiongate::StillFloor(regime);
-
-			// Effective gate: take whichever is higher. When moving, motionGate
-			// dominates (approx1); when still, regimeFloor sets the minimum so the
-			// lerp doesn't freeze at 0.
-			const double effectiveGate = std::max(motionGate, regimeFloor);
-			lerp *= effectiveGate;
-
-			device.lastBlendWorldPos = deviceWorldPose.translation;
-			device.lastBlendWorldRot = deviceWorldPose.rotation;
-		}
-	} else if (device.blendMotionInitialized) {
-		// Flag was on but is now off -- reset so re-enabling later doesn't see a
-		// stale prior pose.
-		device.blendMotionInitialized = false;
-	}
-
-	if (lerp > 1.0)
-		lerp = 1.0;
-	if (lerp < 0 || isnan(lerp))
-		lerp = 0;
-
-	device.transform = device.transform.interpolateAround(lerp, device.targetTransform, deviceWorldPose.translation);
-}
-
-void ServerTrackedDeviceProvider::ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const {
-	auto deviceWorldTransform = toIsoWorldTransform(devicePose);
-	deviceWorldTransform = device.transform * deviceWorldTransform;
-	devicePose.vecWorldFromDriverTranslation[0] = deviceWorldTransform.translation(0);
-	devicePose.vecWorldFromDriverTranslation[1] = deviceWorldTransform.translation(1);
-	devicePose.vecWorldFromDriverTranslation[2] = deviceWorldTransform.translation(2);
-	devicePose.qWorldFromDriverRotation = convert(deviceWorldTransform.rotation);
-}
 
 
-inline vr::HmdQuaternion_t operator*(const vr::HmdQuaternion_t &lhs, const vr::HmdQuaternion_t &rhs) {
-	return {
-		(lhs.w * rhs.w) - (lhs.x * rhs.x) - (lhs.y * rhs.y) - (lhs.z * rhs.z),
-		(lhs.w * rhs.x) + (lhs.x * rhs.w) + (lhs.y * rhs.z) - (lhs.z * rhs.y),
-		(lhs.w * rhs.y) + (lhs.y * rhs.w) + (lhs.z * rhs.x) - (lhs.x * rhs.z),
-		(lhs.w * rhs.z) + (lhs.z * rhs.w) + (lhs.x * rhs.y) - (lhs.y * rhs.x)
-	};
-}
-
-inline vr::HmdVector3d_t quaternionRotateVector(const vr::HmdQuaternion_t& quat, const double(&vector)[3]) {
-	vr::HmdQuaternion_t vectorQuat = { 0.0, vector[0], vector[1] , vector[2] };
-	vr::HmdQuaternion_t conjugate = { quat.w, -quat.x, -quat.y, -quat.z };
-	auto rotatedVectorQuat = quat * vectorQuat * conjugate;
-	return { rotatedVectorQuat.x, rotatedVectorQuat.y, rotatedVectorQuat.z };
-}
 
 void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTransform& newTransform)
 {
@@ -645,42 +490,6 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 	tf.currentRate = DeltaSize::TINY;
 }
 
-ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::FindFallbackSlot(const char* name, size_t len)
-{
-	if (len == 0 || len > protocol::MaxTrackingSystemNameLen) return nullptr;
-	for (size_t i = 0; i < MaxFallbackSlots; ++i) {
-		if (!systemFallbacks[i].occupied) continue;
-		// Compare the full buffer length so a shorter prefix can't accidentally
-		// match a longer occupant. The buffer is NUL-padded after assignment so
-		// `len` bytes followed by a sentinel NUL is sufficient to distinguish.
-		if (memcmp(systemFallbacks[i].system_name, name, len) == 0
-			&& (len == protocol::MaxTrackingSystemNameLen || systemFallbacks[i].system_name[len] == '\0')) {
-			return &systemFallbacks[i];
-		}
-	}
-	return nullptr;
-}
-
-const ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::FindFallbackSlot(const char* name, size_t len) const
-{
-	return const_cast<ServerTrackedDeviceProvider*>(this)->FindFallbackSlot(name, len);
-}
-
-ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::AcquireFallbackSlot(const char* name, size_t len)
-{
-	if (len == 0 || len > protocol::MaxTrackingSystemNameLen) return nullptr;
-	if (auto* existing = FindFallbackSlot(name, len)) return existing;
-	for (size_t i = 0; i < MaxFallbackSlots; ++i) {
-		if (!systemFallbacks[i].occupied) {
-			memset(systemFallbacks[i].system_name, 0, sizeof systemFallbacks[i].system_name);
-			memcpy(systemFallbacks[i].system_name, name, len);
-			systemFallbacks[i].occupied = true;
-			systemFallbacks[i].tf = FallbackTransform{};
-			return &systemFallbacks[i];
-		}
-	}
-	return nullptr;
-}
 
 void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDevicePrediction &cfg)
 {
@@ -1058,52 +867,10 @@ void ServerTrackedDeviceProvider::HandleApplyRandomOffset() {
 	LOG("%s", oss.str().c_str());
 }
 
-// Pack/unpack helpers for the two-atomic FingerSmoothingConfig representation.
-// See ServerTrackedDeviceProvider.h for the byte layout.
-namespace {
-	inline uint64_t PackFingerHeader(const protocol::FingerSmoothingConfig &cfg)
-	{
-		uint64_t packed = 0;
-		uint8_t* b = reinterpret_cast<uint8_t*>(&packed);
-		b[0] = cfg.master_enabled ? 1 : 0;
-		b[1] = cfg.smoothness;
-		b[2] = static_cast<uint8_t>(cfg.finger_mask & 0xFF);
-		b[3] = static_cast<uint8_t>((cfg.finger_mask >> 8) & 0xFF);
-		b[4] = 0;
-		b[5] = cfg.per_finger_smoothness[8];
-		b[6] = cfg.per_finger_smoothness[9];
-		b[7] = 0;
-		return packed;
-	}
-
-	inline uint64_t PackFingerLow(const protocol::FingerSmoothingConfig &cfg)
-	{
-		uint64_t packed = 0;
-		std::memcpy(&packed, cfg.per_finger_smoothness, 8);
-		return packed;
-	}
-
-	inline protocol::FingerSmoothingConfig UnpackFingerSmoothing(uint64_t header, uint64_t low)
-	{
-		protocol::FingerSmoothingConfig cfg{};
-		const uint8_t* b = reinterpret_cast<const uint8_t*>(&header);
-		cfg.master_enabled = b[0] != 0;
-		cfg.smoothness     = b[1];
-		cfg.finger_mask    = static_cast<uint16_t>(b[2] | (static_cast<uint16_t>(b[3]) << 8));
-		cfg._reserved      = 0;
-		std::memcpy(cfg.per_finger_smoothness, &low, 8);
-		cfg.per_finger_smoothness[8] = b[5];
-		cfg.per_finger_smoothness[9] = b[6];
-		cfg._reserved2[0] = 0;
-		cfg._reserved2[1] = 0;
-		return cfg;
-	}
-}
-
 void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig &cfg)
 {
-	const uint64_t newHeader = PackFingerHeader(cfg);
-	const uint64_t newLow    = PackFingerLow(cfg);
+	const uint64_t newHeader = pairdriver::PackFingerHeader(cfg);
+	const uint64_t newLow    = pairdriver::PackFingerLow(cfg);
 
 	// Two exchanges: header carries the master/smoothness/mask plus fingers 8&9;
 	// low carries fingers 0..7. The detour reads both atomically with acquire;
@@ -1114,7 +881,8 @@ void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::Finge
 	// Log only on real changes so a slider drag (60 Hz no-op tick) doesn't
 	// flood the log file.
 	if (oldHeader != newHeader || oldLow != newLow) {
-		const protocol::FingerSmoothingConfig prev = UnpackFingerSmoothing(oldHeader, oldLow);
+		const protocol::FingerSmoothingConfig prev =
+			pairdriver::UnpackFingerSmoothing(oldHeader, oldLow);
 
 		// Compute which fingers transitioned from "not smoothed" to
 		// "smoothed" so the detour can reseed its per-finger state.previous
@@ -1129,19 +897,8 @@ void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::Finge
 		// prev.master_enabled == 0 (atomics start at zero), so the very
 		// first SetFingerSmoothingConfig after driver init reseeds every
 		// currently-enabled finger automatically.
-		auto isSmoothedIn = [](const protocol::FingerSmoothingConfig &c, int idx) {
-			if (!c.master_enabled) return false;
-			if (((c.finger_mask >> idx) & 1u) == 0) return false;
-			const uint8_t perFinger = c.per_finger_smoothness[idx];
-			const uint8_t effective = perFinger != 0 ? perFinger : c.smoothness;
-			return effective != 0;
-		};
-		uint16_t reseedBits = 0;
-		for (int i = 0; i < 10; ++i) {
-			const bool wasOn = isSmoothedIn(prev, i);
-			const bool isOn  = isSmoothedIn(cfg,  i);
-			if (!wasOn && isOn) reseedBits |= (uint16_t)(1u << i);
-		}
+		const uint16_t reseedBits =
+			pairdriver::ComputeFingerSmoothingReseedBits(prev, cfg);
 		if (reseedBits) skeletal::MarkFingersNeedReseed(reseedBits);
 
 		LOG("[skeletal] SetFingerSmoothingConfig via IPC: enabled=%d global=%u mask=0x%04x per_finger=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u] (was: enabled=%d global=%u mask=0x%04x)",
@@ -1162,22 +919,18 @@ protocol::FingerSmoothingConfig ServerTrackedDeviceProvider::GetFingerSmoothingC
 	// one extra cache-line touch per call vs the old single-atomic version.
 	const uint64_t header = fingerCfgPacked.load(std::memory_order_acquire);
 	const uint64_t low    = perFingerSmoothness0to7Packed.load(std::memory_order_acquire);
-	return UnpackFingerSmoothing(header, low);
+	return pairdriver::UnpackFingerSmoothing(header, low);
 }
 
 void ServerTrackedDeviceProvider::SetInputHealthConfig(const protocol::InputHealthConfig &cfg)
 {
-	static_assert(sizeof(protocol::InputHealthConfig) <= sizeof(uint64_t),
-		"InputHealthConfig must fit inside atomic<uint64_t>");
-
-	uint64_t newPacked = 0;
-	std::memcpy(&newPacked, &cfg, sizeof(cfg));
+	const uint64_t newPacked = pairdriver::PackInputHealthConfig(cfg);
 
 	const uint64_t oldPacked = inputHealthCfgPacked.exchange(newPacked, std::memory_order_acq_rel);
 
 	if (oldPacked != newPacked) {
-		protocol::InputHealthConfig prev{};
-		std::memcpy(&prev, &oldPacked, sizeof(prev));
+		const protocol::InputHealthConfig prev =
+			pairdriver::UnpackInputHealthConfig(oldPacked);
 		LOG("[inputhealth] SetInputHealthConfig via IPC: master=%d diag_only=%d rest=%d trig=%d (was: master=%d diag_only=%d rest=%d trig=%d)",
 			(int)cfg.master_enabled, (int)cfg.diagnostics_only,
 			(int)cfg.enable_rest_recenter, (int)cfg.enable_trigger_remap,
@@ -1191,9 +944,7 @@ protocol::InputHealthConfig ServerTrackedDeviceProvider::GetInputHealthConfig() 
 	// Hot path: every UpdateBooleanComponent / UpdateScalarComponent detour
 	// once Stage 1B lands. Single atomic load + acquire fence + memcpy.
 	const uint64_t packed = inputHealthCfgPacked.load(std::memory_order_acquire);
-	protocol::InputHealthConfig cfg{};
-	std::memcpy(&cfg, &packed, sizeof(cfg));
-	return cfg;
+	return pairdriver::UnpackInputHealthConfig(packed);
 }
 
 void ServerTrackedDeviceProvider::SetInputHealthCompensation(const protocol::InputHealthCompensationEntry &entry)
@@ -1274,4 +1025,3 @@ void ServerTrackedDeviceProvider::ClearInputHealthCompensation(uint64_t serial_h
 	LOG("[inputhealth] ClearInputHealthCompensation: serial_hash=0x%016llx erased=%zu",
 		(unsigned long long)serial_hash, erased);
 }
-

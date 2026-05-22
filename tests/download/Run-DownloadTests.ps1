@@ -29,6 +29,27 @@ foreach ($p in @($GeneratorPs1, $ServerPs1, $CaptionsPs1, $FaceSyncPs1)) {
 	Assert-FileExists $p 'required script'
 }
 
+function Quote-PsSingle([string] $Value) {
+	return "'" + ($Value -replace "'", "''") + "'"
+}
+
+function Invoke-FaceSyncFolder([string] $SourceData, [string] $SourceId, [string] $ResultPath) {
+	$env:WKOPENVR_FACE_SYNC_SOURCE_DATA = $SourceData
+	try {
+		$command = @"
+`$ProgressPreference = 'SilentlyContinue'
+& $(Quote-PsSingle $FaceSyncPs1) -Action 'add' -Kind 'folder' -SourceData `$env:WKOPENVR_FACE_SYNC_SOURCE_DATA -SourceId $(Quote-PsSingle $SourceId) -ResultPath $(Quote-PsSingle $ResultPath)
+exit `$LASTEXITCODE
+"@
+		$encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($command))
+		& pwsh.exe -NoProfile -EncodedCommand $encoded
+		return $LASTEXITCODE
+	}
+	finally {
+		Remove-Item Env:WKOPENVR_FACE_SYNC_SOURCE_DATA -ErrorAction SilentlyContinue
+	}
+}
+
 # ---- workspace -----------------------------------------------------------
 
 if (-not $WorkingRoot) {
@@ -140,8 +161,15 @@ try {
 	[System.IO.File]::WriteAllText($badManifestPath, $badContent, (New-Object System.Text.UTF8Encoding($false)))
 	# Wipe the captions tree so the installer re-downloads (and trips on SHA).
 	Remove-Item -LiteralPath $captionsRoot -Recurse -Force -ErrorAction SilentlyContinue
-	$badOutput = & pwsh.exe -NoProfile -File $CaptionsPs1 -PackId $Summary.captions_pack_id -Manifest $badManifestPath 2>&1
-	$badExit = $LASTEXITCODE
+	$oldErrorActionPreference = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		$badOutput = & pwsh.exe -NoProfile -File $CaptionsPs1 -PackId $Summary.captions_pack_id -Manifest $badManifestPath 2>&1
+		$badExit = $LASTEXITCODE
+	}
+	finally {
+		$ErrorActionPreference = $oldErrorActionPreference
+	}
 	Assert-True ($badExit -ne 0) "installer must exit non-zero on bad SHA (got exit=$badExit; output: $($badOutput -join ' | '))"
 	$badOutputJoined = ($badOutput -join "`n").ToLowerInvariant()
 	Assert-True ($badOutputJoined -match 'sha|hash|mismatch') `
@@ -157,10 +185,8 @@ try {
 	$faceResultPath = Join-Path $WorkingRoot 'face-folder-result.json'
 	$folderSource = $Summary.vrcft_module_dir
 	$folderJson = @{ path = $folderSource } | ConvertTo-Json -Compress
-	& pwsh.exe -NoProfile -File $FaceSyncPs1 `
-		-Action 'add' -Kind 'folder' -SourceData $folderJson `
-		-SourceId 'harness-folder-1' -ResultPath $faceResultPath
-	if ($LASTEXITCODE -ne 0) { throw "face-module-sync folder install exited $LASTEXITCODE" }
+	$faceExit = Invoke-FaceSyncFolder -SourceData $folderJson -SourceId 'harness-folder-1' -ResultPath $faceResultPath
+	if ($faceExit -ne 0) { throw "face-module-sync folder install exited $faceExit" }
 	Assert-FileExists $faceResultPath 'face install result'
 	$faceResult = Get-Content -LiteralPath $faceResultPath -Raw | ConvertFrom-Json
 	Assert-True $faceResult.ok "face install result must report ok=true (msg='$($faceResult.message)')"
@@ -175,14 +201,12 @@ try {
 	# hit the network, so we use the registry branch with a forced 404).
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-missing-source"
-	$bogusFolder = Join-Path $WorkingRoot 'no-such-folder-' + ([Guid]::NewGuid().ToString('N'))
+	$bogusFolder = Join-Path $WorkingRoot ('no-such-folder-' + ([Guid]::NewGuid().ToString('N')))
 	$bogusJson = @{ path = $bogusFolder } | ConvertTo-Json -Compress
 	$bogusResult = Join-Path $WorkingRoot 'face-bogus-result.json'
 	$exit = 0
 	try {
-		& pwsh.exe -NoProfile -File $FaceSyncPs1 -Action 'add' -Kind 'folder' `
-			-SourceData $bogusJson -SourceId 'harness-bogus-1' -ResultPath $bogusResult
-		$exit = $LASTEXITCODE
+		$exit = Invoke-FaceSyncFolder -SourceData $bogusJson -SourceId 'harness-bogus-1' -ResultPath $bogusResult
 	} catch {
 		$exit = -1
 	}

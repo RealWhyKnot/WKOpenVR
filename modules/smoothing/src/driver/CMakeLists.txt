@@ -4,8 +4,12 @@ cmake_minimum_required(VERSION 3.15)
 set(SMOOTHING_PAIRDRIVER_ROOT "${CMAKE_SOURCE_DIR}")
 
 add_library(openvr_pair_feature_smoothing_driver STATIC
+	SkeletalDiagnostics.cpp
+	SkeletalDiagnostics.h
 	SkeletalHookInjector.cpp
 	SkeletalHookInjector.h
+	SkeletalSmoothingMath.cpp
+	SkeletalSmoothingMath.h
 	SmoothingDriverModule.cpp)
 
 target_include_directories(openvr_pair_feature_smoothing_driver PRIVATE

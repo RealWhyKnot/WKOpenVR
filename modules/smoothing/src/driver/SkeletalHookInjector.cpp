@@ -1,4 +1,6 @@
 #include "SkeletalHookInjector.h"
+#include "SkeletalDiagnostics.h"
+#include "SkeletalSmoothingMath.h"
 #include "Hooking.h"
 #include "DriverMemoryProbe.h"
 #include "InterfaceHookInjector.h"   // InterfaceHooks::DetourScope -- bracket
@@ -316,82 +318,6 @@ static void DumpHandleMap(const char *callerTag)
 }
 
 // =============================================================================
-// Smoothing math. Per-bone slerp toward incoming, with linear interpolation
-// for position. Independent per-bone smoothing (not curl/splay derive +
-// reconstruct) -- this is the first-iteration math; we may promote to summary-
-// scalar smoothing later. Quaternion validity is preserved (slerp + normalize).
-// =============================================================================
-
-static inline float Lerpf(float a, float b, float t)
-{
-    return a + (b - a) * t;
-}
-
-static vr::HmdQuaternionf_t SlerpQuat(const vr::HmdQuaternionf_t &a, vr::HmdQuaternionf_t b, float t)
-{
-    float dot = a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w;
-    // Take the shorter arc.
-    if (dot < 0.0f) {
-        b.x = -b.x; b.y = -b.y; b.z = -b.z; b.w = -b.w;
-        dot = -dot;
-    }
-    // Nearly aligned: linear blend is numerically safer than acos at small angles.
-    if (dot > 0.9995f) {
-        vr::HmdQuaternionf_t r{
-            Lerpf(a.w, b.w, t),
-            Lerpf(a.x, b.x, t),
-            Lerpf(a.y, b.y, t),
-            Lerpf(a.z, b.z, t)
-        };
-        float len = std::sqrt(r.w*r.w + r.x*r.x + r.y*r.y + r.z*r.z);
-        if (len > 0.0f) {
-            float inv = 1.0f / len;
-            r.w *= inv; r.x *= inv; r.y *= inv; r.z *= inv;
-        }
-        return r;
-    }
-    float theta_0     = std::acos(dot);
-    float sin_theta_0 = std::sin(theta_0);
-    float theta       = theta_0 * t;
-    float sin_theta   = std::sin(theta);
-    float s1 = std::cos(theta) - dot * sin_theta / sin_theta_0;
-    float s2 = sin_theta / sin_theta_0;
-    return vr::HmdQuaternionf_t{
-        s1*a.w + s2*b.w,
-        s1*a.x + s2*b.x,
-        s1*a.y + s2*b.y,
-        s1*a.z + s2*b.z
-    };
-}
-
-// OpenVR hand skeleton bone layout (vr::HandSkeletonBone enum):
-//   0 root, 1 wrist, 2-5 thumb, 6-10 index, 11-15 middle,
-//   16-20 ring, 21-25 pinky, 26-30 aux markers.
-// Returns 0..4 (thumb..pinky) for finger bones, -1 otherwise.
-static int FingerIndexForBone(uint32_t bone)
-{
-    if (bone >= 2  && bone <= 5)  return 0;
-    if (bone >= 6  && bone <= 10) return 1;
-    if (bone >= 11 && bone <= 15) return 2;
-    if (bone >= 16 && bone <= 20) return 3;
-    if (bone >= 21 && bone <= 25) return 4;
-    return -1;
-}
-
-// User-visible smoothness 0..100 -> slerp factor 1.0..0.05.
-//   0   -> alpha 1.0   (raw passthrough; current frame snaps)
-//   100 -> alpha 0.05  (heavy smoothing; never fully freezes)
-// Intermediate values lerp linearly. The 0.95 multiplier preserves a tiny
-// per-frame nudge at maximum smoothness so a finger never visually locks.
-static float SmoothnessToAlpha(uint8_t smoothness)
-{
-    float s = (float)smoothness;
-    if (s < 0.0f)   s = 0.0f;
-    if (s > 100.0f) s = 100.0f;
-    return 1.0f - (s / 100.0f) * 0.95f;
-}
-
-// =============================================================================
 // Hook<> instances. Names must be unique against everything else registered
 // in IHook::hooks (see SC's existing InterfaceHookInjector.cpp). Two slots
 // only -- UpdateSkeleton (the smoothing target) and CreateSkeleton (used to
@@ -624,7 +550,7 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
     for (int f = 0; f < 5; ++f) {
         uint8_t s = cfg.per_finger_smoothness[handBase + f];
         if (s == 0) s = cfg.smoothness;
-        alphaPerFinger[f] = SmoothnessToAlpha(s);
+        alphaPerFinger[f] = skeletal::math::SmoothnessToAlpha(s);
         if (s != 0) anySmoothing = true;
     }
 
@@ -690,7 +616,7 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
             state.initialized = true;
         } else {
             for (uint32_t i = 0; i < 31; ++i) {
-                int finger = FingerIndexForBone(i);
+                int finger = skeletal::math::FingerIndexForBone(i);
                 bool inMask = finger >= 0 && (((cfg.finger_mask >> (handBase + finger)) & 1u) != 0);
                 if (!inMask) {
                     smoothed[i] = pTransforms[i];
@@ -718,11 +644,11 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
                 const auto &in   = pTransforms[i];
                 const auto &prev = state.previous[i];
                 vr::VRBoneTransform_t out{};
-                out.position.v[0] = Lerpf(prev.position.v[0], in.position.v[0], alpha);
-                out.position.v[1] = Lerpf(prev.position.v[1], in.position.v[1], alpha);
-                out.position.v[2] = Lerpf(prev.position.v[2], in.position.v[2], alpha);
+                out.position.v[0] = skeletal::math::Lerpf(prev.position.v[0], in.position.v[0], alpha);
+                out.position.v[1] = skeletal::math::Lerpf(prev.position.v[1], in.position.v[1], alpha);
+                out.position.v[2] = skeletal::math::Lerpf(prev.position.v[2], in.position.v[2], alpha);
                 out.position.v[3] = in.position.v[3];
-                out.orientation   = SlerpQuat(prev.orientation, in.orientation, alpha);
+                out.orientation   = skeletal::math::SlerpQuat(prev.orientation, in.orientation, alpha);
 
                 // Steady-state delta tracking: compute before we overwrite
                 // state.previous[i] with `out` below, so `prev` is still the
@@ -769,28 +695,13 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
             const bool shouldLog = (frameIdx % kPostEnableLogStride) == 0;
             PostEnableSnapshot &snap = g_postEnableSnap[handedness];
             if (shouldLog && snap.valid) {
-                float maxPosDelta = 0.0f;
-                float minQuatDot  = 1.0f;
-                int   worstBone   = -1;
-                for (uint32_t i = 0; i < 31; ++i) {
-                    const auto &a = smoothed[i];
-                    const auto &b = snap.bones[i];
-                    const float dx = a.position.v[0] - b.position.v[0];
-                    const float dy = a.position.v[1] - b.position.v[1];
-                    const float dz = a.position.v[2] - b.position.v[2];
-                    const float d  = std::sqrt(dx*dx + dy*dy + dz*dz);
-                    if (d > maxPosDelta) { maxPosDelta = d; worstBone = (int)i; }
-                    const float dot = a.orientation.w * b.orientation.w
-                                    + a.orientation.x * b.orientation.x
-                                    + a.orientation.y * b.orientation.y
-                                    + a.orientation.z * b.orientation.z;
-                    const float absDot = dot < 0.0f ? -dot : dot;
-                    if (absDot < minQuatDot) minQuatDot = absDot;
-                }
+                const auto stats = skeletal::diagnostics::MeasureBoneDeltaStats(
+                    smoothed, snap.bones, 31);
                 LOG("[smoothing-diag] post-enable %s hand frame %d/%d: "
                     "maxPosDelta=%.4fm (bone=%d) minQuatDot=%.4f",
                     handedness == 0 ? "left" : "right",
-                    frameIdx, kPostEnableFrames, maxPosDelta, worstBone, minQuatDot);
+                    frameIdx, kPostEnableFrames,
+                    stats.maxPosDelta, stats.maxPosBone, stats.minQuatDot);
             }
             std::memcpy(snap.bones, smoothed, sizeof(snap.bones));
             snap.valid = true;

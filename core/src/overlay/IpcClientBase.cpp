@@ -2,6 +2,7 @@
 
 #include "Win32Errors.h"
 
+#include <cstdio>
 #include <stdexcept>
 #include <utility>
 
@@ -95,6 +96,8 @@ void IpcClientBase::Connect(const char *pipeName, IpcClientConnectOptions option
 		throw std::runtime_error(FormatVersionMismatch(options_, protocol::Version, response.protocol.version));
 	}
 	mismatchState_ = MismatchState::Matching;
+	fprintf(stderr, "[IPC] %s handshake ok: our_protocol=%u driver_protocol=%u\n",
+		pipeName_.c_str(), (unsigned)protocol::Version, (unsigned)response.protocol.version);
 	++connectionGeneration_;
 }
 
