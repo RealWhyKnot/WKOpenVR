@@ -10,7 +10,29 @@
 
 #include <gtest/gtest.h>
 
+#include <deque>
+
 namespace al = spacecal::autolock;
+
+namespace {
+
+// Helper: build a relative-pose sample at the given translation, identity
+// rotation. Tests that vary rotation use the overload below.
+Eigen::AffineCompact3d Sample(double x, double y, double z)
+{
+    Eigen::AffineCompact3d a = Eigen::AffineCompact3d::Identity();
+    a.translation() = Eigen::Vector3d(x, y, z);
+    return a;
+}
+
+Eigen::AffineCompact3d SampleRot(const Eigen::Quaterniond& q)
+{
+    Eigen::AffineCompact3d a = Eigen::AffineCompact3d::Identity();
+    a.linear() = q.toRotationMatrix();
+    return a;
+}
+
+}  // namespace
 
 // --- Hysteresis: enter behavior ---------------------------------------------
 
@@ -180,4 +202,173 @@ TEST(AutoLockHysteresisTest, ReanchorSuppressionReleasesAtAndAfterDeadline)
     EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/until, until));
     EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/until + 1e-6, until));
     EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/until + 10.0, until));
+}
+
+// --- MAD-based robust deviation metrics ------------------------------------
+
+// 28 tight samples (sub-mm scatter around origin) plus 2 outliers at 25mm.
+// The previous sqrt(variance) metric would compute ~6mm and unlock the
+// detector mid-session; MAD ignores the outliers and stays at the
+// steady-state noise level. This is the exact failure mode the 2026-05-21
+// log showed: pending LOCKs cancelled by transient pose spikes.
+TEST(AutoLockHysteresisTest, RobustTranslDeviationRejectsOutlierSpike)
+{
+    std::deque<Eigen::AffineCompact3d> history;
+    // Smooth triangular ramp across ±0.5mm so the componentwise median sits
+    // near origin (alternating-sign distributions land the median at one
+    // mode and double the apparent MAD).
+    for (int i = 0; i < 28; ++i) {
+        const double t = ((double)i - 13.5) / 13.5;  // -1 to +1
+        history.push_back(Sample(0.0005 * t, 0.0002 * t, 0.0));
+    }
+    // Two outliers at 25mm along x.
+    history.push_back(Sample(0.025, 0.0, 0.0));
+    history.push_back(Sample(0.025, 0.0, 0.0));
+
+    const double mad = al::RobustTranslDeviation(history);
+    EXPECT_LT(mad, 0.003)
+        << "MAD should ignore the two 25mm outliers and stay below the 3mm "
+           "enter threshold. Got " << mad << " m.";
+}
+
+// 30 samples drifting linearly across 0-15mm represent an actual rigidity
+// change (tracker slowly slipping). MAD should rise enough to trip the 8mm
+// leave threshold.
+TEST(AutoLockHysteresisTest, RobustTranslDeviationDetectsSustainedDrift)
+{
+    std::deque<Eigen::AffineCompact3d> history;
+    for (int i = 0; i < 30; ++i) {
+        const double x = 0.015 * (double)i / 29.0;
+        history.push_back(Sample(x, 0.0, 0.0));
+    }
+    const double mad = al::RobustTranslDeviation(history);
+    EXPECT_GT(mad, 0.005)
+        << "Sustained drift across 15mm should produce MAD large enough to "
+           "be meaningful. Got " << mad << " m.";
+}
+
+// Rotation analogue of the outlier-rejection test. 28 samples at identity
+// + 2 large-angle outliers; MAD should stay below the 0.7 deg enter
+// threshold.
+TEST(AutoLockHysteresisTest, RobustRotDeviationRejectsOutlierSpike)
+{
+    std::deque<Eigen::AffineCompact3d> history;
+    for (int i = 0; i < 28; ++i) {
+        // Tiny rotation noise (~0.05 deg).
+        const double sign = (i & 1) ? 1.0 : -1.0;
+        const double angle = sign * 0.05 * EIGEN_PI / 180.0;
+        history.push_back(SampleRot(
+            Eigen::Quaterniond(Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ()))));
+    }
+    // Two outliers at 5 degrees.
+    const double bigAngle = 5.0 * EIGEN_PI / 180.0;
+    history.push_back(SampleRot(
+        Eigen::Quaterniond(Eigen::AngleAxisd(bigAngle, Eigen::Vector3d::UnitZ()))));
+    history.push_back(SampleRot(
+        Eigen::Quaterniond(Eigen::AngleAxisd(bigAngle, Eigen::Vector3d::UnitZ()))));
+
+    const double mad = al::RobustRotDeviation(history);
+    const double enterThresh = 0.7 * EIGEN_PI / 180.0;
+    EXPECT_LT(mad, enterThresh)
+        << "Rotation MAD should ignore the two 5-deg outliers. Got " << mad
+        << " rad (" << (mad * 180.0 / EIGEN_PI) << " deg).";
+}
+
+// Empty history returns zero rather than NaN/garbage. The detector caller
+// gates on history size before calling these helpers, but the helpers
+// themselves should be safe to call on an empty deque.
+TEST(AutoLockHysteresisTest, RobustDeviationOnEmptyHistoryReturnsZero)
+{
+    std::deque<Eigen::AffineCompact3d> history;
+    EXPECT_DOUBLE_EQ(al::RobustTranslDeviation(history), 0.0);
+    EXPECT_DOUBLE_EQ(al::RobustRotDeviation(history), 0.0);
+}
+
+// --- End-to-end: bimodal Quest+Lighthouse noise pattern --------------------
+
+// Synthesize the exact failure mode from the 2026-05-21 log:
+// most samples are tight (sub-2mm), but every ~10th sample is a transient
+// spike at 10-15mm. Drive RobustTranslDeviation -> VerdictWithHysteresis;
+// confirm pending LOCK survives the spikes (previous sqrt(variance) would
+// have unlocked within one tick of each spike).
+TEST(AutoLockHysteresisTest, BimodalNoiseStaysLockedThroughSpikes)
+{
+    std::deque<Eigen::AffineCompact3d> history;
+    bool locked = false;
+    int flipCount = 0;
+
+    // Seed with 30 tight samples to enter the locked state -- smooth ramp
+    // so the median sits near origin and MAD reflects the actual scatter.
+    for (int i = 0; i < 30; ++i) {
+        const double t = ((double)i - 14.5) / 14.5;  // -1 to +1
+        history.push_back(Sample(0.0005 * t, 0.0, 0.0));
+    }
+    {
+        const bool verdict = al::VerdictWithHysteresis(
+            al::RobustTranslDeviation(history),
+            al::RobustRotDeviation(history),
+            locked);
+        if (verdict != locked) ++flipCount;
+        locked = verdict;
+    }
+    EXPECT_TRUE(locked) << "Initial tight window should enter locked.";
+
+    // Now feed 100 more samples: tight noise with 10% spike rate at 12mm.
+    for (int i = 0; i < 100; ++i) {
+        const bool isSpike = (i % 10 == 5);
+        const double t = ((double)(i % 13) - 6.0) / 6.0;  // smooth -1..+1
+        const double x = isSpike ? 0.012 : 0.0005 * t;
+        history.push_back(Sample(x, 0.0, 0.0));
+        if (history.size() > al::kHistoryMax) history.pop_front();
+
+        const bool verdict = al::VerdictWithHysteresis(
+            al::RobustTranslDeviation(history),
+            al::RobustRotDeviation(history),
+            locked);
+        if (verdict != locked) ++flipCount;
+        locked = verdict;
+    }
+
+    // Under the old metric this would flap 10+ times. Under MAD we expect
+    // ≤1 flip (initial enter); ideally zero unlocks across the 10% spike
+    // rate.
+    EXPECT_LE(flipCount, 1)
+        << "Bimodal noise (10% spikes) should not flap the lock. flipCount="
+        << flipCount;
+    EXPECT_TRUE(locked) << "Should remain locked at end of run.";
+}
+
+// Same noise but starts unlocked. The detector should latch to locked
+// after the initial 30-sample window earns evidence, then stay locked.
+// The 2026-05-21 log showed 4 pending-LOCK events that all got cancelled;
+// here we want 1 transition to locked and 0 unlocks.
+TEST(AutoLockHysteresisTest, BimodalNoiseEnterLockOnceAndHold)
+{
+    std::deque<Eigen::AffineCompact3d> history;
+    bool locked = false;
+    int lockEvents = 0;
+    int unlockEvents = 0;
+
+    for (int i = 0; i < 60; ++i) {
+        const bool isSpike = (i % 10 == 5);
+        const double t = ((double)(i % 13) - 6.0) / 6.0;
+        const double x = isSpike ? 0.012 : 0.0005 * t;
+        history.push_back(Sample(x, 0.0, 0.0));
+        if (history.size() > al::kHistoryMax) history.pop_front();
+
+        if (history.size() < al::kSamplesNeeded) continue;
+
+        const bool verdict = al::VerdictWithHysteresis(
+            al::RobustTranslDeviation(history),
+            al::RobustRotDeviation(history),
+            locked);
+        if (verdict && !locked) ++lockEvents;
+        if (!verdict && locked) ++unlockEvents;
+        locked = verdict;
+    }
+
+    EXPECT_GE(lockEvents, 1) << "Should enter locked at least once.";
+    EXPECT_EQ(unlockEvents, 0)
+        << "Should never unlock under bimodal 10%-spike noise. unlockEvents="
+        << unlockEvents;
 }

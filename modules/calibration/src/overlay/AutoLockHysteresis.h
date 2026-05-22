@@ -24,6 +24,9 @@
 // MotionGate.h, GeometryShiftDetector.h, WatchdogDecisions.h, TiltDiagnostic.h.
 
 #include <Eigen/Geometry>
+#include <algorithm>
+#include <deque>
+#include <vector>
 
 namespace spacecal::autolock {
 
@@ -112,6 +115,70 @@ inline bool HmdIsStationary(double hmdSpeedMps)
 inline bool ShouldSuppressForReanchor(double now, double suppressUntil)
 {
     return now < suppressUntil;
+}
+
+// MAD-based robust translation deviation over a window of relative-pose
+// samples. Returns a stddev-equivalent value (MAD scaled by 1.4826, the
+// Gaussian consistency factor) that ignores single-sample outliers.
+//
+// Cross-tracking-system pairs (e.g. Quest HMD + Lighthouse tracker) produce a
+// bimodal noise pattern: most samples are tight (sub-2mm) with occasional
+// large transient excursions (USB hiccups, pose extrapolation glitches,
+// inter-system synchronisation jitter). Classic sqrt(variance) inflates
+// badly on those spikes and prevents AUTO Lock from ever committing, even
+// though 27 of 30 samples in the window agree on a rigid relationship. MAD
+// stays at the steady-state noise level until a majority of samples shift,
+// which is the correct signal for "rigid attachment has changed".
+//
+// Componentwise median on translation is computed via nth_element on each
+// axis; deviation magnitudes use the L2 norm against the median vector.
+// O(N) for N=30; trivial cost per tick.
+inline double RobustTranslDeviation(const std::deque<Eigen::AffineCompact3d>& history)
+{
+    const size_t n = history.size();
+    if (n == 0) return 0.0;
+
+    std::vector<double> xs(n), ys(n), zs(n);
+    for (size_t i = 0; i < n; ++i) {
+        const auto& t = history[i].translation();
+        xs[i] = t.x(); ys[i] = t.y(); zs[i] = t.z();
+    }
+    auto medianOf = [](std::vector<double>& v) {
+        const size_t mid = v.size() / 2;
+        std::nth_element(v.begin(), v.begin() + mid, v.end());
+        return v[mid];
+    };
+    const Eigen::Vector3d median(medianOf(xs), medianOf(ys), medianOf(zs));
+
+    std::vector<double> devs(n);
+    for (size_t i = 0; i < n; ++i) {
+        devs[i] = (history[i].translation() - median).norm();
+    }
+    const size_t mid = n / 2;
+    std::nth_element(devs.begin(), devs.begin() + mid, devs.end());
+    return devs[mid] * 1.4826;
+}
+
+// MAD-based robust rotation deviation. Median of geodesic distances from
+// the median quaternion sample, scaled by 1.4826. Same outlier-rejection
+// rationale as RobustTranslDeviation. The middle-sample approximation of
+// the median quaternion matches the legacy code path's choice (the proper
+// Frechet mean on SO(3) is not worth the complexity for a 30-sample
+// outlier-detection metric).
+inline double RobustRotDeviation(const std::deque<Eigen::AffineCompact3d>& history)
+{
+    const size_t n = history.size();
+    if (n == 0) return 0.0;
+
+    const Eigen::Quaterniond medianQ(history[n / 2].rotation());
+
+    std::vector<double> devs(n);
+    for (size_t i = 0; i < n; ++i) {
+        devs[i] = medianQ.angularDistance(Eigen::Quaterniond(history[i].rotation()));
+    }
+    const size_t mid = n / 2;
+    std::nth_element(devs.begin(), devs.begin() + mid, devs.end());
+    return devs[mid] * 1.4826;
 }
 
 } // namespace spacecal::autolock

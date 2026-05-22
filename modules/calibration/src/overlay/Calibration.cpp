@@ -219,33 +219,13 @@ void CalibrationContext::UpdateAutoLockDetector(
 		return;
 	}
 
-	// Translation variance: classic mean + std-dev on the translation
-	// vector. Rigid attachment shows ~mm-level jitter from sensor noise;
-	// independent devices can vary by tens of cm as the user moves.
-	Eigen::Vector3d meanT = Eigen::Vector3d::Zero();
-	for (const auto& a : autoLockHistory) meanT += a.translation();
-	meanT /= (double)autoLockHistory.size();
-	double translVar = 0.0;
-	for (const auto& a : autoLockHistory) {
-		const Eigen::Vector3d d = a.translation() - meanT;
-		translVar += d.squaredNorm();
-	}
-	translVar /= (double)autoLockHistory.size();
-	const double translStdDev = std::sqrt(translVar);
-
-	// Rotation: max angular distance between any sample and the median.
-	// We don't bother computing the proper Frechet mean on SO(3) -- the
-	// median sample is good enough as a stand-in, and "max from median" is
-	// a tighter bound than "max consecutive". For a true rigid attachment,
-	// every sample sits within sensor jitter of the same rotation.
-	const auto& medianRot = autoLockHistory[autoLockHistory.size() / 2].rotation();
-	const Eigen::Quaterniond medianQ(medianRot);
-	double rotMaxAngle = 0.0;
-	for (const auto& a : autoLockHistory) {
-		const Eigen::Quaterniond q(a.rotation());
-		const double angle = medianQ.angularDistance(q);
-		if (angle > rotMaxAngle) rotMaxAngle = angle;
-	}
+	// MAD-based robust deviation metrics. The previous sqrt(variance) +
+	// max-from-median pair inflated badly on single-sample outliers, which
+	// on cross-tracking-system rigs (Quest HMD + Lighthouse tracker) are
+	// frequent enough that pending LOCKs queued during steady-state windows
+	// got cancelled within a tick. See AutoLockHysteresis.h for the why.
+	const double translStdDev = RobustTranslDeviation(autoLockHistory);
+	const double rotMaxAngle  = RobustRotDeviation(autoLockHistory);
 
 	const bool verdict = spacecal::autolock::VerdictWithHysteresis(
 		translStdDev, rotMaxAngle, autoLockEffectivelyLocked);
@@ -266,7 +246,7 @@ void CalibrationContext::UpdateAutoLockDetector(
 		if (!prevPending || prevTarget != verdict) {
 			char buf[224];
 			snprintf(buf, sizeof buf,
-				"auto_lock_flip_pending: target=%d current=%d translStdDev=%.4fm rotMaxAng=%.4frad samples=%zu",
+				"auto_lock_flip_pending: target=%d current=%d translMad=%.4fm rotMad=%.4frad samples=%zu",
 				(int)verdict, (int)autoLockEffectivelyLocked,
 				translStdDev, rotMaxAngle, autoLockHistory.size());
 			Metrics::WriteLogAnnotation(buf);
