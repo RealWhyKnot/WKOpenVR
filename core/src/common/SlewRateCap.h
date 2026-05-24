@@ -5,12 +5,12 @@
 // in absolute mm/sec and deg/sec, regardless of how large the pending
 // correction is.
 //
-// Why a cap, not a regime-based percentage floor (which is what
-// MotionGate.h's ClassifyCorrection + StillFloor previously did): a 90%
-// still-floor on a "Large" regime correction closed ~85% of the gap per
-// second when the user was stationary. After a long stationary stretch in
-// which continuous-cal accumulated a few cm of pending correction, that
-// regime fired the moment the user moved, producing a visible jump. The
+// Why a cap, not a regime-based percentage floor: the predecessor used
+// a 10/50/90 percent still-floor by Tiny/Normal/Large classification,
+// which closed ~85 percent of the gap per second when stationary for any
+// Large-regime correction. After a long stationary stretch in which
+// continuous-cal accumulated a few cm of pending correction, that regime
+// fired the moment the user moved, producing a visible jump. The
 // imperceptible-drift threshold in VR is ~0.5 mm/sec lateral; a hard cap
 // at that rate guarantees no visible jump regardless of how much correction
 // accumulated while still.

@@ -6,7 +6,6 @@
 #include "ServerTrackedDeviceProviderConfigPacking.h"
 #include "inputhealth/PathClassifier.h"
 #include "inputhealth/SerialHash.h"
-#include "MotionGate.h"  // ClassifyCorrection / StillFloor -- option 3 per user 2026-05-04
 #include "quash/QuashPose.h"
 
 // Forward declaration of the per-finger reseed entry point. Defined in
