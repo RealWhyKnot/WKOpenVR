@@ -169,6 +169,12 @@ private:
 		Eigen::Vector3d lastBlendWorldPos = Eigen::Vector3d::Zero();
 		Eigen::Quaterniond lastBlendWorldRot = Eigen::Quaterniond::Identity();
 		bool blendMotionInitialized = false;
+
+		// Last time the [blend][slew] heartbeat fired for this slot. Throttled
+		// to ~5 s so a long stationary stretch produces a few log lines, not a
+		// flood. Zero-initialised; first non-trivial-pending tick after wrap or
+		// boot emits regardless of the throttle.
+		LARGE_INTEGER lastSlewLogTime{};
 	};
 
 	struct FallbackTransform
