@@ -6,6 +6,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 
 ## Unreleased
 
+### Added
+- **calibration:** Plumb slew-rate config + IPC + UI (protocol v24) (e9770db)
+- **calibration:** Add SlewRateCap pure helper + tests (37caaf4)
+
 ### Changed
 - **calibration:** Drop the per-serial Always-Hide list (68f0cf7)
 - diag(calibration): surface AUTO Lock MAD + geometry-shift state in heartbeat (1a6638a)
@@ -13,11 +17,14 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Centralise HMD speed + forward-declare leaf autolock helpers (9c721b1)
 - diag(facetracking): per-phase startup log so a slow cold-start narrows itself (04ab330)
 - Modularize large WKOpenVR subsystems (4f4c668)
+- **calibration:** Remove deprecated regime-floor helpers (20105e6)
+- diag(calibration): geometry-shift fire log shows real sustain count (e5fd39c)
 
 ### Fixed
 - **calibration:** Geometry-shift CUSUM sustain gate + post-fire cooldown (d41c811)
 - **calibration:** MAD-based AUTO Lock deviation metric (32a7d2e)
 - **calibration:** Panic-unlock AUTO Lock on extreme MAD deviation (d1a7e9e)
+- **calibration:** Drive BlendTransform from the slew-rate cap (c152580)
 
 ---
 
