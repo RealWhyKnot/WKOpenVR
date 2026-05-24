@@ -36,6 +36,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_watchdog_decisions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_state_transitions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_gate.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_slew_rate_cap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_latency_estimator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tilt_diagnostic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_robust_scale.cpp
