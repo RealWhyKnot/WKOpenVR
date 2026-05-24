@@ -226,6 +226,57 @@ TEST(CusumGeometryShiftTest, ManualThresholdTuningWorks) {
     EXPECT_DOUBLE_EQ(s.S, 0.0);
 }
 
+TEST(CusumGeometryShiftTest, OutSustainAtFireCapturesPreResetValue) {
+    // Regression for the 2026-05-24 log audit: every CUSUM fire line printed
+    // `sustained=0` because the caller read the state field AFTER the
+    // in-function reset. The out-param exposes the pre-reset value so the
+    // log can prove the sustain gate was satisfied (>= kMinSustainedSpikes).
+    using spacecal::geometry_shift::CusumState;
+    using spacecal::geometry_shift::UpdateCusumGeometryShift;
+    using spacecal::geometry_shift::kMinSustainedSpikes;
+    CusumState s{};
+
+    int sustainAtFire = -1;
+    double valueAtFire = -1.0;
+
+    // Per SustainedShiftFiresAfterSustainGate above: with current=5/baseline=0
+    // the increment is 4.5/tick, so tick 1 lands S=4.5 (below threshold; no
+    // sustain bump), ticks 2-4 cross the threshold and tick 4 hits sustain=3.
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0,
+            spacecal::geometry_shift::kCusumDriftMm,
+            spacecal::geometry_shift::kCusumThreshold,
+            &valueAtFire, &sustainAtFire));
+        EXPECT_EQ(sustainAtFire, -1) << "no fire => out-param untouched (tick " << i << ")";
+        EXPECT_DOUBLE_EQ(valueAtFire, -1.0);
+    }
+    EXPECT_TRUE(UpdateCusumGeometryShift(s, 5.0, 0.0,
+        spacecal::geometry_shift::kCusumDriftMm,
+        spacecal::geometry_shift::kCusumThreshold,
+        &valueAtFire, &sustainAtFire));
+    EXPECT_GE(sustainAtFire, kMinSustainedSpikes)
+        << "fire requires sustain >= kMinSustainedSpikes; out-param must "
+           "expose that pre-reset value so the diagnostic log can confirm it";
+    EXPECT_GT(valueAtFire, 0.0)
+        << "value-at-fire out-param should mirror the pre-reset S";
+    EXPECT_EQ(s.sustainedAboveThreshold, 0)
+        << "post-fire, the state itself resets -- the out-param is the only "
+           "way to recover the pre-reset count";
+}
+
+TEST(CusumGeometryShiftTest, NullOutParamsAreSafe) {
+    // Defensive: passing nullptr for either out-param must not crash the
+    // hot path. The function takes both as optional pointers.
+    using spacecal::geometry_shift::CusumState;
+    using spacecal::geometry_shift::UpdateCusumGeometryShift;
+    CusumState s{};
+    // Same 4-tick fire pattern as above.
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+    EXPECT_FALSE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+    EXPECT_TRUE(UpdateCusumGeometryShift(s, 5.0, 0.0));
+}
+
 TEST(CusumGeometryShiftTest, ResetClampPreventsNegativeAccumulation) {
     using spacecal::geometry_shift::CusumState;
     using spacecal::geometry_shift::UpdateCusumGeometryShift;

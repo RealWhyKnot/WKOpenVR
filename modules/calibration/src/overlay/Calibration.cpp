@@ -921,19 +921,22 @@ void CalibrationTick(double time)
 				bool fire = false;
 				bool isSpike = false;
 				double cusumValueAtFire = 0.0;  // captured before the in-function reset
+				int cusumSustainAtFire = 0;     // ditto -- post-reset reads as 0
 				if (ctx.useCusumGeometryShift) {
 					// Page CUSUM: accumulates (current - baseline - drift) per
 					// tick, fires when the running sum crosses threshold. Median
 					// stays as the baseline so the test is centered on the recent
 					// no-shift behavior. Fire path resets the CUSUM state to zero
 					// inside UpdateCusumGeometryShift -- we capture the pre-reset
-					// value via the out-param so the fire log can show what S
-					// climbed to before the reset, rather than the post-reset 0.
+					// values via the out-params so the fire log can show what S
+					// climbed to AND that the sustain gate was satisfied (>=3),
+					// rather than the post-reset 0.
 					fire = spacecal::geometry_shift::UpdateCusumGeometryShift(
 						g_cusumState, current, median,
 						spacecal::geometry_shift::kCusumDriftMm,
 						spacecal::geometry_shift::kCusumThreshold,
-						&cusumValueAtFire);
+						&cusumValueAtFire,
+						&cusumSustainAtFire);
 					// Mirror the consecutive-bad-tick counter to zero in this path
 					// so a toggle flip mid-session doesn't leave stale state.
 					g_geomShiftConsecutiveBadTicks = 0;
@@ -1073,6 +1076,14 @@ void CalibrationTick(double time)
 					const std::string chiSqTail = RenderChiSqTail();
 					const double cooldownStarts =
 						time + spacecal::geometry_shift::kPostFireCooldownSeconds;
+					// Pre-reset sustain count: in CUSUM mode the in-function
+					// reset clears g_cusumState.sustainedAboveThreshold to 0
+					// before this line runs, so read the captured out-param;
+					// in legacy mode g_geomShiftConsecutiveBadTicks is still
+					// at its pre-reset value (reset happens further below).
+					const int sustainedAtFire = ctx.useCusumGeometryShift
+						? cusumSustainAtFire
+						: g_geomShiftConsecutiveBadTicks;
 					char fireBuf[800];
 					snprintf(fireBuf, sizeof fireBuf,
 						"[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
@@ -1082,7 +1093,7 @@ void CalibrationTick(double time)
 						" errTail_slope_mm_per_sample=%.3f errTail=[%s]"
 						" chi_sq_tail=%s cooldown_until=%.3f",
 						current, median, ratio,
-						g_geomShiftConsecutiveBadTicks, cusumValueAtFire,
+						sustainedAtFire, cusumValueAtFire,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,

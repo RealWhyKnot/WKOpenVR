@@ -127,6 +127,14 @@ struct CusumState {
 // has no way to confirm which decision arm actually triggered the fire or
 // how far past threshold the accumulator climbed.
 //
+// `outSustainAtFire` (optional, write-only): same idea for the sustain
+// counter. The function resets `sustainedAboveThreshold` to 0 before
+// returning so the next tick starts fresh, but a diagnostic reader at the
+// fire site needs the pre-reset value to confirm the sustain gate was
+// satisfied (every fire should have sustain >= kMinSustainedSpikes). The
+// 2026-05-24 log audit showed every CUSUM fire line printed `sustained=0`
+// for exactly this reason -- the caller was reading the post-reset value.
+//
 // Sustain gate: S crossing threshold on a single tick increments the
 // state's sustain counter but does not fire. Fire requires
 // kMinSustainedSpikes consecutive above-threshold ticks. A single tick at
@@ -138,7 +146,8 @@ constexpr bool UpdateCusumGeometryShift(CusumState& state,
                                          double baselineMm,
                                          double driftMm = kCusumDriftMm,
                                          double threshold = kCusumThreshold,
-                                         double* outValueAtFire = nullptr) {
+                                         double* outValueAtFire = nullptr,
+                                         int* outSustainAtFire = nullptr) {
     const double increment = (currentErrorMm - baselineMm) - driftMm;
     state.S = state.S + increment;
     if (state.S < 0.0) state.S = 0.0;
@@ -146,6 +155,7 @@ constexpr bool UpdateCusumGeometryShift(CusumState& state,
         state.sustainedAboveThreshold++;
         if (state.sustainedAboveThreshold >= kMinSustainedSpikes) {
             if (outValueAtFire) *outValueAtFire = state.S;
+            if (outSustainAtFire) *outSustainAtFire = state.sustainedAboveThreshold;
             state.S = 0.0;
             state.sustainedAboveThreshold = 0;
             return true;
