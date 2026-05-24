@@ -212,7 +212,19 @@ namespace protocol
 	// Layout grows by one byte; padded to natural alignment. Bump forces
 	// paired install so a stale driver doesn't read updateQuash from a
 	// garbage byte and flap unpredictably.
-	const uint32_t Version = 23;
+	//
+	// v24 (2026-05-24): AlignmentSpeedParams grows four `double` fields
+	// (slew_stationary_pos_rate, slew_stationary_rot_rate,
+	// slew_moving_pos_rate, slew_moving_rot_rate) that drive the new
+	// time-rate cap in BlendTransform when recalibrateOnMovement is on.
+	// Replaces the regime-based still-floor (10/50/90 percent) that
+	// previously closed up to ~85 percent of a Large-regime gap per
+	// second when the user was stationary. AlignmentSpeedParams grows
+	// by 32 bytes; still smaller than SetDeviceTransform so the Request
+	// union does not change size. Bump is required because a stale
+	// driver paired with a new overlay would read garbage from the new
+	// offsets; we'd rather refuse the handshake.
+	const uint32_t Version = 24;
 
 	// Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 	// "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

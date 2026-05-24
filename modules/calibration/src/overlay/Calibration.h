@@ -567,6 +567,15 @@ struct CalibrationContext
 		alignmentSpeedParams.align_speed_small = 1.0f;
 		alignmentSpeedParams.align_speed_large = 2.0f;
 
+		// Slew-rate cap defaults. Mirror the driver-side Init defaults so a
+		// fresh overlay starts pushing the same numbers it would have computed
+		// on its own and no first-frame surprise happens before the user opens
+		// the Advanced tab. Units match the driver: metres/sec, radians/sec.
+		alignmentSpeedParams.slew_stationary_pos_rate = 0.0005;   // 0.5 mm/sec
+		alignmentSpeedParams.slew_stationary_rot_rate = 0.000873; // ~0.05 deg/sec
+		alignmentSpeedParams.slew_moving_pos_rate     = 0.010;    // 10  mm/sec
+		alignmentSpeedParams.slew_moving_rot_rate     = 0.01745;  // ~1.0 deg/sec
+
 		continuousCalibrationThreshold = 1.5f;
 		maxRelativeErrorThreshold = 0.005f;
 		jitterThreshold = 3.0f;

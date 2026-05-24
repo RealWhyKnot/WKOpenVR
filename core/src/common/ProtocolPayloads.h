@@ -23,6 +23,33 @@
 		 * (We actually do a lerp(s * delta_t) where s is the speed factor here)
 		 */
 		double align_speed_tiny, align_speed_small, align_speed_large;
+
+		/**
+		 * Slew-rate cap on user-visible blend progress when `recalibrateOnMovement`
+		 * is on. The driver's BlendTransform multiplies the time-based lerp by a
+		 * scale factor that keeps the per-frame translation step at or below
+		 * `slew_stationary_pos_rate * dt` (metres) and rotation step at or below
+		 * `slew_stationary_rot_rate * dt` (radians) when the user is fully still.
+		 * When motion is detected, the cap linearly blends up to the
+		 * corresponding `_moving_` value -- the existing per-frame motion gate
+		 * supplies the 0..1 weight.
+		 *
+		 * Replaces the prior regime-based still-floor (10/50/90%) which closed
+		 * up to ~85% of a Large-regime gap per second and produced visible
+		 * snaps after long stationary stretches. With a hard mm/sec cap, a
+		 * 30 mm pending correction takes ~60 s to converge if the user never
+		 * moves -- imperceptible -- but catches up in ~3 s once they do.
+		 *
+		 * Defaults set in driver Init() and CalibrationContext::ResetConfig():
+		 *   stationary pos = 0.0005 m/s   (0.5 mm/sec)
+		 *   stationary rot = 0.000873 rad/s (~0.05 deg/sec)
+		 *   moving pos     = 0.010  m/s   (10 mm/sec)
+		 *   moving rot     = 0.01745 rad/s (~1.0 deg/sec)
+		 */
+		double slew_stationary_pos_rate;
+		double slew_stationary_rot_rate;
+		double slew_moving_pos_rate;
+		double slew_moving_rot_rate;
 	};
 
 	struct SetDeviceTransform
@@ -655,6 +682,8 @@
 		Request(AlignmentSpeedParams params) : type(RequestType::RequestSetAlignmentSpeedParams), setAlignmentSpeedParams(params) {}
 	};
 
+	static_assert(sizeof(AlignmentSpeedParams) <= sizeof(SetDeviceTransform),
+		"AlignmentSpeedParams must not grow Request (v24 added 32 bytes of slew_* fields; the union still has room but pin it so a future addition can't silently overflow)");
 	static_assert(sizeof(InputHealthCompensationEntry) <= sizeof(SetDeviceTransform),
 		"InputHealthCompensationEntry must not grow Request");
 	static_assert(sizeof(FaceTrackingConfig) <= sizeof(SetDeviceTransform),

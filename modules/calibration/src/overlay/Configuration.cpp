@@ -162,6 +162,14 @@ static void VisitAlignmentParams(CalibrationContext& ctx, std::function<void(con
 	P(thr_rot_tiny);
 	P(thr_rot_small);
 	P(thr_rot_large);
+	// v24 slew-rate caps. Persisted under "alignment_params" alongside the
+	// legacy speeds because the driver ships the whole struct in one IPC
+	// message (RequestSetAlignmentSpeedParams); separate JSON keys would
+	// just complicate the sync path. Defaults live in ResetConfig.
+	P(slew_stationary_pos_rate);
+	P(slew_stationary_rot_rate);
+	P(slew_moving_pos_rate);
+	P(slew_moving_rot_rate);
 	
 	// Convert to double and back
 	double tmp = ctx.continuousCalibrationThreshold;

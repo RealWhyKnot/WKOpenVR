@@ -443,8 +443,8 @@ static void OneShot_DrawSettings() {
 			SaveProfile(CalCtx);
 		}
 		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("When the calibration math updates, only blend the new offset in while you're moving.\n"
-				"Stationary users (lying down, sitting still) won't see phantom body shifts.\n"
+			ImGui::SetTooltip("Calibration corrections converge at a capped rate: imperceptible when still\n"
+				"(default ~0.5 mm/sec), brisk when moving (default ~10 mm/sec). Tune on Advanced.\n"
 				"Default ON.");
 		}
 

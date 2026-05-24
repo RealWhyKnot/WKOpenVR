@@ -244,6 +244,51 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned) {
     EXPECT_DOUBLE_EQ(ctx.calibratedScale, 1.0);
     EXPECT_DOUBLE_EQ(ctx.targetLatencyOffsetMs, 0.0);
     EXPECT_FALSE(ctx.latencyAutoDetect);
+
+    // v24 slew-rate cap defaults. Stationary at the published lateral-drift
+    // detection threshold (~0.5 mm/sec); moving 20x faster so motion-masked
+    // catch-up of a 30 mm pending correction takes ~3 s. Pin both halves --
+    // the moving rate has to stay above the stationary rate or the cap
+    // inverts when the user starts moving.
+    EXPECT_DOUBLE_EQ(ctx.alignmentSpeedParams.slew_stationary_pos_rate, 0.0005);
+    EXPECT_DOUBLE_EQ(ctx.alignmentSpeedParams.slew_stationary_rot_rate, 0.000873);
+    EXPECT_DOUBLE_EQ(ctx.alignmentSpeedParams.slew_moving_pos_rate,     0.010);
+    EXPECT_DOUBLE_EQ(ctx.alignmentSpeedParams.slew_moving_rot_rate,     0.01745);
+    EXPECT_LT(ctx.alignmentSpeedParams.slew_stationary_pos_rate,
+              ctx.alignmentSpeedParams.slew_moving_pos_rate);
+    EXPECT_LT(ctx.alignmentSpeedParams.slew_stationary_rot_rate,
+              ctx.alignmentSpeedParams.slew_moving_rot_rate);
+}
+
+// ---------------------------------------------------------------------------
+// v24 slew-rate fields round-trip via VisitAlignmentParams (the same path
+// the existing align_speed_*/thr_*_* knobs use). The fields live under the
+// "alignment_params" JSON object, not the top-level skip-if-default block,
+// because they ship with the rest of AlignmentSpeedParams in one IPC
+// message and splitting the persistence would just create a sync hazard.
+// ---------------------------------------------------------------------------
+TEST(ConfigurationTest, SlewRateFieldsRoundTrip) {
+    CalibrationContext src;
+    src.referenceTrackingSystem = "lighthouse";
+    src.targetTrackingSystem = "oculus";
+    src.validProfile = true;
+    // Pick values that are NOT the defaults so a missed save/load path
+    // would let the dst read back as the construction defaults.
+    src.alignmentSpeedParams.slew_stationary_pos_rate = 0.0010;
+    src.alignmentSpeedParams.slew_stationary_rot_rate = 0.002;
+    src.alignmentSpeedParams.slew_moving_pos_rate     = 0.025;
+    src.alignmentSpeedParams.slew_moving_rot_rate     = 0.05;
+
+    std::stringstream io;
+    WriteProfile(src, io);
+
+    CalibrationContext dst;
+    ParseProfile(dst, io);
+
+    EXPECT_NEAR(dst.alignmentSpeedParams.slew_stationary_pos_rate, 0.0010,  1e-9);
+    EXPECT_NEAR(dst.alignmentSpeedParams.slew_stationary_rot_rate, 0.002,   1e-9);
+    EXPECT_NEAR(dst.alignmentSpeedParams.slew_moving_pos_rate,     0.025,   1e-9);
+    EXPECT_NEAR(dst.alignmentSpeedParams.slew_moving_rot_rate,     0.05,    1e-9);
 }
 
 // ---------------------------------------------------------------------------
