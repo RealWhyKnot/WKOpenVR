@@ -6,7 +6,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **calibration:** Warm-restart snap path for HMD wake from standby (454ed8a)
 
 ---
 

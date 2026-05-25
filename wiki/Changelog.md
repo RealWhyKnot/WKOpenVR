@@ -4,7 +4,8 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **calibration:** Warm-restart snap path for HMD wake from standby (454ed8a)
 
 ---
 
