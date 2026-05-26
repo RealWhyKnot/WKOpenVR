@@ -561,10 +561,20 @@ wkopenvr::adb::SetupWizard* WizardPtr() {
 void DrawSetupWizardModal() {
     if (!s_showWizard) return;
 
-    ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(760.0f, 560.0f), ImGuiCond_Appearing);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 18.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 10.0f));
     if (ImGui::BeginPopupModal("Connect to Quest##wiz", &s_showWizard, 0)) {
+        ImGui::SetWindowFontScale(1.18f);
+
         auto* wiz = WizardPtr();
         const auto& pal = openvr_pair::overlay::ui::GetPalette();
+        const float actionHeight = ImGui::GetTextLineHeightWithSpacing() * 1.45f;
+        const ImVec2 actionButtonSize(260.0f, actionHeight);
+        auto ActionButton = [&](const char* label) {
+            return ImGui::Button(label, actionButtonSize);
+        };
 
         struct StepInfo { wkopenvr::adb::WizardStep step; const char* label; const char* help; };
         static const StepInfo kSteps[] = {
@@ -608,32 +618,34 @@ void DrawSetupWizardModal() {
             switch (cur) {
             case wkopenvr::adb::WizardStep::Start:
             case wkopenvr::adb::WizardStep::CheckBinary:
-                if (ImGui::Button("Check##binary")) wiz->RunCheckBinary();
+                if (ActionButton("Check##binary")) wiz->RunCheckBinary();
                 break;
             case wkopenvr::adb::WizardStep::CheckDevAccount:
-                if (ImGui::Button("Check##devacct")) wiz->RunCheckDevAccount();
+                if (ActionButton("Check##devacct")) wiz->RunCheckDevAccount();
                 break;
             case wkopenvr::adb::WizardStep::CheckDevMode:
-                if (ImGui::Button("Check##devmode")) wiz->RunCheckDevMode();
+                if (ActionButton("Check##devmode")) wiz->RunCheckDevMode();
                 break;
             case wkopenvr::adb::WizardStep::UsbPair:
-                if (ImGui::Button("Confirm##usbpair")) wiz->RunUsbPair();
+                if (ActionButton("Confirm##usbpair")) wiz->RunUsbPair();
                 break;
             case wkopenvr::adb::WizardStep::WifiTcpip:
-                if (ImGui::Button("Enable Wi-Fi ADB##tcpip")) wiz->RunWifiTcpip();
+                if (ActionButton("Enable Wi-Fi ADB##tcpip")) wiz->RunWifiTcpip();
                 break;
             case wkopenvr::adb::WizardStep::WifiDiscover:
-                if (ImGui::Button("Discover##disc")) wiz->RunWifiDiscover();
+                if (ActionButton("Discover##disc")) wiz->RunWifiDiscover();
                 break;
             case wkopenvr::adb::WizardStep::WifiPair:
+                ImGui::SetNextItemWidth(420.0f);
                 ImGui::InputText("Host:port##wiz_hp", s_wifiHostPort, sizeof(s_wifiHostPort));
+                ImGui::SetNextItemWidth(180.0f);
                 ImGui::InputText("Code##wiz_code",   s_wifiCode,     sizeof(s_wifiCode));
-                if (ImGui::Button("Pair##pair")) {
+                if (ActionButton("Pair##pair")) {
                     wiz->RunWifiPair(s_wifiHostPort, s_wifiCode);
                 }
                 break;
             case wkopenvr::adb::WizardStep::WifiVerify:
-                if (ImGui::Button("Verify##verify")) {
+                if (ActionButton("Verify##verify")) {
                     auto res = wiz->RunWifiVerify();
                     if (res.status == wkopenvr::adb::StepStatus::Passed) {
                         wkopenvr::adb::ProbeGuardianPolarity(CCal_GetAdb());
@@ -664,14 +676,14 @@ void DrawSetupWizardModal() {
             // user telling us whether the boundary actually disappeared.
             ImGui::TextWrapped("Did Quest Guardian visibly disappear in-headset just now?");
             ImGui::Spacing();
-            if (ImGui::Button("Yes, Guardian disappeared")) {
+            if (ImGui::Button("Yes, Guardian disappeared", actionButtonSize)) {
                 CalCtx.adb.setupCompleted = true;
                 SaveProfile(CalCtx);
                 s_awaitPolarityConfirm = false;
                 s_showWizard = false;
             }
             ImGui::SameLine();
-            if (ImGui::Button("No, flip the value")) {
+            if (ImGui::Button("No, flip the value", actionButtonSize)) {
                 wkopenvr::adb::SetGuardianPauseValueOverride(CCal_GetAdb(),
                     CalCtx.adb.guardianPauseValue == 1 ? 0 : 1);
                 CalCtx.adb.setupCompleted = true;
@@ -681,7 +693,7 @@ void DrawSetupWizardModal() {
             }
         } else {
             ImGui::TextColored(pal.statusOk, "Setup complete.");
-            if (ImGui::Button("Close")) { s_showWizard = false; }
+            if (ImGui::Button("Close", actionButtonSize)) { s_showWizard = false; }
         }
 
         ImGui::Spacing();
@@ -708,20 +720,25 @@ void DrawSetupWizardModal() {
                     break;
                 }
                 if (!res.detail.empty()) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled(" %s", res.detail.c_str());
+                    ImGui::Indent();
+                    ImGui::PushStyleColor(ImGuiCol_Text,
+                        ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    ImGui::TextWrapped("%s", res.detail.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::Unindent();
                 }
             }
             ImGui::TreePop();
         }
 
         if (!wiz->IsDone()) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) wiz->Reset();
+            ImGui::Spacing();
+            if (ImGui::Button("Reset", ImVec2(120.0f, actionHeight * 0.85f))) wiz->Reset();
         }
 
         ImGui::EndPopup();
     }
+    ImGui::PopStyleVar(3);
 }
 
 void DrawGuardianSection(ImVec2 panelSize) {
