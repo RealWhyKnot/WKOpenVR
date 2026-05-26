@@ -76,6 +76,20 @@ static Eigen::AffineCompact3d ProfileTransform(Eigen::Vector3d eulerDeg, Eigen::
 	return transform;
 }
 
+static bool RestoreCalibrationSolverFromProfile(CalibrationContext& ctx)
+{
+	if (!ctx.validProfile) {
+		return false;
+	}
+
+	calibration.SeedEstimatedTransformation(
+		ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation),
+		/*annotate=*/false);
+	calibration.setRelativeTransformation(ctx.refToTargetPose, ctx.relativePosCalibrated);
+	calibration.lockRelativePosition = ctx.lockRelativePosition;
+	return true;
+}
+
 // CPU-pressure diagnostic. Samples GetProcessTimes() once per CalibrationTick
 // (~20 Hz). Computes the % of total CPU the SC process used over the wall-clock
 // delta since the last sample, divided by the logical-processor count so 100%
@@ -2387,6 +2401,8 @@ void CalibrationTick(double time)
 	QueryPerformanceCounter(&start_time);
 		
 	bool lerp = false;
+	bool solveAttempted = false;
+	bool solveProducedCandidate = false;
 	calibration.useVelocityAwareWeighting = CalCtx.EffectiveVelocityAwareWeighting();
 	calibration.useTukeyBiweight = CalCtx.EffectiveTukeyBiweight();
 	calibration.useBlendFilter = CalCtx.EffectiveBlendFilter();
@@ -2402,7 +2418,8 @@ void CalibrationTick(double time)
 		// already-applied driver offset live, skip any new solve cycle so the
 		// math doesn't fight the user trying to inspect the current result.
 		if (!CalCtx.calibrationPaused) {
-			calibration.ComputeIncremental(lerp, CalCtx.continuousCalibrationThreshold, CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers);
+			solveAttempted = true;
+			solveProducedCandidate = calibration.ComputeIncremental(lerp, CalCtx.continuousCalibrationThreshold, CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers);
 
 			// Warm-restart grace counts down per Continuous-mode solve. When
 			// it hits zero, the prior-vs-new error gate snaps back on -- the
@@ -2724,10 +2741,14 @@ void CalibrationTick(double time)
 	}
 	else {
 		calibration.enableStaticRecalibration = false;
-		calibration.ComputeOneshot(CalCtx.ignoreOutliers);
+		solveAttempted = true;
+		solveProducedCandidate = calibration.ComputeOneshot(CalCtx.ignoreOutliers);
 	}
 
-	if (calibration.isValid()) {
+	const bool inContinuousState = ctx.state == CalibrationState::Continuous;
+	const bool hasPublishableCandidate = solveProducedCandidate && calibration.isValid();
+
+	if (hasPublishableCandidate) {
 		const Eigen::Matrix3d R = calibration.Transformation().rotation();
 		const Eigen::Vector3d T = calibration.Transformation().translation();
 		const Eigen::Vector3d candidateTranslationCm = T * 100.0;
@@ -2735,7 +2756,6 @@ void CalibrationTick(double time)
 			std::acos(std::clamp((R.trace() - 1.0) * 0.5, -1.0, 1.0));
 		const bool finiteT = T.allFinite();
 		const bool nonTrivialRot = rotAngle > 1e-3;  // > ~0.06 deg from identity
-		const bool inContinuous = ctx.state == CalibrationState::Continuous;
 		const bool hasAcceptedSnapshot =
 			ctx.lastAcceptedContinuousSnapshot.captured;
 		const Eigen::Vector3d guardBaseline =
@@ -2743,17 +2763,19 @@ void CalibrationTick(double time)
 				? ctx.lastAcceptedContinuousSnapshot.calibratedTranslation
 				: ctx.calibratedTranslation;
 		const bool hasGuardBaseline =
-			inContinuous && (hasAcceptedSnapshot || ctx.validProfile);
+			inContinuousState && (hasAcceptedSnapshot || ctx.validProfile);
 		const auto guard = spacecal::continuous::EvaluateCandidate(
-			inContinuous, hasGuardBaseline, hasAcceptedSnapshot,
+			inContinuousState, hasGuardBaseline, hasAcceptedSnapshot,
 			guardBaseline, candidateTranslationCm, R);
 		if (!finiteT || !nonTrivialRot || !guard.accepted) {
+			const bool restoredPrior =
+				inContinuousState && RestoreCalibrationSolverFromProfile(ctx);
 			const char* baselineTag =
 				hasAcceptedSnapshot ? "last_accepted" : (ctx.validProfile ? "profile" : "none");
 			char rejBuf[512];
 			std::snprintf(rejBuf, sizeof rejBuf,
 				"calibration_candidate_rejected: finiteT=%d rotAngle=%.6f reason=%s jump_cm=%.2f baseline=%s "
-				"baseline_cm=(%.2f,%.2f,%.2f) candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f",
+				"baseline_cm=(%.2f,%.2f,%.2f) candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f restored_prior=%d",
 				finiteT ? 1 : 0,
 				rotAngle,
 				guard.reason,
@@ -2765,7 +2787,8 @@ void CalibrationTick(double time)
 				candidateTranslationCm.x(),
 				candidateTranslationCm.y(),
 				candidateTranslationCm.z(),
-				candidateTranslationCm.norm());
+				candidateTranslationCm.norm(),
+				restoredPrior ? 1 : 0);
 			Metrics::WriteLogAnnotation(rejBuf);
 			CalCtx.Log("Calibration candidate rejected; keeping previous profile.\n");
 		} else {
@@ -2809,8 +2832,22 @@ void CalibrationTick(double time)
 			// re-localization auto-recovery in TickHmdRelocalizationDetector
 			// (HMD-jump signal, not magnitude) is unchanged and still active.
 		}
-	} else {
+	} else if (!inContinuousState || (solveAttempted && !calibration.isValid())) {
 		CalCtx.Log("Calibration failed.\n");
+	} else if (solveAttempted && calibration.isValid() && !solveProducedCandidate) {
+		static double s_lastNoCandidateAnnotation = -1e9;
+		if (time - s_lastNoCandidateAnnotation >= 5.0) {
+			s_lastNoCandidateAnnotation = time;
+			const char* rejectReason = Metrics::lastRejectReason.empty()
+				? "none"
+				: Metrics::lastRejectReason.c_str();
+			char skipBuf[240];
+			std::snprintf(skipBuf, sizeof skipBuf,
+				"calibration_candidate_skipped: reason=no_new_solver_candidate calc_reject_reason=%s sample_count=%zu prior_valid=1",
+				rejectReason,
+				calibration.SampleCount());
+			Metrics::WriteLogAnnotation(skipBuf);
+		}
 	}
 
 	LARGE_INTEGER end_time;

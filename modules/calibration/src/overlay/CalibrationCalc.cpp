@@ -147,9 +147,11 @@ void CalibrationCalc::Clear() {
 	// is restarted faster than fresh samples can be collected.
 }
 
-void CalibrationCalc::SeedEstimatedTransformation(const Eigen::AffineCompact3d& transform) {
+void CalibrationCalc::SeedEstimatedTransformation(const Eigen::AffineCompact3d& transform, bool annotate) {
 	if (!transform.matrix().allFinite()) {
-		Metrics::WriteLogAnnotation("SeedEstimatedTransformation_rejected: nonfinite_transform");
+		if (annotate) {
+			Metrics::WriteLogAnnotation("SeedEstimatedTransformation_rejected: nonfinite_transform");
+		}
 		return;
 	}
 
@@ -175,16 +177,18 @@ void CalibrationCalc::SeedEstimatedTransformation(const Eigen::AffineCompact3d& 
 	m_blendFilter.tz = transform.translation().z();
 	m_blendFilterLastUpdateTime = m_lastSampleTime;
 
-	char buf[220];
-	snprintf(buf, sizeof buf,
-		"SeedEstimatedTransformation_applied: trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f yaw_deg=%.3f sample_count=%zu",
-		transform.translation().x() * 100.0,
-		transform.translation().y() * 100.0,
-		transform.translation().z() * 100.0,
-		transform.translation().norm() * 100.0,
-		yaw * 57.29577951308232,
-		m_samples.size());
-	Metrics::WriteLogAnnotation(buf);
+	if (annotate) {
+		char buf[220];
+		snprintf(buf, sizeof buf,
+			"SeedEstimatedTransformation_applied: trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f yaw_deg=%.3f sample_count=%zu",
+			transform.translation().x() * 100.0,
+			transform.translation().y() * 100.0,
+			transform.translation().z() * 100.0,
+			transform.translation().norm() * 100.0,
+			yaw * 57.29577951308232,
+			m_samples.size());
+		Metrics::WriteLogAnnotation(buf);
+	}
 }
 
 void CalibrationCalc::FreezeRotationPhaseSamples() {

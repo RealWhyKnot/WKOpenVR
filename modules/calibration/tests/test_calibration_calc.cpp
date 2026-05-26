@@ -208,6 +208,29 @@ TEST(CalibrationCalcTest, SeedEstimatedTransformationStartsIncrementalFromProfil
         << "Continuous mode must score the saved profile as the prior, not identity";
 }
 
+TEST(CalibrationCalcTest, SeededTransformDoesNotImplyIncrementalCandidate) {
+    const double yawRad = 20.0 * EIGEN_PI / 180.0;
+    const Eigen::Vector3d trans(-1.06882, 2.47276, 0.50086);
+    Eigen::AffineCompact3d profile = MakeTransform(yawRad, 0.0, 0.0, trans);
+
+    CalibrationCalc calc;
+    calc.Clear();
+    calc.SeedEstimatedTransformation(profile, /*annotate=*/false);
+
+    for (auto& s : MakeSamplePairs(profile, 5)) {
+        calc.PushSample(s);
+    }
+
+    bool lerp = false;
+    const bool producedCandidate = calc.ComputeIncremental(
+        lerp, /*threshold=*/1.5, /*relPoseMaxError=*/0.005, /*ignoreOutliers=*/false);
+
+    EXPECT_FALSE(producedCandidate);
+    EXPECT_TRUE(calc.isValid())
+        << "A seeded prior can stay valid even when this tick produced no candidate";
+    EXPECT_LT((calc.Transformation().translation() - trans).norm(), 1e-9);
+}
+
 // ---------------------------------------------------------------------------
 // Combined 10 deg yaw plus a (0.5, 0.1, -0.3) m offset. The solver should
 // recover both within tolerance from the same sample stream.
