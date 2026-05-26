@@ -179,7 +179,7 @@ StepResult SetupWizard::RunCheckDevAccount()
 
     if (!DevicesHasAnyEntry(result.out)) {
         r.status = StepStatus::Failed;
-        r.detail = "No Quest detected -- enable USB debugging or check your Meta dev account.";
+        r.detail = "No Quest detected -- turn Developer Mode on in the Meta Horizon app, then reconnect USB.";
         return Commit(WizardStep::CheckDevAccount, r);
     }
 
@@ -210,13 +210,13 @@ StepResult SetupWizard::RunCheckDevMode()
 
     if (Contains(result.out, "unauthorized")) {
         r.status = StepStatus::Failed;
-        r.detail = "Accept the USB debugging prompt on the headset.";
+        r.detail = "Accept the USB debugging prompt on the headset. If it is not visible, open Settings > Developer, turn on MTP Notification, then reconnect USB.";
         return Commit(WizardStep::CheckDevMode, r);
     }
 
     if (!DevicesHasAuthorized(result.out)) {
         r.status = StepStatus::Failed;
-        r.detail = "No authorized device found -- enable Developer Mode on the Quest.";
+        r.detail = "No authorized device found -- turn Developer Mode on in the Meta Horizon app and MTP Notification on in headset Developer settings.";
         return Commit(WizardStep::CheckDevMode, r);
     }
 
@@ -242,7 +242,7 @@ StepResult SetupWizard::RunUsbPair()
 
     if (!DevicesHasAuthorized(result.out)) {
         r.status = StepStatus::Failed;
-        r.detail = "Quest not paired over USB -- accept the 'Allow USB debugging?' prompt.";
+        r.detail = "Quest not paired over USB -- accept the 'Allow USB debugging?' prompt in-headset, or toggle MTP Notification and reconnect USB.";
         return Commit(WizardStep::UsbPair, r);
     }
 
