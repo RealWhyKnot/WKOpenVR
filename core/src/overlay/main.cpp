@@ -1,4 +1,6 @@
 #include "BuildChannel.h"
+#include "DebugLogging.h"
+#include "DiagnosticsLog.h"
 #include "FeaturePlugin.h"
 #include "ManifestRegistration.h"
 #include "Migration.h"
@@ -65,6 +67,9 @@ namespace {
 void GlfwErrorCallback(int code, const char *description)
 {
 	fprintf(stderr, "[glfw] error %d: %s\n", code, description ? description : "(null)");
+	openvr_pair::common::DiagnosticLog(
+		"overlay", "glfw_error code=%d description='%s'",
+		code, description ? description : "(null)");
 }
 
 std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins()
@@ -115,12 +120,27 @@ int main(int argc, char **argv)
 		if (arg == "--test-harness")    testHarness = true;
 	}
 
+	openvr_pair::common::DiagnosticLog(
+		"overlay",
+		"startup version=%s build=%s channel=%s argc=%d register_only=%d unregister_only=%d test_harness=%d debug_enabled=%d debug_forced=%d",
+		OPENVR_PAIR_VERSION_STRING,
+		WKOPENVR_BUILD_STAMP,
+		WKOPENVR_BUILD_CHANNEL,
+		argc,
+		registerOnly ? 1 : 0,
+		unregisterOnly ? 1 : 0,
+		testHarness ? 1 : 0,
+		openvr_pair::common::IsDebugLoggingEnabled() ? 1 : 0,
+		openvr_pair::common::IsDebugLoggingForcedOn() ? 1 : 0);
+
 #if WKOPENVR_BUILD_IS_DEV
 	if (testHarness) {
+		openvr_pair::common::DiagnosticLog("overlay", "entering test harness");
 		return openvr_pair::overlay::testharness::Run(argc, argv);
 	}
 #else
 	if (testHarness) {
+		openvr_pair::common::DiagnosticLog("overlay", "test harness requested on non-dev build");
 		fprintf(stderr, "--test-harness is only available on dev builds (current channel: %s)\n",
 			WKOPENVR_BUILD_CHANNEL);
 		return 2;
@@ -128,6 +148,7 @@ int main(int argc, char **argv)
 #endif
 
 	if (unregisterOnly) {
+		openvr_pair::common::DiagnosticLog("overlay", "unregister-only requested");
 		UnregisterApplicationManifest();
 		return 0;
 	}
@@ -142,11 +163,15 @@ int main(int argc, char **argv)
 	RegisterApplicationManifest();
 
 	if (registerOnly) {
+		openvr_pair::common::DiagnosticLog("overlay", "register-only requested");
 		return 0;
 	}
 
 	glfwSetErrorCallback(GlfwErrorCallback);
-	if (!glfwInit()) return 1;
+	if (!glfwInit()) {
+		openvr_pair::common::DiagnosticLog("overlay", "glfw_init_failed");
+		return 1;
+	}
 
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -155,6 +180,7 @@ int main(int argc, char **argv)
 
 	GLFWwindow *window = glfwCreateWindow(1200, 780, "WKOpenVR", nullptr, nullptr);
 	if (!window) {
+		openvr_pair::common::DiagnosticLog("overlay", "glfw_create_window_failed size=1200x780");
 		glfwTerminate();
 		return 1;
 	}
@@ -187,6 +213,7 @@ int main(int argc, char **argv)
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
 	if (gl3wInit() != 0) {
+		openvr_pair::common::DiagnosticLog("overlay", "gl3w_init_failed");
 		glfwDestroyWindow(window);
 		glfwTerminate();
 		return 1;
@@ -262,6 +289,11 @@ int main(int argc, char **argv)
 	ShellContext context = CreateShellContext();
 	openvr_pair::overlay::ui::ApplyOverlayStyle();
 	openvr_pair::overlay::ui::InitThemeFromDisk(context);
+	openvr_pair::common::DiagnosticLog(
+		"overlay", "shell_context_ready driver_resource_dirs=%zu log_root_set=%d profile_root_set=%d",
+		context.driverResourceDirs.size(),
+		context.logRoot.empty() ? 0 : 1,
+		context.profileRoot.empty() ? 0 : 1);
 
 	// Fire the GitHub-release probe once. The worker is non-blocking; the
 	// ShellFooter polls GetUpdateNoticeState() and renders an indicator
@@ -271,11 +303,25 @@ int main(int argc, char **argv)
 	openvr_pair::overlay::StartUpdateCheck();
 
 	auto plugins = CreatePlugins();
+	openvr_pair::common::DiagnosticLog("overlay", "plugins_created count=%zu", plugins.size());
 	for (auto &plugin : plugins) {
+		const bool installed = plugin->IsInstalled(context);
+		openvr_pair::common::DiagnosticLog(
+			"overlay", "plugin_state name='%s' flag='%s' pipe='%s' installed=%d",
+			plugin->Name(),
+			plugin->FlagFileName(),
+			plugin->PipeName(),
+			installed ? 1 : 0);
 		plugin->OnStart(context);
+		openvr_pair::common::DiagnosticLog(
+			"overlay", "plugin_started name='%s' installed=%d",
+			plugin->Name(), installed ? 1 : 0);
 	}
 
 	auto vrOverlay = std::make_unique<VrOverlayHost>();
+	bool haveVrState = false;
+	bool prevDashboardVisible = false;
+	bool prevVrConnected = false;
 
 	while (!glfwWindowShouldClose(window) && !vrOverlay->QuitRequested()) {
 		context.TickToggles();
@@ -296,6 +342,17 @@ int main(int argc, char **argv)
 		const bool dashboardVisible = vrOverlay->TickFrame();
 		context.vrConnected = vrOverlay->VrConnected();
 		context.dashboardVisible = dashboardVisible;
+		if (!haveVrState
+			|| dashboardVisible != prevDashboardVisible
+			|| context.vrConnected != prevVrConnected) {
+			openvr_pair::common::DiagnosticLog(
+				"overlay", "vr_state dashboard_visible=%d vr_connected=%d",
+				dashboardVisible ? 1 : 0,
+				context.vrConnected ? 1 : 0);
+			haveVrState = true;
+			prevDashboardVisible = dashboardVisible;
+			prevVrConnected = context.vrConnected;
+		}
 
 		ImGuiIO &io = ImGui::GetIO();
 		if (dashboardVisible) {
@@ -391,8 +448,10 @@ int main(int argc, char **argv)
 	vrOverlay.reset();
 
 	for (auto it = plugins.rbegin(); it != plugins.rend(); ++it) {
+		openvr_pair::common::DiagnosticLog("overlay", "plugin_shutdown name='%s'", (*it)->Name());
 		(*it)->OnShutdown(context);
 	}
+	openvr_pair::common::DiagnosticLog("overlay", "shutdown");
 
 	glDeleteFramebuffers(1, &vrFbo);
 	glDeleteTextures(1, &vrTexture);

@@ -1,5 +1,6 @@
 #include "IpcClientBase.h"
 
+#include "DiagnosticsLog.h"
 #include "Win32Errors.h"
 
 #include <cstdio>
@@ -60,6 +61,10 @@ IpcClientBase::~IpcClientBase()
 void IpcClientBase::Close()
 {
 	if (pipe_ != INVALID_HANDLE_VALUE) {
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "close pipe='%s' generation=%llu",
+			pipeName_.c_str(),
+			static_cast<unsigned long long>(connectionGeneration_));
 		CloseHandle(pipe_);
 		pipe_ = INVALID_HANDLE_VALUE;
 	}
@@ -70,28 +75,51 @@ void IpcClientBase::Connect(const char *pipeName, IpcClientConnectOptions option
 	Close();
 	options_ = std::move(options);
 	pipeName_ = pipeName ? pipeName : "";
-	WaitNamedPipeA(pipeName_.c_str(), 1000);
+	const BOOL waitOk = WaitNamedPipeA(pipeName_.c_str(), 1000);
+	const DWORD waitError = waitOk ? ERROR_SUCCESS : GetLastError();
+	openvr_pair::common::DiagnosticLog(
+		"ipc-client", "connect_start pipe='%s' wait_ok=%d wait_error=%lu",
+		pipeName_.c_str(), waitOk ? 1 : 0, waitError);
 	pipe_ = CreateFileA(pipeName_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
 	DWORD openError = (pipe_ == INVALID_HANDLE_VALUE) ? GetLastError() : ERROR_SUCCESS;
 	OnPipeOpenAttempt(pipe_, openError);
 	if (pipe_ == INVALID_HANDLE_VALUE) {
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "connect_open_failed pipe='%s' error=%lu",
+			pipeName_.c_str(), openError);
 		throw std::runtime_error(FormatUnavailable(options_, openError));
 	}
 
 	DWORD mode = PIPE_READMODE_MESSAGE;
 	if (!SetNamedPipeHandleState(pipe_, &mode, nullptr, nullptr)) {
 		DWORD err = GetLastError();
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "connect_mode_failed pipe='%s' error=%lu",
+			pipeName_.c_str(), err);
 		Close();
 		throw std::runtime_error(FormatModeFailure(options_, err));
 	}
 
 	auto response = SendBlocking(protocol::Request(protocol::RequestHandshake));
 	OnHandshakeResponse(response);
+	openvr_pair::common::DiagnosticLog(
+		"ipc-client", "handshake_response pipe='%s' response_type=%d driver_protocol=%u expected_protocol=%u",
+		pipeName_.c_str(),
+		response.type,
+		(unsigned)response.protocol.version,
+		(unsigned)protocol::Version);
 	if (response.type != protocol::ResponseHandshake || response.protocol.version != protocol::Version) {
 		driverVersion_ = response.protocol.version;
 		mismatchState_ = (response.protocol.version < protocol::Version)
 			? MismatchState::OverlayNewer
 			: MismatchState::DriverNewer;
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "handshake_mismatch pipe='%s' response_type=%d driver_protocol=%u expected_protocol=%u state=%d",
+			pipeName_.c_str(),
+			response.type,
+			(unsigned)response.protocol.version,
+			(unsigned)protocol::Version,
+			(int)mismatchState_);
 		Close();
 		throw std::runtime_error(FormatVersionMismatch(options_, protocol::Version, response.protocol.version));
 	}
@@ -99,6 +127,10 @@ void IpcClientBase::Connect(const char *pipeName, IpcClientConnectOptions option
 	fprintf(stderr, "[IPC] %s handshake ok: our_protocol=%u driver_protocol=%u\n",
 		pipeName_.c_str(), (unsigned)protocol::Version, (unsigned)response.protocol.version);
 	++connectionGeneration_;
+	openvr_pair::common::DiagnosticLog(
+		"ipc-client", "connect_ok pipe='%s' generation=%llu",
+		pipeName_.c_str(),
+		static_cast<unsigned long long>(connectionGeneration_));
 }
 
 protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
@@ -114,6 +146,12 @@ protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
 	} catch (const BrokenPipeException &e) {
 		if (reconnecting_ || pipeName_.empty()) throw;
 
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "broken_pipe pipe='%s' request_type=%d error=%lu generation=%llu",
+			pipeName_.c_str(),
+			request.type,
+			e.errorCode,
+			static_cast<unsigned long long>(connectionGeneration_));
 		OnBrokenPipe(e.errorCode);
 		Close();
 
@@ -122,8 +160,18 @@ protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
 			Connect(pipeName_.c_str(), options_);
 			reconnecting_ = false;
 			OnReconnectSucceeded();
+			openvr_pair::common::DiagnosticLog(
+				"ipc-client", "reconnect_ok pipe='%s' request_type=%d generation=%llu",
+				pipeName_.c_str(),
+				request.type,
+				static_cast<unsigned long long>(connectionGeneration_));
 		} catch (const std::exception &reconnectError) {
 			reconnecting_ = false;
+			openvr_pair::common::DiagnosticLog(
+				"ipc-client", "reconnect_failed pipe='%s' request_type=%d error='%s'",
+				pipeName_.c_str(),
+				request.type,
+				reconnectError.what());
 			throw std::runtime_error(options_.reconnectFailurePrefix + reconnectError.what());
 		}
 
@@ -141,6 +189,9 @@ void IpcClientBase::Send(const protocol::Request &request)
 	DWORD bytesWritten = 0;
 	if (!WriteFile(pipe_, &request, sizeof request, &bytesWritten, nullptr)) {
 		DWORD err = GetLastError();
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "write_failed pipe='%s' request_type=%d error=%lu",
+			pipeName_.c_str(), request.type, err);
 		Close();
 		std::string msg = options_.writeFailurePrefix + ". Error " + std::to_string(err)
 			+ ": " + openvr_pair::common::FormatWin32Error(err);
@@ -150,6 +201,9 @@ void IpcClientBase::Send(const protocol::Request &request)
 		throw std::runtime_error(msg);
 	}
 	if (bytesWritten != sizeof request) {
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "write_truncated pipe='%s' request_type=%d wrote=%lu expected=%zu",
+			pipeName_.c_str(), request.type, bytesWritten, sizeof request);
 		Close();
 		throw std::runtime_error("IPC write truncated: wrote " + std::to_string(bytesWritten)
 			+ " of " + std::to_string(sizeof request) + " bytes");
@@ -167,6 +221,9 @@ protocol::Response IpcClientBase::Receive()
 	if (!ReadFile(pipe_, &response, sizeof response, &bytesRead, nullptr)) {
 		DWORD err = GetLastError();
 		if (err == ERROR_MORE_DATA) {
+			openvr_pair::common::DiagnosticLog(
+				"ipc-client", "oversized_response pipe='%s' error=%lu expected_max=%zu",
+				pipeName_.c_str(), err, sizeof response);
 			char drainBuffer[1024];
 			for (;;) {
 				DWORD drained = 0;
@@ -185,6 +242,9 @@ protocol::Response IpcClientBase::Receive()
 		}
 
 		Close();
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "read_failed pipe='%s' error=%lu",
+			pipeName_.c_str(), err);
 		std::string msg = options_.readFailurePrefix + ". Error " + std::to_string(err)
 			+ ": " + openvr_pair::common::FormatWin32Error(err);
 		if (IsBrokenPipeError(err)) {
@@ -193,6 +253,9 @@ protocol::Response IpcClientBase::Receive()
 		throw std::runtime_error(msg);
 	}
 	if (bytesRead != sizeof response) {
+		openvr_pair::common::DiagnosticLog(
+			"ipc-client", "read_truncated pipe='%s' read=%lu expected=%zu",
+			pipeName_.c_str(), bytesRead, sizeof response);
 		Close();
 		throw std::runtime_error(options_.sizeMismatchMessagePrefix + ": got "
 			+ std::to_string(bytesRead) + " bytes, expected "

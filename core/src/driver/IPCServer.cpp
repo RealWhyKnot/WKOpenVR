@@ -20,12 +20,16 @@ IPCServer::~IPCServer()
 
 void IPCServer::Run()
 {
+	LOG("IPC[%s] starting server thread feature_mask=0x%08x",
+		pipeName.c_str(), (unsigned)featureMask);
 	mainThread = std::thread(RunThread, this);
 }
 
 void IPCServer::Stop()
 {
 	TRACE("IPCServer::Stop()");
+	LOG("IPC[%s] stop requested running=%d",
+		pipeName.c_str(), running ? 1 : 0);
 	// Signal and join even if `running` has already been cleared by the
 	// ThreadGuard (early-exit path). A joinable thread whose destructor fires
 	// without a join calls std::terminate.
@@ -43,6 +47,7 @@ void IPCServer::Stop()
 	// RunThread before join() returns; nothing left to clean up here.
 
 	TRACE("IPCServer::Stop() finished");
+	LOG("IPC[%s] stop finished", pipeName.c_str());
 }
 
 IPCServer::PipeInstance *IPCServer::CreatePipeInstance(HANDLE pipe)
@@ -69,6 +74,8 @@ void IPCServer::ClosePipeInstance(PipeInstance *pipeInst)
 void IPCServer::RunThread(IPCServer *_this)
 {
 	_this->running = true;
+	LOG("IPC[%s] server thread entered feature_mask=0x%08x",
+		_this->pipeName.c_str(), (unsigned)_this->featureMask);
 
 	// RAII guard: on any exit path (normal or error) drain any still-open
 	// PipeInstance objects, clear `running`, and close `connectEvent` once.
@@ -79,6 +86,8 @@ void IPCServer::RunThread(IPCServer *_this)
 	struct ThreadGuard {
 		IPCServer *server;
 		~ThreadGuard() {
+			LOG("IPC[%s] server thread exiting open_pipes=%zu stop=%d",
+				server->pipeName.c_str(), server->pipes.size(), server->stop ? 1 : 0);
 			// Snapshot then close: ClosePipeInstance erases from `pipes`,
 			// which invalidates iterators on std::set during a range-for.
 			std::vector<PipeInstance*> snapshot(server->pipes.begin(), server->pipes.end());
@@ -106,6 +115,7 @@ void IPCServer::RunThread(IPCServer *_this)
 		LOG("CreateEvent failed in RunThread. Error: %d", GetLastError());
 		return;
 	}
+	LOG("IPC[%s] listen event created", _this->pipeName.c_str());
 
 	OVERLAPPED connectOverlap;
 	connectOverlap.hEvent = connectEvent;
@@ -191,12 +201,15 @@ BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE &pipe)
 	case ERROR_IO_PENDING:
 		// Mark a pending connection by returning true, and when the connection
 		// completes an event will trigger automatically.
+		LOG("IPC[%s] waiting for client", pipeName.c_str());
 		return TRUE;
 
 	case ERROR_PIPE_CONNECTED:
 		// Signal the event loop that a client is connected.
-		if (SetEvent(overlap->hEvent))
+		if (SetEvent(overlap->hEvent)) {
+			LOG("IPC[%s] client was already connected at pipe creation", pipeName.c_str());
 			return FALSE;
+		}
 	}
 
 	// Pipe handle was created above but neither path took ownership of it. Close

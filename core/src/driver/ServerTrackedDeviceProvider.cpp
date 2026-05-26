@@ -43,6 +43,9 @@ namespace skeletal { void MarkFingersNeedReseed(uint16_t fingerBits); }
 #ifndef OPENVR_PAIR_HAS_PHANTOM_DRIVER
 #define OPENVR_PAIR_HAS_PHANTOM_DRIVER 0
 #endif
+#ifndef PAIRDRIVER_VERSION_STRING
+#define PAIRDRIVER_VERSION_STRING "0.0.0.0-dev"
+#endif
 
 // Phantom hot-path entry points are declared in DriverModule.h next to the
 // CreateDriverModule forward declaration; no additional include needed.
@@ -112,6 +115,8 @@ double ComputeSmartMotionRamp(const vr::DriverPose_t &pose)
 vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriverContext)
 {
 	TRACE("ServerTrackedDeviceProvider::Init()");
+	LOG("ServerTrackedDeviceProvider::Init begin version=%s protocol=%u",
+		PAIRDRIVER_VERSION_STRING, (unsigned)protocol::Version);
 	VR_INIT_SERVER_DRIVER_CONTEXT(pDriverContext);
 
 	// QPF is constant for the lifetime of the boot; capture it once instead of
@@ -124,12 +129,20 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	// the driver runs inert -- still loaded by SteamVR, but no hooks, no IPC,
 	// no shmem.
 	featureFlags = pairdriver::DetectFeatureFlags();
+	LOG("Driver feature mask detected: 0x%08x", (unsigned)featureFlags);
 
 	activeModules.clear();
 	DriverModuleContext moduleContext{this, pDriverContext, featureFlags};
 	auto activateModule = [&](std::unique_ptr<DriverModule> module) {
-		if (!module) return;
-		if ((featureFlags & module->FeatureMask()) == 0) return;
+		if (!module) {
+			LOG("Driver module factory returned null");
+			return;
+		}
+		if ((featureFlags & module->FeatureMask()) == 0) {
+			LOG("Driver module '%s' skipped; module_mask=0x%08x featureFlags=0x%08x",
+				module->Name(), (unsigned)module->FeatureMask(), (unsigned)featureFlags);
+			return;
+		}
 		if (!module->Init(moduleContext)) {
 			LOG("Driver module '%s' failed to initialize", module->Name());
 			return;
@@ -204,6 +217,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME,
 			pairdriver::kFeatureCalibration);
+		LOG("Starting calibration IPC server pipe=%s", OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME);
 		calibrationServer->Run();
 	}
 
@@ -212,6 +226,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME,
 			pairdriver::kFeatureSmoothing);
+		LOG("Starting smoothing IPC server pipe=%s", OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME);
 		smoothingServer->Run();
 	}
 
@@ -220,6 +235,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME,
 			pairdriver::kFeatureInputHealth);
+		LOG("Starting inputhealth IPC server pipe=%s", OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME);
 		inputHealthServer->Run();
 	}
 
@@ -228,6 +244,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME,
 			pairdriver::kFeatureFaceTracking);
+		LOG("Starting facetracking IPC server pipe=%s", OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME);
 		faceTrackingServer->Run();
 	}
 
@@ -236,6 +253,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME,
 			pairdriver::kFeatureOscRouter);
+		LOG("Starting oscrouter IPC server pipe=%s", OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME);
 		oscRouterServer->Run();
 	}
 
@@ -244,6 +262,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME,
 			pairdriver::kFeatureCaptions);
+		LOG("Starting captions IPC server pipe=%s", OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME);
 		captionsServer->Run();
 	}
 
@@ -252,6 +271,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			this,
 			OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME,
 			pairdriver::kFeaturePhantom);
+		LOG("Starting phantom IPC server pipe=%s", OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME);
 		phantomServer->Run();
 	}
 
@@ -259,6 +279,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	// flags so the GetGenericInterface detour skips registering the
 	// per-feature inner hooks for subsystems that aren't enabled.
 	if (!InjectHooks(this, pDriverContext, featureFlags)) {
+		LOG("InjectHooks failed; stopping IPC servers and shmem");
 		// MH_Initialize failed. IPC servers and shmem are already up, but
 		// without hooks the calibration and smoothing paths are dead. Report
 		// failure so SteamVR unloads us cleanly rather than leaving the driver
@@ -279,12 +300,16 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	debugTransform = Eigen::Vector3d::Zero();
 	debugRotation = Eigen::Quaterniond::Identity();
 
+	LOG("ServerTrackedDeviceProvider::Init complete active_modules=%zu featureFlags=0x%08x",
+		activeModules.size(), (unsigned)featureFlags);
 	return vr::VRInitError_None;
 }
 
 void ServerTrackedDeviceProvider::Cleanup()
 {
 	TRACE("ServerTrackedDeviceProvider::Cleanup()");
+	LOG("ServerTrackedDeviceProvider::Cleanup begin active_modules=%zu featureFlags=0x%08x",
+		activeModules.size(), (unsigned)featureFlags);
 
 	// Order matters. The previous order (server.Stop -> shmem.Close ->
 	// DisableHooks -> VR_CLEANUP) had a fatal race: DisableHooks removes
@@ -316,6 +341,7 @@ void ServerTrackedDeviceProvider::Cleanup()
 	if (calibrationServer) calibrationServer->Stop();
 	shmem.Close();
 	VR_CLEANUP_SERVER_DRIVER_CONTEXT();
+	LOG("ServerTrackedDeviceProvider::Cleanup complete");
 }
 
 bool ServerTrackedDeviceProvider::HandleIpcRequest(

@@ -1,5 +1,7 @@
 #include "VrOverlayHost.h"
 
+#include "DiagnosticsLog.h"
+
 #include <imgui.h>
 
 #include <cstdio>
@@ -83,6 +85,12 @@ VrOverlayHost::VrOverlayHost() = default;
 
 VrOverlayHost::~VrOverlayHost()
 {
+	openvr_pair::common::DiagnosticLog(
+		"vr-overlay", "destroy overlay_created=%d vr_ready=%d main=%llu thumb=%llu",
+		overlayCreated_ ? 1 : 0,
+		vrReady_ ? 1 : 0,
+		(unsigned long long)mainHandle_,
+		(unsigned long long)thumbHandle_);
 	if (overlayCreated_ && vr::VROverlay()) {
 		if (mainHandle_)  vr::VROverlay()->DestroyOverlay(mainHandle_);
 		if (thumbHandle_) vr::VROverlay()->DestroyOverlay(thumbHandle_);
@@ -114,8 +122,20 @@ bool VrOverlayHost::TryInitVrStack()
 		// Not fatal. The most common error here is
 		// VRInitError_Init_NoServerForBackgroundApp, which just means
 		// SteamVR is not running yet.
+		static vr::EVRInitError s_lastBackgroundErr = vr::VRInitError_None;
+		static double s_lastBackgroundLog = -1e9;
+		const double now = NowSeconds();
+		if (err != s_lastBackgroundErr || now - s_lastBackgroundLog >= 30.0) {
+			openvr_pair::common::DiagnosticLog(
+				"vr-overlay", "vr_init_background_failed error=%d description='%s'",
+				(int)err,
+				vr::VR_GetVRInitErrorAsEnglishDescription(err));
+			s_lastBackgroundErr = err;
+			s_lastBackgroundLog = now;
+		}
 		return false;
 	}
+	openvr_pair::common::DiagnosticLog("vr-overlay", "vr_init_background_ok");
 
 	// Phase 2: tear the probe down and re-init as Overlay so we can
 	// create dashboard overlays.
@@ -125,6 +145,10 @@ bool VrOverlayHost::TryInitVrStack()
 	if (err != vr::VRInitError_None) {
 		fprintf(stderr, "[VrOverlayHost] VR_Init(Overlay) failed: %s\n",
 			vr::VR_GetVRInitErrorAsEnglishDescription(err));
+		openvr_pair::common::DiagnosticLog(
+			"vr-overlay", "vr_init_overlay_failed error=%d description='%s'",
+			(int)err,
+			vr::VR_GetVRInitErrorAsEnglishDescription(err));
 		return false;
 	}
 
@@ -133,11 +157,13 @@ bool VrOverlayHost::TryInitVrStack()
 	{
 		fprintf(stderr, "[VrOverlayHost] OpenVR interface version mismatch; "
 			"runtime DLL out of date.\n");
+		openvr_pair::common::DiagnosticLog("vr-overlay", "interface_version_mismatch");
 		vr::VR_Shutdown();
 		return false;
 	}
 
 	vrReady_ = true;
+	openvr_pair::common::DiagnosticLog("vr-overlay", "vr_init_overlay_ok");
 	return true;
 }
 
@@ -154,10 +180,15 @@ void VrOverlayHost::TryCreateOverlay()
 		// closing the other instance.
 		fprintf(stderr, "[VrOverlayHost] CreateDashboardOverlay: key in use "
 			"(another WKOpenVR instance is registered)\n");
+		openvr_pair::common::DiagnosticLog("vr-overlay", "create_dashboard_overlay_key_in_use");
 		return;
 	}
 	if (err != vr::VROverlayError_None) {
 		fprintf(stderr, "[VrOverlayHost] CreateDashboardOverlay failed: %s\n",
+			vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
+		openvr_pair::common::DiagnosticLog(
+			"vr-overlay", "create_dashboard_overlay_failed error=%d name='%s'",
+			(int)err,
 			vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
 		return;
 	}
@@ -171,11 +202,21 @@ void VrOverlayHost::TryCreateOverlay()
 	const std::string iconPath = ResolveIconPath();
 	if (!iconPath.empty() && std::filesystem::exists(iconPath)) {
 		vr::VROverlay()->SetOverlayFromFile(thumbHandle_, iconPath.c_str());
+		openvr_pair::common::DiagnosticLog(
+			"vr-overlay", "dashboard_icon_set path='%s'", iconPath.c_str());
+	} else {
+		openvr_pair::common::DiagnosticLog(
+			"vr-overlay", "dashboard_icon_missing path='%s'", iconPath.c_str());
 	}
 
 	overlayCreated_ = true;
 	fprintf(stderr, "[VrOverlayHost] dashboard overlay created (main=%llu thumb=%llu)\n",
 		(unsigned long long)mainHandle_, (unsigned long long)thumbHandle_);
+	openvr_pair::common::DiagnosticLog(
+		"vr-overlay", "dashboard_overlay_created main=%llu thumb=%llu width_m=%.2f",
+		(unsigned long long)mainHandle_,
+		(unsigned long long)thumbHandle_,
+		kOverlayWidthMeters);
 }
 
 bool VrOverlayHost::IsDashboardVisible() const
@@ -216,6 +257,7 @@ void VrOverlayHost::DrainOverlayEvents()
 		}
 		case vr::VREvent_Quit:
 			quitRequested_ = true;
+			openvr_pair::common::DiagnosticLog("vr-overlay", "quit_event");
 			break;
 		default:
 			break;

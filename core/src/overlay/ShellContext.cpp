@@ -1,5 +1,6 @@
 #include "ShellContext.h"
 
+#include "DiagnosticsLog.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -233,6 +234,15 @@ ShellContext CreateShellContext()
 		resources = kFallbackResources;
 	}
 	ctx.driverResourceDirs.push_back(resources);
+	openvr_pair::common::DiagnosticLog(
+		"shell",
+		"context_paths install='%s' profile_root='%s' log_root='%s' steamvr_root='%s' resources='%s' resources_fallback=%d",
+		Narrow(ctx.installDir).c_str(),
+		Narrow(ctx.profileRoot).c_str(),
+		Narrow(ctx.logRoot).c_str(),
+		Narrow(steamvrRoot).c_str(),
+		Narrow(resources).c_str(),
+		steamvrRoot.empty() ? 1 : 0);
 	return ctx;
 }
 
@@ -309,7 +319,18 @@ const wchar_t *ShortcutArgFor(const char *flagFileName)
 bool ShellContext::SetFlagPresent(const char *flagFileName, bool present)
 {
 	std::wstring path = FlagPath(flagFileName);
-	if (path.empty()) return false;
+	if (path.empty()) {
+		openvr_pair::common::DiagnosticLog(
+			"shell", "set_flag_no_path flag='%s' want_present=%d",
+			flagFileName ? flagFileName : "(null)",
+			present ? 1 : 0);
+		return false;
+	}
+	openvr_pair::common::DiagnosticLog(
+		"shell", "set_flag_start flag='%s' want_present=%d path='%s'",
+		flagFileName ? flagFileName : "(null)",
+		present ? 1 : 0,
+		Narrow(path).c_str());
 
 	std::wstring parent = path.substr(0, path.find_last_of(L"\\/"));
 
@@ -397,6 +418,11 @@ bool ShellContext::SetFlagPresent(const char *flagFileName, bool present)
 		// shell refused to launch the helper. Either way there is no
 		// process to wait on.
 		DWORD err = GetLastError();
+		openvr_pair::common::DiagnosticLog(
+			"shell", "set_flag_launch_failed flag='%s' want_present=%d error=%lu",
+			flagFileName ? flagFileName : "(null)",
+			present ? 1 : 0,
+			err);
 		if (err == 0) {
 			SetStatus("Module change cancelled.");
 		} else {
@@ -408,6 +434,11 @@ bool ShellContext::SetFlagPresent(const char *flagFileName, bool present)
 	}
 
 	g_pendingToggles.push_back({flagFileName, present, sei.hProcess});
+	openvr_pair::common::DiagnosticLog(
+		"shell", "set_flag_queued flag='%s' want_present=%d pending_count=%zu",
+		flagFileName ? flagFileName : "(null)",
+		present ? 1 : 0,
+		g_pendingToggles.size());
 	SetStatus("Module change queued. SteamVR will pick up the new state the next time it loads the driver.");
 	return true;
 }
@@ -433,6 +464,12 @@ void ShellContext::TickToggles()
 			exitCode = 1;
 		}
 		const bool present = IsFlagPresent(it->flagFileName.c_str());
+		openvr_pair::common::DiagnosticLog(
+			"shell", "set_flag_finished flag='%s' want_present=%d present=%d exit=0x%08lX",
+			it->flagFileName.c_str(),
+			it->wantPresent ? 1 : 0,
+			present ? 1 : 0,
+			static_cast<unsigned long>(exitCode));
 		if (exitCode == 0 && present == it->wantPresent) {
 			SetStatus("Module change applied. SteamVR will pick up the new state the next time it loads the driver.");
 		} else if (present == it->wantPresent) {

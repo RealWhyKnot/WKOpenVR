@@ -1,6 +1,8 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #include "HostSupervisorBase.h"
 
+#include "DiagnosticsLog.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -9,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -149,6 +152,10 @@ void HostSupervisorBase::Log(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
+    va_list diagArgs;
+    va_copy(diagArgs, args);
+    DiagnosticLogV("host-supervisor", fmt, diagArgs);
+    va_end(diagArgs);
     LogV(fmt, args);
     va_end(args);
 }
