@@ -188,8 +188,12 @@ if (-not $SkipConfigure) {
 	if ($LASTEXITCODE -ne 0) { throw "CMake configure failed (exit $LASTEXITCODE)" }
 }
 
-# Build Release.
-Invoke-NativeQuiet { cmake --build build --config Release --parallel }
+# Build Release. Pass the job count explicitly so Visual Studio/MSBuild gets
+# the full logical CPU count instead of relying on generator defaults.
+$ParallelJobs = [Environment]::ProcessorCount
+if ($ParallelJobs -lt 1) { $ParallelJobs = 1 }
+Write-Host ("Build parallelism: {0} jobs" -f $ParallelJobs)
+Invoke-NativeQuiet { cmake --build build --config Release --parallel $ParallelJobs }
 if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 
 # Verify the artifact lands where we expect.

@@ -59,6 +59,10 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 # lib first: third-party targets must exist before the feature modules reference them.
 add_subdirectory(lib)
 
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC" OR "${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+	add_compile_options(/MP)
+endif()
+
 # Core umbrella driver + overlay. These CMakeLists add the feature
 # module driver/overlay subdirectories directly.
 add_subdirectory(core/src)
