@@ -1,5 +1,6 @@
 #include "Calibration.h"
 #include "CalibrationProgress.h"
+#include "CalibrationOneShotDiagnostics.h"
 #include "CalibrationInternal.h"
 #include "CalibrationDevicePoseUtils.h"
 #include "CalibrationPoseSampling.h"
@@ -2305,7 +2306,16 @@ void CalibrationTick(double time)
 		return;
 	}
 
-	CalCtx.Progress((int) calibration.SampleCount(), (int)CalCtx.SampleCount());
+	const int sampleProgress = (int)calibration.SampleCount();
+	const int sampleTarget = (int)ctx.SampleCount();
+	CalCtx.Progress(sampleProgress, sampleTarget);
+	spacecal::oneshot::MaybeLogReadiness(
+		ctx,
+		sampleProgress,
+		sampleTarget,
+		calibration.RotationDiversity(),
+		calibration.TranslationDiversity(),
+		time);
 
 	if (calibration.SampleCount() < CalCtx.SampleCount()) return;
 	while (calibration.SampleCount() > CalCtx.SampleCount()) calibration.ShiftSample();

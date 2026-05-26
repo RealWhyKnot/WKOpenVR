@@ -22,7 +22,7 @@ static void ScaledDragFloat(const char* label, double& f, double scale, double m
 		ImGui::SliderFloat(label, &v, (float)min, (float)max, "%1.2f", flags);
 	} else {
 		// Otherwise do funny
-		ImGui::Text(label);
+		ImGui::Text("%s", label);
 		ImGui::SameLine();
 		ImGui::PushID((std::string(label) + "_id").c_str());
 		// Line up to a column, multiples of 100

@@ -1,6 +1,5 @@
 ﻿#include "UserInterface.h"
 #include "Calibration.h"
-#include "CalibrationProgress.h"
 #include "Configuration.h"
 #include "DeviceFilters.h"
 #include "VRState.h"
@@ -13,6 +12,7 @@
 #include "Wizard.h"
 #include "UserInterfaceFooter.h"
 #include "UserInterfaceBanners.h"
+#include "UserInterfaceCalibrationProgress.h"
 #include "HeadMountOffsetModal.h"
 #include "UiHelpers.h"
 
@@ -387,7 +387,7 @@ void BuildContinuousCalDisplay() {
 void DrawVectorElement(const std::string id, const char* text, double* value, int defaultValue, const char* defaultValueStr) {
 	constexpr float CONTINUOUS_CALIBRATION_TRACKER_OFFSET_DELTA = 0.01f;
 
-	ImGui::Text(text);
+	ImGui::Text("%s", text);
 
 	ImGui::SameLine();
 
@@ -737,176 +737,7 @@ void BuildMenu(bool runningInOverlay)
 		ImGui::Button("Calibration in progress...", ImVec2(ImGui::GetWindowContentRegionWidth(), ImGui::GetTextLineHeight() * 2));
 	}
 
-	ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x - 40.0f, io.DisplaySize.y - 40.0f), ImGuiCond_Always);
-	if (ImGui::BeginPopupModal("Calibration Progress", nullptr, bareWindowFlags))
-	{
-		ImGui::PushStyleColor(ImGuiCol_FrameBg, (ImVec4)ImVec4(0, 0, 0, 1));
-		const bool isCollecting =
-			CalCtx.state == CalibrationState::Begin ||
-			CalCtx.state == CalibrationState::Rotation ||
-			CalCtx.state == CalibrationState::Translation;
-		for (auto &message : CalCtx.messages)
-		{
-			switch (message.type)
-			{
-			case CalibrationContext::Message::String:
-				ImGui::TextWrapped(message.str.c_str());
-				break;
-			case CalibrationContext::Message::Progress:
-				float fraction = 0.0f;
-				if (isCollecting) {
-					fraction = (float)spacecal::calibration_progress::OneShotReadyScore(
-						CalCtx.state,
-						message.progress,
-						message.target,
-						Metrics::rotationDiversity.last(),
-						Metrics::translationDiversity.last());
-				} else {
-					fraction = (float)spacecal::calibration_progress::SampleFillScore(
-						message.progress,
-						message.target);
-				}
-				char readyLabel[32];
-				snprintf(readyLabel, sizeof readyLabel, "Ready %d%%", (int)(fraction * 100.0f));
-				ImGui::Text("");
-				ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), readyLabel);
-				break;
-			}
-		}
-		ImGui::PopStyleColor();
-
-		// Live motion-coverage feedback while the user is actively running a
-		// one-shot calibration (Begin / Rotation / Translation). The math runs
-		// at sample-buffer fill regardless; these bars just tell the user
-		// "you've moved enough on every axis" so they don't stop early or
-		// keep waving long after they're done.
-		if (isCollecting) {
-			ImGui::Spacing();
-			ImGui::Separator();
-			// Phase banner. The two-phase one-shot flow (Rotation -> Translation)
-			// is invisible to the user otherwise; surfacing the active phase and
-			// what motion to do removes the "I waved but the bar didn't move"
-			// confusion that the old combined-gate flow created.
-			if (CalCtx.state == CalibrationState::Rotation) {
-				ImGui::TextDisabled("Phase 1 of 2: Rotation");
-				ImGui::TextWrapped("Rotate the tracker through different orientations (>= 90 deg between some pair).");
-			} else if (CalCtx.state == CalibrationState::Translation) {
-				ImGui::TextDisabled("Phase 2 of 2: Translation");
-				ImGui::TextWrapped("Wave the tracker through ~15 cm on each of left/right, up/down, and forward/back.");
-			} else {
-				ImGui::TextDisabled("Motion coverage");
-			}
-			ImGui::Spacing();
-
-			// Paired-motion warning. Fires when recent samples show one
-			// device moving while the other stayed put -- the most common
-			// case is the headset pose being frozen by a passthrough or
-			// desktop overlay while the target tracker keeps reporting
-			// motion. The threshold is a few mismatched samples in a row,
-			// not a single transient. Banner clears automatically once the
-			// user fixes the mismatch (counter decays each correlated
-			// sample).
-			const int pairedMotionWarn = (int)Metrics::pairedMotionWarningCount.last();
-			if (pairedMotionWarn >= 5) {
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.30f, 1.0f));
-				ImGui::TextWrapped("Reference and target aren't moving together. If you're in passthrough or a desktop overlay, your headset pose may be frozen -- exit to VR view so the headset reports real motion.");
-				ImGui::PopStyleColor();
-				ImGui::Spacing();
-			}
-
-			const float trDiv = (float)Metrics::translationDiversity.last();
-			// Latch the rotation bar at 100 % once we've moved into Translation
-			// phase: the rotation samples are frozen on CalibrationCalc and the
-			// live Metrics::rotationDiversity now reflects only fresh translation
-			// samples (which initially drops to 0 and stays low). Showing the
-			// raw metric here would make the just-achieved rotation appear to
-			// regress -- correct from the metric's POV but wrong UX.
-			const float rotDiv = (CalCtx.state == CalibrationState::Translation)
-				? 1.0f
-				: (float)Metrics::rotationDiversity.last();
-
-			char trLabel[64], rotLabel[64];
-			snprintf(trLabel, sizeof trLabel, "Translation %d%%", (int)(trDiv * 100.0f));
-			snprintf(rotLabel, sizeof rotLabel, "Rotation %d%%", (int)(rotDiv * 100.0f));
-
-			// Translation gate fires at kPhaseDiversity=0.55; rotation at 0.70.
-			// Match the green threshold to each phase's actual trigger so the
-			// bar turns green exactly when calibration will proceed.
-			constexpr float kTrGoodThreshold =
-				(float)spacecal::calibration_progress::kOneShotTranslationReadyDiversity;
-			constexpr float kRotGoodThreshold =
-				(float)spacecal::calibration_progress::kOneShotRotationReadyDiversity;
-			const ImVec4 trColor = trDiv >= kTrGoodThreshold
-				? ImVec4(0.40f, 0.85f, 0.40f, 1.0f)
-				: ImVec4(0.95f, 0.70f, 0.20f, 1.0f);
-			const ImVec4 rotColor = rotDiv >= kRotGoodThreshold
-				? ImVec4(0.40f, 0.85f, 0.40f, 1.0f)
-				: ImVec4(0.95f, 0.70f, 0.20f, 1.0f);
-
-			ImGui::PushStyleColor(ImGuiCol_PlotHistogram, trColor);
-			ImGui::ProgressBar(trDiv, ImVec2(-1.0f, 0.0f), trLabel);
-			ImGui::PopStyleColor();
-			if (ImGui::IsItemHovered()) {
-				// Per-axis ranges of the target tracker across the live sample
-				// buffer. Whichever axis is smallest is what's pinning the
-				// Translation% score (= min / 20 cm). Naming axes in user
-				// terms (left/right, up/down, fwd/back) is more useful than
-				// raw X/Y/Z because the user is moving a hand, not thinking
-				// in tracker-space coordinates.
-				const Eigen::Vector3d r = Metrics::translationAxisRangesCm.last();
-				int minIdx = 0; double minR = r(0);
-				for (int i = 1; i < 3; ++i) if (r(i) < minR) { minR = r(i); minIdx = i; }
-				static const char* kAxisName[] = {
-					"X (left/right)", "Y (up/down)", "Z (forward/back)"
-				};
-				ImGui::SetTooltip(
-					"Translation coverage: how much you've moved the tracker along all three axes.\n"
-					"Wave it ~15 cm in each of left/right, up/down, and forward/back to fill this bar.\n"
-					"Green = enough variety for a clean calibration.\n"
-					"\n"
-					"Current ranges: X=%.0f cm, Y=%.0f cm, Z=%.0f cm\n"
-					"Weakest axis: %s",
-					r(0), r(1), r(2), kAxisName[minIdx]);
-			}
-			ImGui::PushStyleColor(ImGuiCol_PlotHistogram, rotColor);
-			ImGui::ProgressBar(rotDiv, ImVec2(-1.0f, 0.0f), rotLabel);
-			ImGui::PopStyleColor();
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Rotation coverage: the widest angle between any two sampled tracker rotations.\n"
-				                  "Twist the tracker through ~90 degrees at some point to fill this bar.\n"
-				                  "Green = enough variety for a clean calibration.");
-			}
-
-			if (trDiv < kTrGoodThreshold || rotDiv < kRotGoodThreshold) {
-				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-				if (trDiv < rotDiv) {
-					ImGui::TextWrapped("Tip: try moving the tracker through wider distances on every axis.");
-				} else {
-					ImGui::TextWrapped("Tip: try rotating the tracker more (point it in different directions).");
-				}
-				ImGui::PopStyleColor();
-			}
-
-			ImGui::Spacing();
-			if (ImGui::Button("Cancel calibration", ImVec2(-1.0f, ImGui::GetTextLineHeight() * 1.6f))) {
-				CancelCalibration("ui_oneshot_progress");
-				ImGui::CloseCurrentPopup();
-			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Stop this calibration run and discard the samples collected so far.");
-			}
-		}
-
-		if (CalCtx.state == CalibrationState::None)
-		{
-			ImGui::Text("");
-			if (ImGui::Button("Close", ImVec2(ImGui::GetWindowContentRegionWidth(), ImGui::GetTextLineHeight() * 2)))
-				ImGui::CloseCurrentPopup();
-		}
-
-		ImGui::EndPopup();
-	}
+	spacecal::ui::DrawCalibrationProgressPopup(io.DisplaySize, bareWindowFlags);
 }
 
 void BuildSystemSelection(const VRState &state)
@@ -1261,7 +1092,7 @@ void BuildProfileEditor()
 void TextWithWidth(const char *label, const char *text, float width)
 {
 	ImGui::BeginChild(label, ImVec2(width, ImGui::GetTextLineHeightWithSpacing()));
-	ImGui::Text(text);
+	ImGui::Text("%s", text);
 	ImGui::EndChild();
 }
 
