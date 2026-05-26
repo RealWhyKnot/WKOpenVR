@@ -15,6 +15,19 @@
 
 using namespace wkopenvr::boundary;
 
+namespace {
+
+Eigen::Affine3d MakeFloorPointerPose(double x, double z, double y = 1.0) {
+    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    pose.translation() = Eigen::Vector3d(x, y, z);
+    pose.linear() = Eigen::AngleAxisd(
+        -3.14159265358979323846 / 2.0,
+        Eigen::Vector3d::UnitX()).toRotationMatrix();
+    return pose;
+}
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Douglas-Peucker
 // ---------------------------------------------------------------------------
@@ -150,8 +163,7 @@ TEST(CaptureSessionTest, DebouncesVertices) {
     session.Start();
     EXPECT_EQ(session.state(), CaptureState::Active);
 
-    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
-    pose.translation() = Eigen::Vector3d(0.5, 1.0, 0.5);
+    Eigen::Affine3d pose = MakeFloorPointerPose(0.5, 0.5);
 
     for (int i = 0; i < 100; ++i) {
         session.Tick(pose, /*triggerHeld=*/true);
@@ -166,14 +178,13 @@ TEST(CaptureSessionTest, FinishSimplifies) {
     session.Start();
 
     // Walk along +X axis: 20 steps of 0.1 m -> 2 m total
-    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
     for (int i = 0; i <= 20; ++i) {
-        pose.translation() = Eigen::Vector3d(i * 0.1, 0.0, 0.0);
+        Eigen::Affine3d pose = MakeFloorPointerPose(i * 0.1, 0.0);
         session.Tick(pose, true);
     }
     // Turn: walk along +Z axis: 20 steps of 0.1 m
     for (int i = 1; i <= 20; ++i) {
-        pose.translation() = Eigen::Vector3d(2.0, 0.0, i * 0.1);
+        Eigen::Affine3d pose = MakeFloorPointerPose(2.0, i * 0.1);
         session.Tick(pose, true);
     }
 
@@ -190,9 +201,8 @@ TEST(CaptureSessionTest, CancelClearsBuffer) {
     CaptureSession session;
     session.Start();
 
-    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
     for (int i = 0; i < 5; ++i) {
-        pose.translation() = Eigen::Vector3d(i * 0.2, 0.0, 0.0);
+        Eigen::Affine3d pose = MakeFloorPointerPose(i * 0.2, 0.0);
         session.Tick(pose, true);
     }
     EXPECT_GT(session.rawVertexCount(), 0u);
@@ -208,12 +218,62 @@ TEST(CaptureSessionTest, IgnoresTicksWhenTriggerNotHeld) {
     CaptureSession session;
     session.Start();
 
-    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    Eigen::Affine3d pose = MakeFloorPointerPose(0.0, 0.0);
     for (int i = 0; i < 10; ++i) {
         pose.translation() = Eigen::Vector3d(i * 0.1, 0.0, 0.0);
         session.Tick(pose, /*triggerHeld=*/false);
     }
     EXPECT_EQ(session.rawVertexCount(), 0u);
+}
+
+TEST(CaptureSessionTest, UsesControllerAimRayFloorHit) {
+    CaptureSession session;
+    session.Start();
+
+    Eigen::Affine3d pose = MakeFloorPointerPose(0.25, -0.5, 1.25);
+    session.Tick(pose, true, 0.25);
+
+    ASSERT_EQ(session.rawVertexCount(), 1u);
+    const auto& verts = session.vertices();
+    ASSERT_EQ(verts.size(), 1u);
+    EXPECT_NEAR(verts[0].x, 0.25, 1e-9);
+    EXPECT_NEAR(verts[0].y, 0.25, 1e-9);
+    EXPECT_NEAR(verts[0].z, -0.5, 1e-9);
+}
+
+TEST(CaptureSessionTest, IgnoresHorizontalAimRay) {
+    CaptureSession session;
+    session.Start();
+
+    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    pose.translation() = Eigen::Vector3d(0.0, 1.0, 0.0);
+    session.Tick(pose, true);
+
+    EXPECT_EQ(session.rawVertexCount(), 0u);
+}
+
+TEST(CaptureSessionTest, FinishCleansPaintedSquareToEdges) {
+    CaptureSession session;
+    session.Start();
+
+    for (int i = 0; i <= 20; ++i) {
+        session.Tick(MakeFloorPointerPose(i * 0.1, 0.0), true);
+    }
+    for (int i = 1; i <= 20; ++i) {
+        session.Tick(MakeFloorPointerPose(2.0, i * 0.1), true);
+    }
+    for (int i = 1; i <= 20; ++i) {
+        session.Tick(MakeFloorPointerPose(2.0 - i * 0.1, 2.0), true);
+    }
+    for (int i = 1; i <= 20; ++i) {
+        session.Tick(MakeFloorPointerPose(0.0, 2.0 - i * 0.1), true);
+    }
+
+    session.Finish();
+
+    const auto& verts = session.vertices();
+    EXPECT_EQ(verts.size(), 4u);
+    EXPECT_NEAR(AbsoluteAreaXZ(ProjectXZ(verts)), 4.0, 1e-9);
 }
 
 // ---------------------------------------------------------------------------

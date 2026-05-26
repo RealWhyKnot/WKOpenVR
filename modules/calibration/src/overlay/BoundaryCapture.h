@@ -10,10 +10,10 @@ namespace wkopenvr::boundary {
 
 enum class CaptureState { Idle, Active, Finished };
 
-// Streams controller poses while the trigger is held and builds a
-// boundary polygon in lighthouse (pre-transform) space. Call Finish() to
-// run Douglas-Peucker simplification on the raw buffer. Cancel() discards
-// the buffer and resets to Idle.
+// Streams controller aim rays while the trigger is held and builds a boundary
+// polygon in lighthouse (pre-transform) space. Call Finish() to clean the raw
+// painted loop down to edge vertices. Cancel() discards the buffer and resets
+// to Idle.
 class CaptureSession {
 public:
     void Start();
@@ -21,9 +21,10 @@ public:
     void Finish();
 
     // Called each overlay tick. controllerPose is the raw lighthouse-space
-    // pose. A new vertex is appended when triggerHeld AND the controller has
-    // moved at least kVertexDebounceMeters from the last recorded position.
-    void Tick(const Eigen::Affine3d& controllerPose, bool triggerHeld);
+    // pose. The controller's pointer ray is intersected with the floor plane;
+    // a new vertex is appended when triggerHeld AND that floor point has moved
+    // at least kVertexDebounceMeters from the last recorded position.
+    void Tick(const Eigen::Affine3d& controllerPose, bool triggerHeld, double floorY = 0.0);
 
     CaptureState state() const { return m_state; }
     // Simplified vertices after Finish(); raw vertices while Active.
@@ -40,6 +41,7 @@ private:
     static constexpr double kVertexDebounceMeters = 0.05;
     // Perpendicular-distance tolerance for Douglas-Peucker.
     static constexpr double kSimplifyEpsilonMeters = 0.05;
+    static constexpr double kCloseLoopMeters = 0.15;
 };
 
 }  // namespace wkopenvr::boundary

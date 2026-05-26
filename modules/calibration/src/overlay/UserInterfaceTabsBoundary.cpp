@@ -389,7 +389,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
     const auto state = s_capture.state();
 
     ImGui::TextWrapped(
-        "Walk your play area while holding the controller trigger. The polygon is anchored to lighthouse space so it doesn't drift with SLAM.");
+        "Point an Index controller at the floor, hold the trigger, and trace the play-space edge.");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
             "Stored in the target tracking system's coordinates. Unlike Quest Guardian, this\n"
@@ -406,7 +406,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
                 s_boundaryError.clear();
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Hold a controller trigger and walk the perimeter of your play space.");
+                ImGui::SetTooltip("Aim the controller at the floor. The pointer ray paints floor points while the trigger is held.");
             }
         } else {
             if (ImGui::Button("Re-draw")) {
@@ -488,7 +488,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
         }
     } else if (state == wkopenvr::boundary::CaptureState::Active) {
         ImGui::TextColored(pal.statusWarn,
-            "Recording. Hold the trigger and walk the perimeter. Click Done when finished.");
+            "Recording. Point at the floor and trace the edge. Click Done when finished.");
         ImGui::TextDisabled("Raw vertices: %d", (int)s_capture.rawVertexCount());
         ImGui::Spacing();
         if (ImGui::Button("Done##bnd_done")) {
@@ -504,27 +504,36 @@ void DrawBoundarySection(ImVec2 panelSize) {
         const double area = wkopenvr::boundary::AbsoluteAreaXZ(pts);
 
         ImGui::Text("%d vertices, %.2f m^2", (int)verts.size(), area);
+        ImGui::TextDisabled("Cleaned to edge vertices.");
 
         DrawPolygonPreview(verts);
 
         ImGui::Spacing();
         if (ImGui::Button("Keep this boundary##bnd_apply")) {
-            if (!CalCtx.boundary.priorChaperoneCaptured) {
-                CalCtx.boundary.priorChaperone = wkopenvr::boundary::SnapshotCurrentChaperone();
-                CalCtx.boundary.priorChaperoneCaptured = true;
-            }
-            CalCtx.boundary.vertices = verts;
-            if (CalCtx.boundary.enabled) {
-                if (!wkopenvr::boundary::PushToChaperone(
-                        CalCtx.boundary.vertices,
-                        CalCtx.boundary.floorY,
-                        CalCtx.boundary.ceilingY)) {
-                    s_boundaryError = "PushToChaperone failed after Apply.";
+            if (verts.size() < 3 || area < 0.25) {
+                s_boundaryError = "Boundary needs at least three floor points and a usable area.";
+            } else {
+                if (!CalCtx.boundary.priorChaperoneCaptured) {
+                    CalCtx.boundary.priorChaperone = wkopenvr::boundary::SnapshotCurrentChaperone();
+                    CalCtx.boundary.priorChaperoneCaptured = true;
+                }
+                CalCtx.boundary.vertices = verts;
+                bool appliedOk = true;
+                if (CalCtx.boundary.enabled) {
+                    if (!wkopenvr::boundary::PushToChaperone(
+                            CalCtx.boundary.vertices,
+                            CalCtx.boundary.floorY,
+                            CalCtx.boundary.ceilingY)) {
+                        s_boundaryError = "PushToChaperone failed after Apply.";
+                        appliedOk = false;
+                    }
+                }
+                SaveProfile(CalCtx);
+                if (appliedOk) {
+                    s_capture.Cancel();
+                    s_boundaryError.clear();
                 }
             }
-            SaveProfile(CalCtx);
-            s_capture.Cancel();
-            s_boundaryError.clear();
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard##bnd_discard_fin")) {
@@ -873,44 +882,50 @@ void CCal_TickBoundaryCapture() {
     if (s_capture.state() != wkopenvr::boundary::CaptureState::Active)
         return;
 
-    int ctrlId = -1;
+    auto* vrs = vr::VRSystem();
+    if (!vrs) return;
+
     for (int i = 0; i < (int)CalCtx.MAX_CONTROLLERS; ++i) {
-        if (CalCtx.controllerIDs[i] >= 0) {
-            const auto& dp = CalCtx.devicePoses[CalCtx.controllerIDs[i]];
-            if (dp.poseIsValid && dp.result == vr::ETrackingResult::TrackingResult_Running_OK) {
-                ctrlId = CalCtx.controllerIDs[i];
-                break;
-            }
+        const int ctrlId = CalCtx.controllerIDs[i];
+        if (ctrlId < 0) {
+            continue;
         }
-    }
-    if (ctrlId < 0) return;
 
-    const auto& dp = CalCtx.devicePoses[ctrlId];
-    Eigen::Quaterniond wfd(
-        dp.qWorldFromDriverRotation.w,
-        dp.qWorldFromDriverRotation.x,
-        dp.qWorldFromDriverRotation.y,
-        dp.qWorldFromDriverRotation.z);
-    Eigen::Vector3d wfd_t(
-        dp.vecWorldFromDriverTranslation[0],
-        dp.vecWorldFromDriverTranslation[1],
-        dp.vecWorldFromDriverTranslation[2]);
-    Eigen::Quaterniond rot(dp.qRotation.w, dp.qRotation.x, dp.qRotation.y, dp.qRotation.z);
-    Eigen::Vector3d pos(dp.vecPosition[0], dp.vecPosition[1], dp.vecPosition[2]);
-    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
-    pose.translate(wfd_t + wfd * pos);
-    pose.rotate(wfd * rot);
-
-    bool triggerHeld = false;
-    if (auto* vrs = vr::VRSystem()) {
         vr::VRControllerState_t st = {};
-        vrs->GetControllerState(ctrlId, &st, sizeof(st));
-        triggerHeld =
+        if (!vrs->GetControllerState(ctrlId, &st, sizeof(st))) {
+            continue;
+        }
+        const bool triggerHeld =
+            (st.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Trigger)) != 0 ||
             st.rAxis[vr::k_eControllerAxis_Trigger].x > 0.75f ||
             st.rAxis[vr::k_eControllerAxis_TrackPad].x > 0.75f;
-    }
+        if (!triggerHeld) {
+            continue;
+        }
 
-    s_capture.Tick(pose, triggerHeld);
+        const auto& dp = CalCtx.devicePoses[ctrlId];
+        if (!dp.poseIsValid || dp.result != vr::ETrackingResult::TrackingResult_Running_OK) {
+            continue;
+        }
+
+        Eigen::Quaterniond wfd(
+            dp.qWorldFromDriverRotation.w,
+            dp.qWorldFromDriverRotation.x,
+            dp.qWorldFromDriverRotation.y,
+            dp.qWorldFromDriverRotation.z);
+        Eigen::Vector3d wfd_t(
+            dp.vecWorldFromDriverTranslation[0],
+            dp.vecWorldFromDriverTranslation[1],
+            dp.vecWorldFromDriverTranslation[2]);
+        Eigen::Quaterniond rot(dp.qRotation.w, dp.qRotation.x, dp.qRotation.y, dp.qRotation.z);
+        Eigen::Vector3d pos(dp.vecPosition[0], dp.vecPosition[1], dp.vecPosition[2]);
+        Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+        pose.translate(wfd_t + wfd * pos);
+        pose.rotate(wfd * rot);
+
+        s_capture.Tick(pose, true, CalCtx.boundary.floorY);
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
