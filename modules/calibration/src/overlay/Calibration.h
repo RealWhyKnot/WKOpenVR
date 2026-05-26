@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "Protocol.h"
+#include "WarmRestart.h"  // ValidationOutcome enum
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -385,6 +386,25 @@ struct CalibrationContext
 	std::deque<Eigen::AffineCompact3d> autoLockHistory;
 	bool autoLockEffectivelyLocked = false;
 
+	// Rolling MAD floor for adaptive enter threshold. The detector tracks
+	// the minimum robust-translation-deviation reading across a sliding
+	// window of recent samples; EnterThresholdFor() scales this up to
+	// produce a per-rig enter threshold so a noisy pair (e.g. Quest+
+	// Lighthouse cross-system MAD floor ~4 mm) can still engage AUTO Lock
+	// instead of waiting forever for MAD to drop below the 3 mm hard floor.
+	// History is a deque of (time, mad) pairs trimmed to
+	// kFloorWindowSec of age. Floor is recomputed each push as the min of
+	// the in-window readings; zero means "no observations yet, use hard
+	// floor". Reset on Clear().
+	std::deque<std::pair<double, double>> autoLockMadHistory;
+	double autoLockMadFloor = 0.0;
+
+	// Wall-clock time of the most recent AUTO Lock flip commit. Used by
+	// the heartbeat's `settled=` field via IsSettled, which requires the
+	// lock to have held for kSettledMinHoldSec before reporting settled.
+	// Zero means no flip has happened this session. Reset on Clear().
+	double autoLockLastFlipTime = 0.0;
+
 	// AUTO lock-mode pending-flip queue. The detector produces a target value
 	// (`autoLockPendingFlipTo`) when the hysteresis verdict changes; the flip
 	// is held until the next CalibrationTick observes the HMD nearly still
@@ -491,6 +511,38 @@ struct CalibrationContext
 	bool lastUserPresent = true;
 	double userAwaySince = 0.0;
 	int warmRestartGraceSamples = 0;
+
+	// Session-level continuous-cal tick counter for the cold-start safety
+	// gate. Incremented once per CalibrationTick that processes the warm-
+	// restart polling block; compared against
+	// spacecal::warm_restart::kColdStartGraceTicks to suppress engages
+	// during the first ~30 s of a session (when a startup-then-put-on-HMD
+	// sequence would otherwise look like a warm restart with no profile to
+	// restore from). Reset on Clear() so a fresh profile starts the gate
+	// over.
+	int warmRestartTickId = 0;
+
+	// HMD world-position captured on the proximity-falling edge (user
+	// took the HMD off). On the rising edge, the displacement from this
+	// stored position to the current HMD position is the
+	// awayPositionDeltaM input to ShouldEngage; large jumps fast-path the
+	// engage decision (see WarmRestart.h::kPositionJumpFastPathM) for
+	// HMDs whose activity-level signal is unreliable. Zero vector when
+	// no falling-edge position has been captured yet.
+	Eigen::Vector3d hmdLastKnownPosWhenAway = Eigen::Vector3d::Zero();
+	bool hmdLastKnownPosValid = false;
+
+	// MAD-floor reading captured at the moment a warm-restart snap fired.
+	// Used by the validation phase as the baseline against which post-snap
+	// MAD convergence is judged. NaN until a snap fires.
+	double warmRestartMadAtSnap = 0.0;
+
+	// Validation outcome of the most recent warm-restart snap. Set
+	// Inconclusive when the snap fires; transitions to Settled or Failed
+	// when the validation gate trips (see WarmRestart.h::EvaluateValidation).
+	// Reset on Clear().
+	spacecal::warm_restart::ValidationOutcome warmRestartValidationState =
+		spacecal::warm_restart::ValidationOutcome::Inconclusive;
 
 	// Multi-ecosystem extras: each entry aligns an additional non-HMD tracking
 	// system to the HMD's tracking system. Empty for the typical 1-or-2-system
@@ -692,6 +744,9 @@ struct CalibrationContext
 		autoLockReanchorSuppressUntil = 0.0;
 		autoLockPendingFlipFirstSeen = 0.0;
 		autoLockGateHeldWarned = false;
+		autoLockMadHistory.clear();
+		autoLockMadFloor = 0.0;
+		autoLockLastFlipTime = 0.0;
 		relocalizationCooldownUntil = 0.0;
 		recoveryWaitingSince = 0.0;
 		recoveryHmdDeltaAtStart = 0.0;
@@ -703,6 +758,12 @@ struct CalibrationContext
 		lastUserPresent = true;
 		userAwaySince = 0.0;
 		warmRestartGraceSamples = 0;
+		warmRestartTickId = 0;
+		hmdLastKnownPosWhenAway = Eigen::Vector3d::Zero();
+		hmdLastKnownPosValid = false;
+		warmRestartMadAtSnap = 0.0;
+		warmRestartValidationState =
+			spacecal::warm_restart::ValidationOutcome::Inconclusive;
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
 		// user preference that spans profiles.
 		// No calibration was performed — relative pose is NOT calibrated. The

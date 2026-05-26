@@ -64,24 +64,28 @@ TEST(AutoLockHysteresisTest, EnterLockedRequiresTightRotation)
 
 // --- Hysteresis: leave behavior ---------------------------------------------
 
-// While currently LOCKED, the detector tolerates modest noise (up to 8mm /
+// While currently LOCKED, the detector tolerates modest noise (up to 15mm /
 // 1.5 deg) before unlocking. Sub-threshold jitter that the old detector
-// would have rejected now remains locked.
+// would have rejected now remains locked. (kLeaveTranslM widened from 8mm
+// to 15mm on 2026-05-25 because the prior 8mm caught steady-state cross-
+// tracking-system MAD which routinely sits in the 3-6mm band on
+// Quest+Lighthouse, with transient outliers in the 8-15mm range.)
 TEST(AutoLockHysteresisTest, StaysLockedThroughDeadbandNoise)
 {
     // 5mm is comfortably above the 3mm enter threshold but well under the
-    // 8mm leave threshold. The old detector flipped at 5mm; the new one
-    // should keep us locked.
+    // 15mm leave threshold. The original 5mm-single-threshold detector
+    // flipped here; the wider-deadband path stays locked.
     EXPECT_TRUE(al::VerdictWithHysteresis(0.005, 0.005, /*prevLocked=*/true));
 
-    // 7mm is still under the leave threshold; stays locked.
-    EXPECT_TRUE(al::VerdictWithHysteresis(0.007, 0.005, /*prevLocked=*/true));
+    // 12mm is in the new deadband (was outside the old 8mm leave). With
+    // the wider deadband this sits comfortably inside the locked band.
+    EXPECT_TRUE(al::VerdictWithHysteresis(0.012, 0.005, /*prevLocked=*/true));
 }
 
 TEST(AutoLockHysteresisTest, LeavesLockedOnGenuineLooseness)
 {
-    EXPECT_FALSE(al::VerdictWithHysteresis(0.012, 0.001, /*prevLocked=*/true))
-        << "12 mm stddev is too loose -- should unlock";
+    EXPECT_FALSE(al::VerdictWithHysteresis(0.020, 0.001, /*prevLocked=*/true))
+        << "20 mm stddev is past the 15 mm leave threshold -- should unlock";
 
     const double twoDeg = 2.0 * EIGEN_PI / 180.0;
     EXPECT_FALSE(al::VerdictWithHysteresis(0.001, twoDeg, /*prevLocked=*/true))
@@ -124,11 +128,11 @@ TEST(AutoLockHysteresisTest, FourToSixMillimeterFlapStaysLockedOnceLocked)
 // prevent legitimate state changes.
 TEST(AutoLockHysteresisTest, GenuineLooseMotionTransitionsThroughDeadband)
 {
-    // Start locked, ramp from rigid (1mm) up through the deadband to genuinely
-    // loose (15mm). Detector should hold locked through the 4-7mm region and
-    // unlock once we exceed 8mm.
+    // Start locked, ramp from rigid (1mm) up through the new wider deadband
+    // to genuinely loose (20mm). Detector should hold locked through the
+    // entire 4-14mm region and unlock only once we exceed 15mm.
     bool locked = true;
-    const double trace[] = {0.001, 0.003, 0.005, 0.007, 0.009, 0.011, 0.013, 0.015};
+    const double trace[] = {0.001, 0.003, 0.006, 0.009, 0.012, 0.014, 0.018, 0.020};
     bool sawUnlock = false;
     for (double stddev : trace) {
         const bool next = al::VerdictWithHysteresis(stddev, 0.001, locked);
@@ -414,21 +418,147 @@ TEST(AutoLockPanicTest, EitherAxisTriggers)
     EXPECT_TRUE(al::IsPanicLevelDeviation(0.010, tenDeg));
 }
 
-// Panic does not replace the hysteresis verdict -- the 8 mm leave
+// Panic does not replace the hysteresis verdict -- the 15 mm leave
 // threshold still releases locks normally, the queue and stationary gate
 // still arbitrate timing. Panic is a strict superset trigger for the
 // pathological tail. Pin the contract that callers must consult both.
 TEST(AutoLockPanicTest, DoesNotSubsumeHysteresis)
 {
-    // 9 mm: past the 8 mm leave threshold but well under the 40 mm panic
+    // 16 mm: past the 15 mm leave threshold but well under the 40 mm panic
     // floor. The hysteresis verdict (currently locked) says unlock; the
     // panic predicate says no. Callers route through the normal queue.
-    EXPECT_FALSE(al::IsPanicLevelDeviation(0.009, 0.0));
-    EXPECT_FALSE(al::VerdictWithHysteresis(0.009, 0.0, /*prevLocked=*/true));
+    EXPECT_FALSE(al::IsPanicLevelDeviation(0.016, 0.0));
+    EXPECT_FALSE(al::VerdictWithHysteresis(0.016, 0.0, /*prevLocked=*/true));
 
     // 2 mm: below both. Locked stays locked.
     EXPECT_FALSE(al::IsPanicLevelDeviation(0.002, 0.0));
     EXPECT_TRUE(al::VerdictWithHysteresis(0.002, 0.0, /*prevLocked=*/true));
+}
+
+// --- Adaptive enter threshold -----------------------------------------------
+
+// EnterThresholdFor scales the enter band to the rig's observed MAD floor
+// so cross-tracking-system pairs whose steady-state noise sits above the
+// 3mm hard floor can still engage AUTO Lock. Hard floor at kEnterTranslM
+// (low-noise rig still demands tight evidence); ceiling at kLeaveTranslM-1mm
+// (preserves 1mm of hysteresis deadband even on the noisiest rigs).
+
+TEST(AutoLockAdaptiveEnterTest, ZeroFloorReturnsHardMinimum)
+{
+    // No observations yet -- floor of 0 must return the hard minimum.
+    EXPECT_DOUBLE_EQ(al::EnterThresholdFor(0.0), al::kEnterTranslM);
+}
+
+TEST(AutoLockAdaptiveEnterTest, LowFloorPinnedToHardMinimum)
+{
+    // 1 mm floor -> 2 mm scaled value, but the hard floor at 3 mm wins.
+    // Clean low-noise rig should still demand tight evidence to lock.
+    EXPECT_DOUBLE_EQ(al::EnterThresholdFor(0.001), al::kEnterTranslM);
+}
+
+TEST(AutoLockAdaptiveEnterTest, MediumFloorScalesProportionally)
+{
+    // 4 mm floor -> 8 mm scaled value. Cross-tracking-system rig with
+    // steady-state noise of 4 mm gets an 8 mm enter threshold so it can
+    // actually engage AUTO Lock.
+    EXPECT_DOUBLE_EQ(al::EnterThresholdFor(0.004), 0.008);
+
+    // 5 mm floor -> 10 mm scaled value.
+    EXPECT_DOUBLE_EQ(al::EnterThresholdFor(0.005), 0.010);
+}
+
+TEST(AutoLockAdaptiveEnterTest, HighFloorClampedAtCeiling)
+{
+    // 10 mm floor -> 20 mm scaled value, but the ceiling at
+    // kLeaveTranslM - 1 mm (14 mm) wins. Preserves the 1 mm deadband.
+    EXPECT_NEAR(al::EnterThresholdFor(0.010), al::kLeaveTranslM - 0.001, 1e-9);
+
+    // Pathologically high floor still clamps at the ceiling.
+    EXPECT_NEAR(al::EnterThresholdFor(0.100), al::kLeaveTranslM - 0.001, 1e-9);
+}
+
+TEST(AutoLockAdaptiveEnterTest, EnterRemainsBelowLeave)
+{
+    // Hysteresis invariant: enter < leave for any floor input. Required
+    // for the deadband to exist at all; without it, a single sample could
+    // flip-flop between enter and leave each tick.
+    for (double floor : {0.0, 0.001, 0.005, 0.010, 0.020, 0.100}) {
+        EXPECT_LT(al::EnterThresholdFor(floor), al::kLeaveTranslM)
+            << "Adaptive enter must stay strictly below leave; floor=" << floor;
+    }
+}
+
+TEST(AutoLockVerdictTest, AdaptiveEnterUnlocksMidFloorRig)
+{
+    // The headline regression scenario from the 2026-05-25 log: a rig with
+    // ~4 mm steady-state MAD never engages because enter is pinned at 3 mm.
+    // With adaptive enter at 8 mm (for that floor), a clean 5 mm reading
+    // enters lock.
+    const double floor = 0.004;
+    const double enter = al::EnterThresholdFor(floor);
+    EXPECT_TRUE(al::VerdictWithHysteresis(0.005, 0.001,
+                                          /*prevLocked=*/false, enter))
+        << "5 mm MAD on a 4 mm-floor rig should enter lock under adaptive";
+
+    // Without adaptive (default hard floor): 5 mm fails to enter.
+    EXPECT_FALSE(al::VerdictWithHysteresis(0.005, 0.001, /*prevLocked=*/false))
+        << "Default hard floor at 3 mm correctly rejects 5 mm MAD";
+}
+
+// --- Settled diagnostic ----------------------------------------------------
+
+// IsSettled gates on three conditions: currently locked, MAD below the
+// adaptive enter threshold (well inside the deadband, not riding the leave
+// edge), and the lock has held for at least kSettledMinHoldSec. The
+// heartbeat field `settled=` is the success-rate signal for the 2026-05-25
+// settling fix.
+
+TEST(AutoLockSettledTest, UnlockedIsNeverSettled)
+{
+    EXPECT_FALSE(al::IsSettled(/*currentlyLocked=*/false,
+                               /*translMad=*/0.001,
+                               /*madFloor=*/0.001,
+                               /*secsSinceLastFlip=*/100.0));
+}
+
+TEST(AutoLockSettledTest, FreshlyLockedIsNotSettled)
+{
+    // Just flipped to locked, hasn't held long enough yet. Prevents a
+    // freshly-committed lock from immediately reporting settled.
+    EXPECT_FALSE(al::IsSettled(/*currentlyLocked=*/true,
+                               /*translMad=*/0.001,
+                               /*madFloor=*/0.001,
+                               /*secsSinceLastFlip=*/1.0));
+}
+
+TEST(AutoLockSettledTest, LockedAndHeldButMadAtLeaveEdgeNotSettled)
+{
+    // Locked, has held, but MAD is riding the leave threshold -- about to
+    // unlock at any moment. Not "settled" in the user-visible sense.
+    EXPECT_FALSE(al::IsSettled(/*currentlyLocked=*/true,
+                               /*translMad=*/0.014,
+                               /*madFloor=*/0.0,
+                               /*secsSinceLastFlip=*/10.0));
+}
+
+TEST(AutoLockSettledTest, LockedHeldAndBelowEnterIsSettled)
+{
+    EXPECT_TRUE(al::IsSettled(/*currentlyLocked=*/true,
+                              /*translMad=*/0.001,
+                              /*madFloor=*/0.0,
+                              /*secsSinceLastFlip=*/10.0));
+}
+
+TEST(AutoLockSettledTest, AdaptiveEnterPath)
+{
+    // On a 4 mm-floor rig, MAD of 5 mm is below the adaptive enter
+    // threshold of 8 mm -- should count as settled (locked, held, inside
+    // deadband). Pre-adaptive code would have considered this "above
+    // enter" and declined to mark settled.
+    EXPECT_TRUE(al::IsSettled(/*currentlyLocked=*/true,
+                              /*translMad=*/0.005,
+                              /*madFloor=*/0.004,
+                              /*secsSinceLastFlip=*/10.0));
 }
 
 // --- Commit-gate decision ---------------------------------------------------

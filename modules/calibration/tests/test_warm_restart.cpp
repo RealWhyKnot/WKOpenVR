@@ -144,3 +144,211 @@ static_assert(wr::kMinAwaySeconds == 5.0,
 static_assert(wr::kGraceSamples == 100,
     "kGraceSamples changed -- ~30 s of grace at 3.5 Hz; verify the new "
     "value with the latest tick-rate measurement");
+static_assert(wr::kMaxAwaySeconds == 4.0 * 3600.0,
+    "kMaxAwaySeconds changed -- update the cold-cal handoff rationale");
+static_assert(wr::kPositionJumpFastPathM == 0.30,
+    "kPositionJumpFastPathM changed -- update the dead-proximity-sensor "
+    "fallback rationale");
+static_assert(wr::kColdStartGraceTicks == 100,
+    "kColdStartGraceTicks changed -- ~30 s of session warmup at 3.5 Hz");
+
+// --- Pose-jump fast-path (B1) ----------------------------------------------
+
+// Single-signal fast-path for HMDs whose activity-level signal is
+// unreliable. A 30+ cm HMD displacement during "away" is unambiguous
+// evidence of repositioning, regardless of how long the away gap was
+// (even sub-kMinAwaySeconds). Built for Quest variants over Link with
+// flaky proximity, IMU stillness not met on wobbly desks, etc.
+
+TEST(WarmRestartTest, PoseJumpFastPathEngagesBelowMinAway) {
+    // Brief gap (1 s, way below kMinAwaySeconds=5) but with a 50 cm
+    // physical HMD displacement -- engage.
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = 1.0;
+    in.awayPositionDeltaM = 0.50;
+    EXPECT_TRUE(wr::ShouldEngage(in))
+        << "Large HMD displacement bypasses the kMinAwaySeconds gate";
+}
+
+TEST(WarmRestartTest, PoseJumpFastPathRequiresThreshold) {
+    // Brief gap + small displacement (20 cm) -- does NOT engage. Sub-
+    // threshold position deltas are casual head movement, not warm-restart.
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = 1.0;
+    in.awayPositionDeltaM = 0.20;
+    EXPECT_FALSE(wr::ShouldEngage(in));
+}
+
+TEST(WarmRestartTest, PoseJumpFastPathStillNeedsRisingEdge) {
+    // Even with a huge position jump, a steady-true reading is not a
+    // warm-restart event -- no edge to act on.
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.wasPresent = true;
+    in.nowPresent = true;
+    in.awayPositionDeltaM = 5.0;
+    EXPECT_FALSE(wr::ShouldEngage(in));
+}
+
+TEST(WarmRestartTest, PoseJumpFastPathStillNeedsValidProfile) {
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = 1.0;
+    in.awayPositionDeltaM = 0.50;
+    in.validProfile = false;
+    EXPECT_FALSE(wr::ShouldEngage(in));
+}
+
+TEST(WarmRestartTest, PoseJumpAtExactlyThresholdEngages) {
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = 1.0;
+    in.awayPositionDeltaM = wr::kPositionJumpFastPathM;
+    EXPECT_TRUE(wr::ShouldEngage(in)) << "Boundary value is inclusive (>=)";
+}
+
+// --- Max-away ceiling (B2) -------------------------------------------------
+
+// Multi-day absences are unsafe to snap because base stations could have
+// shifted, room layout could have changed, or the rig could have been
+// physically moved while powered down. Falls through to cold cal which
+// re-validates everything.
+
+TEST(WarmRestartTest, MaxAwayCeilingSuppresses) {
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = wr::kMaxAwaySeconds + 60.0;  // just over 4 h
+    EXPECT_FALSE(wr::ShouldEngage(in))
+        << "Beyond kMaxAwaySeconds the snap is unsafe without re-validation";
+}
+
+TEST(WarmRestartTest, MaxAwayCeilingBoundaryIsInclusive) {
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = wr::kMaxAwaySeconds;  // exactly at boundary
+    EXPECT_TRUE(wr::ShouldEngage(in))
+        << "Exactly at the ceiling still engages (<= boundary)";
+}
+
+TEST(WarmRestartTest, PoseJumpBypassesMaxAwayCeiling) {
+    // 8 h away AND a 1 m physical jump -- the jump is unambiguous evidence
+    // that the saved profile must be re-evaluated, regardless of the
+    // ceiling. The pose-jump fast-path bypasses time-window checks
+    // entirely.
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.awayForSeconds = 8.0 * 3600.0;
+    in.awayPositionDeltaM = 1.0;
+    EXPECT_TRUE(wr::ShouldEngage(in))
+        << "Pose-jump fast-path bypasses kMaxAwaySeconds";
+}
+
+// --- Cold-start safety (B4) ------------------------------------------------
+
+// Session startup with HMD off + user puts it on shortly = rising edge
+// that looks like a warm restart, but there's no prior session state to
+// "snap back to". Cold-start grace covers the first ~30 s.
+
+TEST(WarmRestartTest, ColdStartSuppressesEngage) {
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.tickId = 5;  // very early in session
+    EXPECT_FALSE(wr::ShouldEngage(in))
+        << "First few ticks of a session must not warm-restart";
+}
+
+TEST(WarmRestartTest, ColdStartGraceReleasesAtThreshold) {
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.tickId = wr::kColdStartGraceTicks;  // exactly at boundary
+    EXPECT_TRUE(wr::ShouldEngage(in)) << "Boundary is inclusive";
+}
+
+TEST(WarmRestartTest, ColdStartGraceAlsoBlocksPoseJump) {
+    // Pose jump fast-path is also gated by cold-start grace -- session
+    // startup with a large pose delta (e.g. HMD picked up off the desk
+    // for the first time) must not engage.
+    wr::EngageInput in = kHealthyWarmRestart;
+    in.tickId = 5;
+    in.awayForSeconds = 1.0;
+    in.awayPositionDeltaM = 0.50;
+    EXPECT_FALSE(wr::ShouldEngage(in));
+}
+
+// --- Validation phase (B3) -------------------------------------------------
+
+// EvaluateValidation classifies the post-snap convergence into Settled
+// (early-end grace), Failed (trigger recovery), or Inconclusive (ride out
+// the window). Pure helper; caller threads samples_since_snap and
+// graceEndedThisTick.
+
+TEST(WarmRestartValidationTest, SettledWhenMadConvergesBelowThreshold) {
+    // 5 mm MAD after 25 samples = comfortably settled.
+    EXPECT_EQ(wr::EvaluateValidation(/*madFloorM=*/0.005,
+                                      /*samplesSinceSnap=*/25,
+                                      /*graceEndedThisTick=*/false),
+              wr::ValidationOutcome::Settled);
+}
+
+TEST(WarmRestartValidationTest, SettledRequiresMinimumSamples) {
+    // 5 mm MAD but only 10 samples in -- too early to declare settled.
+    // The min-samples gate prevents declaring victory on a lucky early
+    // tick before the solver has accumulated real evidence.
+    EXPECT_EQ(wr::EvaluateValidation(/*madFloorM=*/0.005,
+                                      /*samplesSinceSnap=*/10,
+                                      /*graceEndedThisTick=*/false),
+              wr::ValidationOutcome::Inconclusive);
+}
+
+TEST(WarmRestartValidationTest, SettledRequiresNonZeroMad) {
+    // MAD floor of zero means "no observations yet" -- not the same as
+    // "actually settled at sub-mm". Defensive: don't declare settled
+    // until we have at least one real reading.
+    EXPECT_EQ(wr::EvaluateValidation(/*madFloorM=*/0.0,
+                                      /*samplesSinceSnap=*/25,
+                                      /*graceEndedThisTick=*/false),
+              wr::ValidationOutcome::Inconclusive);
+}
+
+TEST(WarmRestartValidationTest, FailedAtGraceEndWithHighMad) {
+    // 30 mm MAD at grace end -> Failed -> caller triggers recovery.
+    EXPECT_EQ(wr::EvaluateValidation(/*madFloorM=*/0.030,
+                                      /*samplesSinceSnap=*/100,
+                                      /*graceEndedThisTick=*/true),
+              wr::ValidationOutcome::Failed);
+}
+
+TEST(WarmRestartValidationTest, FailedRequiresGraceEnd) {
+    // Mid-grace with high MAD -> wait it out. The solver may still
+    // converge. Only at grace end do we commit to Failed.
+    EXPECT_EQ(wr::EvaluateValidation(/*madFloorM=*/0.030,
+                                      /*samplesSinceSnap=*/50,
+                                      /*graceEndedThisTick=*/false),
+              wr::ValidationOutcome::Inconclusive);
+}
+
+TEST(WarmRestartValidationTest, BetweenThresholdsAtGraceEndIsInconclusive) {
+    // 15 mm MAD at grace end -- not settled, not failed. Profile stays;
+    // caller logs and moves on.
+    EXPECT_EQ(wr::EvaluateValidation(/*madFloorM=*/0.015,
+                                      /*samplesSinceSnap=*/100,
+                                      /*graceEndedThisTick=*/true),
+              wr::ValidationOutcome::Inconclusive);
+}
+
+TEST(WarmRestartValidationTest, BoundaryAtSettledThreshold) {
+    // Boundary is strict less-than -- 8 mm exactly does NOT settle.
+    // Prevents declaring settled when sitting right at the edge.
+    EXPECT_EQ(wr::EvaluateValidation(wr::kValidatedSettledMadM,
+                                      /*samplesSinceSnap=*/25,
+                                      /*graceEndedThisTick=*/false),
+              wr::ValidationOutcome::Inconclusive);
+    EXPECT_EQ(wr::EvaluateValidation(wr::kValidatedSettledMadM - 0.0001,
+                                      /*samplesSinceSnap=*/25,
+                                      /*graceEndedThisTick=*/false),
+              wr::ValidationOutcome::Settled);
+}
+
+TEST(WarmRestartValidationTest, BoundaryAtFailedThreshold) {
+    // Boundary is strict greater-than -- 20 mm exactly does NOT fail.
+    EXPECT_EQ(wr::EvaluateValidation(wr::kValidatedFailedMadM,
+                                      /*samplesSinceSnap=*/100,
+                                      /*graceEndedThisTick=*/true),
+              wr::ValidationOutcome::Inconclusive);
+    EXPECT_EQ(wr::EvaluateValidation(wr::kValidatedFailedMadM + 0.0001,
+                                      /*samplesSinceSnap=*/100,
+                                      /*graceEndedThisTick=*/true),
+              wr::ValidationOutcome::Failed);
+}

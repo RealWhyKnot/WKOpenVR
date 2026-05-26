@@ -39,16 +39,55 @@ inline bool HmdIsStationary(double hmdSpeedMps);
 inline bool ShouldSuppressForReanchor(double now, double suppressUntil);
 
 // Window size of the relative-pose history. With samples arriving at the
-// continuous-cal cadence (~2 Hz post-buffer-fill), 30 samples ~ 15 s.
-constexpr size_t kHistoryMax = 30;
-constexpr size_t kSamplesNeeded = 30;
+// continuous-cal cadence (~2 Hz post-buffer-fill), 20 samples ~ 10 s. Was
+// 30 (~15 s) before 2026-05-25; the longer window held a single transient
+// outlier in the MAD computation for too long, so even a clean 30s
+// settling period could be interrupted by one ~50mm spike from 12-14s
+// earlier. The shorter window ages transients out faster while still
+// covering enough samples for the MAD median to be statistically
+// meaningful.
+constexpr size_t kHistoryMax = 20;
+constexpr size_t kSamplesNeeded = 20;
 
 // Hysteresis thresholds. Tighter on enter (need genuine rigid attachment)
 // than on leave (don't release a locked relationship over a few mm of noise).
-constexpr double kEnterTranslM = 0.003;                  // 3 mm
-constexpr double kLeaveTranslM = 0.008;                  // 8 mm
+//
+// kLeaveTranslM widened from 8 mm to 15 mm on 2026-05-25: the prior 5 mm
+// deadband (3 enter / 8 leave) was tight relative to the steady-state MAD
+// scatter on cross-tracking-system pairs (Quest+Lighthouse routinely 3-6 mm
+// MAD even when rigidly attached), so transient outliers in the 8-15 mm
+// band were forcing unlock on otherwise-clean attachments. 15 mm leaves
+// the panic-unlock at 40 mm comfortably above the new floor; locks that
+// have genuinely broken still release via IsPanicLevelDeviation regardless
+// of where the leave threshold sits.
+constexpr double kEnterTranslM = 0.003;                  // 3 mm hard floor
+constexpr double kLeaveTranslM = 0.015;                  // 15 mm
 constexpr double kEnterRotRad  = 0.7 * EIGEN_PI / 180.0; // 0.7 deg
 constexpr double kLeaveRotRad  = 1.5 * EIGEN_PI / 180.0; // 1.5 deg
+
+// Adaptive enter threshold derived from the rolling MAD floor. The hard
+// floor at kEnterTranslM keeps the gate tight on low-noise rigs (every
+// attached pair must still demonstrate ~few-mm rigidity before locking);
+// the ceiling at kLeaveTranslM - 1 mm preserves a 1 mm deadband even on
+// the noisiest rigs. The 2x scale lets a pair whose observed steady-state
+// MAD floor is e.g. 5 mm engage AUTO Lock at 10 mm rather than waiting
+// forever for the MAD to drop below the hardcoded 3 mm constant -- the
+// 2026-05-25 session log showed exactly this starvation, with autoLockEff
+// alternating 0/1 indefinitely on a rig whose MAD floor sat near 4 mm.
+//
+// Caller maintains the rolling MAD floor (typically the minimum or low
+// quantile of the last ~60 s of robust deviation readings) and passes
+// it here per-tick. A floor of 0 (no observations yet) returns the hard
+// floor unchanged so the gate doesn't relax before evidence exists.
+constexpr double kEnterAdaptiveScale = 2.0;
+inline double EnterThresholdFor(double madFloor)
+{
+    constexpr double kCeil = kLeaveTranslM - 0.001;
+    double v = kEnterAdaptiveScale * madFloor;
+    if (v < kEnterTranslM) v = kEnterTranslM;
+    if (v > kCeil)         v = kCeil;
+    return v;
+}
 
 // HMD linear-speed threshold (m/s) below which a queued AUTO-lock flip is
 // allowed to commit. Same order of magnitude as the existing TrackerLiveness
@@ -128,9 +167,17 @@ inline bool IsPanicLevelDeviation(double translStdDev, double rotMaxAngle)
 // Returns the verdict the detector should produce given the current
 // (translStdDev, rotMaxAngle) and the previously committed lock state.
 // Single owner of the hysteresis decision; unit tests pin the contract.
+//
+// `enterTranslM` defaults to the kEnterTranslM hard floor so callers that
+// don't track an adaptive MAD floor keep the historical contract. Callers
+// that do (the primary detector in Calibration.cpp uses a rolling minimum
+// of recent MAD readings as the floor input to EnterThresholdFor) pass the
+// adaptive value here so cross-tracking-system pairs whose natural noise
+// sits above 3 mm can still engage AUTO Lock.
 inline bool VerdictWithHysteresis(double translStdDev,
                                   double rotMaxAngle,
-                                  bool prevLocked)
+                                  bool prevLocked,
+                                  double enterTranslM = kEnterTranslM)
 {
     if (prevLocked) {
         const bool stillRigid =
@@ -138,8 +185,28 @@ inline bool VerdictWithHysteresis(double translStdDev,
         return stillRigid;
     }
     const bool genuinelyRigid =
-        (translStdDev < kEnterTranslM) && (rotMaxAngle < kEnterRotRad);
+        (translStdDev < enterTranslM) && (rotMaxAngle < kEnterRotRad);
     return genuinelyRigid;
+}
+
+// Settled-state predicate. "Settled" means: currently locked, MAD inside
+// the adaptive enter band (so we're well-inside the deadband, not riding
+// the leave threshold), and the lock has held for at least
+// kSettledMinHoldSec since the last flip (so a freshly-committed lock
+// doesn't immediately count as settled). Pure helper; the caller maintains
+// `secsSinceLastFlip` from the auto_lock_flip log path.
+//
+// Used by the [cal-heartbeat] settled= field; a >70% rate in real sessions
+// is the success criterion for the 2026-05-25 settling fix.
+constexpr double kSettledMinHoldSec = 3.0;
+inline bool IsSettled(bool currentlyLocked,
+                      double translMad,
+                      double madFloor,
+                      double secsSinceLastFlip)
+{
+    if (!currentlyLocked) return false;
+    if (secsSinceLastFlip < kSettledMinHoldSec) return false;
+    return translMad < EnterThresholdFor(madFloor);
 }
 
 // Returns true when an HMD linear speed is low enough to commit a queued

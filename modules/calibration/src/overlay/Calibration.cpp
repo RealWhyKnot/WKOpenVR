@@ -202,6 +202,7 @@ static double g_lastAutoLockTranslMad = 0.0;
 static double g_lastAutoLockRotMad = 0.0;
 static int g_geomShiftConsecutiveBadTicks = 0;
 static spacecal::geometry_shift::CusumState g_cusumState;
+static spacecal::geometry_shift::DeferralState g_geomShiftDeferral;
 
 void CalibrationContext::UpdateAutoLockDetector(
 	const Eigen::AffineCompact3d& refWorld,
@@ -236,6 +237,27 @@ void CalibrationContext::UpdateAutoLockDetector(
 	g_lastAutoLockTranslMad = translStdDev;
 	g_lastAutoLockRotMad = rotMaxAngle;
 
+	// Maintain the rolling MAD floor used by EnterThresholdFor to scale the
+	// enter threshold to the rig's natural noise level. Window covers the
+	// last 60 s of MAD readings; floor is the min across the in-window
+	// samples. Pairs (time, mad) are pushed each tick and trimmed when they
+	// age out. See CalibrationContext::autoLockMadFloor for the field
+	// rationale.
+	{
+		constexpr double kFloorWindowSec = 60.0;
+		const double nowSec = Metrics::CurrentTime;
+		autoLockMadHistory.emplace_back(nowSec, translStdDev);
+		while (!autoLockMadHistory.empty()
+			&& (nowSec - autoLockMadHistory.front().first) > kFloorWindowSec) {
+			autoLockMadHistory.pop_front();
+		}
+		double floor = autoLockMadHistory.front().second;
+		for (const auto& p : autoLockMadHistory) {
+			if (p.second < floor) floor = p.second;
+		}
+		autoLockMadFloor = floor;
+	}
+
 	// Panic-unlock: at clearly-broken deviation, skip the pending-flip queue
 	// and drop the effective lock immediately so downstream cal output stops
 	// using the stale rigid attachment. ResolveLockMode runs inline because
@@ -249,6 +271,7 @@ void CalibrationContext::UpdateAutoLockDetector(
 		autoLockHasPendingFlip = false;
 		autoLockPendingFlipFirstSeen = 0.0;
 		autoLockGateHeldWarned = false;
+		autoLockLastFlipTime = Metrics::CurrentTime;
 		ResolveLockMode();
 		char buf[224];
 		snprintf(buf, sizeof buf,
@@ -259,7 +282,8 @@ void CalibrationContext::UpdateAutoLockDetector(
 	}
 
 	const bool verdict = spacecal::autolock::VerdictWithHysteresis(
-		translStdDev, rotMaxAngle, autoLockEffectivelyLocked);
+		translStdDev, rotMaxAngle, autoLockEffectivelyLocked,
+		spacecal::autolock::EnterThresholdFor(autoLockMadFloor));
 
 	// Queue rather than commit when the verdict differs from the currently
 	// effective state. CommitPendingAutoLockFlipIfStationary in
@@ -368,6 +392,7 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 	ctx.autoLockHasPendingFlip = false;
 	ctx.autoLockPendingFlipFirstSeen = 0.0;
 	ctx.autoLockGateHeldWarned = false;
+	ctx.autoLockLastFlipTime = now;
 
 	char buf[280];
 	snprintf(buf, sizeof buf,
@@ -652,12 +677,43 @@ void CalibrationTick(double time)
 		// reported anything would look like a "false" reading and
 		// immediately start the away timer at session start.
 		if (activity != vr::k_EDeviceActivityLevel_Unknown) {
+			// Session-level tick counter for the cold-start safety gate
+			// in ShouldEngage. Incremented every poll-cycle (the outer
+			// {} guards on Continuous/ContinuousStandby state, which is
+			// where warm-restart can meaningfully fire). See
+			// WarmRestart.h::kColdStartGraceTicks for the threshold.
+			++ctx.warmRestartTickId;
+
+			// Current HMD position from the latest device pose, used for
+			// the pose-jump fallback signal. DriverPose_t carries position
+			// in vecPosition[3]; same field other code paths in this file
+			// read for HMD position (e.g. line 1583).
+			const auto& hmdPose = ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
+			const Eigen::Vector3d hmdPosNow(
+				hmdPose.vecPosition[0],
+				hmdPose.vecPosition[1],
+				hmdPose.vecPosition[2]);
+			const bool hmdPoseValid = hmdPose.poseIsValid
+				&& hmdPose.result == vr::ETrackingResult::TrackingResult_Running_OK;
+
 			const bool wasPresent = ctx.lastUserPresent;
 			if (wasPresent && !nowPresent) {
 				ctx.userAwaySince = time;
+				// Capture the HMD's position at the moment of falling
+				// edge so the rising edge can compute displacement and
+				// fast-path the engage decision on large jumps (HMD
+				// physically moved while away, regardless of how briefly).
+				if (hmdPoseValid) {
+					ctx.hmdLastKnownPosWhenAway = hmdPosNow;
+					ctx.hmdLastKnownPosValid = true;
+				}
 			} else if (!wasPresent && nowPresent) {
 				const double awayFor = (ctx.userAwaySince > 0.0)
 					? (time - ctx.userAwaySince) : 0.0;
+				const double awayPosDelta =
+					(ctx.hmdLastKnownPosValid && hmdPoseValid)
+						? (hmdPosNow - ctx.hmdLastKnownPosWhenAway).norm()
+						: 0.0;
 				const spacecal::warm_restart::EngageInput engageIn = {
 					wasPresent,
 					nowPresent,
@@ -665,24 +721,60 @@ void CalibrationTick(double time)
 					ctx.validProfile,
 					ctx.state == CalibrationState::Continuous
 						|| ctx.state == CalibrationState::ContinuousStandby,
+					awayPosDelta,
+					ctx.warmRestartTickId,
 				};
-				if (spacecal::warm_restart::ShouldEngage(engageIn)) {
+				const bool engaged = spacecal::warm_restart::ShouldEngage(engageIn);
+
+				// Diagnostic: max-away ceiling. When the proximity path
+				// would have engaged but awayFor crossed the ceiling, log
+				// it explicitly so a session that "went to sleep then woke
+				// to cold cal" leaves a paper trail rather than being
+				// invisible. Only logs when this is the suppress reason
+				// (not when pose-jump fast-path took over).
+				if (!engaged
+					&& ctx.validProfile
+					&& (ctx.state == CalibrationState::Continuous
+						|| ctx.state == CalibrationState::ContinuousStandby)
+					&& ctx.warmRestartTickId >= spacecal::warm_restart::kColdStartGraceTicks
+					&& awayFor > spacecal::warm_restart::kMaxAwaySeconds
+					&& awayPosDelta < spacecal::warm_restart::kPositionJumpFastPathM) {
+					char cbuf[200];
+					snprintf(cbuf, sizeof cbuf,
+						"[warm-restart][ceiling-suppressed] away_for_s=%.1f"
+						" max_away_s=%.0f pos_delta_m=%.3f",
+						awayFor, spacecal::warm_restart::kMaxAwaySeconds,
+						awayPosDelta);
+					Metrics::WriteLogAnnotation(cbuf);
+				}
+
+				if (engaged) {
 					ctx.warmRestartGraceSamples =
 						spacecal::warm_restart::kGraceSamples;
+					ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
+					ctx.warmRestartValidationState =
+						spacecal::warm_restart::ValidationOutcome::Inconclusive;
 					g_snapNextProfileApply = true;
 					const double mag = std::sqrt(
 						  ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x()
 						+ ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y()
 						+ ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
-					char wbuf[200];
+					const bool fastPath =
+						awayPosDelta >= spacecal::warm_restart::kPositionJumpFastPathM
+						&& awayFor < spacecal::warm_restart::kMinAwaySeconds;
+					char wbuf[260];
 					snprintf(wbuf, sizeof wbuf,
 						"[warm-restart][snap] away_for_s=%.1f state=%d"
-						" grace_samples=%d profile_magnitude_cm=%.2f",
+						" grace_samples=%d profile_magnitude_cm=%.2f"
+						" pos_delta_m=%.3f mad_at_snap_mm=%.3f path=%s",
 						awayFor, (int)ctx.state,
-						ctx.warmRestartGraceSamples, mag);
+						ctx.warmRestartGraceSamples, mag,
+						awayPosDelta, ctx.warmRestartMadAtSnap * 1000.0,
+						fastPath ? "pose_jump_fast_path" : "proximity_and_time");
 					Metrics::WriteLogAnnotation(wbuf);
 				}
 				ctx.userAwaySince = 0.0;
+				ctx.hmdLastKnownPosValid = false;
 			}
 			ctx.lastUserPresent = nowPresent;
 		}
@@ -815,11 +907,31 @@ void CalibrationTick(double time)
 				(ctx.autoLockHasPendingFlip && ctx.autoLockPendingFlipFirstSeen > 0.0)
 					? (time - ctx.autoLockPendingFlipFirstSeen)
 					: 0.0;
-			char hbBuf[640];
+			// Settled signal: see AutoLockHysteresis.h::IsSettled. The settled
+			// rate over a session is the headline success metric for the
+			// 2026-05-25 settling fix -- a healthy run should sit at
+			// settled=yes for the majority of heartbeats once initial motion
+			// has finished. settledSinceSec is the elapsed time since the
+			// last AUTO Lock flip when settled, zero otherwise; lets a
+			// reader scrub the timeline of stable lock windows.
+			const double secsSinceLastFlip = (ctx.autoLockLastFlipTime > 0.0)
+				? (time - ctx.autoLockLastFlipTime)
+				: 0.0;
+			const bool settled = spacecal::autolock::IsSettled(
+				ctx.autoLockEffectivelyLocked,
+				g_lastAutoLockTranslMad,
+				ctx.autoLockMadFloor,
+				secsSinceLastFlip);
+			const double madFloorMm = ctx.autoLockMadFloor * 1000.0;
+			const double enterMm =
+				spacecal::autolock::EnterThresholdFor(ctx.autoLockMadFloor) * 1000.0;
+			char hbBuf[768];
 			snprintf(hbBuf, sizeof hbBuf,
 				"[cal-heartbeat] state=%d lockMode=%d lockRel=%d autoLockEff=%d"
 				" autoLockPending=%d autoLockPendingTo=%d autoLockHeldSec=%.2f"
 				" autoLockHistory=%zu/%zu translMad_mm=%.3f rotMad_deg=%.3f"
+				" mad_floor_mm=%.3f enter_threshold_mm=%.3f"
+				" settled=%s settled_since_sec=%.1f"
 				" err_last_mm=%.2f err_samples=%d"
 				" sec_since_reanchor=%.2f autolock_suppress_until=%.3f"
 				" reloc_cooldown_until=%.3f grace_until=%.3f"
@@ -832,6 +944,9 @@ void CalibrationTick(double time)
 				autoLockHeldSec,
 				ctx.autoLockHistory.size(), spacecal::autolock::kSamplesNeeded,
 				translMadMm, rotMadDeg,
+				madFloorMm, enterMm,
+				settled ? "yes" : "no",
+				settled ? secsSinceLastFlip : 0.0,
 				errLast, errSeries.size(),
 				secSinceReanchor, ctx.autoLockReanchorSuppressUntil,
 				ctx.relocalizationCooldownUntil, ctx.geometryShiftGraceUntil,
@@ -960,6 +1075,7 @@ void CalibrationTick(double time)
 		if (inGeometryShiftGrace) {
 			g_geomShiftConsecutiveBadTicks = 0;
 			g_cusumState.Reset();
+			g_geomShiftDeferral.Reset();
 			if ((time - s_lastGraceLogTime) >= 1.0) {
 				s_lastGraceLogTime = time;
 				char gBuf[200];
@@ -1024,31 +1140,134 @@ void CalibrationTick(double time)
 					g_cusumState.Reset();
 				}
 
-				// Reanchor-gate: when the chi-square reanchor is frozen, the
-				// underlying worldFromDriver was just reset and the cal solver
-				// is naturally producing larger residuals as it re-anchors
-				// against the new frame. Treating that transient as a real
-				// geometry shift triggers a cascade -- demote to Standby,
-				// promote back, clear error history, then the next reanchor
-				// finds the EWMA variance at floor and fires again. In the
-				// pre-fix session 29 of 32 geometry-shift fires landed
-				// inside a reanchor frozen window; gating those out is the
-				// single biggest unblocker for AUTO Lock engagement.
-				if (fire && IsReanchorChiFrozen(time)) {
-					char supBuf[280];
+				// Reanchor-gate with deferral. When the chi-square reanchor is
+				// frozen the underlying worldFromDriver was just reset and the
+				// cal solver naturally produces larger residuals as it re-
+				// anchors against the new frame. The previous suppress-and-
+				// reset path dropped those fires entirely, which on rigs with
+				// continuous reanchor activity (Quest+Lighthouse, reanchor
+				// every 0.8-1.5 s with 0.5 s freeze each) starved real shifts
+				// of any remediation -- the 2026-05-25 session log showed 1
+				// committed fire across 5.3 h despite continuous candidate
+				// activity. Deferral preserves the fire intent: commit on the
+				// next non-frozen tick, or fire through after
+				// kFireThroughSeconds of continuous freeze (storm itself is
+				// shift signature at that duration). See
+				// GeometryShiftDetector.h::DeferralState for the contract.
+				const bool reanchorFrozen = IsReanchorChiFrozen(time);
+
+				// Process an existing deferral first -- it can promote into a
+				// real fire even if no new fire was decided this tick.
+				if (g_geomShiftDeferral.HasPending()) {
+					const double deferredFor = time - g_geomShiftDeferral.pendingFireSince;
 					const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
-					snprintf(supBuf, sizeof supBuf,
-						"[geometry-shift][suppressed-by-reanchor] current_mm=%.3f median_mm=%.3f"
-						" ratio=%.2fx cusum_S_at_fire=%.3f mode=%s sec_since_reanchor=%.3f"
-						" lockRelativePosition=%d",
-						current, median, ratio, cusumValueAtFire,
+					if (!reanchorFrozen) {
+						// Reanchor cleared. Commit the deferred fire using the
+						// latched diagnostics so the upcoming [fire] log
+						// describes the originally-triggering values, not the
+						// post-defer current sample.
+						char dcBuf[320];
+						snprintf(dcBuf, sizeof dcBuf,
+							"[geometry-shift][deferred-fire-committed] deferred_for_sec=%.3f"
+							" current_mm=%.3f median_mm=%.3f ratio=%.2fx"
+							" cusum_S_at_pending=%.3f sustain_at_pending=%d mode=%s"
+							" sec_since_reanchor=%.3f",
+							deferredFor,
+							g_geomShiftDeferral.currentMmAtPending,
+							g_geomShiftDeferral.medianMmAtPending,
+							g_geomShiftDeferral.ratioAtPending,
+							g_geomShiftDeferral.cusumSAtPending,
+							g_geomShiftDeferral.sustainAtPending,
+							g_geomShiftDeferral.modeWasCusum ? "cusum" : "legacy",
+							secSinceReanchor);
+						Metrics::WriteLogAnnotation(dcBuf);
+						current = g_geomShiftDeferral.currentMmAtPending;
+						median  = g_geomShiftDeferral.medianMmAtPending;
+						cusumValueAtFire   = g_geomShiftDeferral.cusumSAtPending;
+						cusumSustainAtFire = g_geomShiftDeferral.sustainAtPending;
+						fire = true;
+						g_geomShiftDeferral.Reset();
+					} else if (spacecal::geometry_shift::ShouldFireThroughDeferral(
+							time, g_geomShiftDeferral)) {
+						// Reanchor still frozen past kFireThroughSeconds --
+						// fire anyway. Continued suppression at this point
+						// would leave the bad calibration sitting indefinitely.
+						char ftBuf[320];
+						snprintf(ftBuf, sizeof ftBuf,
+							"[geometry-shift][fired-through-reanchor] deferred_for_sec=%.3f"
+							" current_mm=%.3f median_mm=%.3f ratio=%.2fx"
+							" cusum_S_at_pending=%.3f sustain_at_pending=%d mode=%s"
+							" sec_since_reanchor=%.3f",
+							deferredFor,
+							g_geomShiftDeferral.currentMmAtPending,
+							g_geomShiftDeferral.medianMmAtPending,
+							g_geomShiftDeferral.ratioAtPending,
+							g_geomShiftDeferral.cusumSAtPending,
+							g_geomShiftDeferral.sustainAtPending,
+							g_geomShiftDeferral.modeWasCusum ? "cusum" : "legacy",
+							secSinceReanchor);
+						Metrics::WriteLogAnnotation(ftBuf);
+						current = g_geomShiftDeferral.currentMmAtPending;
+						median  = g_geomShiftDeferral.medianMmAtPending;
+						cusumValueAtFire   = g_geomShiftDeferral.cusumSAtPending;
+						cusumSustainAtFire = g_geomShiftDeferral.sustainAtPending;
+						fire = true;
+						g_geomShiftDeferral.Reset();
+					} else if (!fire) {
+						// Reanchor still frozen, no new fire AND signal has
+						// subsided below the relevant accumulator's noise
+						// floor. The original spike turned out to be
+						// transient -- clear the deferral without firing.
+						// CUSUM mode: S well below threshold (S>=1 indicates
+						// the increment is still pushing past the drift).
+						// Legacy mode: consecutive bad ticks dropped to 0
+						// (any tick without a 5x median spike resets it).
+						const bool subsided = ctx.useCusumGeometryShift
+							? (g_cusumState.S < 1.0)
+							: (g_geomShiftConsecutiveBadTicks == 0);
+						if (subsided) {
+							char clrBuf[240];
+							snprintf(clrBuf, sizeof clrBuf,
+								"[geometry-shift][deferral-cleared] deferred_for_sec=%.3f"
+								" mode=%s reason=subsided cusum_S=%.3f legacy_sustained=%d",
+								deferredFor,
+								g_geomShiftDeferral.modeWasCusum ? "cusum" : "legacy",
+								g_cusumState.S, g_geomShiftConsecutiveBadTicks);
+							Metrics::WriteLogAnnotation(clrBuf);
+							g_geomShiftDeferral.Reset();
+						}
+					}
+					// else: deferred, reanchor frozen, elapsed < kFireThroughSeconds,
+					// new fire still active or signal still hot -- keep waiting.
+				}
+
+				// New fire while reanchor is frozen and no deferral already
+				// pending: latch the deferral so the fire intent survives the
+				// freeze instead of being dropped. If a deferral is already
+				// pending, the original timestamp wins (don't re-latch and
+				// extend the fire-through window).
+				if (fire && reanchorFrozen && !g_geomShiftDeferral.HasPending()) {
+					char defBuf[320];
+					const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
+					snprintf(defBuf, sizeof defBuf,
+						"[geometry-shift][deferred-by-reanchor] current_mm=%.3f median_mm=%.3f"
+						" ratio=%.2fx cusum_S_at_fire=%.3f sustain=%d mode=%s"
+						" sec_since_reanchor=%.3f lockRelativePosition=%d",
+						current, median, ratio,
+						cusumValueAtFire, cusumSustainAtFire,
 						ctx.useCusumGeometryShift ? "cusum" : "legacy",
 						secSinceReanchor, (int)ctx.lockRelativePosition);
-					Metrics::WriteLogAnnotation(supBuf);
+					Metrics::WriteLogAnnotation(defBuf);
+					g_geomShiftDeferral.Latch(time,
+						cusumValueAtFire, cusumSustainAtFire,
+						current, median, ratio,
+						ctx.useCusumGeometryShift);
 					fire = false;
-					// Reset both accumulators so the next genuine excursion
-					// starts from a clean baseline rather than carrying the
-					// reanchor-noise contribution.
+					// Reset accumulators so the next tick's spike detection
+					// starts fresh; the latched values carry the original
+					// fire decision. If the underlying shift is real, the
+					// fire-through timeout will commit it; if transient, the
+					// subsided check will clear it.
 					g_geomShiftConsecutiveBadTicks = 0;
 					g_cusumState.Reset();
 				}
@@ -1797,13 +2016,68 @@ void CalibrationTick(double time)
 			// Warm-restart grace counts down per Continuous-mode solve. When
 			// it hits zero, the prior-vs-new error gate snaps back on -- the
 			// solver has had ~30 s of bypassed acceptance and should be sitting
-			// on the saved offset now. Logged so triage can see whether the
-			// fast path ended naturally or was demoted by a geometry-shift.
+			// on the saved offset now. Validation phase replaces the prior
+			// silent samples_exhausted success path: each tick checks the
+			// rolling MAD floor, ends grace early on convergence (Settled),
+			// triggers RecoverFromWedgedCalibration at grace end with elevated
+			// MAD (Failed -- snap landed on a profile that no longer matches
+			// reality), or rides out the window as Inconclusive (MAD between
+			// thresholds, current behaviour but logged with the actual reading
+			// so a reader can see whether the snap was load-bearing).
 			if (CalCtx.warmRestartGraceSamples > 0) {
 				--CalCtx.warmRestartGraceSamples;
-				if (CalCtx.warmRestartGraceSamples == 0) {
+				const int samplesSinceSnap =
+					spacecal::warm_restart::kGraceSamples - CalCtx.warmRestartGraceSamples;
+				const bool graceEndedThisTick = (CalCtx.warmRestartGraceSamples == 0);
+				const double madFloor = CalCtx.autoLockMadFloor;
+				const auto outcome = spacecal::warm_restart::EvaluateValidation(
+					madFloor, samplesSinceSnap, graceEndedThisTick);
+				if (outcome == spacecal::warm_restart::ValidationOutcome::Settled
+					&& CalCtx.warmRestartValidationState
+						!= spacecal::warm_restart::ValidationOutcome::Settled) {
+					CalCtx.warmRestartValidationState =
+						spacecal::warm_restart::ValidationOutcome::Settled;
+					CalCtx.warmRestartGraceSamples = 0;  // end grace early
+					char vbuf[240];
+					snprintf(vbuf, sizeof vbuf,
+						"[warm-restart][validated] mad_mm=%.3f samples_since_snap=%d"
+						" mad_at_snap_mm=%.3f reason=settled",
+						madFloor * 1000.0, samplesSinceSnap,
+						CalCtx.warmRestartMadAtSnap * 1000.0);
+					Metrics::WriteLogAnnotation(vbuf);
 					Metrics::WriteLogAnnotation(
-						"[warm-restart][grace-ended] reason=samples_exhausted");
+						"[warm-restart][grace-ended] reason=validated_settled");
+				} else if (graceEndedThisTick) {
+					if (outcome == spacecal::warm_restart::ValidationOutcome::Failed) {
+						CalCtx.warmRestartValidationState =
+							spacecal::warm_restart::ValidationOutcome::Failed;
+						char fbuf[240];
+						snprintf(fbuf, sizeof fbuf,
+							"[warm-restart][failed] mad_mm=%.3f samples_since_snap=%d"
+							" mad_at_snap_mm=%.3f reason=above_failed_threshold",
+							madFloor * 1000.0, samplesSinceSnap,
+							CalCtx.warmRestartMadAtSnap * 1000.0);
+						Metrics::WriteLogAnnotation(fbuf);
+						Metrics::WriteLogAnnotation(
+							"[warm-restart][grace-ended] reason=validation_failed");
+						RecoverFromWedgedCalibration(
+							"Warm-restart validation failed -- recalibrating from scratch\n",
+							"warm_restart_validation_failed");
+					} else {
+						// Inconclusive at grace end: MAD between thresholds.
+						// Profile stays; log loudly so this case is visible
+						// in triage. Was the old default samples_exhausted
+						// success path; now explicit.
+						char ibuf[240];
+						snprintf(ibuf, sizeof ibuf,
+							"[warm-restart][inconclusive] mad_mm=%.3f samples_since_snap=%d"
+							" mad_at_snap_mm=%.3f reason=between_thresholds",
+							madFloor * 1000.0, samplesSinceSnap,
+							CalCtx.warmRestartMadAtSnap * 1000.0);
+						Metrics::WriteLogAnnotation(ibuf);
+						Metrics::WriteLogAnnotation(
+							"[warm-restart][grace-ended] reason=samples_exhausted");
+					}
 				}
 			}
 

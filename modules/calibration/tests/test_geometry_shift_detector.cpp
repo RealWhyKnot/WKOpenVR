@@ -332,3 +332,101 @@ static_assert(spacecal::geometry_shift::ShouldSuppressForCooldown(5.0, 10.0),
     "now < cooldownUntil must suppress");
 static_assert(!spacecal::geometry_shift::ShouldSuppressForCooldown(10.0, 10.0),
     "now == cooldownUntil releases (strict less-than)");
+
+// ---------------------------------------------------------------------------
+// Deferral: holds a fire decision while reanchor freeze is active rather
+// than dropping it. The 2026-05-25 session log showed continuous reanchor
+// activity dropping >95% of candidate fires; deferral preserves the fire
+// intent for either natural commit on un-freeze or fire-through after a
+// timeout (the storm itself is shift signature at that duration).
+// ---------------------------------------------------------------------------
+TEST(GeometryShiftDeferralTest, FreshStateHasNoPending) {
+    using spacecal::geometry_shift::DeferralState;
+    DeferralState d{};
+    EXPECT_FALSE(d.HasPending());
+    EXPECT_DOUBLE_EQ(d.pendingFireSince, 0.0);
+    EXPECT_DOUBLE_EQ(d.cusumSAtPending, 0.0);
+    EXPECT_EQ(d.sustainAtPending, 0);
+}
+
+TEST(GeometryShiftDeferralTest, LatchSetsPendingFields) {
+    using spacecal::geometry_shift::DeferralState;
+    DeferralState d{};
+    d.Latch(/*now=*/100.0,
+            /*cusumS=*/7.5,
+            /*sustain=*/4,
+            /*currentMm=*/35.0,
+            /*medianMm=*/2.5,
+            /*ratio=*/14.0,
+            /*wasCusum=*/true);
+    EXPECT_TRUE(d.HasPending());
+    EXPECT_DOUBLE_EQ(d.pendingFireSince, 100.0);
+    EXPECT_DOUBLE_EQ(d.cusumSAtPending, 7.5);
+    EXPECT_EQ(d.sustainAtPending, 4);
+    EXPECT_DOUBLE_EQ(d.currentMmAtPending, 35.0);
+    EXPECT_DOUBLE_EQ(d.medianMmAtPending, 2.5);
+    EXPECT_DOUBLE_EQ(d.ratioAtPending, 14.0);
+    EXPECT_TRUE(d.modeWasCusum);
+}
+
+TEST(GeometryShiftDeferralTest, ResetClearsAllFields) {
+    using spacecal::geometry_shift::DeferralState;
+    DeferralState d{};
+    d.Latch(100.0, 7.5, 4, 35.0, 2.5, 14.0, true);
+    d.Reset();
+    EXPECT_FALSE(d.HasPending());
+    EXPECT_DOUBLE_EQ(d.pendingFireSince, 0.0);
+    EXPECT_DOUBLE_EQ(d.cusumSAtPending, 0.0);
+    EXPECT_EQ(d.sustainAtPending, 0);
+    EXPECT_DOUBLE_EQ(d.currentMmAtPending, 0.0);
+    EXPECT_DOUBLE_EQ(d.medianMmAtPending, 0.0);
+    EXPECT_DOUBLE_EQ(d.ratioAtPending, 0.0);
+    EXPECT_FALSE(d.modeWasCusum);
+}
+
+TEST(GeometryShiftDeferralTest, ShouldFireThroughEmptyDeferralIsFalse) {
+    using spacecal::geometry_shift::DeferralState;
+    using spacecal::geometry_shift::ShouldFireThroughDeferral;
+    DeferralState d{};
+    EXPECT_FALSE(ShouldFireThroughDeferral(/*now=*/100.0, d))
+        << "Empty deferral must never fire through";
+    EXPECT_FALSE(ShouldFireThroughDeferral(1e9, d));
+}
+
+TEST(GeometryShiftDeferralTest, ShouldFireThroughBeforeTimeoutIsFalse) {
+    using spacecal::geometry_shift::DeferralState;
+    using spacecal::geometry_shift::ShouldFireThroughDeferral;
+    using spacecal::geometry_shift::kFireThroughSeconds;
+    DeferralState d{};
+    d.Latch(100.0, 5.0, 3, 30.0, 2.0, 15.0, false);
+    EXPECT_FALSE(ShouldFireThroughDeferral(100.0, d));
+    EXPECT_FALSE(ShouldFireThroughDeferral(100.0 + kFireThroughSeconds - 0.01, d))
+        << "Just before the timeout must not fire through";
+}
+
+TEST(GeometryShiftDeferralTest, ShouldFireThroughAtAndAfterTimeoutIsTrue) {
+    using spacecal::geometry_shift::DeferralState;
+    using spacecal::geometry_shift::ShouldFireThroughDeferral;
+    using spacecal::geometry_shift::kFireThroughSeconds;
+    DeferralState d{};
+    d.Latch(100.0, 5.0, 3, 30.0, 2.0, 15.0, false);
+    EXPECT_TRUE(ShouldFireThroughDeferral(100.0 + kFireThroughSeconds, d))
+        << "Exactly at timeout must fire through (>= boundary)";
+    EXPECT_TRUE(ShouldFireThroughDeferral(100.0 + kFireThroughSeconds + 1.0, d));
+}
+
+TEST(GeometryShiftDeferralTest, ShouldFireThroughCustomTimeout) {
+    using spacecal::geometry_shift::DeferralState;
+    using spacecal::geometry_shift::ShouldFireThroughDeferral;
+    DeferralState d{};
+    d.Latch(100.0, 5.0, 3, 30.0, 2.0, 15.0, false);
+    EXPECT_FALSE(ShouldFireThroughDeferral(101.0, d, /*fireThroughSec=*/5.0));
+    EXPECT_TRUE(ShouldFireThroughDeferral(105.0, d, /*fireThroughSec=*/5.0));
+}
+
+// constexpr pin for the deferral default fire-through timeout. Same pattern
+// as the cooldown / threshold pins above: changing this requires a test
+// update so the rationale gets reconsidered, not just a silent retune.
+static_assert(spacecal::geometry_shift::kFireThroughSeconds == 3.0,
+    "kFireThroughSeconds changed -- update calibration_robustness memos and"
+    " confirm the storm-vs-noise rationale still holds at the new value");
