@@ -84,6 +84,7 @@ void Solver::Finish() {
 
     if (m_pairs.size() < kTargetSampleCount) {
         m_result.failReason = "not enough motion";
+        m_result.samplesUsed = static_cast<int>(m_pairs.size());
         m_state = SolveState::Failed;
         return;
     }
@@ -143,6 +144,7 @@ void Solver::Finish() {
     if (residualMm > kResidualThresholdMm) {
         m_result.failReason = "mount may be slipping";
         m_result.residualMm = residualMm;
+        m_result.samplesUsed = static_cast<int>(m_pairs.size());
         m_state = SolveState::Failed;
         return;
     }

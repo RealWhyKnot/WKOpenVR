@@ -516,14 +516,8 @@ static void OneShot_DrawSettings() {
 	{
 		// One-shot speed picker. AUTO is intentionally absent here: it only
 		// re-evaluates meaningfully during continuous calibration. The
-		// Advanced tab's continuous-mode panel exposes AUTO. If the user's
-		// profile still has calibrationSpeed=AUTO from an older version,
-		// ResolvedCalibrationSpeed maps it to FAST for one-shot.
-		auto speed = CalCtx.calibrationSpeed;
-		// Stored AUTO maps to FAST visually so the user sees a coherent
-		// selection rather than no radio being lit.
-		const auto displaySpeed = (speed == CalibrationContext::AUTO)
-			? CalibrationContext::FAST : speed;
+		// Advanced tab's continuous-mode panel exposes AUTO.
+		auto speed = CalCtx.oneShotCalibrationSpeed;
 		struct Opt { const char* label; CalibrationContext::Speed value; const char* tooltip; };
 		const Opt opts[] = {
 			{ "Fast",      CalibrationContext::FAST,
@@ -537,8 +531,8 @@ static void OneShot_DrawSettings() {
 		};
 		for (size_t i = 0; i < sizeof(opts) / sizeof(opts[0]); ++i) {
 			if (i > 0) ImGui::SameLine();
-			if (ImGui::RadioButton(opts[i].label, displaySpeed == opts[i].value)) {
-				CalCtx.calibrationSpeed = opts[i].value;
+			if (ImGui::RadioButton(opts[i].label, speed == opts[i].value)) {
+				CalCtx.oneShotCalibrationSpeed = opts[i].value;
 				SaveProfile(CalCtx);
 			}
 			if (ImGui::IsItemHovered()) {

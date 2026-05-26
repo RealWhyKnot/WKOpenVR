@@ -241,8 +241,20 @@ CalibrationCalc calibration;
 		const bool headMountEngaged =
 			inContinuousFamily
 			&& ctx.headMount.mode >= HeadMountMode::AutoPaired
+			&& ctx.headMount.offsetCalibrated
 			&& ctx.headMount.deviceID >= 0
 			&& ctx.headMount.deviceID < (int32_t)vr::k_unMaxTrackedDeviceCount;
+		if (inContinuousFamily
+			&& ctx.headMount.mode >= HeadMountMode::AutoPaired
+			&& !ctx.headMount.offsetCalibrated)
+		{
+			static bool s_loggedNeedsOffset = false;
+			if (!s_loggedNeedsOffset) {
+				s_loggedNeedsOffset = true;
+				Metrics::WriteLogAnnotation(
+					"[head-mount] auto-paired synthetic sampling waiting for calibrated offset");
+			}
+		}
 
 		if (headMountEngaged) {
 			const vr::DriverPose_t& trackerRaw = ctx.devicePoses[ctx.headMount.deviceID];

@@ -1098,7 +1098,7 @@ static inline Eigen::Quaterniond WorldRotationFromPose(const vr::DriverPose_t& p
 // compensate." If the live test shows the wrong sign, flip here -- the toggle
 // is OFF by default so a wrong-sign build cannot regress users.
 void TickRestLockedYaw(double now) {
-	if (!CalCtx.restLockedYawEnabled || CalCtx.useUpstreamMath) {
+	if (!CalCtx.EffectiveRestLockedYawEnabled()) {
 		// Toggle OFF: clear state so a future toggle-on starts fresh.
 		if (!g_restStates.empty()) g_restStates.clear();
 		g_restLockedYawLastTickTime = -1.0;
@@ -1304,7 +1304,7 @@ std::string RenderChiSqTail() {
 // existing 30 cm relocalization detector remains the only path to actual
 // recovery. Returns true if rec A and rec C should skip their tick.
 bool TickReanchorChiSquare(double now) {
-	if (!CalCtx.reanchorChiSquareEnabled) {
+	if (!CalCtx.EffectiveReanchorChiSquareEnabled()) {
 		spacecal::reanchor_chi::Reset(g_reanchorChiState);
 		g_reanchorChiLastTickTime = -1.0;
 		return false;
@@ -1548,7 +1548,7 @@ bool TickReanchorChiSquare(double now) {
 constexpr double kPredictiveRateCapMps = 0.001; // 1 mm/s
 
 void TickPredictiveRecovery(double now) {
-	if (!CalCtx.predictiveRecoveryEnabled) {
+	if (!CalCtx.EffectivePredictiveRecoveryEnabled()) {
 		spacecal::recovery_delta::Clear(g_recoveryDeltaBuffer);
 		g_predictiveRecoveryLastTickTime = -1.0;
 		return;
@@ -1602,9 +1602,9 @@ void DumpDriftSubsystemState() {
 			"[drift][state-dump] header now=%.3f state=%d "
 			"rest_locked_yaw=%d predictive_recovery=%d reanchor_chi_square=%d",
 			now, (int)CalCtx.state,
-			(int)CalCtx.restLockedYawEnabled,
-			(int)CalCtx.predictiveRecoveryEnabled,
-			(int)CalCtx.reanchorChiSquareEnabled);
+			(int)CalCtx.EffectiveRestLockedYawEnabled(),
+			(int)CalCtx.EffectivePredictiveRecoveryEnabled(),
+			(int)CalCtx.EffectiveReanchorChiSquareEnabled());
 		Metrics::WriteLogAnnotation(b);
 	}
 

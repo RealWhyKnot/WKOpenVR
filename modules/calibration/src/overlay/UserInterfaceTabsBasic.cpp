@@ -2,6 +2,7 @@
 #include "Configuration.h"
 #include "VRState.h"
 #include "CalibrationMetrics.h"
+#include "AutoLockHysteresis.h"
 #include "UiHelpers.h"
 
 #include <string>
@@ -277,9 +278,10 @@ void CCal_BasicInfo() {
 			if (CalCtx.autoLockEffectivelyLocked) {
 				ImGui::TextWrapped("Auto: locked (detected as rigidly attached, %d samples)",
 					(int)CalCtx.autoLockHistory.size());
-			} else if (CalCtx.autoLockHistory.size() < 30) {
-				ImGui::TextWrapped("Auto: collecting motion data (%d/30 samples)",
-					(int)CalCtx.autoLockHistory.size());
+			} else if (CalCtx.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
+				ImGui::TextWrapped("Auto: collecting motion data (%d/%d samples)",
+					(int)CalCtx.autoLockHistory.size(),
+					(int)spacecal::autolock::kSamplesNeeded);
 			} else {
 				ImGui::TextWrapped("Auto: unlocked (devices move independently)");
 			}

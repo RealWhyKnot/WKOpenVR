@@ -225,11 +225,11 @@ void CCal_DrawSettings() {
 			if (kInContinuous) {
 				ImGui::BeginGroupPanel("Calibration speed", panel_size);
 
-				auto speed = CalCtx.calibrationSpeed;
+				auto speed = CalCtx.continuousCalibrationSpeed;
 
 				ImGui::Columns(4, nullptr, false);
 				if (ImGui::RadioButton(" Auto          ", speed == CalibrationContext::AUTO)) {
-					CalCtx.calibrationSpeed = CalibrationContext::AUTO;
+					CalCtx.continuousCalibrationSpeed = CalibrationContext::AUTO;
 					SaveProfile(CalCtx);
 				}
 				if (ImGui::IsItemHovered()) {
@@ -241,7 +241,7 @@ void CCal_DrawSettings() {
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Fast          ", speed == CalibrationContext::FAST)) {
-					CalCtx.calibrationSpeed = CalibrationContext::FAST;
+					CalCtx.continuousCalibrationSpeed = CalibrationContext::FAST;
 					SaveProfile(CalCtx);
 				}
 				if (ImGui::IsItemHovered()) {
@@ -250,7 +250,7 @@ void CCal_DrawSettings() {
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Slow          ", speed == CalibrationContext::SLOW)) {
-					CalCtx.calibrationSpeed = CalibrationContext::SLOW;
+					CalCtx.continuousCalibrationSpeed = CalibrationContext::SLOW;
 					SaveProfile(CalCtx);
 				}
 				if (ImGui::IsItemHovered()) {
@@ -259,7 +259,7 @@ void CCal_DrawSettings() {
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Very Slow     ", speed == CalibrationContext::VERY_SLOW)) {
-					CalCtx.calibrationSpeed = CalibrationContext::VERY_SLOW;
+					CalCtx.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
 					SaveProfile(CalCtx);
 				}
 				if (ImGui::IsItemHovered()) {
@@ -583,11 +583,9 @@ void CCal_DrawSettings() {
 		} // if (kInContinuous): latency + slew rate
 
 		// Math panel. Single home for every math-stack toggle: validated
-		// defaults are opt-out ("Disable X"), research code paths are opt-in
-		// ("Enable X"). The pre-fork-upstream master switch was removed from
-		// UI on 2026-05-26 (still readable from the profile JSON as a hidden
-		// safety hatch) -- per-feature toggles below cover any reason to
-		// flip pieces of the stack individually.
+		// defaults are opt-out ("Disable X"). The upstream legacy master
+		// switch stays separate because it disables several paths at once
+		// without overwriting the individual toggle preferences.
 		//
 		// Each toggle is wrapped in a previous-value compare so that a user
 		// flip emits a one-shot log annotation -- session log shows "behavior
@@ -605,16 +603,28 @@ void CCal_DrawSettings() {
 		{
 			ImGui::BeginGroupPanel("Math", panel_size);
 			ImGui::TextWrapped("Validated defaults are on; flip a Disable switch only if a session shows "
-				"a regression and please file a log so the path can be fixed. Research switches at the "
-				"bottom are opt-in and may degrade tracking.");
+				"a regression and please file a log so the path can be fixed.");
+			ImGui::Spacing();
+
+			bool mathChanged = false;
+			mathChanged |= ImGui::Checkbox("Enable legacy math", &CalCtx.useUpstreamMath);
+			if (ImGui::IsItemHovered(0)) {
+				ImGui::SetTooltip("Reverts the effective math stack toward the old upstream behavior.\n"
+					"This overrides the disable switches below while it is on, but keeps their\n"
+					"stored choices so turning legacy math back off restores the selected defaults.");
+			}
+			if (CalCtx.useUpstreamMath) {
+				ImGui::TextDisabled("Legacy math is active; validated defaults below are effectively disabled.");
+			}
 			ImGui::Spacing();
 
 			// --- Validated defaults (Disable to revert) ---------------------
 			ImGui::TextDisabled("Validated defaults (Disable to revert)");
+			if (CalCtx.useUpstreamMath) ImGui::BeginDisabled();
 
 			// Direct O(N) latent-offset translation solve. Default on, graduated
 			// 2026-05-11. Disabling reverts to pairwise O(N^2) IRLS.
-			ImGui::Checkbox("Disable direct translation solve (use pairwise IRLS)", &CalCtx.useLegacyMath);
+			mathChanged |= ImGui::Checkbox("Disable direct translation solve (use pairwise IRLS)", &CalCtx.useLegacyMath);
 			if (ImGui::IsItemHovered(0)) {
 				ImGui::SetTooltip("Reverts the translation solve to the prior pairwise O(N^2) IRLS path.\n"
 					"The default direct O(N) latent-offset solver jointly estimates the calibration\n"
@@ -627,6 +637,7 @@ void CCal_DrawSettings() {
 			bool legacyTimeDomainLatency = !CalCtx.useGccPhatLatency;
 			if (ImGui::Checkbox("Disable GCC-PHAT latency estimator (use time-domain CC)", &legacyTimeDomainLatency)) {
 				CalCtx.useGccPhatLatency = !legacyTimeDomainLatency;
+				mathChanged = true;
 			}
 			if (ImGui::IsItemHovered(0)) {
 				ImGui::SetTooltip("Reverts the latency estimator from the default whitened-spectrum\n"
@@ -639,6 +650,7 @@ void CCal_DrawSettings() {
 			bool legacyUniformIRLS = !CalCtx.useVelocityAwareWeighting;
 			if (ImGui::Checkbox("Disable velocity-aware IRLS weighting", &legacyUniformIRLS)) {
 				CalCtx.useVelocityAwareWeighting = !legacyUniformIRLS;
+				mathChanged = true;
 			}
 			if (ImGui::IsItemHovered(0)) {
 				ImGui::SetTooltip("Reverts the IRLS translation solve to the prior uniform per-pair\n"
@@ -652,6 +664,7 @@ void CCal_DrawSettings() {
 			bool disableRestLockedYaw = !CalCtx.restLockedYawEnabled;
 			if (ImGui::Checkbox("Disable rest-locked yaw drift correction", &disableRestLockedYaw)) {
 				CalCtx.restLockedYawEnabled = !disableRestLockedYaw;
+				mathChanged = true;
 			}
 			if (ImGui::IsItemHovered(0)) {
 				ImGui::SetTooltip("Disables the rest-locked yaw drift correction. When a tracker stays\n"
@@ -664,65 +677,69 @@ void CCal_DrawSettings() {
 			ImGui::Separator();
 			ImGui::Spacing();
 
-			// --- Research (Enable to opt in) --------------------------------
-			ImGui::TextDisabled("Research (opt-in; can regress tracking)");
-
-			// CUSUM geometry-shift detector. Continuous-only path; the same
-			// detector runs in both modes per the wider flag flow, but its
-			// recovery trigger is meaningful only while continuous-cal is
-			// actively refining. Showing it outside continuous would let a
-			// one-shot user flip a knob whose effect they never see -- gate.
+			// CUSUM geometry-shift detector.
 			if (kInContinuous) {
-				ImGui::Checkbox("Enable CUSUM geometry-shift detector", &CalCtx.useCusumGeometryShift);
+				bool disableCusum = !CalCtx.useCusumGeometryShift;
+				if (ImGui::Checkbox("Disable CUSUM geometry-shift detector", &disableCusum)) {
+					CalCtx.useCusumGeometryShift = !disableCusum;
+					mathChanged = true;
+				}
 				if (ImGui::IsItemHovered(0)) {
-					ImGui::SetTooltip("Statistical change-point test (CUSUM, Page 1954) instead of the\n"
-						"default 5x-rolling-median rule. Same recovery action when fired (clear cal,\n"
-						"demote to standby). Documented ARL_0 ~ 10^4 ticks (~3 min at 60 Hz) means roughly\n"
-						"one false alarm per quiet session, which is why it has not graduated to default-on.\n\n"
+					ImGui::SetTooltip("Reverts geometry-shift detection from CUSUM to the older\n"
+						"5x-rolling-median rule. Same recovery action when fired.\n\n"
 						"Active in: continuous calibration only.");
 				}
 			}
 
-			// Tukey biweight + Qn-scale alternative robust kernel. Applies
-			// in both modes.
-			ImGui::Checkbox("Enable Tukey biweight robust kernel", &CalCtx.useTukeyBiweight);
+			bool disableTukey = !CalCtx.useTukeyBiweight;
+			if (ImGui::Checkbox("Disable Tukey biweight robust kernel", &disableTukey)) {
+				CalCtx.useTukeyBiweight = !disableTukey;
+				mathChanged = true;
+			}
 			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Replaces the default IRLS Cauchy + MAD with Tukey biweight + Qn-scale\n"
-					"(Rousseeuw-Croux 1993). Tukey is redescending: residuals beyond the threshold get\n"
-					"exactly zero weight, which can swallow real geometry-shift evidence.\n\n"
+				ImGui::SetTooltip("Reverts the translation robust kernel to Cauchy + MAD.\n"
+					"The default Tukey + Qn path gives high-residual rows zero weight\n"
+					"after the cutoff while using a higher-breakdown scale estimate.\n\n"
 					"Active in: both one-shot and continuous calibration.");
 			}
 
-			// Kalman-filter blend at publish. Continuous-only -- ComputeOneshot
-			// does not use the EMA path that this replaces.
+			// Kalman-filter blend at publish. Continuous-only.
 			if (kInContinuous) {
-				ImGui::Checkbox("Enable Kalman-filter blend at publish", &CalCtx.useBlendFilter);
+				bool disableKalman = !CalCtx.useBlendFilter;
+				if (ImGui::Checkbox("Disable Kalman-filter blend at publish", &disableKalman)) {
+					CalCtx.useBlendFilter = !disableKalman;
+					mathChanged = true;
+				}
 				if (ImGui::IsItemHovered(0)) {
-					ImGui::SetTooltip("Replaces the single-step EMA (alpha=0.3) at the publish point with a\n"
-						"4-state Kalman filter on (yaw, tx, ty, tz). Off by default: measurement noise\n"
-						"is currently fixed and has not been adapted to the new direct translation\n"
-						"solver's covariance output.\n\n"
+					ImGui::SetTooltip("Reverts the publish blend to the older single-step EMA.\n"
+						"The default path uses a 4-state Kalman filter on yaw + translation.\n\n"
 						"Active in: continuous calibration only.");
 				}
 			}
 
-			// Predictive recovery pre-correction. Continuous-only buffer fill,
-			// per-tick apply runs in any state -- gate on continuous since the
-			// buffer never fills otherwise.
+			// Predictive recovery pre-correction. Continuous-only buffer fill.
 			if (kInContinuous) {
-				ImGui::Checkbox("Enable predictive recovery pre-correction", &CalCtx.predictiveRecoveryEnabled);
+				bool disablePredictive = !CalCtx.predictiveRecoveryEnabled;
+				if (ImGui::Checkbox("Disable predictive recovery pre-correction", &disablePredictive)) {
+					CalCtx.predictiveRecoveryEnabled = !disablePredictive;
+					mathChanged = true;
+				}
 				if (ImGui::IsItemHovered(0)) {
 					ImGui::SetTooltip("Each Quest re-anchor event (the 30 cm HMD-jump trigger) pushes its direction\n"
 						"and magnitude into a 6-deep rolling buffer. Once 3+ events accumulate with a consistent\n"
 						"direction, apply 10 percent of the predicted next-jump per tick as a bounded-rate\n"
-						"translation nudge. Speculative -- can inject bias before a real event.\n\n"
+						"translation nudge.\n\n"
 						"Active in: continuous calibration (buffer fill requires the 30 cm detector to fire).");
 				}
 			}
 
 			// Chi-square re-anchor sub-detector. Continuous-only.
 			if (kInContinuous) {
-				ImGui::Checkbox("Enable chi-square re-anchor sub-detector", &CalCtx.reanchorChiSquareEnabled);
+				bool disableChiSquare = !CalCtx.reanchorChiSquareEnabled;
+				if (ImGui::Checkbox("Disable chi-square re-anchor sub-detector", &disableChiSquare)) {
+					CalCtx.reanchorChiSquareEnabled = !disableChiSquare;
+					mathChanged = true;
+				}
 				if (ImGui::IsItemHovered(0)) {
 					ImGui::SetTooltip("Mahalanobis distance between HMD-pose-from-rolling-velocity and observed\n"
 						"HMD pose. Threshold at chi-square 6 DoF p<1e-4 (about 27.86). Needs angular-velocity\n"
@@ -730,6 +747,10 @@ void CCal_DrawSettings() {
 						"that it can false-fire on routine motion. Detection-only -- never triggers recovery.\n\n"
 						"Active in: continuous calibration only.");
 				}
+			}
+			if (CalCtx.useUpstreamMath) ImGui::EndDisabled();
+			if (mathChanged) {
+				SaveProfile(CalCtx);
 			}
 
 			// Toggle-flip diagnostic. useUpstreamMath is still tracked (it can

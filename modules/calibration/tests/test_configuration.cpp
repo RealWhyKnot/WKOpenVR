@@ -24,6 +24,7 @@
 
 #include "Configuration.h"
 #include "Calibration.h"
+#include "ContinuousCalibrationGuard.h"
 
 namespace {
 
@@ -69,7 +70,8 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields) {
     src.baseStationDriftCorrectionEnabled = false;
     src.ignoreOutliers = false;             // non-default; must be written
     src.continuousCalibrationThreshold = 2.5f;
-    src.calibrationSpeed = CalibrationContext::SLOW; // non-default; must round-trip
+    src.oneShotCalibrationSpeed = CalibrationContext::SLOW; // non-default; must round-trip
+    src.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
     src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
     src.validProfile = true;
 
@@ -89,7 +91,8 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields) {
     EXPECT_FALSE(dst.baseStationDriftCorrectionEnabled);
     EXPECT_FALSE(dst.ignoreOutliers);
     EXPECT_FLOAT_EQ(dst.continuousCalibrationThreshold, 2.5f);
-    EXPECT_EQ(dst.calibrationSpeed, CalibrationContext::SLOW);
+    EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::SLOW);
+    EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
     EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
 }
 
@@ -132,7 +135,8 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults) {
     EXPECT_TRUE(dst.enableStaticRecalibration);          // default true (flipped this session)
     EXPECT_TRUE(dst.baseStationDriftCorrectionEnabled);  // default AUTO (no-op without base stations)
     EXPECT_FLOAT_EQ(dst.jitterThreshold, 3.0f);
-    EXPECT_EQ(dst.calibrationSpeed, CalibrationContext::FAST);
+    EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::FAST);
+    EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::AUTO);
     EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
 }
 
@@ -178,8 +182,10 @@ TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly) {
 
     // Migration v1->v2 rewrites legacy SLOW (=1) to AUTO (=3) since SLOW was
     // the old default that most users never customised.
-    EXPECT_EQ(ctx.calibrationSpeed, CalibrationContext::AUTO)
-        << "v1->v2 migration should rewrite legacy SLOW default to AUTO";
+    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST)
+        << "legacy AUTO should become FAST for one-shot";
+    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO)
+        << "v1->v2 migration should still land continuous mode on AUTO";
 
     // Profile loaded; main fields populated.
     EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
@@ -201,6 +207,102 @@ TEST(ConfigurationTest, MigrateV2ProfileLoadsWithEmptyExtras) {
     EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
     EXPECT_TRUE(ctx.additionalCalibrations.empty())
         << "v2 profile should load with no extras (additional_calibrations was added in v3)";
+}
+
+TEST(ConfigurationTest, MigrateV4FastSpeedKeepsOneShotFastAndContinuousAuto) {
+    std::string v4Json = MakeMinimalProfile(
+        /*schemaVersion=*/4,
+        "\"calibration_speed\":0");
+
+    CalibrationContext ctx;
+    std::stringstream io(v4Json);
+    ParseProfile(ctx, io);
+
+    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST);
+    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO);
+}
+
+TEST(ConfigurationTest, MigrateV4VerySlowSpeedPreservesSlowContinuousChoice) {
+    std::string v4Json = MakeMinimalProfile(
+        /*schemaVersion=*/4,
+        "\"calibration_speed\":2");
+
+    CalibrationContext ctx;
+    std::stringstream io(v4Json);
+    ParseProfile(ctx, io);
+
+    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::VERY_SLOW);
+    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
+}
+
+TEST(ConfigurationTest, ResolvedSpeedUsesContinuousSettingOnlyInContinuousMode) {
+    CalibrationContext ctx;
+    ctx.oneShotCalibrationSpeed = CalibrationContext::FAST;
+    ctx.continuousCalibrationSpeed = CalibrationContext::AUTO;
+
+    ctx.state = CalibrationState::None;
+    EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::FAST);
+
+    ctx.state = CalibrationState::Continuous;
+    EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::AUTO);
+}
+
+TEST(ConfigurationTest, ContinuousSnapshotRestoresRelativePoseMetadata) {
+    CalibrationContext ctx;
+    ctx.enabled = true;
+    ctx.validProfile = true;
+    ctx.referenceTrackingSystem = "lighthouse";
+    ctx.targetTrackingSystem = "oculus";
+    ctx.calibratedTranslation = Eigen::Vector3d(1.0, 2.0, 3.0);
+    ctx.calibratedRotation = Eigen::Vector3d(4.0, 5.0, 6.0);
+    ctx.calibratedScale = 1.25;
+    ctx.refToTargetPose.translation() = Eigen::Vector3d(0.1, 0.2, 0.3);
+    ctx.relativePosCalibrated = true;
+
+    const auto snap = ctx.CaptureProfileSnapshot();
+    ctx.calibratedTranslation = Eigen::Vector3d(99.0, 99.0, 99.0);
+    ctx.relativePosCalibrated = false;
+    ctx.validProfile = false;
+
+    ctx.RestoreProfileSnapshot(snap);
+
+    EXPECT_TRUE(ctx.validProfile);
+    EXPECT_TRUE(ctx.relativePosCalibrated);
+    EXPECT_TRUE(ctx.calibratedTranslation.isApprox(Eigen::Vector3d(1.0, 2.0, 3.0)));
+    EXPECT_NEAR(ctx.refToTargetPose.translation().z(), 0.3, 1e-9);
+}
+
+TEST(ConfigurationTest, ContinuousCandidateGuardBlocksLargeSteadyJump) {
+    const Eigen::Vector3d baselineCm(10.0, 20.0, 30.0);
+    const Eigen::Vector3d candidateCm(10.0, 20.0, 80.1);
+
+    const auto result = spacecal::continuous::EvaluateCandidate(
+        /*inContinuous=*/true,
+        /*hasBaseline=*/true,
+        /*hasAcceptedThisSession=*/true,
+        baselineCm,
+        candidateCm,
+        Eigen::Matrix3d::Identity());
+
+    EXPECT_FALSE(result.accepted);
+    EXPECT_STREQ(result.reason, "jump_exceeds_limit");
+}
+
+TEST(ConfigurationTest, LegacyMathMasterDisablesEffectiveValidatedFeatures) {
+    CalibrationContext ctx;
+    ctx.useUpstreamMath = true;
+
+    EXPECT_FALSE(ctx.EffectiveGccPhatLatency());
+    EXPECT_FALSE(ctx.EffectiveCusumGeometryShift());
+    EXPECT_FALSE(ctx.EffectiveVelocityAwareWeighting());
+    EXPECT_FALSE(ctx.EffectiveTukeyBiweight());
+    EXPECT_FALSE(ctx.EffectiveBlendFilter());
+    EXPECT_FALSE(ctx.EffectivePredictiveRecoveryEnabled());
+    EXPECT_FALSE(ctx.EffectiveReanchorChiSquareEnabled());
+    EXPECT_FALSE(ctx.EffectiveRestLockedYawEnabled());
+
+    EXPECT_TRUE(ctx.useCusumGeometryShift)
+        << "Stored validated-default choices must survive the master override";
 }
 
 // ---------------------------------------------------------------------------
@@ -237,9 +339,15 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned) {
            "state == Continuous in the apply path, so one-shot is unaffected.";
     EXPECT_FLOAT_EQ(ctx.continuousCalibrationThreshold, 1.5f);
     EXPECT_FLOAT_EQ(ctx.maxRelativeErrorThreshold, 0.005f);
-    EXPECT_EQ(ctx.calibrationSpeed, CalibrationContext::FAST)
-        << "Default speed is FAST. AUTO only re-evaluates meaningfully in "
-           "continuous mode; for one-shot the user picks explicitly.";
+    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST)
+        << "One-shot default speed is FAST.";
+    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO)
+        << "Continuous default speed is AUTO.";
+    EXPECT_TRUE(ctx.useCusumGeometryShift);
+    EXPECT_TRUE(ctx.useTukeyBiweight);
+    EXPECT_TRUE(ctx.useBlendFilter);
+    EXPECT_TRUE(ctx.predictiveRecoveryEnabled);
+    EXPECT_TRUE(ctx.reanchorChiSquareEnabled);
     EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
     EXPECT_DOUBLE_EQ(ctx.calibratedScale, 1.0);
     EXPECT_DOUBLE_EQ(ctx.targetLatencyOffsetMs, 0.0);

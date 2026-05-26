@@ -28,7 +28,9 @@ bool DriverSynthRadioEnabled(bool offsetCalibrated) {
 
 // Returns true when mode m requires offsetCalibrated to be meaningful.
 bool ModeRequiresOffset(HeadMountMode m) {
-    return m == HeadMountMode::Corroborate || m == HeadMountMode::DriverSynth;
+    return m == HeadMountMode::AutoPaired
+        || m == HeadMountMode::Corroborate
+        || m == HeadMountMode::DriverSynth;
 }
 
 } // namespace
@@ -47,9 +49,9 @@ TEST(HeadMountPanelLogic, DriverSynthRequiresOffset) {
     EXPECT_TRUE(DriverSynthRadioEnabled(true));
 }
 
-TEST(HeadMountPanelLogic, OffAndAutoPairedDoNotRequireOffset) {
+TEST(HeadMountPanelLogic, OnlyOffDoesNotRequireOffset) {
     EXPECT_FALSE(ModeRequiresOffset(HeadMountMode::Off));
-    EXPECT_FALSE(ModeRequiresOffset(HeadMountMode::AutoPaired));
+    EXPECT_TRUE(ModeRequiresOffset(HeadMountMode::AutoPaired));
 }
 
 TEST(HeadMountPanelLogic, CorroborateAndDriverSynthRequireOffset) {
@@ -88,12 +90,11 @@ TEST(HeadMountPanelLogic, CorroborateWithOffsetShouldBeEnabled) {
     EXPECT_TRUE(CorroborateRadioEnabled(hm.offsetCalibrated));
 }
 
-TEST(HeadMountPanelLogic, AutoPairedDoesNotRequireOffset) {
+TEST(HeadMountPanelLogic, AutoPairedRequiresOffset) {
     HeadMountConfig hm;
     hm.mode = HeadMountMode::AutoPaired;
     hm.offsetCalibrated = false;
-    // AutoPaired should not be gated on offset -- it works with identity offset.
-    EXPECT_FALSE(ModeRequiresOffset(hm.mode));
+    EXPECT_TRUE(ModeRequiresOffset(hm.mode));
 }
 
 TEST(HeadMountPanelLogic, ContinuousBindingUsesTargetIdentity) {

@@ -8,6 +8,7 @@
 #include "Configuration.h"
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
+#include "ContinuousCalibrationGuard.h"
 #include "VRState.h"
 #include "WedgeDetector.h"   // ShouldFireRuntimeWedgeRecovery, kMaxPlausibleCalibrationMagnitudeCm
 #include "GeometryShiftDetector.h"  // IsCurrentErrorSpike, ShouldFireGeometryShiftRecovery
@@ -46,6 +47,7 @@ void CCal_TickBoundaryCapture();
 #include <iostream>
 #include <algorithm>
 #include <map>
+#include <cmath>
 
 #include <Eigen/Dense>
 #include <GLFW/glfw3.h>
@@ -139,9 +141,9 @@ static void TickCpuPressureMonitor(double computationTimeMs, double now_s) {
             " auto_detect_latency=%d state=%d",
             s.emaPct, instPct, s.logicalProcessors,
             (int)CalCtx.useUpstreamMath,
-            (int)CalCtx.useGccPhatLatency, (int)CalCtx.useCusumGeometryShift,
-            (int)CalCtx.useVelocityAwareWeighting, (int)CalCtx.useTukeyBiweight,
-            (int)CalCtx.useBlendFilter, (int)CalCtx.latencyAutoDetect,
+            (int)CalCtx.EffectiveGccPhatLatency(), (int)CalCtx.EffectiveCusumGeometryShift(),
+            (int)CalCtx.EffectiveVelocityAwareWeighting(), (int)CalCtx.EffectiveTukeyBiweight(),
+            (int)CalCtx.EffectiveBlendFilter(), (int)CalCtx.latencyAutoDetect,
             (int)CalCtx.state);
         Metrics::WriteLogAnnotation(buf);
     } else if (s.alarmed && s.emaPct < kCpuPressureOffThresholdPct) {
@@ -166,9 +168,9 @@ static void TickCpuPressureMonitor(double computationTimeMs, double now_s) {
             " upstream=%d gcc_phat=%d cusum=%d velocity_aware=%d tukey=%d kalman=%d state=%d",
             computationTimeMs, s.emaPct,
             (int)CalCtx.useUpstreamMath,
-            (int)CalCtx.useGccPhatLatency, (int)CalCtx.useCusumGeometryShift,
-            (int)CalCtx.useVelocityAwareWeighting, (int)CalCtx.useTukeyBiweight,
-            (int)CalCtx.useBlendFilter, (int)CalCtx.state);
+            (int)CalCtx.EffectiveGccPhatLatency(), (int)CalCtx.EffectiveCusumGeometryShift(),
+            (int)CalCtx.EffectiveVelocityAwareWeighting(), (int)CalCtx.EffectiveTukeyBiweight(),
+            (int)CalCtx.EffectiveBlendFilter(), (int)CalCtx.state);
         Metrics::WriteLogAnnotation(buf);
     }
 }
@@ -214,6 +216,16 @@ static int g_geomShiftConsecutiveBadTicks = 0;
 static spacecal::geometry_shift::CusumState g_cusumState;
 static spacecal::geometry_shift::DeferralState g_geomShiftDeferral;
 
+static Eigen::Affine3d CalibrationTransformFromContext(const CalibrationContext& ctx)
+{
+	const Eigen::Vector3d euler = ctx.calibratedRotation * EIGEN_PI / 180.0;
+	const Eigen::Quaterniond rot =
+		Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()) *
+		Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()) *
+		Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX());
+	return Eigen::Translation3d(ctx.calibratedTranslation * 0.01) * rot;
+}
+
 void CalibrationContext::UpdateAutoLockDetector(
 	const Eigen::AffineCompact3d& refWorld,
 	const Eigen::AffineCompact3d& targetWorld)
@@ -228,11 +240,32 @@ void CalibrationContext::UpdateAutoLockDetector(
 	autoLockHistory.push_back(rel);
 	while (autoLockHistory.size() > kHistoryMax) autoLockHistory.pop_front();
 
+	const bool calibratedHeadMountTarget =
+		state == CalibrationState::Continuous
+		&& headMount.mode >= HeadMountMode::AutoPaired
+		&& headMount.offsetCalibrated
+		&& wkopenvr::headmount::HeadMountMatchesContinuousTarget(*this);
+	if (calibratedHeadMountTarget) {
+		const bool prev = autoLockEffectivelyLocked;
+		autoLockEffectivelyLocked = true;
+		autoLockHasPendingFlip = false;
+		autoLockPendingFlipFirstSeen = 0.0;
+		autoLockGateHeldWarned = false;
+		if (!prev) {
+			autoLockLastFlipTime = Metrics::CurrentTime;
+			ResolveLockMode();
+			Metrics::WriteLogAnnotation(
+				"auto_lock_forced_head_mount: offset_calibrated=1 target_matches=1");
+		}
+	}
+
 	if (autoLockHistory.size() < kSamplesNeeded) {
 		// Not enough data yet -- stay in "not detected" state. AUTO mode
 		// users see the calibration unlocked and re-solving until the
 		// detector earns confidence.
-		autoLockEffectivelyLocked = false;
+		if (!calibratedHeadMountTarget) {
+			autoLockEffectivelyLocked = false;
+		}
 		autoLockHasPendingFlip = false;
 		return;
 	}
@@ -280,7 +313,7 @@ void CalibrationContext::UpdateAutoLockDetector(
 	// CommitPendingAutoLockFlipIfStationary) won't fire -- we bypass that
 	// helper entirely. The stationary-HMD gate guards against UX-visible cal
 	// jumps mid-motion, but at this magnitude the jump has already happened.
-	if (autoLockEffectivelyLocked &&
+	if (!calibratedHeadMountTarget && autoLockEffectivelyLocked &&
 		spacecal::autolock::IsPanicLevelDeviation(translStdDev, rotMaxAngle)) {
 		autoLockEffectivelyLocked = false;
 		autoLockHasPendingFlip = false;
@@ -293,6 +326,10 @@ void CalibrationContext::UpdateAutoLockDetector(
 			"auto_lock_panic_unlock: translMad=%.4fm rotMad=%.4frad",
 			translStdDev, rotMaxAngle);
 		Metrics::WriteLogAnnotation(buf);
+		return;
+	}
+
+	if (calibratedHeadMountTarget) {
 		return;
 	}
 
@@ -475,8 +512,9 @@ void CalibrationContext::ResolveLockMode()
 // sample-buffer size. Hysteresis is baked in by separate up-shift / down-shift
 // thresholds (1mm / 5mm) so a marginal value doesn't flap between buckets.
 CalibrationContext::Speed CalibrationContext::ResolvedCalibrationSpeed() const {
-	if (calibrationSpeed != AUTO) {
-		return calibrationSpeed;
+	const Speed requestedSpeed = ActiveCalibrationSpeed();
+	if (requestedSpeed != AUTO) {
+		return requestedSpeed;
 	}
 
 	// AUTO only re-evaluates meaningfully during continuous calibration --
@@ -638,6 +676,8 @@ void StartCalibration(const char* reason)
 
 void StartContinuousCalibration(const char* reason) {
 	CalCtx.hasAppliedCalibrationResult = false;
+	CalCtx.continuousStartSnapshot = CalCtx.CaptureProfileSnapshot();
+	CalCtx.lastAcceptedContinuousSnapshot = {};
 	AssignTargets();
 	if (CalCtx.headMount.mode != HeadMountMode::Off || !CalCtx.headMount.trackerSerial.empty()) {
 		if (wkopenvr::headmount::BindHeadMountToContinuousTarget(CalCtx)) {
@@ -664,8 +704,10 @@ void StartContinuousCalibration(const char* reason) {
 	g_tgtWasOffline = false;
 	char startBuf[200];
 	snprintf(startBuf, sizeof startBuf,
-		"StartContinuousCalibration: reason=%s",
-		(reason && reason[0]) ? reason : "unknown");
+		"StartContinuousCalibration: reason=%s snapshot_valid=%d relPosCal=%d",
+		(reason && reason[0]) ? reason : "unknown",
+		(int)CalCtx.continuousStartSnapshot.validProfile,
+		(int)CalCtx.continuousStartSnapshot.relativePosCalibrated);
 	Metrics::WriteLogAnnotation(startBuf);
 }
 
@@ -693,10 +735,27 @@ void CancelCalibration(const char* reason) {
 }
 
 void EndContinuousCalibration() {
+	const bool hadAccepted = CalCtx.lastAcceptedContinuousSnapshot.captured;
+	const bool hadStart = CalCtx.continuousStartSnapshot.captured;
+	CalibrationProfileSnapshot selected =
+		hadAccepted ? CalCtx.lastAcceptedContinuousSnapshot : CalCtx.continuousStartSnapshot;
 	CalCtx.state = CalibrationState::None;
-	CalCtx.relativePosCalibrated = false;
-	SaveProfile(CalCtx);
-	Metrics::WriteLogAnnotation("EndContinuousCalibration");
+	CalCtx.wantedUpdateInterval = 1.0;
+	if (selected.captured) {
+		CalCtx.RestoreProfileSnapshot(selected);
+		if (CalCtx.validProfile) {
+			SaveProfile(CalCtx);
+			ScanAndApplyProfile(CalCtx);
+		}
+	}
+	CalCtx.continuousStartSnapshot = {};
+	CalCtx.lastAcceptedContinuousSnapshot = {};
+	char endBuf[240];
+	snprintf(endBuf, sizeof endBuf,
+		"EndContinuousCalibration: selected=%s start_snapshot=%d relPosCal=%d valid=%d",
+		hadAccepted ? "last_accepted" : (hadStart ? "entry" : "none"),
+		(int)hadStart, (int)CalCtx.relativePosCalibrated, (int)CalCtx.validProfile);
+	Metrics::WriteLogAnnotation(endBuf);
 }
 
 void CalibrationTick(double time)
@@ -1099,15 +1158,24 @@ void CalibrationTick(double time)
 			char dumpBuf[512];
 			snprintf(dumpBuf, sizeof dumpBuf,
 				"session_config_dump: upstream=%d gcc_phat=%d cusum=%d velocity_aware=%d tukey=%d kalman=%d"
+				" eff_gcc_phat=%d eff_cusum=%d eff_velocity_aware=%d eff_tukey=%d eff_kalman=%d"
 				" auto_detect_latency=%d ignore_outliers=%d static_recal=%d"
-				" recalibrate_on_movement=%d cal_speed=%.2f jitter_threshold=%.2f",
+				" recalibrate_on_movement=%d one_shot_speed=%.2f continuous_speed=%.2f active_speed=%.2f jitter_threshold=%.2f",
 				(int)ctx.useUpstreamMath,
 				(int)ctx.useGccPhatLatency, (int)ctx.useCusumGeometryShift,
 				(int)ctx.useVelocityAwareWeighting, (int)ctx.useTukeyBiweight,
 				(int)ctx.useBlendFilter,
+				(int)ctx.EffectiveGccPhatLatency(),
+				(int)ctx.EffectiveCusumGeometryShift(),
+				(int)ctx.EffectiveVelocityAwareWeighting(),
+				(int)ctx.EffectiveTukeyBiweight(),
+				(int)ctx.EffectiveBlendFilter(),
 				(int)ctx.latencyAutoDetect, (int)ctx.ignoreOutliers,
 				(int)ctx.enableStaticRecalibration, (int)ctx.recalibrateOnMovement,
-				(double)ctx.calibrationSpeed, (double)ctx.jitterThreshold);
+				(double)ctx.oneShotCalibrationSpeed,
+				(double)ctx.continuousCalibrationSpeed,
+				(double)ctx.ActiveCalibrationSpeed(),
+				(double)ctx.jitterThreshold);
 			Metrics::WriteLogAnnotation(dumpBuf);
 		}
 	}
@@ -1241,12 +1309,13 @@ void CalibrationTick(double time)
 				double current = errSeries[N - 1].second;
 				const double ratio = (median > spacecal::geometry_shift::kMedianFloor)
 					? current / median : 0.0;
+				const bool useCusumGeometryShift = ctx.EffectiveCusumGeometryShift();
 
 				bool fire = false;
 				bool isSpike = false;
 				double cusumValueAtFire = 0.0;  // captured before the in-function reset
 				int cusumSustainAtFire = 0;     // ditto -- post-reset reads as 0
-				if (ctx.useCusumGeometryShift) {
+				if (useCusumGeometryShift) {
 					// Page CUSUM: accumulates (current - baseline - drift) per
 					// tick, fires when the running sum crosses threshold. Median
 					// stays as the baseline so the test is centered on the recent
@@ -1316,7 +1385,7 @@ void CalibrationTick(double time)
 							coherence, ratio, extrasCount,
 							spacecal::coherence::kSuppressThreshold,
 							current, median,
-							ctx.useCusumGeometryShift ? "cusum" : "legacy");
+							useCusumGeometryShift ? "cusum" : "legacy");
 						Metrics::WriteLogAnnotation(csBuf);
 						// Wipe the accumulators that drove the fire so a
 						// subsequent pair-local spike can re-accumulate
@@ -1427,7 +1496,7 @@ void CalibrationTick(double time)
 						// the increment is still pushing past the drift).
 						// Legacy mode: consecutive bad ticks dropped to 0
 						// (any tick without a 5x median spike resets it).
-						const bool subsided = ctx.useCusumGeometryShift
+						const bool subsided = useCusumGeometryShift
 							? (g_cusumState.S < 1.0)
 							: (g_geomShiftConsecutiveBadTicks == 0);
 						if (subsided) {
@@ -1460,13 +1529,13 @@ void CalibrationTick(double time)
 						" sec_since_reanchor=%.3f lockRelativePosition=%d",
 						current, median, ratio,
 						cusumValueAtFire, cusumSustainAtFire,
-						ctx.useCusumGeometryShift ? "cusum" : "legacy",
+						useCusumGeometryShift ? "cusum" : "legacy",
 						secSinceReanchor, (int)ctx.lockRelativePosition);
 					Metrics::WriteLogAnnotation(defBuf);
 					g_geomShiftDeferral.Latch(time,
 						cusumValueAtFire, cusumSustainAtFire,
 						current, median, ratio,
-						ctx.useCusumGeometryShift);
+						useCusumGeometryShift);
 					fire = false;
 					// Reset accumulators so the next tick's spike detection
 					// starts fresh; the latched values carry the original
@@ -1497,7 +1566,7 @@ void CalibrationTick(double time)
 						current, median, ratio,
 						g_geomShiftConsecutiveBadTicks, spacecal::geometry_shift::kMinSustainedSpikes,
 						g_cusumState.S, spacecal::geometry_shift::kCusumThreshold,
-						ctx.useCusumGeometryShift ? "cusum" : "legacy",
+						useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor);
 					Metrics::WriteLogAnnotation(spikeBuf);
 				}
@@ -1518,7 +1587,7 @@ void CalibrationTick(double time)
 						" median_mm=%.3f ratio=%.2fx cusum_S_at_fire=%.3f mode=%s"
 						" cooldown_remaining_sec=%.1f",
 						current, median, ratio, cusumValueAtFire,
-						ctx.useCusumGeometryShift ? "cusum" : "legacy",
+						useCusumGeometryShift ? "cusum" : "legacy",
 						ctx.geometryShiftCooldownUntil - time);
 					Metrics::WriteLogAnnotation(cdBuf);
 					fire = false;
@@ -1575,7 +1644,7 @@ void CalibrationTick(double time)
 					// before this line runs, so read the captured out-param;
 					// in legacy mode g_geomShiftConsecutiveBadTicks is still
 					// at its pre-reset value (reset happens further below).
-					const int sustainedAtFire = ctx.useCusumGeometryShift
+					const int sustainedAtFire = useCusumGeometryShift
 						? cusumSustainAtFire
 						: g_geomShiftConsecutiveBadTicks;
 					char fireBuf[800];
@@ -1588,7 +1657,7 @@ void CalibrationTick(double time)
 						" chi_sq_tail=%s cooldown_until=%.3f",
 						current, median, ratio,
 						sustainedAtFire, cusumValueAtFire,
-						ctx.useCusumGeometryShift ? "cusum" : "legacy",
+						useCusumGeometryShift ? "cusum" : "legacy",
 						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,
 						slopeMmPerSample, tailStr.c_str(),
@@ -1654,7 +1723,7 @@ void CalibrationTick(double time)
 		ctx.timeLastLatencyEstimate = time;
 		double lagSamples = 0.0;
 		const int kMaxTau = 10;
-		if (EstimateLatencyLagSamples(ctx.refSpeedHistory, ctx.targetSpeedHistory, kMaxTau, ctx.useGccPhatLatency, &lagSamples)) {
+		if (EstimateLatencyLagSamples(ctx.refSpeedHistory, ctx.targetSpeedHistory, kMaxTau, ctx.EffectiveGccPhatLatency(), &lagSamples)) {
 			// Convert sample lag to ms using the *empirical* sample rate from the
 			// timestamp ring. This is more honest than assuming a fixed 20 Hz: the
 			// rate is whatever CollectSample is being called at right now.
@@ -1852,8 +1921,19 @@ void CalibrationTick(double time)
 			};
 			const Eigen::Affine3d trackerWorld = poseFromDriver(hmRaw);
 			const Eigen::Affine3d hmdWorld      = poseFromDriver(hmdRaw);
+			Eigen::Affine3d hmdForSolver = hmdWorld;
+			if (ctx.validProfile) {
+				hmdForSolver = CalibrationTransformFromContext(ctx).inverse() * hmdWorld;
+			} else {
+				static bool s_loggedNoCommonFrame = false;
+				if (!s_loggedNoCommonFrame) {
+					s_loggedNoCommonFrame = true;
+					Metrics::WriteLogAnnotation(
+						"[head-mount-solver] no valid profile; feeding raw HMD pose without common-frame conversion");
+				}
+			}
 			const double hmdSpeed = ComputeHmdSpeedMps(ctx);
-			wkopenvr::headmount::FeedSolverTick(hmdWorld, trackerWorld, hmdSpeed);
+			wkopenvr::headmount::FeedSolverTick(hmdForSolver, trackerWorld, hmdSpeed);
 		}
 	}
 
@@ -2273,9 +2353,9 @@ void CalibrationTick(double time)
 	QueryPerformanceCounter(&start_time);
 		
 	bool lerp = false;
-	calibration.useVelocityAwareWeighting = CalCtx.useVelocityAwareWeighting && !CalCtx.useUpstreamMath;
-	calibration.useTukeyBiweight = CalCtx.useTukeyBiweight && !CalCtx.useUpstreamMath;
-	calibration.useBlendFilter = CalCtx.useBlendFilter && !CalCtx.useUpstreamMath;
+	calibration.useVelocityAwareWeighting = CalCtx.EffectiveVelocityAwareWeighting();
+	calibration.useTukeyBiweight = CalCtx.EffectiveTukeyBiweight();
+	calibration.useBlendFilter = CalCtx.EffectiveBlendFilter();
 
 	if (CalCtx.state == CalibrationState::Continuous) {
 		CalCtx.messages.clear();
@@ -2616,20 +2696,33 @@ void CalibrationTick(double time)
 	if (calibration.isValid()) {
 		const Eigen::Matrix3d R = calibration.Transformation().rotation();
 		const Eigen::Vector3d T = calibration.Transformation().translation();
+		const Eigen::Vector3d candidateTranslationCm = T * 100.0;
 		const double rotAngle =
 			std::acos(std::clamp((R.trace() - 1.0) * 0.5, -1.0, 1.0));
 		const bool finiteT = T.allFinite();
 		const bool nonTrivialRot = rotAngle > 1e-3;  // > ~0.06 deg from identity
-		if (!finiteT || !nonTrivialRot) {
-			char rejBuf[160];
+		const bool inContinuous = ctx.state == CalibrationState::Continuous;
+		const bool hasAcceptedSnapshot =
+			ctx.lastAcceptedContinuousSnapshot.captured;
+		const Eigen::Vector3d guardBaseline =
+			hasAcceptedSnapshot
+				? ctx.lastAcceptedContinuousSnapshot.calibratedTranslation
+				: ctx.calibratedTranslation;
+		const bool hasGuardBaseline =
+			inContinuous && (hasAcceptedSnapshot || ctx.validProfile);
+		const auto guard = spacecal::continuous::EvaluateCandidate(
+			inContinuous, hasGuardBaseline, hasAcceptedSnapshot,
+			guardBaseline, candidateTranslationCm, R);
+		if (!finiteT || !nonTrivialRot || !guard.accepted) {
+			char rejBuf[224];
 			std::snprintf(rejBuf, sizeof rejBuf,
-				"calibration_rejected_degenerate: finiteT=%d rotAngle=%.6f",
-				finiteT ? 1 : 0, rotAngle);
+				"calibration_candidate_rejected: finiteT=%d rotAngle=%.6f reason=%s jump_cm=%.2f",
+				finiteT ? 1 : 0, rotAngle, guard.reason, guard.jumpM * 100.0);
 			Metrics::WriteLogAnnotation(rejBuf);
-			CalCtx.Log("Degenerate solve rejected; keeping previous profile.\n");
+			CalCtx.Log("Calibration candidate rejected; keeping previous profile.\n");
 		} else {
 			ctx.calibratedRotation = calibration.EulerRotation();
-			ctx.calibratedTranslation = calibration.Transformation().translation() * 100.0; // convert to cm units for profile storage
+			ctx.calibratedTranslation = candidateTranslationCm; // convert to cm units for profile storage
 			ctx.refToTargetPose = calibration.RelativeTransformation();
 			ctx.relativePosCalibrated = calibration.isRelativeTransformationCalibrated();
 
@@ -2642,6 +2735,9 @@ void CalibrationTick(double time)
 			ScanAndApplyProfile(ctx);
 
 			CalCtx.hasAppliedCalibrationResult = true;
+			if (ctx.state == CalibrationState::Continuous) {
+				ctx.lastAcceptedContinuousSnapshot = ctx.CaptureProfileSnapshot();
+			}
 
 			CalCtx.Log("Finished calibration, profile saved\n");
 

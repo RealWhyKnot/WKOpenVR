@@ -117,6 +117,7 @@ TEST(Solver, FinishFailsFewSamples) {
     s.Finish();
     EXPECT_EQ(s.state(), SolveState::Failed);
     EXPECT_EQ(s.result().failReason, "not enough motion");
+    EXPECT_EQ(s.result().samplesUsed, 50);
 }
 
 TEST(Solver, FinishFailsHighResidual) {
@@ -142,6 +143,7 @@ TEST(Solver, FinishFailsHighResidual) {
     s.Finish();
     EXPECT_EQ(s.state(), SolveState::Failed);
     EXPECT_EQ(s.result().failReason, "mount may be slipping");
+    EXPECT_GT(s.result().samplesUsed, 0);
 }
 
 // --- Happy-path test: reconstruct known T --------------------------------
@@ -179,4 +181,38 @@ TEST(Solver, FinishSucceedsOnKnownTransform) {
     // Translation error (mm).
     double transErrMm = (T.translation() - r.headFromTracker.translation()).norm() * 1000.0;
     EXPECT_LT(transErrMm, 1.0); // sub-mm
+}
+
+TEST(Solver, CommonFrameConversionRecoversOffsetAcrossCalibrationTransform) {
+    const double kYaw = 7.0 * EIGEN_PI / 180.0;
+    Eigen::AffineCompact3d headFromTracker;
+    headFromTracker.linear() =
+        (Eigen::AngleAxisd(kYaw, Eigen::Vector3d::UnitY())).toRotationMatrix();
+    headFromTracker.translation() = Eigen::Vector3d(0.02, 0.03, -0.04);
+
+    auto targetFramePairs = MakePairs(
+        headFromTracker,
+        static_cast<int>(Solver::kTargetSampleCount) + 25,
+        77);
+
+    Eigen::Affine3d targetToReference =
+        Eigen::Translation3d(Eigen::Vector3d(1.2, -0.4, 0.8)) *
+        Eigen::AngleAxisd(0.35, Eigen::Vector3d::UnitZ());
+
+    Solver s;
+    s.Start();
+    for (const auto& [hmdTargetFrame, trackerTargetFrame] : targetFramePairs) {
+        const Eigen::Affine3d hmdReferenceFrame = targetToReference * hmdTargetFrame;
+        const Eigen::Affine3d hmdConvertedBack =
+            targetToReference.inverse() * hmdReferenceFrame;
+        s.Tick(hmdConvertedBack, trackerTargetFrame, 1.0);
+    }
+
+    s.Finish();
+    ASSERT_EQ(s.state(), SolveState::Done)
+        << "failReason: " << s.result().failReason;
+
+    EXPECT_LT(s.result().residualMm, 1.0);
+    EXPECT_LT((s.result().headFromTracker.translation()
+        - headFromTracker.translation()).norm() * 1000.0, 1.0);
 }

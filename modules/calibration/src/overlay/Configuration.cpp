@@ -53,12 +53,15 @@
 //   4 - Adds head_mount, boundary, and adb config sections for
 //       lighthouse-anchored head-tracker + safety boundary. No field renames;
 //       new sections default to disabled.
+//   5 - Splits the single "calibration_speed" setting into one-shot and
+//       continuous settings. One-shot defaults to FAST; continuous defaults
+//       to AUTO. The legacy key remains readable for migration only.
 //
 // When you change the schema:
 //   1. Bump kProfileSchemaVersion below.
 //   2. Add a step inside MigrateProfile() for the new bump.
 //   3. Keep the load path tolerant of missing keys for any new field.
-static const int kProfileSchemaVersion = 4;
+static const int kProfileSchemaVersion = 5;
 
 // Set to true when a chaperone geometry array with a non-multiple-of-12 length
 // is encountered during ParseProfile. The UI reads this to show a banner
@@ -110,6 +113,32 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 	// needs to be rewritten here. A v3 profile silently acquires the
 	// default-off state; the first save from the new overlay writes the keys
 	// only when non-default.
+
+	if (from_version < 5) {
+		auto it = profile.find("calibration_speed");
+		if (it != profile.end() && it->second.is<double>()) {
+			const int raw = (int)it->second.get<double>();
+			const bool valid =
+				raw >= CalibrationContext::FAST
+				&& raw <= CalibrationContext::AUTO;
+			const int oneShot = (!valid || raw == CalibrationContext::AUTO)
+				? CalibrationContext::FAST
+				: raw;
+			const int continuous =
+				(valid && (raw == CalibrationContext::SLOW
+					|| raw == CalibrationContext::VERY_SLOW))
+					? raw
+					: CalibrationContext::AUTO;
+			if (profile.find("one_shot_calibration_speed") == profile.end()) {
+				double v = (double)oneShot;
+				profile["one_shot_calibration_speed"].set<double>(v);
+			}
+			if (profile.find("continuous_calibration_speed") == profile.end()) {
+				double v = (double)continuous;
+				profile["continuous_calibration_speed"].set<double>(v);
+			}
+		}
+	}
 }
 
 
@@ -585,19 +614,42 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		ctx.calibratedScale = 1.0;
 	}
 
-	if (obj["calibration_speed"].is<double>()) {
-		const int raw = (int)obj["calibration_speed"].get<double>();
-		// Validate the loaded enum value. AUTO was added in 2026.4.28.x; older
-		// profiles only stored 0..2 (FAST/SLOW/VERY_SLOW). Anything outside
-		// 0..3 is corrupt — fall back to AUTO so users get sane behavior.
-		if (raw >= CalibrationContext::FAST && raw <= CalibrationContext::AUTO) {
-			ctx.calibrationSpeed = (CalibrationContext::Speed)raw;
-		} else {
-			ctx.calibrationSpeed = CalibrationContext::AUTO;
+	auto readSpeed = [](const picojson::value& v,
+	                    CalibrationContext::Speed fallback,
+	                    bool allowAuto) -> CalibrationContext::Speed {
+		if (!v.is<double>()) return fallback;
+		const int raw = (int)v.get<double>();
+		if (raw < CalibrationContext::FAST || raw > CalibrationContext::AUTO) {
+			return fallback;
 		}
+		if (!allowAuto && raw == CalibrationContext::AUTO) {
+			return fallback;
+		}
+		return (CalibrationContext::Speed)raw;
+	};
+	ctx.oneShotCalibrationSpeed = readSpeed(
+		obj["one_shot_calibration_speed"],
+		CalibrationContext::FAST,
+		/*allowAuto=*/false);
+	ctx.continuousCalibrationSpeed = readSpeed(
+		obj["continuous_calibration_speed"],
+		CalibrationContext::AUTO,
+		/*allowAuto=*/true);
+	if (!obj["one_shot_calibration_speed"].is<double>()
+		&& !obj["continuous_calibration_speed"].is<double>()
+		&& obj["calibration_speed"].is<double>()) {
+		const auto legacy = readSpeed(
+			obj["calibration_speed"],
+			CalibrationContext::AUTO,
+			/*allowAuto=*/true);
+		ctx.oneShotCalibrationSpeed =
+			legacy == CalibrationContext::AUTO ? CalibrationContext::FAST : legacy;
+		ctx.continuousCalibrationSpeed =
+			(legacy == CalibrationContext::SLOW
+				|| legacy == CalibrationContext::VERY_SLOW)
+				? legacy
+				: CalibrationContext::AUTO;
 	}
-	// Note: when calibration_speed is absent (older profile or new install) the
-	// CalibrationContext default of AUTO applies.
 
 	// "view_mode" was a per-profile UI density preference (BASIC/GRAPH/ADVANCED).
 	// Replaced by actual top-level tabs (Basic/Graphs/Advanced) in 2026.4.28+;
@@ -857,7 +909,8 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	WRITE_IF_CHANGED_BOOL  ("reanchor_chi_square",          reanchorChiSquareEnabled);
 	WRITE_IF_CHANGED_BOOL  ("recalibrate_on_movement",      recalibrateOnMovement);
 	WRITE_IF_CHANGED_BOOL  ("base_station_drift_correction", baseStationDriftCorrectionEnabled);
-	WRITE_IF_CHANGED_DOUBLE("calibration_speed",            calibrationSpeed);
+	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed",   oneShotCalibrationSpeed);
+	WRITE_IF_CHANGED_DOUBLE("continuous_calibration_speed", continuousCalibrationSpeed);
 
 	// finger_smoothing_* and tracker_smoothness moved out of SC profiles
 	// on 2026-05-11 (Protocol v12 migration). The Smoothing overlay owns

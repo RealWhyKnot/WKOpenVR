@@ -7,7 +7,7 @@
 #endif
 #include <cmath>
 //   1. Off mode: target sample selection unchanged (reads from targetID).
-//   2. AutoPaired: target sample comes from head-mount deviceID.
+//   2. AutoPaired: target sample comes from head-mount deviceID after offset calibration.
 //   3. AutoPaired with invalid tracker: sampling refuses (no sample, no crash).
 //   4. AssignTargets resolution: FindDevice matches serial -> deviceID.
 //
@@ -77,8 +77,22 @@ TEST(HeadMountSamplingTest, AutoPairedWithValidTrackerIsValid)
     HeadMountConfig cfg;
     cfg.mode     = HeadMountMode::AutoPaired;
     cfg.deviceID = 2;
+    cfg.offsetCalibrated = true;
 
     EXPECT_TRUE(hm::IsTrackerValidForSampling(cfg, poses, 4));
+}
+
+TEST(HeadMountSamplingTest, AutoPairedWithoutOffsetIsNotValid)
+{
+    vr::DriverPose_t poses[4];
+    poses[2] = MakeValidPoseAt(0.1, 0.2, 0.3);
+
+    HeadMountConfig cfg;
+    cfg.mode     = HeadMountMode::AutoPaired;
+    cfg.deviceID = 2;
+    cfg.offsetCalibrated = false;
+
+    EXPECT_FALSE(hm::IsTrackerValidForSampling(cfg, poses, 4));
 }
 
 TEST(HeadMountSamplingTest, AutoPairedWithInvalidTrackerIsNotValid)
@@ -89,6 +103,7 @@ TEST(HeadMountSamplingTest, AutoPairedWithInvalidTrackerIsNotValid)
     HeadMountConfig cfg;
     cfg.mode     = HeadMountMode::AutoPaired;
     cfg.deviceID = 2;
+    cfg.offsetCalibrated = true;
 
     EXPECT_FALSE(hm::IsTrackerValidForSampling(cfg, poses, 4));
 }
@@ -100,6 +115,7 @@ TEST(HeadMountSamplingTest, NegativeDeviceIDIsNotValid)
     HeadMountConfig cfg;
     cfg.mode     = HeadMountMode::AutoPaired;
     cfg.deviceID = -1;
+    cfg.offsetCalibrated = true;
 
     EXPECT_FALSE(hm::IsTrackerValidForSampling(cfg, poses, 4));
 }
@@ -111,6 +127,7 @@ TEST(HeadMountSamplingTest, DeviceIDOutOfRangeIsNotValid)
     HeadMountConfig cfg;
     cfg.mode     = HeadMountMode::AutoPaired;
     cfg.deviceID = 10;  // >= poseArraySize (4)
+    cfg.offsetCalibrated = true;
 
     EXPECT_FALSE(hm::IsTrackerValidForSampling(cfg, poses, 4));
 }
@@ -264,6 +281,7 @@ TEST(HeadMountSamplingTest, NonRunningOkResultIsInvalid)
     HeadMountConfig cfg;
     cfg.mode     = HeadMountMode::AutoPaired;
     cfg.deviceID = 2;
+    cfg.offsetCalibrated = true;
 
     EXPECT_FALSE(hm::IsTrackerValidForSampling(cfg, poses, 4));
 }

@@ -192,8 +192,8 @@ void DrawHeadMountSection(const ImVec2& panelSize) {
               false },
             { HeadMountMode::AutoPaired,  "Stabilize continuous calibration",
               "The continuous target becomes a constant paired observation from the headset-mounted tracker.\n"
-              "Drift correction stays smooth across long sessions. Recommended starting point.",
-              false },
+              "Drift correction stays smooth across long sessions. Requires the offset to be calibrated.",
+              true },
             { HeadMountMode::Corroborate, "Block SLAM re-localization jumps",
               "When Quest re-localizes (passthrough, room scan), the headset pose jumps.\n"
               "With this on, the head-tracker provides an independent witness so those\n"

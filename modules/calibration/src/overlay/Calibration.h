@@ -192,6 +192,21 @@ struct AdbConfig {
 	bool autoApplyOnStart = true;
 };
 
+struct CalibrationProfileSnapshot {
+	bool captured = false;
+	bool enabled = false;
+	bool validProfile = false;
+	std::string referenceTrackingSystem;
+	std::string targetTrackingSystem;
+	StandbyDevice referenceStandby;
+	StandbyDevice targetStandby;
+	Eigen::Vector3d calibratedRotation = Eigen::Vector3d::Zero();
+	Eigen::Vector3d calibratedTranslation = Eigen::Vector3d::Zero();
+	double calibratedScale = 1.0;
+	Eigen::AffineCompact3d refToTargetPose = Eigen::AffineCompact3d::Identity();
+	bool relativePosCalibrated = false;
+};
+
 struct CalibrationContext
 {
 	CalibrationState state = CalibrationState::None;
@@ -319,15 +334,10 @@ struct CalibrationContext
 	// Persisted via Configuration.cpp.
 	bool useGccPhatLatency = true;
 
-	// Opt-in switch for the CUSUM geometry-shift detector (Page 1954)
-	// alternative to the default 5x-rolling-median rule. Both share the
-	// same "fire -> Clear() + demote to Standby" recovery action; only the
-	// per-tick decision differs. CUSUM gives a tunable false-alarm rate
-	// via standard ARL tables (kCusumDriftMm, kCusumThreshold in
-	// GeometryShiftDetector.h). Default OFF; the rolling-median rule has
-	// not misfired in observed 35.6 MB of session logs. Persisted as
-	// geometry_shift_use_cusum in profile JSON.
-	bool useCusumGeometryShift = false;
+	// Validated geometry-shift detector. Uses the CUSUM path instead of the
+	// older 5x-rolling-median rule. Both share the same recovery action.
+	// Persisted as geometry_shift_use_cusum in profile JSON.
+	bool useCusumGeometryShift = true;
 
 	// Opt-in switch for velocity-aware outlier weighting in the IRLS
 	// translation solve. When on, the per-pair Cauchy threshold c is
@@ -342,14 +352,10 @@ struct CalibrationContext
 	// profile JSON.
 	bool useVelocityAwareWeighting = true;
 
-	// Opt-in switch for the Tukey biweight + Qn-scale path in the IRLS
-	// translation solve. Replaces the default Cauchy + MAD pair with a
-	// redescending kernel (large residuals get exactly zero weight) and
-	// a 50% breakdown scale estimator (no symmetry assumption, no MAD
-	// floor saturation). Default OFF; the Cauchy + MAD path has been
-	// adequate on observed Quest+Lighthouse residual distributions.
-	// Persisted as irls_use_tukey in profile JSON.
-	bool useTukeyBiweight = false;
+	// Validated Tukey biweight + Qn-scale path in the IRLS translation solve.
+	// Replaces Cauchy + MAD with a redescending kernel and a 50% breakdown
+	// scale estimator. Persisted as irls_use_tukey in profile JSON.
+	bool useTukeyBiweight = true;
 
 	// When true, the translation solve falls back to the pre-revamp pairwise
 	// O(N^2) IRLS path. Provided as a safety hatch if the direct O(N)
@@ -365,15 +371,11 @@ struct CalibrationContext
 	// translation solver. Default false. Persisted as translation_use_upstream.
 	bool useUpstreamMath = false;
 
-	// Opt-in switch for the Kalman-filter blend at publish (replaces the
-	// single-step EMA at alpha=0.3 in CalibrationCalc::ComputeIncremental
-	// with a 4-state filter on yaw + translation, with proper process and
-	// measurement covariances). Default OFF; the EMA path is the
-	// validated default. Filter divergence is detected per-tick via hard
-	// caps on per-component innovation; on divergence the filter resets
-	// to the candidate and the EMA path runs that tick as a graceful
-	// fallback. Persisted as blend_use_kalman in profile JSON.
-	bool useBlendFilter = false;
+	// Validated Kalman-filter blend at publish. Replaces the single-step EMA
+	// at alpha=0.3 in CalibrationCalc::ComputeIncremental with a 4-state
+	// filter on yaw + translation. Divergence falls back to the EMA path for
+	// that tick. Persisted as blend_use_kalman in profile JSON.
+	bool useBlendFilter = true;
 
 	// Opt-in switch for the rest-locked yaw drift correction. Per-tracker
 	// rest detector locks the orientation 1 s of dwell; subsequent at-rest
@@ -388,27 +390,17 @@ struct CalibrationContext
 	// profile JSON.
 	bool restLockedYawEnabled = true;
 
-	// Opt-in switch for the predictive recovery pre-correction (rec C).
-	// Each RecoverFromWedgedCalibration fire pushes (HMD-jump direction,
-	// magnitude, time) into a 6-deep ring; if the last 3+ events trend in
-	// a consistent direction (recency-weighted cosine > 0.7), apply a
-	// small fraction (10 percent) of the predicted next-jump per tick as
-	// a bounded-rate translation nudge to the active SE(3). The
-	// 30 cm relocalization detector is the high-SNR signal source; rec C
-	// only chooses how to extrapolate between events. Math is in
-	// src/overlay/RecoveryDeltaBuffer.h. Persisted as predictive_recovery
-	// in profile JSON.
-	bool predictiveRecoveryEnabled = false;
+	// Validated predictive recovery pre-correction (rec C). Each recovery
+	// fire pushes a displacement into a 6-deep ring; a consistent trend
+	// applies a small bounded-rate translation nudge. Persisted as
+	// predictive_recovery in profile JSON.
+	bool predictiveRecoveryEnabled = true;
 
-	// Opt-in switch for the chi-square re-anchor sub-detector (rec F).
-	// Runs a 1-D chi-square test on the residual between HMD-pose-from-
-	// rolling-velocity and observed HMD pose. When the Mahalanobis
-	// distance exceeds the 6-DoF p<1e-4 threshold, raises a candidate
-	// flag and freezes recs A/C corrections for 500 ms so the existing
-	// 30 cm detector has a clean window to confirm. Math is in
-	// src/overlay/ReanchorChiSquareDetector.h. Persisted as
-	// reanchor_chi_square in profile JSON.
-	bool reanchorChiSquareEnabled = false;
+	// Validated chi-square re-anchor sub-detector (rec F). Runs a chi-square
+	// test on the residual between HMD-pose-from-rolling-velocity and the
+	// observed HMD pose, then freezes rec A/C corrections briefly on a
+	// candidate. Persisted as reanchor_chi_square in profile JSON.
+	bool reanchorChiSquareEnabled = true;
 
 	// Rolling window of per-solve residual pitch+roll readings (degrees), used
 	// by spacecal::gravity::EvaluateTilt to flag sustained gravity-axis
@@ -715,13 +707,14 @@ struct CalibrationContext
 		// noise floor and slows the calibration down when conditions are bad.
 		AUTO = 3,
 	};
-	// Default FAST. AUTO only makes sense in continuous mode (it re-evaluates
-	// each tick based on observed jitter and slows down when conditions
-	// degrade). In one-shot mode the user has committed to a single run --
-	// AUTO would just pick once and confuse them. ResolvedCalibrationSpeed
-	// folds AUTO -> FAST whenever state is not Continuous so an old profile
-	// carrying calibrationSpeed=AUTO behaves correctly for one-shot.
-	Speed calibrationSpeed = FAST;
+	// One-shot defaults to FAST. Continuous defaults to AUTO so long-running
+	// sessions can adapt buffer size to observed jitter without making one-shot
+	// calibration wait on a sticky speed resolver.
+	Speed oneShotCalibrationSpeed = FAST;
+	Speed continuousCalibrationSpeed = AUTO;
+
+	CalibrationProfileSnapshot continuousStartSnapshot;
+	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
@@ -881,7 +874,60 @@ struct CalibrationContext
 		// converge" symptom). The offset is a runtime adjustment, not a
 		// persistent profile setting — it has no business surviving a Clear().
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
+		continuousStartSnapshot = {};
+		lastAcceptedContinuousSnapshot = {};
 	}
+
+	CalibrationProfileSnapshot CaptureProfileSnapshot() const
+	{
+		CalibrationProfileSnapshot snap;
+		snap.captured = true;
+		snap.enabled = enabled;
+		snap.validProfile = validProfile;
+		snap.referenceTrackingSystem = referenceTrackingSystem;
+		snap.targetTrackingSystem = targetTrackingSystem;
+		snap.referenceStandby = referenceStandby;
+		snap.targetStandby = targetStandby;
+		snap.calibratedRotation = calibratedRotation;
+		snap.calibratedTranslation = calibratedTranslation;
+		snap.calibratedScale = calibratedScale;
+		snap.refToTargetPose = refToTargetPose;
+		snap.relativePosCalibrated = relativePosCalibrated;
+		return snap;
+	}
+
+	void RestoreProfileSnapshot(const CalibrationProfileSnapshot& snap)
+	{
+		if (!snap.captured) return;
+		enabled = snap.enabled;
+		validProfile = snap.validProfile;
+		referenceTrackingSystem = snap.referenceTrackingSystem;
+		targetTrackingSystem = snap.targetTrackingSystem;
+		referenceStandby = snap.referenceStandby;
+		targetStandby = snap.targetStandby;
+		calibratedRotation = snap.calibratedRotation;
+		calibratedTranslation = snap.calibratedTranslation;
+		calibratedScale = snap.calibratedScale;
+		refToTargetPose = snap.refToTargetPose;
+		relativePosCalibrated = snap.relativePosCalibrated;
+	}
+
+	Speed ActiveCalibrationSpeed() const
+	{
+		return (state == CalibrationState::Continuous
+			|| state == CalibrationState::ContinuousStandby)
+			? continuousCalibrationSpeed
+			: oneShotCalibrationSpeed;
+	}
+
+	bool EffectiveGccPhatLatency() const { return useGccPhatLatency && !useUpstreamMath; }
+	bool EffectiveCusumGeometryShift() const { return useCusumGeometryShift && !useUpstreamMath; }
+	bool EffectiveVelocityAwareWeighting() const { return useVelocityAwareWeighting && !useUpstreamMath; }
+	bool EffectiveTukeyBiweight() const { return useTukeyBiweight && !useUpstreamMath; }
+	bool EffectiveBlendFilter() const { return useBlendFilter && !useUpstreamMath; }
+	bool EffectivePredictiveRecoveryEnabled() const { return predictiveRecoveryEnabled && !useUpstreamMath; }
+	bool EffectiveReanchorChiSquareEnabled() const { return reanchorChiSquareEnabled && !useUpstreamMath; }
+	bool EffectiveRestLockedYawEnabled() const { return restLockedYawEnabled && !useUpstreamMath; }
 
 	// Resolve the user's selected speed to a concrete FAST/SLOW/VERY_SLOW. When
 	// the user picks AUTO, we look at the recent observed jitter on both

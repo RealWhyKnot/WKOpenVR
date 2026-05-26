@@ -15,6 +15,7 @@ namespace spacecal::headmount {
 
 // Returns true if the head-mount tracker is engaged for sampling:
 //   - mode >= AutoPaired
+//   - headFromTracker offset calibrated
 //   - deviceID resolved (>= 0) and within OpenVR range
 //   - the device pose in poseArray is valid and Running_OK
 inline bool IsTrackerValidForSampling(
@@ -23,6 +24,7 @@ inline bool IsTrackerValidForSampling(
     uint32_t poseArraySize)
 {
     if (cfg.mode < HeadMountMode::AutoPaired) return false;
+    if (!cfg.offsetCalibrated) return false;
     if (cfg.deviceID < 0 || (uint32_t)cfg.deviceID >= poseArraySize) return false;
     const vr::DriverPose_t& p = poseArray[cfg.deviceID];
     return p.poseIsValid && p.result == vr::ETrackingResult::TrackingResult_Running_OK;
