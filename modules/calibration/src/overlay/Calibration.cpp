@@ -11,6 +11,7 @@
 #include "VRState.h"
 #include "WedgeDetector.h"   // ShouldFireRuntimeWedgeRecovery, kMaxPlausibleCalibrationMagnitudeCm
 #include "GeometryShiftDetector.h"  // IsCurrentErrorSpike, ShouldFireGeometryShiftRecovery
+#include "CommonModeCoherence.h"   // spacecal::coherence::ComputeCoherenceScore
 #include "MotionGate.h"      // ShouldBlendCycle -- auto-recovery snap decision
 #include "LatencyEstimator.h"  // spacecal::latency::EstimateLagTimeDomain / EstimateLagGccPhat
 #include "TiltDiagnostic.h"    // spacecal::gravity::EvaluateTilt -- sustained gravity-disagreement annotation
@@ -251,11 +252,16 @@ void CalibrationContext::UpdateAutoLockDetector(
 			&& (nowSec - autoLockMadHistory.front().first) > kFloorWindowSec) {
 			autoLockMadHistory.pop_front();
 		}
-		double floor = autoLockMadHistory.front().second;
+		// Track the timestamp of the sample that produced the floor too;
+		// the warm-restart validator uses it to label `mad_floor_source`
+		// as preSnap vs postSnap. A floor inherited from pre-snap quiet
+		// can mask a wrong snap by satisfying the dispersion gate.
+		auto floorEntry = autoLockMadHistory.front();
 		for (const auto& p : autoLockMadHistory) {
-			if (p.second < floor) floor = p.second;
+			if (p.second < floorEntry.second) floorEntry = p;
 		}
-		autoLockMadFloor = floor;
+		autoLockMadFloor = floorEntry.second;
+		autoLockMadFloorTs = floorEntry.first;
 	}
 
 	// Panic-unlock: at clearly-broken deviation, skip the pending-flip queue
@@ -754,6 +760,16 @@ void CalibrationTick(double time)
 					ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
 					ctx.warmRestartValidationState =
 						spacecal::warm_restart::ValidationOutcome::Inconclusive;
+					// Reset the post-snap bias accumulator and pin the
+					// last-consumed err timestamp to the latest pre-snap
+					// sample, so pre-snap retargeting errors do not feed
+					// into the post-snap mean. warmRestartSnapTime is
+					// surfaced in the heartbeat to label mad_floor_source.
+					ctx.postSnapErrorSumMm = 0.0;
+					ctx.postSnapErrorSampleCount = 0;
+					ctx.warmRestartLastConsumedErrTs =
+						Metrics::error_currentCal.lastTs();
+					ctx.warmRestartSnapTime = Metrics::CurrentTime;
 					g_snapNextProfileApply = true;
 					const double mag = std::sqrt(
 						  ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x()
@@ -925,7 +941,41 @@ void CalibrationTick(double time)
 			const double madFloorMm = ctx.autoLockMadFloor * 1000.0;
 			const double enterMm =
 				spacecal::autolock::EnterThresholdFor(ctx.autoLockMadFloor) * 1000.0;
-			char hbBuf[768];
+			// Warm-restart heartbeat fields: the post-snap bias mean and
+			// the mad-floor source distinguish "Settled by post-snap
+			// convergence" from "Settled by inherited pre-snap quiet
+			// floor". post_snap_bias_mm is the validator's correctness
+			// signal; mad_floor_source is its provenance label. Both are
+			// emitted regardless of whether the grace window is active --
+			// outside the window they read as zero / "n/a" so a triage
+			// reader can grep one line per heartbeat for the relevant
+			// state.
+			const bool warmRestartActive = (ctx.warmRestartGraceSamples > 0);
+			const double postSnapBiasMm =
+				(ctx.postSnapErrorSampleCount > 0)
+				? (ctx.postSnapErrorSumMm
+					/ static_cast<double>(ctx.postSnapErrorSampleCount))
+				: 0.0;
+			const char* madFloorSourceHb;
+			if (!warmRestartActive) {
+				madFloorSourceHb = "n/a";
+			} else if (ctx.warmRestartSnapTime > 0.0
+				&& ctx.autoLockMadFloorTs > 0.0
+				&& ctx.autoLockMadFloorTs >= ctx.warmRestartSnapTime) {
+				madFloorSourceHb = "postSnap";
+			} else {
+				madFloorSourceHb = "preSnap";
+			}
+			const char* validationStateHb;
+			switch (ctx.warmRestartValidationState) {
+				case spacecal::warm_restart::ValidationOutcome::Settled:
+					validationStateHb = "settled"; break;
+				case spacecal::warm_restart::ValidationOutcome::Failed:
+					validationStateHb = "failed"; break;
+				default:
+					validationStateHb = "inconclusive"; break;
+			}
+			char hbBuf[1024];
 			snprintf(hbBuf, sizeof hbBuf,
 				"[cal-heartbeat] state=%d lockMode=%d lockRel=%d autoLockEff=%d"
 				" autoLockPending=%d autoLockPendingTo=%d autoLockHeldSec=%.2f"
@@ -937,7 +987,10 @@ void CalibrationTick(double time)
 				" reloc_cooldown_until=%.3f grace_until=%.3f"
 				" geom_cusumS=%.3f geom_sustain=%d/%d"
 				" geom_cooldown_remaining_sec=%.1f"
-				" relPosCal=%d hmdStalls=%d",
+				" relPosCal=%d hmdStalls=%d"
+				" wr_active=%d wr_grace_remaining=%d"
+				" post_snap_bias_mm=%.3f post_snap_samples=%d"
+				" mad_floor_source=%s wr_validation=%s",
 				(int)ctx.state, (int)ctx.lockRelativePositionMode,
 				(int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked,
 				(int)ctx.autoLockHasPendingFlip, (int)ctx.autoLockPendingFlipTo,
@@ -953,7 +1006,10 @@ void CalibrationTick(double time)
 				g_cusumState.S, g_cusumState.sustainedAboveThreshold,
 				spacecal::geometry_shift::kMinSustainedSpikes,
 				cooldownRemaining,
-				(int)ctx.relativePosCalibrated, ctx.consecutiveHmdStalls);
+				(int)ctx.relativePosCalibrated, ctx.consecutiveHmdStalls,
+				(int)warmRestartActive, ctx.warmRestartGraceSamples,
+				postSnapBiasMm, ctx.postSnapErrorSampleCount,
+				madFloorSourceHb, validationStateHb);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
@@ -1138,6 +1194,73 @@ void CalibrationTick(double time)
 					// later toggle flip starts from a clean state rather than a
 					// stale running-sum from before the toggle change.
 					g_cusumState.Reset();
+				}
+
+				// Common-mode coherence check. The primary detector above
+				// votes from the primary HMD<->target pair's residual
+				// stream alone. If a vote-to-fire actually reflects a
+				// shared-frame event (worldFromDriver reanchor coming
+				// from outside the chi-square detector, runtime
+				// relocalization, base-station perturbation), then the
+				// active multi-system extras should be showing the same
+				// spike with the same shape. Score that explicitly and
+				// suppress the fire when the spike is coherent across
+				// pairs -- pair-local geometry shifts only spike one
+				// pair's residual, not all of them.
+				if (fire) {
+					std::vector<double> extraRatios;
+					extraRatios.reserve(ctx.additionalCalibrations.size());
+					for (const auto& extra : ctx.additionalCalibrations) {
+						if (!extra.enabled || !extra.valid) continue;
+						if (extra.recentErrorsMm.size() < 5) continue;
+						std::vector<double> tail(
+							extra.recentErrorsMm.begin(),
+							extra.recentErrorsMm.end());
+						std::sort(tail.begin(), tail.end());
+						const double xMedian = tail[tail.size() / 2];
+						const double xCurrent = extra.recentErrorsMm.back();
+						if (xMedian <= spacecal::geometry_shift::kMedianFloor) continue;
+						extraRatios.push_back(xCurrent / xMedian);
+					}
+					const int extrasCount = static_cast<int>(extraRatios.size());
+					const double coherence =
+						spacecal::coherence::ComputeCoherenceScore(ratio, extraRatios);
+					if (spacecal::coherence::ShouldSuppressFire(coherence, extrasCount)) {
+						char csBuf[320];
+						snprintf(csBuf, sizeof csBuf,
+							"[geometry-shift][coherence-suppressed] coherence=%.3f"
+							" primary_ratio=%.2fx extras_count=%d threshold=%.2f"
+							" current_mm=%.3f median_mm=%.3f mode=%s",
+							coherence, ratio, extrasCount,
+							spacecal::coherence::kSuppressThreshold,
+							current, median,
+							ctx.useCusumGeometryShift ? "cusum" : "legacy");
+						Metrics::WriteLogAnnotation(csBuf);
+						// Wipe the accumulators that drove the fire so a
+						// subsequent pair-local spike can re-accumulate
+						// cleanly without inheriting this suppressed
+						// evidence.
+						fire = false;
+						g_cusumState.Reset();
+						g_geomShiftConsecutiveBadTicks = 0;
+					} else if (extrasCount >= spacecal::coherence::kMinExtrasForCoherence) {
+						// Multi-extra session with a fire that the coherence
+						// check let through: log the score so the next session
+						// log shows the discriminator did its work rather
+						// than being dead code. Throttled with the existing
+						// spike-candidate-log throttle so it cannot run away.
+						if ((time - s_lastSpikeLogTime) >= 1.0) {
+							s_lastSpikeLogTime = time;
+							char clBuf[280];
+							snprintf(clBuf, sizeof clBuf,
+								"[geometry-shift][coherence-check] coherence=%.3f"
+								" primary_ratio=%.2fx extras_count=%d threshold=%.2f"
+								" verdict=pair_local",
+								coherence, ratio, extrasCount,
+								spacecal::coherence::kSuppressThreshold);
+							Metrics::WriteLogAnnotation(clBuf);
+						}
+					}
 				}
 
 				// Reanchor-gate with deferral. When the chi-square reanchor is
@@ -2030,54 +2153,110 @@ void CalibrationTick(double time)
 					spacecal::warm_restart::kGraceSamples - CalCtx.warmRestartGraceSamples;
 				const bool graceEndedThisTick = (CalCtx.warmRestartGraceSamples == 0);
 				const double madFloor = CalCtx.autoLockMadFloor;
-				const auto outcome = spacecal::warm_restart::EvaluateValidation(
-					madFloor, samplesSinceSnap, graceEndedThisTick);
+
+				// Accumulate any fresh error_currentCal sample produced by
+				// the ComputeIncremental call above into the post-snap
+				// bias mean. error_currentCal.Push only fires when the
+				// solver successfully ValidateCalibration's the applied
+				// transform, so some ticks contribute no sample; the
+				// timestamp gate keeps stale samples (carried over from
+				// before the snap, or from a missed-push earlier tick)
+				// out of the mean. This is the correctness signal the
+				// previous validator was missing: it tracks how well the
+				// applied calibration fits the live samples, not just how
+				// quiet the relative-pose dispersion is.
+				const double latestErrTs = Metrics::error_currentCal.lastTs();
+				if (latestErrTs > CalCtx.warmRestartLastConsumedErrTs) {
+					CalCtx.postSnapErrorSumMm += Metrics::error_currentCal.last();
+					CalCtx.postSnapErrorSampleCount += 1;
+					CalCtx.warmRestartLastConsumedErrTs = latestErrTs;
+				}
+				const double meanBiasTransM =
+					(CalCtx.postSnapErrorSampleCount > 0)
+					? (CalCtx.postSnapErrorSumMm
+						/ static_cast<double>(CalCtx.postSnapErrorSampleCount))
+						/ 1000.0
+					: 0.0;
+
+				const spacecal::warm_restart::ValidationInputs vin{
+					madFloor, samplesSinceSnap, graceEndedThisTick,
+					meanBiasTransM};
+				const auto outcome = spacecal::warm_restart::EvaluateValidation(vin);
+
+				// mad_floor_source labels whether the rolling-min floor
+				// was produced by a pre-snap sample (inherited quiet
+				// floor; Settled-by-floor is suspect) or a post-snap
+				// sample (genuine convergence).
+				const char* madFloorSource =
+					(CalCtx.warmRestartSnapTime > 0.0
+						&& CalCtx.autoLockMadFloorTs > 0.0
+						&& CalCtx.autoLockMadFloorTs >= CalCtx.warmRestartSnapTime)
+					? "postSnap" : "preSnap";
+
 				if (outcome == spacecal::warm_restart::ValidationOutcome::Settled
 					&& CalCtx.warmRestartValidationState
 						!= spacecal::warm_restart::ValidationOutcome::Settled) {
 					CalCtx.warmRestartValidationState =
 						spacecal::warm_restart::ValidationOutcome::Settled;
 					CalCtx.warmRestartGraceSamples = 0;  // end grace early
-					char vbuf[240];
+					char vbuf[320];
 					snprintf(vbuf, sizeof vbuf,
 						"[warm-restart][validated] mad_mm=%.3f samples_since_snap=%d"
-						" mad_at_snap_mm=%.3f reason=settled",
+						" mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
+						" post_snap_samples=%d mad_floor_source=%s reason=settled",
 						madFloor * 1000.0, samplesSinceSnap,
-						CalCtx.warmRestartMadAtSnap * 1000.0);
+						CalCtx.warmRestartMadAtSnap * 1000.0,
+						meanBiasTransM * 1000.0,
+						CalCtx.postSnapErrorSampleCount, madFloorSource);
 					Metrics::WriteLogAnnotation(vbuf);
 					Metrics::WriteLogAnnotation(
 						"[warm-restart][grace-ended] reason=validated_settled");
+				} else if (outcome == spacecal::warm_restart::ValidationOutcome::Failed
+					&& CalCtx.warmRestartValidationState
+						!= spacecal::warm_restart::ValidationOutcome::Failed) {
+					// Bias-Failed can fire mid-grace (post-snap retargeting
+					// error too large); end grace immediately and trigger
+					// recovery. MAD-Failed only fires at grace end and is
+					// handled in the graceEndedThisTick branch below.
+					CalCtx.warmRestartValidationState =
+						spacecal::warm_restart::ValidationOutcome::Failed;
+					CalCtx.warmRestartGraceSamples = 0;
+					const char* failReason =
+						(meanBiasTransM > spacecal::warm_restart::kFailBiasTransM)
+						? "bias_above_threshold" : "above_failed_threshold";
+					char fbuf[320];
+					snprintf(fbuf, sizeof fbuf,
+						"[warm-restart][failed] mad_mm=%.3f samples_since_snap=%d"
+						" mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
+						" post_snap_samples=%d mad_floor_source=%s reason=%s",
+						madFloor * 1000.0, samplesSinceSnap,
+						CalCtx.warmRestartMadAtSnap * 1000.0,
+						meanBiasTransM * 1000.0,
+						CalCtx.postSnapErrorSampleCount, madFloorSource,
+						failReason);
+					Metrics::WriteLogAnnotation(fbuf);
+					Metrics::WriteLogAnnotation(
+						"[warm-restart][grace-ended] reason=validation_failed");
+					RecoverFromWedgedCalibration(
+						"Warm-restart validation failed -- recalibrating from scratch\n",
+						"warm_restart_validation_failed");
 				} else if (graceEndedThisTick) {
-					if (outcome == spacecal::warm_restart::ValidationOutcome::Failed) {
-						CalCtx.warmRestartValidationState =
-							spacecal::warm_restart::ValidationOutcome::Failed;
-						char fbuf[240];
-						snprintf(fbuf, sizeof fbuf,
-							"[warm-restart][failed] mad_mm=%.3f samples_since_snap=%d"
-							" mad_at_snap_mm=%.3f reason=above_failed_threshold",
-							madFloor * 1000.0, samplesSinceSnap,
-							CalCtx.warmRestartMadAtSnap * 1000.0);
-						Metrics::WriteLogAnnotation(fbuf);
-						Metrics::WriteLogAnnotation(
-							"[warm-restart][grace-ended] reason=validation_failed");
-						RecoverFromWedgedCalibration(
-							"Warm-restart validation failed -- recalibrating from scratch\n",
-							"warm_restart_validation_failed");
-					} else {
-						// Inconclusive at grace end: MAD between thresholds.
-						// Profile stays; log loudly so this case is visible
-						// in triage. Was the old default samples_exhausted
-						// success path; now explicit.
-						char ibuf[240];
-						snprintf(ibuf, sizeof ibuf,
-							"[warm-restart][inconclusive] mad_mm=%.3f samples_since_snap=%d"
-							" mad_at_snap_mm=%.3f reason=between_thresholds",
-							madFloor * 1000.0, samplesSinceSnap,
-							CalCtx.warmRestartMadAtSnap * 1000.0);
-						Metrics::WriteLogAnnotation(ibuf);
-						Metrics::WriteLogAnnotation(
-							"[warm-restart][grace-ended] reason=samples_exhausted");
-					}
+					// Inconclusive at grace end: MAD between thresholds and
+					// bias under the fail threshold. Profile stays; log
+					// loudly so this case is visible in triage.
+					char ibuf[320];
+					snprintf(ibuf, sizeof ibuf,
+						"[warm-restart][inconclusive] mad_mm=%.3f samples_since_snap=%d"
+						" mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
+						" post_snap_samples=%d mad_floor_source=%s"
+						" reason=between_thresholds",
+						madFloor * 1000.0, samplesSinceSnap,
+						CalCtx.warmRestartMadAtSnap * 1000.0,
+						meanBiasTransM * 1000.0,
+						CalCtx.postSnapErrorSampleCount, madFloorSource);
+					Metrics::WriteLogAnnotation(ibuf);
+					Metrics::WriteLogAnnotation(
+						"[warm-restart][grace-ended] reason=samples_exhausted");
 				}
 			}
 
@@ -2258,6 +2437,18 @@ void CalibrationTick(double time)
 						extra.refToTargetPose = extra.calc->RelativeTransformation();
 						extra.relativePosCalibrated = extra.calc->isRelativeTransformationCalibrated();
 						extra.valid = true;
+					}
+				}
+				// Track this extra's recent priorCalibrationError values
+				// for the geometry-shift common-mode coherence check.
+				// LastPriorErrorM is INFINITY until a validated compute
+				// has happened; skip pushes until then so the rolling
+				// median is built from real readings, not sentinels.
+				const double extraErrM = extra.calc->LastPriorErrorM();
+				if (std::isfinite(extraErrM)) {
+					extra.recentErrorsMm.push_back(extraErrM * 1000.0);
+					while (extra.recentErrorsMm.size() > 30) {
+						extra.recentErrorsMm.pop_front();
 					}
 				}
 			}

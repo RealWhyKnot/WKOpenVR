@@ -6,6 +6,7 @@
 #include <vector>
 #include <deque>
 #include <iostream>
+#include <limits>
 
 #include "BlendFilter.h"  // spacecal::blendfilter::State (member of CalibrationCalc)
 
@@ -126,8 +127,21 @@ public:
 	bool isValid() const {
 		return m_isValid;
 	}
-	
-	const Eigen::AffineCompact3d RelativeTransformation() const 
+
+	// Most recent RMS retargeting error of the applied calibration (the
+	// `priorCalibrationError` computed inside ComputeIncremental and
+	// pushed to Metrics::error_currentCal for the primary pair). Exposed
+	// per-instance so the common-mode coherence check at the geometry-
+	// shift fire site can read each AdditionalCalibration's latest error
+	// without each extra needing its own global TimeSeries. Returns
+	// INFINITY when no incremental compute has produced a validated
+	// result yet (the value is initialized to INFINITY and only
+	// overwritten by a successful ValidateCalibration path).
+	double LastPriorErrorM() const {
+		return m_lastPriorRetargetingErrorM;
+	}
+
+	const Eigen::AffineCompact3d RelativeTransformation() const
 	{
 		return m_refToTargetPose;
 	}
@@ -288,6 +302,13 @@ public:
 	mutable RejectReason m_lastRejectReason = RejectReason::None;
 	mutable double m_lastRejectRms = 0.0;
 	mutable double m_lastRejectRmsThreshold = 0.0;
+
+	// Cached priorCalibrationError from the most recent successful
+	// ValidateCalibration call inside ComputeIncremental, in metres.
+	// INFINITY when no successful compute has happened yet (or after a
+	// Clear). Exposed via LastPriorErrorM() for the common-mode
+	// coherence check.
+	double m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 
 private:
 

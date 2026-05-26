@@ -51,16 +51,31 @@ constexpr int kColdStartGraceTicks = 100;
 
 // Validation thresholds (metres). After the snap engages, the solver
 // converges over kGraceSamples ticks. During that window the caller
-// watches the rolling MAD floor:
-//   - madFloor < kValidatedSettledMadM AND samples_since_snap >= 20:
-//     declare Settled, end grace early. Profile snap was correct.
-//   - At grace end with madFloor > kValidatedFailedMadM:
-//     declare FailedAboveThreshold, trigger RecoverFromWedgedCalibration.
-//     Snap landed on a profile that no longer matches reality.
-//   - In between: Inconclusive, profile stays, no recovery (current
-//     samples_exhausted behaviour, but logged with the actual MAD).
+// watches two signals:
+//   - madFloor (rolling-minimum relative-pose dispersion). Tells us
+//     whether the post-snap samples are stable.
+//   - meanBias (mean RMS retargeting error of the applied calibration
+//     across the post-snap window, in metres). Tells us whether the
+//     applied calibration actually fits the samples, not just whether
+//     the samples are quiet. A snap to a stale profile can land 12 mm
+//     off and still produce 4 mm MAD -- stable but wrong. The bias
+//     check catches that. Translation-only suffices because rotation
+//     errors propagate to RMS retargeting error via the lever arm
+//     (a 2 deg rotation error on a 30 cm tracker arm is ~10 mm).
+//
+// Decision rule:
+//   - meanBias > kFailBiasTransM AND postSnap samples >= 20:
+//     declare Failed, trigger RecoverFromWedgedCalibration. The snap
+//     landed on a profile that no longer matches reality.
+//   - madFloor in (0, kValidatedSettledMadM] AND meanBias <=
+//     kAcceptBiasTransM AND postSnap samples >= 20: declare Settled,
+//     end grace early. Profile snap was correct.
+//   - At grace end with madFloor > kValidatedFailedMadM: also Failed.
+//   - In between: Inconclusive, profile stays, no recovery.
 constexpr double kValidatedSettledMadM = 0.008;   // 8 mm
 constexpr double kValidatedFailedMadM  = 0.020;   // 20 mm
+constexpr double kAcceptBiasTransM     = 0.005;   // 5 mm; max bias for Settled
+constexpr double kFailBiasTransM       = 0.015;   // 15 mm; bias above this -> Failed
 constexpr int    kValidationMinSamples = 20;
 
 enum class ValidationOutcome {
@@ -131,21 +146,59 @@ constexpr bool ShouldEngage(const EngageInput& in) {
     return poseJump || proximityAndTime;
 }
 
-// Validation outcome from one tick's MAD reading. Pure; caller maintains
-// the running tick count since snap.
+// Inputs to the per-tick validation decision. Built once per Continuous
+// solver tick from CalibrationContext fields. `meanBiasTransM` is the
+// post-snap mean of `Metrics::error_currentCal` (the RMS retargeting
+// error of the applied calibration), in metres. Zero when no post-snap
+// error sample has been accumulated yet -- in that case the decision
+// falls back to the dispersion-only branch and only the early-Settled /
+// MAD-Failed paths can fire.
+struct ValidationInputs {
+    double madFloorM;
+    int    samplesSinceSnap;
+    bool   graceEndedThisTick;
+    double meanBiasTransM = 0.0;
+};
+
+// Validation outcome from one tick's reading. Pure helper; caller
+// maintains both the running tick count since snap and the post-snap
+// bias accumulator.
+constexpr ValidationOutcome EvaluateValidation(const ValidationInputs& in)
+{
+    // Bias-Failed: the applied calibration is producing too much
+    // retargeting error for the snap target to be trusted. This is the
+    // path that catches the "stable but wrong" case the previous
+    // dispersion-only validator missed.
+    if (in.samplesSinceSnap >= kValidationMinSamples
+        && in.meanBiasTransM > kFailBiasTransM) {
+        return ValidationOutcome::Failed;
+    }
+    // Dispersion-Failed at grace end: post-snap samples never stabilized.
+    if (in.graceEndedThisTick && in.madFloorM > kValidatedFailedMadM) {
+        return ValidationOutcome::Failed;
+    }
+    // Settled: requires BOTH dispersion AND bias to be low. Pre-fix this
+    // only checked dispersion, so a snap that landed off-target but
+    // landed quietly was reported as Settled.
+    if (in.samplesSinceSnap >= kValidationMinSamples
+        && in.madFloorM > 0.0
+        && in.madFloorM < kValidatedSettledMadM
+        && in.meanBiasTransM <= kAcceptBiasTransM) {
+        return ValidationOutcome::Settled;
+    }
+    return ValidationOutcome::Inconclusive;
+}
+
+// Back-compat positional overload. Pre-bias callers (and existing tests
+// that pin the dispersion-only behaviour) route through this; bias is
+// implicitly zero, which satisfies the Settled bias gate and never
+// triggers Bias-Failed. New callers should use the struct form.
 constexpr ValidationOutcome EvaluateValidation(double madFloorM,
                                                 int samplesSinceSnap,
                                                 bool graceEndedThisTick)
 {
-    if (samplesSinceSnap >= kValidationMinSamples
-        && madFloorM > 0.0
-        && madFloorM < kValidatedSettledMadM) {
-        return ValidationOutcome::Settled;
-    }
-    if (graceEndedThisTick && madFloorM > kValidatedFailedMadM) {
-        return ValidationOutcome::Failed;
-    }
-    return ValidationOutcome::Inconclusive;
+    return EvaluateValidation(ValidationInputs{
+        madFloorM, samplesSinceSnap, graceEndedThisTick, 0.0});
 }
 
 }  // namespace spacecal::warm_restart

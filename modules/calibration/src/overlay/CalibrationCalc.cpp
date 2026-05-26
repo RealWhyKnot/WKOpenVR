@@ -141,6 +141,7 @@ void CalibrationCalc::Clear() {
 	// stuck-loop watchdog) restarts seed the filter from the next accept.
 	spacecal::blendfilter::Reset(m_blendFilter);
 	m_blendFilterLastUpdateTime = 0.0;
+	m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 	// `m_lastSampleTime` and `m_lastSuccessfulIncrementalTime` deliberately retained
 	// across Clear() so the watchdog can still see the gap if continuous calibration
 	// is restarted faster than fresh samples can be collected.
@@ -1380,6 +1381,12 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold, double re
 	if (m_isValid && ValidateCalibration(m_estimatedTransformation, &priorCalibrationError, &priorPosOffset)) {
 		Metrics::posOffset_currentCal.Push(priorPosOffset * 1000);
 		Metrics::error_currentCal.Push(priorCalibrationError * 1000);
+		// Cache the prior error per-instance so the common-mode coherence
+		// check at the geometry-shift fire site can read each
+		// AdditionalCalibration's latest error. Metrics::error_currentCal
+		// is a single global series and only carries the primary pair's
+		// values; extras need their own access path.
+		m_lastPriorRetargetingErrorM = priorCalibrationError;
 	}
 
 	double newError = INFINITY;

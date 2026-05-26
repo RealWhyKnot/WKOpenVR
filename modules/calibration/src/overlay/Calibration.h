@@ -114,6 +114,16 @@ struct AdditionalCalibration {
 	// removes the entry.
 	bool enabled = true;
 
+	// Rolling history of this extra's `priorCalibrationError * 1000` (mm)
+	// readings, one push per successful ComputeIncremental. Window is
+	// capped at 30 entries to match the primary's geometry-shift
+	// rolling-median window. Read at the geometry-shift fire site to
+	// compute the extra's spike ratio (latest / median) for the
+	// common-mode coherence check; a coherent ratio across all extras
+	// implies the primary spike was global (worldFromDriver reanchor,
+	// runtime relocalization) rather than pair-local.
+	std::deque<double> recentErrorsMm;
+
 	// Defaulted in-class because CalibrationCalc is a complete type at this
 	// point (we included its header above), so unique_ptr's destructor is
 	// inlinable. Out-of-line definitions in Calibration.cpp would only show
@@ -544,6 +554,31 @@ struct CalibrationContext
 	spacecal::warm_restart::ValidationOutcome warmRestartValidationState =
 		spacecal::warm_restart::ValidationOutcome::Inconclusive;
 
+	// Post-snap retargeting-error accumulator for the warm-restart
+	// validation phase. The validator's MAD floor (`autoLockMadFloor`)
+	// is a 60 s rolling minimum that includes pre-snap history, so a
+	// snap can inherit a quiet pre-snap floor and pass the dispersion
+	// check while landing on a stale profile. The bias accumulator only
+	// integrates `Metrics::error_currentCal` samples whose push timestamp
+	// post-dates `warmRestartLastConsumedErrTs` -- i.e. samples produced
+	// strictly after the snap fire. Reset at snap fire and on Clear().
+	// `postSnapErrorSumMm` is in millimetres to match the units already
+	// stored in `error_currentCal`; the mean is converted to metres at
+	// the call site before being passed to EvaluateValidation.
+	double postSnapErrorSumMm = 0.0;
+	int    postSnapErrorSampleCount = 0;
+	double warmRestartLastConsumedErrTs = 0.0;
+
+	// Snap wall-time and source-of-floor tracking. `warmRestartSnapTime`
+	// is `Metrics::CurrentTime` at snap fire; `autoLockMadFloorTs` is the
+	// timestamp of the sample that produced the current floor value.
+	// When `autoLockMadFloorTs < warmRestartSnapTime`, the floor came
+	// from pre-snap history; the heartbeat surfaces this distinction via
+	// `mad_floor_source` so a "Settled by stale floor" verdict is
+	// distinguishable from a "Settled by post-snap convergence" one.
+	double warmRestartSnapTime = 0.0;
+	double autoLockMadFloorTs = 0.0;
+
 	// Multi-ecosystem extras: each entry aligns an additional non-HMD tracking
 	// system to the HMD's tracking system. Empty for the typical 1-or-2-system
 	// case. The wizard appends entries here as it walks the user through each
@@ -764,6 +799,11 @@ struct CalibrationContext
 		warmRestartMadAtSnap = 0.0;
 		warmRestartValidationState =
 			spacecal::warm_restart::ValidationOutcome::Inconclusive;
+		postSnapErrorSumMm = 0.0;
+		postSnapErrorSampleCount = 0;
+		warmRestartLastConsumedErrTs = 0.0;
+		warmRestartSnapTime = 0.0;
+		autoLockMadFloorTs = 0.0;
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
 		// user preference that spans profiles.
 		// No calibration was performed — relative pose is NOT calibrated. The

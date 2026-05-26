@@ -352,3 +352,156 @@ TEST(WarmRestartValidationTest, BoundaryAtFailedThreshold) {
                                       /*graceEndedThisTick=*/true),
               wr::ValidationOutcome::Failed);
 }
+
+// --- Validation correctness path (B5) --------------------------------------
+//
+// Pre-fix, EvaluateValidation took (madFloor, samples, graceEnded) only and
+// reported Settled whenever the dispersion floor was below threshold. A snap
+// that landed on a stale saved profile -- low post-snap dispersion but a
+// systematic offset between the applied calibration and the live samples --
+// would be incorrectly reported as Settled. The fix adds a post-snap bias
+// input (mean RMS retargeting error of the applied calibration over the
+// post-snap window) and refuses to Settle without bias evidence. Rotation
+// bias does not need its own input because rotation errors propagate to
+// retargeting error via the tracker lever arm: a 2 deg rotation error on
+// a 30 cm arm produces ~10 mm of bias, which is well above the fail
+// threshold.
+
+TEST(WarmRestartValidationTest, StaleProfileLowNoise_ReturnsFailed) {
+    // The bug shape: post-snap samples are quiet (4 mm MAD, well under
+    // the 8 mm Settled cap) but the applied calibration is producing
+    // 25 mm of mean retargeting error. Pre-fix this was reported as
+    // Settled. Post-fix the bias check fires Failed mid-grace because
+    // 25 mm > kFailBiasTransM (15 mm). The mid-band shape -- low MAD
+    // + bias between accept (5 mm) and fail (15 mm) -- is tested
+    // separately in BiasGateBlocksSettledEvenWithLowMad below.
+    const wr::ValidationInputs in{
+        /*madFloorM=*/0.004,
+        /*samplesSinceSnap=*/25,
+        /*graceEndedThisTick=*/false,
+        /*meanBiasTransM=*/0.025,
+    };
+    EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed)
+        << "Stable post-snap dispersion does not imply a correct snap; "
+           "the bias check must reject this";
+}
+
+TEST(WarmRestartValidationTest, LargeNoiseLowBias_StaysInconclusiveUntilGraceEnd) {
+    // High dispersion, low bias: the snap target looks right on average
+    // but the samples are noisy. Mid-grace this is Inconclusive (let the
+    // solver keep working); at grace end the MAD-Failed path fires.
+    wr::ValidationInputs in{
+        /*madFloorM=*/0.018,
+        /*samplesSinceSnap=*/50,
+        /*graceEndedThisTick=*/false,
+        /*meanBiasTransM=*/0.002,
+    };
+    EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive);
+    in.samplesSinceSnap = 100;
+    in.graceEndedThisTick = true;
+    EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive)
+        << "0.018 m is below kValidatedFailedMadM (0.020 m); only MAD strictly "
+           "greater fails, otherwise grace end is Inconclusive";
+
+    // Now push MAD past the failed threshold at grace end.
+    in.madFloorM = 0.025;
+    EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed);
+}
+
+TEST(WarmRestartValidationTest, RotationBiasPropagatesViaLeverArm) {
+    // Rotation errors of the applied calibration manifest as translation
+    // bias on a tracker mounted at the end of a lever arm. A 2 deg
+    // rotation error on a 30 cm arm is ~10.5 mm of retargeting error,
+    // which is above the 5 mm Settled bias cap. This test pins the
+    // contract that the translation bias signal catches rotation
+    // failures too, without requiring a separate rotation parameter.
+    constexpr double kLeverArmM = 0.30;
+    constexpr double kRotErrorRad = 2.0 * 3.14159265358979323846 / 180.0;
+    constexpr double kTranslBiasFromRotation = kLeverArmM * kRotErrorRad;
+    // Confirm the algebra before asserting on the validator.
+    static_assert(kTranslBiasFromRotation > wr::kAcceptBiasTransM,
+        "Test setup invariant: lever-arm bias must exceed accept cap");
+
+    const wr::ValidationInputs in{
+        /*madFloorM=*/0.003,             // dispersion clean
+        /*samplesSinceSnap=*/30,
+        /*graceEndedThisTick=*/false,
+        /*meanBiasTransM=*/kTranslBiasFromRotation,
+    };
+    EXPECT_NE(wr::EvaluateValidation(in), wr::ValidationOutcome::Settled)
+        << "Rotation error large enough to fail the bias gate via the "
+           "lever arm must not be reported as Settled";
+}
+
+TEST(WarmRestartValidationTest, BiasGateBlocksSettledEvenWithLowMad) {
+    // Companion to StaleProfileLowNoise: at exactly the Settled MAD
+    // threshold minus epsilon (the case the original validator
+    // reported Settled), the bias gate refuses the verdict if the
+    // post-snap bias exceeds kAcceptBiasTransM.
+    const wr::ValidationInputs lowDispersionLowBias{
+        wr::kValidatedSettledMadM - 0.001, 25, false, 0.002};
+    EXPECT_EQ(wr::EvaluateValidation(lowDispersionLowBias),
+              wr::ValidationOutcome::Settled)
+        << "Low dispersion + low bias is the only configuration that "
+           "should Settle";
+
+    const wr::ValidationInputs lowDispersionHighBias{
+        wr::kValidatedSettledMadM - 0.001, 25, false,
+        wr::kAcceptBiasTransM + 0.001};
+    EXPECT_NE(wr::EvaluateValidation(lowDispersionHighBias),
+              wr::ValidationOutcome::Settled)
+        << "Just above the Settled bias cap must not Settle even with "
+           "clean dispersion";
+}
+
+// Boundary tests on the bias thresholds. Mirror BoundaryAtSettledThreshold
+// and BoundaryAtFailedThreshold above but for the bias axis.
+
+TEST(WarmRestartValidationTest, BiasBoundaryAtAcceptThreshold) {
+    // <= is the Settled gate: exactly at the accept threshold still
+    // settles when MAD is clean. Just above does not.
+    const wr::ValidationInputs atCap{
+        0.005, 25, false, wr::kAcceptBiasTransM};
+    EXPECT_EQ(wr::EvaluateValidation(atCap), wr::ValidationOutcome::Settled);
+
+    const wr::ValidationInputs justAbove{
+        0.005, 25, false, wr::kAcceptBiasTransM + 0.0001};
+    EXPECT_EQ(wr::EvaluateValidation(justAbove),
+              wr::ValidationOutcome::Inconclusive);
+}
+
+TEST(WarmRestartValidationTest, BiasBoundaryAtFailThreshold) {
+    // > is the Failed gate: exactly at the fail threshold is still
+    // Inconclusive (other paths may decide). Just above fails.
+    const wr::ValidationInputs atCap{
+        0.004, 25, false, wr::kFailBiasTransM};
+    EXPECT_EQ(wr::EvaluateValidation(atCap),
+              wr::ValidationOutcome::Inconclusive);
+
+    const wr::ValidationInputs justAbove{
+        0.004, 25, false, wr::kFailBiasTransM + 0.0001};
+    EXPECT_EQ(wr::EvaluateValidation(justAbove),
+              wr::ValidationOutcome::Failed);
+}
+
+TEST(WarmRestartValidationTest, BiasGateRequiresMinSamples) {
+    // Bias-Failed needs enough post-snap samples to be confident the
+    // mean is real. With only 10 samples in, a high bias reading is
+    // ignored (Inconclusive); the solver may yet converge.
+    const wr::ValidationInputs in{
+        0.004, 10, false, wr::kFailBiasTransM + 0.005};
+    EXPECT_EQ(wr::EvaluateValidation(in),
+              wr::ValidationOutcome::Inconclusive);
+}
+
+// --- Pin the bias-threshold constants --------------------------------------
+
+static_assert(wr::kAcceptBiasTransM == 0.005,
+    "kAcceptBiasTransM changed -- review the lever-arm rotation propagation "
+    "rationale in RotationBiasPropagatesViaLeverArm");
+static_assert(wr::kFailBiasTransM == 0.015,
+    "kFailBiasTransM changed -- review the stale-profile fail rationale; "
+    "this controls how quickly a wrong snap is recovered");
+static_assert(wr::kFailBiasTransM > wr::kAcceptBiasTransM,
+    "Fail bias must exceed accept bias or the validator has no Inconclusive "
+    "band on the bias axis");
