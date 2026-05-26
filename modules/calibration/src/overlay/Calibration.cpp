@@ -1,4 +1,5 @@
 #include "Calibration.h"
+#include "CalibrationProgress.h"
 #include "CalibrationInternal.h"
 #include "CalibrationDevicePoseUtils.h"
 #include "CalibrationPoseSampling.h"
@@ -2335,7 +2336,7 @@ void CalibrationTick(double time)
 	//   When the gate passes, fall through to ComputeOneshot, which splices
 	//   the frozen rotation samples back in for the math.
 	if (CalCtx.state == CalibrationState::Rotation) {
-		constexpr double kPhaseDiversity = 0.70;
+		constexpr double kPhaseDiversity = spacecal::calibration_progress::kOneShotRotationReadyDiversity;
 		if (calibration.RotationDiversity() < kPhaseDiversity) {
 			calibration.ShiftSample();
 			return;
@@ -2359,7 +2360,7 @@ void CalibrationTick(double time)
 		// 0.55 * 0.20m = 11cm per axis -- achievable with a deliberate nod and
 		// lateral lean. The math gates in ComputeOneshot still reject genuinely
 		// under-constrained solutions; this only speeds up the collection trigger.
-		constexpr double kPhaseDiversity = 0.55;
+		constexpr double kPhaseDiversity = spacecal::calibration_progress::kOneShotTranslationReadyDiversity;
 		if (calibration.TranslationDiversity() < kPhaseDiversity) {
 			calibration.ShiftSample();
 			return;

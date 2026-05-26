@@ -1,5 +1,6 @@
 ﻿#include "UserInterface.h"
 #include "Calibration.h"
+#include "CalibrationProgress.h"
 #include "Configuration.h"
 #include "DeviceFilters.h"
 #include "VRState.h"
@@ -741,6 +742,10 @@ void BuildMenu(bool runningInOverlay)
 	if (ImGui::BeginPopupModal("Calibration Progress", nullptr, bareWindowFlags))
 	{
 		ImGui::PushStyleColor(ImGuiCol_FrameBg, (ImVec4)ImVec4(0, 0, 0, 1));
+		const bool isCollecting =
+			CalCtx.state == CalibrationState::Begin ||
+			CalCtx.state == CalibrationState::Rotation ||
+			CalCtx.state == CalibrationState::Translation;
 		for (auto &message : CalCtx.messages)
 		{
 			switch (message.type)
@@ -749,11 +754,23 @@ void BuildMenu(bool runningInOverlay)
 				ImGui::TextWrapped(message.str.c_str());
 				break;
 			case CalibrationContext::Message::Progress:
-				float fraction = (float)message.progress / (float)message.target;
+				float fraction = 0.0f;
+				if (isCollecting) {
+					fraction = (float)spacecal::calibration_progress::OneShotReadyScore(
+						CalCtx.state,
+						message.progress,
+						message.target,
+						Metrics::rotationDiversity.last(),
+						Metrics::translationDiversity.last());
+				} else {
+					fraction = (float)spacecal::calibration_progress::SampleFillScore(
+						message.progress,
+						message.target);
+				}
+				char readyLabel[32];
+				snprintf(readyLabel, sizeof readyLabel, "Ready %d%%", (int)(fraction * 100.0f));
 				ImGui::Text("");
-				ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), "");
-				ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetFontSize() - style.FramePadding.y * 2);
-				ImGui::Text(" %d%%", (int)(fraction * 100));
+				ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), readyLabel);
 				break;
 			}
 		}
@@ -764,10 +781,6 @@ void BuildMenu(bool runningInOverlay)
 		// at sample-buffer fill regardless; these bars just tell the user
 		// "you've moved enough on every axis" so they don't stop early or
 		// keep waving long after they're done.
-		const bool isCollecting =
-			CalCtx.state == CalibrationState::Begin ||
-			CalCtx.state == CalibrationState::Rotation ||
-			CalCtx.state == CalibrationState::Translation;
 		if (isCollecting) {
 			ImGui::Spacing();
 			ImGui::Separator();
@@ -820,8 +833,10 @@ void BuildMenu(bool runningInOverlay)
 			// Translation gate fires at kPhaseDiversity=0.55; rotation at 0.70.
 			// Match the green threshold to each phase's actual trigger so the
 			// bar turns green exactly when calibration will proceed.
-			constexpr float kTrGoodThreshold  = 0.55f;
-			constexpr float kRotGoodThreshold = 0.70f;
+			constexpr float kTrGoodThreshold =
+				(float)spacecal::calibration_progress::kOneShotTranslationReadyDiversity;
+			constexpr float kRotGoodThreshold =
+				(float)spacecal::calibration_progress::kOneShotRotationReadyDiversity;
 			const ImVec4 trColor = trDiv >= kTrGoodThreshold
 				? ImVec4(0.40f, 0.85f, 0.40f, 1.0f)
 				: ImVec4(0.95f, 0.70f, 0.20f, 1.0f);
