@@ -92,15 +92,15 @@ TEST(AutoRecoverySnapTest, FirstMeaningfulContinuousCandidateSnaps) {
         /*solveUncertaintyCm=*/12.5));
     EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(
         true, false, true,
-        /*jumpCm=*/25.0,
-        /*solveUncertaintyCm=*/30.0));
+        /*jumpCm=*/50.0,
+        /*solveUncertaintyCm=*/5.0));
     EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(
         true, false, true,
-        /*jumpCm=*/40.0,
-        /*solveUncertaintyCm=*/45.0));
+        /*jumpCm=*/500.0,
+        /*solveUncertaintyCm=*/10.0));
 }
 
-TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnsafeDeltas) {
+TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnclearDeltas) {
     EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
@@ -129,13 +129,13 @@ TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnsafeDe
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/25.01,
-        /*solveUncertaintyCm=*/25.0));
+        /*jumpCm=*/25.0,
+        /*solveUncertaintyCm=*/30.0));
     EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/40.01,
+        /*jumpCm=*/39.99,
         /*solveUncertaintyCm=*/40.0));
 }
 
@@ -147,5 +147,7 @@ static_assert(!ShouldBlendCycle(false, false, false),
     "non-continuous state must snap");
 static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 3.0, 0.5),
     "first meaningful continuous correction must snap");
-static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 25.01, 25.0),
-    "first continuous corrections beyond solve uncertainty must blend");
+static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 50.0, 5.0),
+    "first continuous corrections clearly above solve uncertainty must snap");
+static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 25.0, 30.0),
+    "first continuous corrections below solve uncertainty must blend");

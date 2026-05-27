@@ -2611,6 +2611,39 @@ void CalibrationTick(double time)
 	if (hasPublishableCandidate) {
 		const Eigen::Vector3d candidateTranslationCm =
 			calibration.Transformation().translation() * 100.0;
+		const bool firstContinuousCandidate =
+			inContinuousState && !ctx.lastAcceptedContinuousSnapshot.captured;
+		const bool hasContinuousStartBaseline =
+			ctx.continuousStartSnapshot.captured &&
+			ctx.continuousStartSnapshot.validProfile;
+		const double firstContinuousJumpCm = hasContinuousStartBaseline
+			? (candidateTranslationCm -
+				ctx.continuousStartSnapshot.calibratedTranslation).norm()
+			: 0.0;
+		const double candidateErrorM = calibration.LastCandidateErrorM();
+		const double solveUncertaintyCm = std::isfinite(candidateErrorM)
+			? candidateErrorM * 100.0
+			: 0.0;
+		const bool snapFirstContinuousCandidate =
+			spacecal::motiongate::ShouldSnapFirstContinuousCandidate(
+				/*inContinuousState=*/inContinuousState,
+				/*hasAcceptedSnapshot=*/ctx.lastAcceptedContinuousSnapshot.captured,
+				/*hasGuardBaseline=*/hasContinuousStartBaseline,
+				/*jumpCm=*/firstContinuousJumpCm,
+				/*solveUncertaintyCm=*/solveUncertaintyCm);
+
+		if (firstContinuousCandidate) {
+			char firstBuf[360];
+			snprintf(firstBuf, sizeof firstBuf,
+				"first_continuous_candidate_apply: snap=%d hasBaseline=%d"
+				" jump_cm=%.2f solve_uncertainty_cm=%.2f start_valid=%d",
+				(int)snapFirstContinuousCandidate,
+				(int)hasContinuousStartBaseline,
+				firstContinuousJumpCm,
+				solveUncertaintyCm,
+				(int)ctx.continuousStartSnapshot.validProfile);
+			Metrics::WriteLogAnnotation(firstBuf);
+		}
 
 		ctx.calibratedRotation = calibration.EulerRotation();
 		ctx.calibratedTranslation = candidateTranslationCm;
@@ -2623,7 +2656,10 @@ void CalibrationTick(double time)
 		ctx.validProfile = true;
 		SaveProfile(ctx);
 
-		ScanAndApplyProfile(ctx);
+		ScanAndApplyProfile(
+			ctx,
+			snapFirstContinuousCandidate,
+			snapFirstContinuousCandidate ? "first_continuous_candidate" : nullptr);
 
 		CalCtx.hasAppliedCalibrationResult = true;
 		if (ctx.state == CalibrationState::Continuous) {

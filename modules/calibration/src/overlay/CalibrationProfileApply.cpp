@@ -232,7 +232,10 @@ namespace {
 	std::map<uint32_t, AdoptedTracker> g_lastAdoptedTrackers;
 }
 
-void ScanAndApplyProfile(CalibrationContext &ctx)
+void ScanAndApplyProfile(
+	CalibrationContext& ctx,
+	bool forceSnapThisCycle,
+	const char* forceSnapReason)
 {
 	if (!vr::VRSystem() || spacecal::devfake::IsEnabled()) {
 		ctx.enabled = ctx.validProfile;
@@ -257,7 +260,11 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 	// per-ID slot by the time recovery fires, so per-ID snap covers the user-visible
 	// case. Captured at the top of the function and consumed at the end so all
 	// per-ID sends in this cycle see the same value.
-	const bool snapThisCycle = g_snapNextProfileApply;
+	const bool recoverySnapThisCycle = g_snapNextProfileApply;
+	const bool snapThisCycle = recoverySnapThisCycle || forceSnapThisCycle;
+	const char* snapReason = recoverySnapThisCycle
+		? "recovery"
+		: ((forceSnapReason && forceSnapReason[0]) ? forceSnapReason : "forced");
 
 	// Snapshot of which IDs got adopted this scan and what serial/model they had.
 	// Compared against g_lastAdoptedTrackers below to log new-adoption / disconnect events.
@@ -563,7 +570,7 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 				" ref='%s' target='%s' profile_trans_cm=(%.2f,%.2f,%.2f)"
 				" profile_mag_cm=%.2f invalid=%d disabled=%d hmd=%d"
 				" trackingErr=%d nonTarget=%d targetMatched=%d payloadSent=%d"
-				" adopted=%zu fallbackSent=%d",
+				" adopted=%zu fallbackSent=%d snap=%d",
 				(int)CalCtx.state, (int)ctx.enabled, (int)ctx.validProfile,
 				ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str(),
 				ctx.calibratedTranslation.x(),
@@ -573,7 +580,7 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 				scanInvalidClass, scanDisabledProfile, scanHmd,
 				scanTrackingSystemError, scanNonTargetSystem, scanTargetMatched,
 				scanPayloadSent, g_lastAdoptedTrackers.size(),
-				(int)g_lastFallbackSent);
+				(int)g_lastFallbackSent, (int)snapThisCycle);
 			Metrics::WriteLogAnnotation(summaryBuf);
 		}
 	}
@@ -595,7 +602,13 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 	// payload in this cycle has been sent, so the snap reaches all devices.
 	// Subsequent cycles return to normal lerp behaviour.
 	if (snapThisCycle) {
-		g_snapNextProfileApply = false;
-		Metrics::WriteLogAnnotation("auto_recovery_snap_consumed: post-recovery profile sent with payload.lerp=false");
+		if (recoverySnapThisCycle) {
+			g_snapNextProfileApply = false;
+		}
+		char snapBuf[220];
+		snprintf(snapBuf, sizeof snapBuf,
+			"profile_apply_snap_cycle_consumed: reason=%s payloadSent=%d",
+			snapReason, scanPayloadSent);
+		Metrics::WriteLogAnnotation(snapBuf);
 	}
 }
