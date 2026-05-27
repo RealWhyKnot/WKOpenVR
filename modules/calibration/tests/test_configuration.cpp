@@ -288,6 +288,36 @@ TEST(ConfigurationTest, ContinuousCandidateGuardBlocksLargeSteadyJump) {
     EXPECT_STREQ(result.reason, "jump_exceeds_limit");
 }
 
+TEST(ConfigurationTest, PublishCandidateGuardAllowsTranslationOnlyCandidate) {
+    const Eigen::Vector3d candidateCm(0.0, 25.0, 0.0);
+
+    const auto result = spacecal::continuous::EvaluatePublishCandidate(
+        /*inContinuous=*/false,
+        /*hasBaseline=*/false,
+        /*hasAcceptedThisSession=*/false,
+        Eigen::Vector3d::Zero(),
+        candidateCm,
+        Eigen::Matrix3d::Identity());
+
+    EXPECT_TRUE(result.accepted);
+    EXPECT_STREQ(result.reason, "accepted");
+    EXPECT_NEAR(result.rotAngleRad, 0.0, 1e-12);
+    EXPECT_NEAR(result.translationMagnitudeCm, 25.0, 1e-12);
+}
+
+TEST(ConfigurationTest, PublishCandidateGuardRejectsExactNoopCandidate) {
+    const auto result = spacecal::continuous::EvaluatePublishCandidate(
+        /*inContinuous=*/false,
+        /*hasBaseline=*/false,
+        /*hasAcceptedThisSession=*/false,
+        Eigen::Vector3d::Zero(),
+        Eigen::Vector3d::Zero(),
+        Eigen::Matrix3d::Identity());
+
+    EXPECT_FALSE(result.accepted);
+    EXPECT_STREQ(result.reason, "identity_candidate");
+}
+
 TEST(ConfigurationTest, LegacyMathMasterDisablesEffectiveValidatedFeatures) {
     CalibrationContext ctx;
     ctx.useUpstreamMath = true;

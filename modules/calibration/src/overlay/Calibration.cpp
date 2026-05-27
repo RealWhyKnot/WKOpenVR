@@ -2763,10 +2763,6 @@ void CalibrationTick(double time)
 		const Eigen::Matrix3d R = calibration.Transformation().rotation();
 		const Eigen::Vector3d T = calibration.Transformation().translation();
 		const Eigen::Vector3d candidateTranslationCm = T * 100.0;
-		const double rotAngle =
-			std::acos(std::clamp((R.trace() - 1.0) * 0.5, -1.0, 1.0));
-		const bool finiteT = T.allFinite();
-		const bool nonTrivialRot = rotAngle > 1e-3;  // > ~0.06 deg from identity
 		const bool hasAcceptedSnapshot =
 			ctx.lastAcceptedContinuousSnapshot.captured;
 		const Eigen::Vector3d guardBaseline =
@@ -2775,10 +2771,10 @@ void CalibrationTick(double time)
 				: ctx.calibratedTranslation;
 		const bool hasGuardBaseline =
 			inContinuousState && (hasAcceptedSnapshot || ctx.validProfile);
-		const auto guard = spacecal::continuous::EvaluateCandidate(
+		const auto guard = spacecal::continuous::EvaluatePublishCandidate(
 			inContinuousState, hasGuardBaseline, hasAcceptedSnapshot,
 			guardBaseline, candidateTranslationCm, R);
-		if (!finiteT || !nonTrivialRot || !guard.accepted) {
+		if (!guard.accepted) {
 			const bool restoredPrior =
 				inContinuousState && RestoreCalibrationSolverFromProfile(ctx);
 			const char* baselineTag =
@@ -2787,8 +2783,8 @@ void CalibrationTick(double time)
 			std::snprintf(rejBuf, sizeof rejBuf,
 				"calibration_candidate_rejected: finiteT=%d rotAngle=%.6f reason=%s jump_cm=%.2f baseline=%s "
 				"baseline_cm=(%.2f,%.2f,%.2f) candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f restored_prior=%d",
-				finiteT ? 1 : 0,
-				rotAngle,
+				guard.finiteTranslation ? 1 : 0,
+				guard.rotAngleRad,
 				guard.reason,
 				guard.jumpM * 100.0,
 				baselineTag,
