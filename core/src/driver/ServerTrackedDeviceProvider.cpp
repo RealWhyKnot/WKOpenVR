@@ -847,7 +847,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 					reason = "offset_not_calibrated"; bit = R_OFFSET;
 				} else if (!trackerCopy.valid || !trackerCopy.pose.poseIsValid) {
 					reason = "tracker_invalid"; bit = R_INVALID;
-				} else if (!driver_synth::IsTrackerFresh(trackerCopy, synthNow)) {
+				} else if (!driver_synth::IsTrackerFresh(trackerCopy, driverSynthNow)) {
 					reason = "tracker_stale"; bit = R_STALE;
 				} else if (trackerCopy.capturedForDeviceId != synthState.deviceId) {
 					reason = "snapshot_device_mismatch"; bit = R_MISMATCH;
