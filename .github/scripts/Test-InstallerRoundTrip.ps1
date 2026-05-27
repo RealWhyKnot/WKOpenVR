@@ -202,6 +202,17 @@ function Assert-InstalledState {
         Assert-PathMissing -Path (Join-Path $InstallDir 'bin\adb\adb.exe')
     }
 
+    $shortcutPath = Join-Path ([System.Environment]::GetFolderPath('CommonPrograms')) 'WKOpenVR\WKOpenVR.lnk'
+    Assert-PathExists -Path $shortcutPath
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+    $expectedShortcutTarget = Join-Path $InstallDir 'WKOpenVR.exe'
+    if (-not [System.String]::Equals($shortcut.TargetPath, $expectedShortcutTarget, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Installed shortcut target mismatch. Expected '$expectedShortcutTarget', got '$($shortcut.TargetPath)'."
+    }
+    if ($shortcut.Arguments -ne '--launch=umbrella') {
+        throw "Installed shortcut arguments mismatch. Expected '--launch=umbrella', got '$($shortcut.Arguments)'."
+    }
+
     $registry = Get-RegistryPaths
     if (-not (Test-AnyRegistryPath -Paths $registry.App)) {
         throw "Installed app registry key was not written."

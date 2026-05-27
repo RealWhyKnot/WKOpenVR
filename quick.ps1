@@ -433,19 +433,30 @@ function Refresh-Shortcuts {
 	param([Parameter(Mandatory=$true)]$Plan)
 
 	$startMenuDir = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\WKOpenVR"
-	if (-not (Test-Path -LiteralPath $startMenuDir)) { return }
+	New-Item -ItemType Directory -Force -Path $startMenuDir | Out-Null
 
 	$argMap = @{}
 	foreach ($shortcut in $Plan.Shortcuts) {
 		$argMap[$shortcut.Name] = $shortcut.Arguments
 	}
 
-	$wsh = New-Object -ComObject WScript.Shell
+	$shortcutNames = @()
+	if ($argMap.ContainsKey("WKOpenVR.lnk")) {
+		$shortcutNames += "WKOpenVR.lnk"
+	}
 	foreach ($lnk in Get-ChildItem -LiteralPath $startMenuDir -Filter "*.lnk" -File -ErrorAction SilentlyContinue) {
 		if (-not $argMap.ContainsKey($lnk.Name)) { continue }
-		$sc = $wsh.CreateShortcut($lnk.FullName)
+		if ($shortcutNames -notcontains $lnk.Name) {
+			$shortcutNames += $lnk.Name
+		}
+	}
+
+	$wsh = New-Object -ComObject WScript.Shell
+	foreach ($shortcutName in $shortcutNames) {
+		$shortcutPath = Join-Path $startMenuDir $shortcutName
+		$sc = $wsh.CreateShortcut($shortcutPath)
 		$sc.TargetPath = $Plan.OverlayExeDest
-		$sc.Arguments = $argMap[$lnk.Name]
+		$sc.Arguments = $argMap[$shortcutName]
 		$sc.IconLocation = $Plan.OverlayExeDest + ",0"
 		$sc.Description = "Open WKOpenVR"
 		$sc.Save()
