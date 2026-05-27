@@ -99,6 +99,47 @@ void DrawLine(std::vector<uint8_t>& pixels, int x0, int y0, int x1, int y1, uint
     }
 }
 
+void FillPolygon(std::vector<uint8_t>& pixels, const std::vector<std::pair<int, int>>& points)
+{
+    if (points.size() < 3) return;
+
+    constexpr int size = BoundaryPreviewRaster::kTextureSize;
+    std::vector<double> intersections;
+    intersections.reserve(points.size());
+
+    for (int y = 0; y < size; ++y) {
+        intersections.clear();
+        const double scanY = static_cast<double>(y) + 0.5;
+        for (size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+            const auto& a = points[j];
+            const auto& b = points[i];
+            const double y0 = static_cast<double>(a.second);
+            const double y1 = static_cast<double>(b.second);
+            if ((y0 <= scanY && y1 > scanY) || (y1 <= scanY && y0 > scanY)) {
+                const double x0 = static_cast<double>(a.first);
+                const double x1 = static_cast<double>(b.first);
+                const double t = (scanY - y0) / (y1 - y0);
+                intersections.push_back(x0 + (x1 - x0) * t);
+            }
+        }
+
+        std::sort(intersections.begin(), intersections.end());
+        for (size_t i = 1; i < intersections.size(); i += 2) {
+            const int xStart = std::clamp(
+                static_cast<int>(std::ceil(intersections[i - 1])),
+                0,
+                size - 1);
+            const int xEnd = std::clamp(
+                static_cast<int>(std::floor(intersections[i])),
+                0,
+                size - 1);
+            for (int x = xStart; x <= xEnd; ++x) {
+                BlendPixel(pixels, x, y, 0, 180, 255, 42);
+            }
+        }
+    }
+}
+
 bool EnsureCreated()
 {
     auto& s = State();
@@ -190,19 +231,29 @@ BoundaryPreviewRaster BuildBoundaryPreviewRaster(
         return std::pair<int, int>(x, y);
     };
 
+    std::vector<std::pair<int, int>> pixelPoints;
+    pixelPoints.reserve(vertices.size());
+    for (const auto& v : vertices) {
+        pixelPoints.push_back(toPixel(v));
+    }
+
+    if (closeLoop && vertices.size() >= 3) {
+        FillPolygon(raster.rgba, pixelPoints);
+    }
+
     for (size_t i = 1; i < vertices.size(); ++i) {
-        const auto a = toPixel(vertices[i - 1]);
-        const auto b = toPixel(vertices[i]);
+        const auto a = pixelPoints[i - 1];
+        const auto b = pixelPoints[i];
         DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 0, 245, 160, 230);
     }
     if (closeLoop && vertices.size() >= 3) {
-        const auto a = toPixel(vertices.back());
-        const auto b = toPixel(vertices.front());
+        const auto a = pixelPoints.back();
+        const auto b = pixelPoints.front();
         DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 0, 180, 255, 170);
     }
 
     for (size_t i = 0; i < vertices.size(); ++i) {
-        const auto p = toPixel(vertices[i]);
+        const auto p = pixelPoints[i];
         const bool last = i + 1 == vertices.size();
         DrawDot(raster.rgba, p.first, p.second, last ? 5 : 3,
             last ? 255 : 0,

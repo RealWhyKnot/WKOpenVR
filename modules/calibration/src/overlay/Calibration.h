@@ -164,12 +164,13 @@ struct HeadMountConfig {
 // One vertex of the safety boundary polygon.
 struct BoundaryVertex { double x = 0, y = 0, z = 0; };
 
-// Safety boundary anchored in the target tracking system (lighthouse) so it
-// stays physically stable even when the reference universe drifts. Vertices
-// are stored in lighthouse space; chaperone push transforms them into
-// standing-universe coordinates each cycle. priorChaperone snapshots the
-// user's pre-existing SteamVR chaperone before our first push so the
-// "Restore original" action returns the user to where they started.
+// Safety boundary anchored in the target tracking system so it stays
+// physically stable even when the reference universe drifts. Vertices and
+// floor/ceiling heights are stored in target space; preview and chaperone push
+// transform them into standing-universe coordinates each cycle.
+// priorChaperone snapshots the user's pre-existing SteamVR chaperone before
+// our first push so the "Restore original" action returns the user to where
+// they started.
 struct BoundaryConfig {
 	bool enabled = false;
 	std::vector<BoundaryVertex> vertices;

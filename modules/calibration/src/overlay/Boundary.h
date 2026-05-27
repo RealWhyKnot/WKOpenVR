@@ -23,16 +23,26 @@ std::vector<XZPoint> ProjectXZ(const std::vector<BoundaryVertex>& v);
 std::vector<size_t> SimplifyDouglasPeucker(const std::vector<BoundaryVertex>& path,
                                             double epsilonMeters);
 
-// Apply the continuous-cal SE(3) transform to convert lighthouse-space
-// boundary vertices into standing-universe coordinates.
+// Apply the continuous-cal SE(3) transform to convert target-space boundary
+// vertices into standing-universe coordinates.
 std::vector<BoundaryVertex> TransformToStandingUniverse(
-    const std::vector<BoundaryVertex>& lighthouseSpace,
-    const Eigen::AffineCompact3d& lighthouseToStanding);
+    const std::vector<BoundaryVertex>& targetSpace,
+    const Eigen::AffineCompact3d& targetToStanding);
+
+// Convert a target-space horizontal height to the standing-universe height
+// used by SteamVR chaperone wall quads.
+double TransformHeightToStandingUniverse(
+    double targetY,
+    const Eigen::AffineCompact3d& targetToStanding);
+
+double TransformHeightToStandingUniverse(
+    const std::vector<BoundaryVertex>& targetSpace,
+    double targetY,
+    const Eigen::AffineCompact3d& targetToStanding);
 
 // Build/apply the same profile transform sent to the driver for the calibrated
-// target tracking system. Boundary capture uses this so the painted point is
-// based on the in-headset visible controller pose, not the raw
-// pre-calibration lighthouse pose.
+// target tracking system. Boundary drawing stores raw target-space points and
+// applies this transform only for preview and chaperone push.
 Eigen::AffineCompact3d ProfileTransformFromCalibration(
     Eigen::Vector3d eulerDeg,
     Eigen::Vector3d transCm);

@@ -154,6 +154,42 @@ TEST(BoundaryTransformTest, KnownTranslationApplied) {
     EXPECT_NEAR(out[1].z, 3.0, 1e-9);
 }
 
+TEST(BoundaryTransformTest, HeightUsesSameTargetToStandingTransform) {
+    Eigen::AffineCompact3d xf = Eigen::AffineCompact3d::Identity();
+    xf.linear() = Eigen::AngleAxisd(
+        15.0 * EIGEN_PI / 180.0,
+        Eigen::Vector3d::UnitX()).toRotationMatrix();
+    xf.translation() = Eigen::Vector3d(1.0, 0.75, -0.25);
+
+    const double targetY = 0.40;
+    const double standingY = TransformHeightToStandingUniverse(targetY, xf);
+    const Eigen::Vector3d expected = xf * Eigen::Vector3d(0.0, targetY, 0.0);
+
+    EXPECT_NEAR(standingY, expected.y(), 1e-9);
+}
+
+TEST(BoundaryTransformTest, BoundaryHeightUsesPolygonCenter) {
+    Eigen::AffineCompact3d xf = Eigen::AffineCompact3d::Identity();
+    xf.linear() = Eigen::AngleAxisd(
+        10.0 * EIGEN_PI / 180.0,
+        Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    xf.translation() = Eigen::Vector3d(0.0, 0.25, 0.0);
+
+    std::vector<BoundaryVertex> verts = {
+        { 10.0, 0.0, -1.0 },
+        { 12.0, 0.0, -1.0 },
+        { 12.0, 0.0,  1.0 },
+        { 10.0, 0.0,  1.0 },
+    };
+    const double targetY = 0.30;
+
+    const double standingY = TransformHeightToStandingUniverse(verts, targetY, xf);
+    const Eigen::Vector3d expected = xf * Eigen::Vector3d(11.0, targetY, 0.0);
+
+    EXPECT_NEAR(standingY, expected.y(), 1e-9);
+    EXPECT_NE(standingY, TransformHeightToStandingUniverse(targetY, xf));
+}
+
 TEST(BoundaryTransformTest, ProfileTransformAppliesToControllerPose) {
     const Eigen::AffineCompact3d xf = ProfileTransformFromCalibration(
         Eigen::Vector3d::Zero(),
@@ -458,6 +494,28 @@ TEST(BoundaryPreviewTest, RasterMarksLivePathPixels) {
 
     EXPECT_GT(openAlpha, 0u);
     EXPECT_GT(closedAlpha, openAlpha);
+}
+
+TEST(BoundaryPreviewTest, ClosedRasterFillsInterior) {
+    std::vector<BoundaryVertex> pts = {
+        { -1.0, 0.0, -1.0 },
+        {  1.0, 0.0, -1.0 },
+        {  1.0, 0.0,  1.0 },
+        { -1.0, 0.0,  1.0 },
+    };
+
+    auto openRaster = BuildBoundaryPreviewRaster(pts, false);
+    auto closedRaster = BuildBoundaryPreviewRaster(pts, true);
+    ASSERT_TRUE(openRaster.plane.valid);
+    ASSERT_TRUE(closedRaster.plane.valid);
+
+    const int center = BoundaryPreviewRaster::kTextureSize / 2;
+    const size_t centerAlpha =
+        static_cast<size_t>(center * BoundaryPreviewRaster::kTextureSize + center) * 4u + 3u;
+    ASSERT_LT(centerAlpha, openRaster.rgba.size());
+
+    EXPECT_EQ(openRaster.rgba[centerAlpha], 0u);
+    EXPECT_GT(closedRaster.rgba[centerAlpha], 0u);
 }
 
 TEST(BoundaryPreviewTest, UsesStandingTrackingUniverseForFloorOverlay) {

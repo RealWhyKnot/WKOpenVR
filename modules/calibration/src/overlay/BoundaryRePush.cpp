@@ -104,7 +104,14 @@ static void DoPush(const Eigen::AffineCompact3d& xf) {
     }
 
     auto standing = wkopenvr::boundary::TransformToStandingUniverse(bc.vertices, xf);
-    const bool ok = wkopenvr::boundary::PushToChaperone(standing, bc.floorY, bc.ceilingY);
+    const double standingFloorY =
+        wkopenvr::boundary::TransformHeightToStandingUniverse(bc.vertices, bc.floorY, xf);
+    const double standingCeilingY =
+        wkopenvr::boundary::TransformHeightToStandingUniverse(bc.vertices, bc.ceilingY, xf);
+    const bool ok = wkopenvr::boundary::PushToChaperone(
+        standing,
+        standingFloorY,
+        standingCeilingY);
     if (ok) {
         if (g_firstPush) {
             // Initial push after profile load.

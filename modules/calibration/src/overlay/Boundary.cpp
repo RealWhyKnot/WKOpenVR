@@ -114,16 +114,51 @@ std::vector<size_t> SimplifyDouglasPeucker(const std::vector<BoundaryVertex>& pa
 // ---------------------------------------------------------------------------
 
 std::vector<BoundaryVertex> TransformToStandingUniverse(
-    const std::vector<BoundaryVertex>& lighthouseSpace,
-    const Eigen::AffineCompact3d& lighthouseToStanding) {
+    const std::vector<BoundaryVertex>& targetSpace,
+    const Eigen::AffineCompact3d& targetToStanding) {
     std::vector<BoundaryVertex> out;
-    out.reserve(lighthouseSpace.size());
-    for (const auto& bv : lighthouseSpace) {
+    out.reserve(targetSpace.size());
+    for (const auto& bv : targetSpace) {
         Eigen::Vector3d p(bv.x, bv.y, bv.z);
-        Eigen::Vector3d t = lighthouseToStanding * p;
+        Eigen::Vector3d t = targetToStanding * p;
         out.push_back({ t.x(), t.y(), t.z() });
     }
     return out;
+}
+
+double TransformHeightToStandingUniverse(
+    double targetY,
+    const Eigen::AffineCompact3d& targetToStanding)
+{
+    const Eigen::Vector3d p = targetToStanding * Eigen::Vector3d(0.0, targetY, 0.0);
+    return p.y();
+}
+
+double TransformHeightToStandingUniverse(
+    const std::vector<BoundaryVertex>& targetSpace,
+    double targetY,
+    const Eigen::AffineCompact3d& targetToStanding)
+{
+    if (targetSpace.empty()) {
+        return TransformHeightToStandingUniverse(targetY, targetToStanding);
+    }
+
+    double minX = targetSpace[0].x;
+    double maxX = targetSpace[0].x;
+    double minZ = targetSpace[0].z;
+    double maxZ = targetSpace[0].z;
+    for (const auto& v : targetSpace) {
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.z < minZ) minZ = v.z;
+        if (v.z > maxZ) maxZ = v.z;
+    }
+
+    const Eigen::Vector3d p = targetToStanding * Eigen::Vector3d(
+        (minX + maxX) * 0.5,
+        targetY,
+        (minZ + maxZ) * 0.5);
+    return p.y();
 }
 
 Eigen::AffineCompact3d ProfileTransformFromCalibration(
