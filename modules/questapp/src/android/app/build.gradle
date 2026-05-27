@@ -1,0 +1,16 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "org.wkopenvr.quest"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "org.wkopenvr.quest"
+        minSdk 26
+        targetSdk 32
+        versionCode 1
+        versionName "0.1.0"
+    }
+}

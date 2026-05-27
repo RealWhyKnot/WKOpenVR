@@ -177,15 +177,10 @@ Section "Install"
     SetOutPath "$INSTDIR\resources"
     File "${ARTIFACTS_BASEDIR}\resources\face-module-sync.ps1"
 
-    ; ADB platform-tools: adb.exe + Windows USB DLLs + license.
-    ; AdbController resolves these from <install-root>/bin/adb/ at runtime.
-    ; Platform-tools are Apache-2.0 (GPL-3.0 compatible). adb-LICENSE.txt is
-    ; the upstream NOTICE.txt from the Google platform-tools zip.
-    SetOutPath "$INSTDIR\bin\adb"
-    File "..\third_party\platform-tools\adb.exe"
-    File "..\third_party\platform-tools\AdbWinApi.dll"
-    File "..\third_party\platform-tools\AdbWinUsbApi.dll"
-    File "..\third_party\platform-tools\adb-LICENSE.txt"
+    SetOutPath "$INSTDIR\resources\questapp"
+    File "${ARTIFACTS_BASEDIR}\resources\questapp\install-platform-tools.ps1"
+    File "${ARTIFACTS_BASEDIR}\resources\questapp\uninstall-questapp.ps1"
+    File "${ARTIFACTS_BASEDIR}\resources\questapp\WKOpenVRQuestCompanion.apk"
 
     ; Start Menu shortcuts. The umbrella shortcut is always present.
     ; Per-feature aliases are dropped here only when the installer is
@@ -382,6 +377,11 @@ Section "Uninstall"
         Sleep 2000
     skipUnregister:
 
+    IfFileExists "$INSTDIR\resources\questapp\uninstall-questapp.ps1" 0 skipQuestAppCleanup
+        DetailPrint "Cleaning Quest App companion state..."
+        nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\questapp\uninstall-questapp.ps1"'
+    skipQuestAppCleanup:
+
     ; Re-resolve SteamVR runtime path. Fall back to the registry value when
     ; openvrpaths.vrpath is missing (SteamVR uninstalled after WKOpenVR).
     ClearErrors
@@ -415,6 +415,7 @@ Section "Uninstall"
     Delete "$vrRuntimePath\drivers\01wkopenvr\resources\enable_facetracking.flag"
     Delete "$vrRuntimePath\drivers\01wkopenvr\resources\enable_captions.flag"
     Delete "$vrRuntimePath\drivers\01wkopenvr\resources\enable_phantom.flag"
+    Delete "$vrRuntimePath\drivers\01wkopenvr\resources\enable_questapp.flag"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\facetracking"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\translator"
     RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\captions"
@@ -454,8 +455,6 @@ Section "Uninstall"
         Delete "$INSTDIR\README.md"
         Delete "$INSTDIR\Uninstall.exe"
         RMDir /r "$INSTDIR\resources"
-        RMDir /r "$INSTDIR\bin\adb"
-        RMDir "$INSTDIR\bin"
         RMDir /r "$INSTDIR"
         IfFileExists "$INSTDIR\WKOpenVR.exe" instDirLocked deleteDone
         IfFileExists "$INSTDIR\openvr_api.dll" instDirLocked deleteDone
@@ -475,8 +474,6 @@ Section "Uninstall"
         Delete /REBOOTOK "$INSTDIR\README.md"
         Delete /REBOOTOK "$INSTDIR\Uninstall.exe"
         RMDir /r /REBOOTOK "$INSTDIR\resources"
-        RMDir /r /REBOOTOK "$INSTDIR\bin\adb"
-        RMDir /REBOOTOK "$INSTDIR\bin"
         RMDir /REBOOTOK "$INSTDIR"
     deleteDone:
 

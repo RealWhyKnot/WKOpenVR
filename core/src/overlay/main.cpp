@@ -50,6 +50,7 @@ namespace openvr_pair::overlay {
 std::unique_ptr<FeaturePlugin> CreateInputHealthPlugin();
 std::unique_ptr<FeaturePlugin> CreateSmoothingPlugin();
 std::unique_ptr<FeaturePlugin> CreateSpaceCalibratorPlugin();
+std::unique_ptr<FeaturePlugin> CreateQuestAppPlugin();
 std::unique_ptr<FeaturePlugin> CreateFaceTrackingPlugin();
 #if OPENVR_PAIR_HAS_OSCROUTER_OVERLAY
 std::unique_ptr<FeaturePlugin> CreateOscRouterPlugin();
@@ -85,6 +86,9 @@ std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins(
 #endif
 #if OPENVR_PAIR_HAS_CALIBRATION_OVERLAY
 	plugins.push_back(CreateSpaceCalibratorPlugin());
+#endif
+#if OPENVR_PAIR_HAS_QUESTAPP_OVERLAY
+	plugins.push_back(CreateQuestAppPlugin());
 #endif
 #if OPENVR_PAIR_HAS_FACETRACKING_OVERLAY
 	plugins.push_back(CreateFaceTrackingPlugin());

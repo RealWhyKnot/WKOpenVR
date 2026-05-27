@@ -170,11 +170,6 @@ namespace Metrics {
 	// event clobbered it.
 	extern TimeSeries<bool>     boundaryActive;
 	extern TimeSeries<uint32_t> chaperoneRePushCount;
-	// ADB/Guardian state. guardianPaused is true while the ADB guardian-pause
-	// command is in effect. adbConnected is true when the ADB subprocess has
-	// an active connection to the headset.
-	extern TimeSeries<bool>     guardianPaused;
-	extern TimeSeries<bool>     adbConnected;
 
 	extern bool enableLogs;
 

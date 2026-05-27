@@ -1,6 +1,6 @@
 # Local HTTP fixture server for WKOpenVR Phase 4 download tests. Binds to
 # http://127.0.0.1:<port>/ and serves files from the fixtures/staging/ tree
-# the generator emitted. Designed to run inside a Start-Job so the parent
+# the generator emitted. Designed to run as a child process so the parent
 # runner can kill it when tests finish. Loopback-only binding does not need
 # a Windows firewall rule.
 

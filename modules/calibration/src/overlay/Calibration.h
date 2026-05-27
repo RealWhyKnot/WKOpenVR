@@ -182,16 +182,6 @@ struct BoundaryConfig {
 	bool priorChaperoneCaptured = false;
 };
 
-// ADB connection state and Guardian-pause settings. savedEndpoint survives
-// restarts so the user does not re-scan on every launch.
-struct AdbConfig {
-	bool setupCompleted = false;
-	std::string savedEndpoint;
-	bool guardianPauseEnabled = false;
-	int guardianPauseValue = 1;
-	bool autoApplyOnStart = true;
-};
-
 struct CalibrationProfileSnapshot {
 	bool captured = false;
 	bool enabled = false;
@@ -239,9 +229,6 @@ struct CalibrationContext
 	HeadMountConfig headMount;
 	// Safety boundary: captured chaperone outline + floor/ceiling for re-push.
 	BoundaryConfig  boundary;
-	// ADB connection and Guardian-pause settings.
-	AdbConfig       adb;
-
 	double timeLastTick = 0, timeLastScan = 0, timeLastAssign = 0;
 	// Default ON: drop sample pairs whose rotation axis disagrees with the
 	// consensus before the LS solve. Helps with intermittent USB glitches or

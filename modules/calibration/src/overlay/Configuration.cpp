@@ -50,7 +50,7 @@
 //       Adds "lock_relative_position_mode" (int 0/1/2 = OFF/ON/AUTO) replacing
 //       the legacy "lock_relative_position" bool. Migration: bool true -> ON,
 //       bool false -> AUTO (the new safer default that detects rigidity).
-//   4 - Adds head_mount, boundary, and adb config sections for
+//   4 - Adds head_mount and boundary config sections for
 //       lighthouse-anchored head-tracker + safety boundary. No field renames;
 //       new sections default to disabled.
 //   5 - Splits the single "calibration_speed" setting into one-shot and
@@ -108,7 +108,7 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 		// drop it for new profiles.
 	}
 
-	// 3 -> 4: head_mount, boundary, and adb are new sections. The load path
+	// 3 -> 4: head_mount and boundary are new sections. The load path
 	// is tolerant of missing keys and defaults them to disabled, so nothing
 	// needs to be rewritten here. A v3 profile silently acquires the
 	// default-off state; the first save from the new overlay writes the keys
@@ -406,36 +406,6 @@ static picojson::object SaveBoundary(const BoundaryConfig& bc) {
 		verts.push_back(vval);
 	}
 	obj["vertices"].set<picojson::array>(verts);
-	return obj;
-}
-
-static void LoadAdb(AdbConfig& adb, picojson::value& value) {
-	if (!value.is<picojson::object>()) return;
-	auto& obj = value.get<picojson::object>();
-
-	if (obj["setup_completed"].is<bool>())
-		adb.setupCompleted = obj["setup_completed"].get<bool>();
-	if (obj["saved_endpoint"].is<std::string>())
-		adb.savedEndpoint = obj["saved_endpoint"].get<std::string>();
-	if (obj["guardian_pause_enabled"].is<bool>())
-		adb.guardianPauseEnabled = obj["guardian_pause_enabled"].get<bool>();
-	if (obj["guardian_pause_value"].is<double>())
-		adb.guardianPauseValue = (int)obj["guardian_pause_value"].get<double>();
-	if (obj["auto_apply_on_start"].is<bool>())
-		adb.autoApplyOnStart = obj["auto_apply_on_start"].get<bool>();
-}
-
-static picojson::object SaveAdb(const AdbConfig& adb) {
-	picojson::object obj;
-	bool sc = adb.setupCompleted;
-	obj["setup_completed"].set<bool>(sc);
-	obj["saved_endpoint"].set<std::string>(adb.savedEndpoint);
-	bool gpe = adb.guardianPauseEnabled;
-	obj["guardian_pause_enabled"].set<bool>(gpe);
-	double gpv = (double)adb.guardianPauseValue;
-	obj["guardian_pause_value"].set<double>(gpv);
-	bool aas = adb.autoApplyOnStart;
-	obj["auto_apply_on_start"].set<bool>(aas);
 	return obj;
 }
 
@@ -790,14 +760,12 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		ctx.wizardCompleted = obj["wizard_completed"].get<bool>();
 	}
 
-	// v4: head-mounted tracker, safety boundary, ADB settings. All sections
+	// v4: head-mounted tracker and safety boundary. All sections
 	// are optional (skip-if-absent); absent means default (disabled).
 	if (obj["head_mount"].is<picojson::object>())
 		LoadHeadMount(ctx.headMount, obj["head_mount"]);
 	if (obj["boundary"].is<picojson::object>())
 		LoadBoundary(ctx.boundary, obj["boundary"]);
-	if (obj["adb"].is<picojson::object>())
-		LoadAdb(ctx.adb, obj["adb"]);
 
 	// Load-time wedge guard, completion. The relative-pose state and
 	// refToTargetPose are read further down in ParseProfile, so we can only
@@ -1003,9 +971,9 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 		profile["wizard_completed"].set<bool>(wc);
 	}
 
-	// v4: head-mounted tracker, boundary, ADB. Skip-if-default: only write
+	// v4: head-mounted tracker and boundary. Skip-if-default: only write
 	// when the subsystem has been activated (mode != Off / enabled != false /
-	// setupCompleted != false) so profiles for the typical no-Quest setup
+	// boundary data present) so profiles for the typical no-Quest setup
 	// remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off
 		|| !ctx.headMount.trackerSerial.empty()
@@ -1016,11 +984,6 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 		|| !ctx.boundary.vertices.empty()) {
 		profile["boundary"].set<picojson::object>(SaveBoundary(ctx.boundary));
 	}
-	if (ctx.adb.setupCompleted || !ctx.adb.savedEndpoint.empty()
-		|| ctx.adb.guardianPauseEnabled) {
-		profile["adb"].set<picojson::object>(SaveAdb(ctx.adb));
-	}
-
 	picojson::value profileV;
 	profileV.set<picojson::object>(profile);
 

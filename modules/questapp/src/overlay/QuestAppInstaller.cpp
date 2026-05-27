@@ -1,0 +1,441 @@
+#include "QuestAppInstaller.h"
+
+#include "QuestAppCatalog.h"
+#include "Win32Paths.h"
+#include "Win32Text.h"
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winhttp.h>
+
+#include <picojson.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <filesystem>
+#include <sstream>
+#include <string>
+
+namespace wkopenvr::questapp {
+namespace {
+
+std::string Narrow(const std::wstring& value)
+{
+    return openvr_pair::common::WideToUtf8(value);
+}
+
+std::wstring QuoteForCommandLine(const std::wstring& value)
+{
+    std::wstring out = L"\"";
+    for (wchar_t ch : value) {
+        if (ch == L'"') out += L"\\\"";
+        else out += ch;
+    }
+    out += L"\"";
+    return out;
+}
+
+OperationResult RunPowerShellScript(
+    const std::wstring& scriptPath,
+    const std::vector<std::wstring>& args,
+    DWORD timeoutMs)
+{
+    OperationResult result;
+    if (scriptPath.empty() || GetFileAttributesW(scriptPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        result.message = "Install script is missing.";
+        return result;
+    }
+
+    std::wstring command = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File ";
+    command += QuoteForCommandLine(scriptPath);
+    for (const auto& arg : args) {
+        command += L" ";
+        command += QuoteForCommandLine(arg);
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+
+    std::wstring mutableCommand = command;
+    if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        std::ostringstream oss;
+        oss << "Could not start PowerShell installer (error 0x"
+            << std::hex << std::uppercase << GetLastError() << ").";
+        result.message = oss.str();
+        return result;
+    }
+
+    const DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
+    if (wait == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 124);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        result.message = "Installer timed out.";
+        return result;
+    }
+
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    result.ok = (wait == WAIT_OBJECT_0 && exitCode == 0);
+    if (result.ok) {
+        result.message = "Platform-tools installed.";
+    } else {
+        std::ostringstream oss;
+        oss << "Platform-tools installer failed (exit " << exitCode << ").";
+        result.message = oss.str();
+    }
+    return result;
+}
+
+bool ContainsNoCase(std::string text, std::string needle)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    std::transform(needle.begin(), needle.end(), needle.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return text.find(needle) != std::string::npos;
+}
+
+std::vector<std::string> CompanionServiceCommand(
+    const QuestAppConfig& cfg,
+    const QuestCompanionSettings* settings)
+{
+    std::vector<std::string> args = {
+        "shell", "am", "start-foreground-service",
+        "-n", "org.wkopenvr.quest/.QuestCompanionService",
+        "--es", "wkopenvr_pairing_key", cfg.pairingKey,
+    };
+    if (!settings) return args;
+
+    args.push_back("--ez");
+    args.push_back("wkopenvr_auto_launch_enabled");
+    args.push_back(settings->autoLaunchEnabled ? "true" : "false");
+    if (!settings->selectedPackage.empty()) {
+        args.push_back("--es");
+        args.push_back("wkopenvr_selected_package");
+        args.push_back(settings->selectedPackage);
+    }
+    if (!settings->selectedActivity.empty()) {
+        args.push_back("--es");
+        args.push_back("wkopenvr_selected_activity");
+        args.push_back(settings->selectedActivity);
+    }
+    return args;
+}
+
+OperationResult HttpGetLocalCompanion(const std::wstring& path, std::string& body)
+{
+    OperationResult out;
+    HINTERNET session = WinHttpOpen(
+        L"WKOpenVR Quest App/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0);
+    if (!session) {
+        out.message = "Could not create HTTP session.";
+        return out;
+    }
+
+    HINTERNET connect = WinHttpConnect(session, L"127.0.0.1", 39789, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        out.message = "Could not connect to forwarded companion endpoint.";
+        return out;
+    }
+
+    HINTERNET request = WinHttpOpenRequest(
+        connect,
+        L"GET",
+        path.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        0);
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        out.message = "Could not create companion HTTP request.";
+        return out;
+    }
+
+    BOOL ok = WinHttpSendRequest(
+        request,
+        WINHTTP_NO_ADDITIONAL_HEADERS,
+        0,
+        WINHTTP_NO_REQUEST_DATA,
+        0,
+        0,
+        0);
+    if (ok) ok = WinHttpReceiveResponse(request, nullptr);
+
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    if (ok) {
+        ok = WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            &status,
+            &statusSize,
+            WINHTTP_NO_HEADER_INDEX);
+    }
+
+    if (ok) {
+        body.clear();
+        for (;;) {
+            DWORD available = 0;
+            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+            std::string chunk;
+            chunk.resize(available);
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+            chunk.resize(read);
+            body += chunk;
+        }
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+
+    if (!ok) {
+        out.message = "Companion HTTP request failed.";
+        return out;
+    }
+    if (status != 200) {
+        std::ostringstream oss;
+        oss << "Companion rejected settings query (HTTP " << status << ").";
+        out.message = oss.str();
+        return out;
+    }
+    out.ok = true;
+    out.message = "Companion settings loaded.";
+    return out;
+}
+
+} // namespace
+
+std::wstring QuestAppDataDir(bool create)
+{
+    return openvr_pair::common::WkOpenVrSubdirectoryPath(L"questapp", create);
+}
+
+std::wstring PlatformToolsDir(bool create)
+{
+    return openvr_pair::common::WkOpenVrSubdirectoryPath(L"questapp\\platform-tools", create);
+}
+
+std::wstring CompanionApkPath(const openvr_pair::overlay::ShellContext& context)
+{
+    return context.installDir + L"\\resources\\questapp\\WKOpenVRQuestCompanion.apk";
+}
+
+std::wstring InstallPlatformToolsScriptPath(const openvr_pair::overlay::ShellContext& context)
+{
+    return context.installDir + L"\\resources\\questapp\\install-platform-tools.ps1";
+}
+
+bool PlatformToolsInstalled()
+{
+    const std::wstring path = PlatformToolsDir(false) + L"\\adb.exe";
+    return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+bool CompanionApkAvailable(const openvr_pair::overlay::ShellContext& context)
+{
+    const std::wstring path = CompanionApkPath(context);
+    return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+OperationResult InstallPlatformTools(const openvr_pair::overlay::ShellContext& context)
+{
+    const std::wstring root = QuestAppDataDir(true);
+    if (root.empty()) return {false, "Could not create Quest App data folder."};
+    const std::wstring script = InstallPlatformToolsScriptPath(context);
+    return RunPowerShellScript(script, {root}, 5 * 60 * 1000);
+}
+
+OperationResult InstallCompanionApp(
+    const openvr_pair::overlay::ShellContext& context,
+    AdbController& adb,
+    QuestAppConfig& cfg)
+{
+    OperationResult out;
+    if (!CompanionApkAvailable(context)) {
+        out.message = "Companion APK is not bundled in this build yet.";
+        return out;
+    }
+    if (!PlatformToolsInstalled()) {
+        out.message = "Install ADB platform-tools first.";
+        return out;
+    }
+
+    adb.RefreshResolvedBinaryPath();
+
+    const bool mustClearHeadsetKey =
+        cfg.companionInstalled && !IsValidPairingKey(cfg.pairingKey);
+    if (mustClearHeadsetKey) {
+        auto uninstall = adb.Run({"uninstall", "org.wkopenvr.quest"}, std::chrono::seconds(30));
+        const bool alreadyGone =
+            ContainsNoCase(uninstall.out, "not installed") ||
+            ContainsNoCase(uninstall.err, "not installed") ||
+            ContainsNoCase(uninstall.out, "unknown package") ||
+            ContainsNoCase(uninstall.err, "unknown package");
+        if (uninstall.timedOut || (uninstall.exitCode != 0 && !alreadyGone)) {
+            out.message = "Could not remove the old companion before creating a new install key.";
+            return out;
+        }
+        cfg.companionInstalled = false;
+    }
+
+    if (!IsValidPairingKey(cfg.pairingKey)) {
+        cfg.pairingKey = GeneratePairingKey();
+    }
+
+    const std::string apk = Narrow(CompanionApkPath(context));
+    auto install = adb.Run({"install", "-r", apk}, std::chrono::minutes(2));
+    if (install.timedOut || install.exitCode != 0 ||
+        (!ContainsNoCase(install.out, "success") && !ContainsNoCase(install.err, "success"))) {
+        out.message = "Companion install failed.";
+        return out;
+    }
+
+    auto configure = adb.Run(CompanionServiceCommand(cfg, nullptr), std::chrono::seconds(10));
+    if (configure.timedOut || configure.exitCode != 0) {
+        out.message = "Companion installed, but the initial key setup did not confirm.";
+        return out;
+    }
+
+    cfg.companionInstalled = true;
+    SaveQuestAppConfig(cfg);
+    out.ok = true;
+    out.message = "Companion app installed and paired.";
+    return out;
+}
+
+OperationResult SyncCompanionConfig(
+    AdbController& adb,
+    const QuestAppConfig& cfg,
+    const QuestCompanionSettings& settings)
+{
+    OperationResult out;
+    if (!cfg.companionInstalled) {
+        out.message = "Install the companion app first.";
+        return out;
+    }
+    if (!IsValidPairingKey(cfg.pairingKey)) {
+        out.message = "Install key is missing. Reinstall the companion to create a new key.";
+        return out;
+    }
+    adb.RefreshResolvedBinaryPath();
+    auto result = adb.Run(CompanionServiceCommand(cfg, &settings), std::chrono::seconds(10));
+    if (result.timedOut || result.exitCode != 0) {
+        out.message = "Companion settings did not confirm over ADB.";
+        return out;
+    }
+    out.ok = true;
+    out.message = "Companion settings sent to headset.";
+    return out;
+}
+
+SettingsQueryResult QueryCompanionSettings(AdbController& adb, const QuestAppConfig& cfg)
+{
+    SettingsQueryResult out;
+    if (!cfg.companionInstalled) {
+        out.result.message = "Install the companion app first.";
+        return out;
+    }
+    if (!IsValidPairingKey(cfg.pairingKey)) {
+        out.result.message = "Install key is missing. Reinstall the companion to create a new key.";
+        return out;
+    }
+
+    adb.RefreshResolvedBinaryPath();
+    auto forward = adb.Run({"forward", "tcp:39789", "tcp:39789"}, std::chrono::seconds(10));
+    if (forward.timedOut || forward.exitCode != 0) {
+        out.result.message = "Could not forward the companion settings endpoint over ADB.";
+        return out;
+    }
+
+    std::string body;
+    std::wstring path = L"/settings?key=" + openvr_pair::common::Utf8ToWide(cfg.pairingKey);
+    out.result = HttpGetLocalCompanion(path, body);
+    if (!out.result.ok) return out;
+
+    picojson::value parsed;
+    const std::string err = picojson::parse(parsed, body);
+    if (!err.empty() || !parsed.is<picojson::object>()) {
+        out.result.ok = false;
+        out.result.message = "Companion settings response was not valid JSON.";
+        return out;
+    }
+    const auto& obj = parsed.get<picojson::object>();
+    auto autoIt = obj.find("autoLaunchEnabled");
+    if (autoIt != obj.end() && autoIt->second.is<bool>()) {
+        out.settings.autoLaunchEnabled = autoIt->second.get<bool>();
+    }
+    auto pkgIt = obj.find("selectedPackage");
+    if (pkgIt != obj.end() && pkgIt->second.is<std::string>()) {
+        out.settings.selectedPackage = pkgIt->second.get<std::string>();
+    }
+    auto activityIt = obj.find("selectedActivity");
+    if (activityIt != obj.end() && activityIt->second.is<std::string>()) {
+        out.settings.selectedActivity = activityIt->second.get<std::string>();
+    }
+    return out;
+}
+
+OperationResult UninstallCompanionApp(AdbController& adb, QuestAppConfig& cfg)
+{
+    OperationResult out;
+    adb.RefreshResolvedBinaryPath();
+    auto uninstall = adb.Run({"uninstall", "org.wkopenvr.quest"}, std::chrono::seconds(30));
+    if (uninstall.timedOut || uninstall.exitCode != 0) {
+        out.message = "Companion uninstall did not confirm.";
+        return out;
+    }
+
+    cfg.companionInstalled = false;
+    cfg.pairingKey.clear();
+    SaveQuestAppConfig(cfg);
+    out.ok = true;
+    out.message = "Companion app uninstalled. Reinstalling will create a new key.";
+    return out;
+}
+
+std::vector<QuestLaunchTarget> QueryInstalledPackages(AdbController& adb)
+{
+    std::vector<QuestLaunchTarget> out;
+    adb.RefreshResolvedBinaryPath();
+    auto result = adb.Run({"shell", "pm", "list", "packages"}, std::chrono::seconds(10));
+    if (result.timedOut || result.exitCode != 0) return out;
+
+    std::istringstream lines(result.out);
+    std::string line;
+    while (std::getline(lines, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+            line.pop_back();
+        }
+        constexpr const char* prefix = "package:";
+        if (line.rfind(prefix, 0) != 0) continue;
+        const std::string pkg = line.substr(std::char_traits<char>::length(prefix));
+        if (pkg.empty()) continue;
+        out.push_back({pkg, pkg, {}, false});
+    }
+    return out;
+}
+
+} // namespace wkopenvr::questapp

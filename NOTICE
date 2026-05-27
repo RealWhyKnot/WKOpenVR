@@ -650,17 +650,6 @@ visibility of UpdateDataContiguous changed from internal to public.
 Full Apache-2.0 license text: see LICENSE.Apache-2.0 at the repository root.
 
 ================================================================================
-Android platform-tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll)
-Source: https://developer.android.com/studio/releases/platform-tools
-Version: 37.0.0
-================================================================================
-
-Licensed under the Apache License, Version 2.0. The full license text is
-bundled at bin/adb/adb-LICENSE.txt in the installed product.
-
-Full Apache-2.0 license text: see LICENSE.Apache-2.0 at the repository root.
-
-================================================================================
 gl3w (UNLICENSE / public domain)
 Source: https://github.com/skaslev/gl3w
 ================================================================================

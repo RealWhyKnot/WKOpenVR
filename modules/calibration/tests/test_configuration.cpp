@@ -706,8 +706,8 @@ TEST(ConfigurationTest, SaveStampsCurrentSchemaVersion) {
 }
 
 // ---------------------------------------------------------------------------
-// Schema migration v3 -> v4. v3 profiles have no head_mount, boundary, or
-// adb sections. They must load with all three at their disabled defaults.
+// Schema migration v3 -> v4. v3 profiles have no head_mount or boundary
+// sections. They must load with both at their disabled defaults.
 // ---------------------------------------------------------------------------
 TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections) {
     std::string v3Json = MakeMinimalProfile(/*schemaVersion=*/3);
@@ -725,12 +725,10 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections) {
         << "v3 profile must default head_mount.offsetCalibrated to false";
     EXPECT_FALSE(ctx.boundary.enabled)
         << "v3 profile must default boundary.enabled to false";
-    EXPECT_FALSE(ctx.adb.setupCompleted)
-        << "v3 profile must default adb.setupCompleted to false";
 }
 
 // ---------------------------------------------------------------------------
-// Round-trip for the v4 sections (head_mount, boundary, adb). Non-default
+// Round-trip for the v4 sections (head_mount, boundary). Non-default
 // values must survive a write->read cycle intact.
 // ---------------------------------------------------------------------------
 TEST(ConfigurationTest, V4SectionsRoundTrip) {
@@ -757,12 +755,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip) {
     src.boundary.vertices = { {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.5} };
     src.boundary.priorChaperone = {0xDE, 0xAD, 0xBE, 0xEF};
     src.boundary.priorChaperoneCaptured = true;
-
-    src.adb.setupCompleted = true;
-    src.adb.savedEndpoint = "192.168.1.42:5555";
-    src.adb.guardianPauseEnabled = true;
-    src.adb.guardianPauseValue = 2;
-    src.adb.autoApplyOnStart = false;
 
     std::stringstream io;
     WriteProfile(src, io);
@@ -799,21 +791,16 @@ TEST(ConfigurationTest, V4SectionsRoundTrip) {
     EXPECT_EQ(dst.boundary.priorChaperone[3], 0xEF);
     EXPECT_TRUE(dst.boundary.priorChaperoneCaptured);
 
-    EXPECT_TRUE(dst.adb.setupCompleted);
-    EXPECT_EQ(dst.adb.savedEndpoint, "192.168.1.42:5555");
-    EXPECT_TRUE(dst.adb.guardianPauseEnabled);
-    EXPECT_EQ(dst.adb.guardianPauseValue, 2);
-    EXPECT_FALSE(dst.adb.autoApplyOnStart);
 }
 
-// Skip-if-default: the three new sections must NOT appear in the JSON
+// Skip-if-default: the new sections must NOT appear in the JSON
 // when all fields are at their default values.
 TEST(ConfigurationTest, V4SectionsSkippedWhenDefault) {
     CalibrationContext ctx;
     ctx.referenceTrackingSystem = "lighthouse";
     ctx.targetTrackingSystem = "oculus";
     ctx.validProfile = true;
-    // All head_mount / boundary / adb fields at construction defaults.
+    // All head_mount / boundary fields at construction defaults.
 
     std::stringstream io;
     WriteProfile(ctx, io);
@@ -823,6 +810,4 @@ TEST(ConfigurationTest, V4SectionsSkippedWhenDefault) {
         << "head_mount must be omitted when at default (Off, no serial)";
     EXPECT_EQ(json.find("\"boundary\""),    std::string::npos)
         << "boundary must be omitted when disabled and no vertices captured";
-    EXPECT_EQ(json.find("\"adb\""),         std::string::npos)
-        << "adb must be omitted when setup not completed and no endpoint saved";
 }

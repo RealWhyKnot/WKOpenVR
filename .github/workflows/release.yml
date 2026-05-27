@@ -299,6 +299,15 @@ jobs:
           if (-not (Test-Path "$artifacts/resources/face-module-sync.ps1")) {
             throw "face-module-sync.ps1 not found at $artifacts/resources"
           }
+          if (-not (Test-Path "$artifacts/resources/questapp/install-platform-tools.ps1")) {
+            throw "Quest App platform-tools installer not found at $artifacts/resources/questapp"
+          }
+          if (-not (Test-Path "$artifacts/resources/questapp/uninstall-questapp.ps1")) {
+            throw "Quest App uninstaller not found at $artifacts/resources/questapp"
+          }
+          if (-not (Test-Path "$artifacts/resources/questapp/WKOpenVRQuestCompanion.apk")) {
+            throw "Quest App companion APK not found at $artifacts/resources/questapp"
+          }
 
           Copy-Item "$artifacts/WKOpenVR.exe"        "$stage/WKOpenVR.exe"
           Copy-Item "$artifacts/openvr_api.dll"      "$stage/openvr_api.dll"
@@ -310,15 +319,10 @@ jobs:
           Copy-Item "$artifacts/dashboard_icon.png"  "$stage/dashboard_icon.png"
           New-Item -ItemType Directory -Force -Path "$stage/resources" | Out-Null
           Copy-Item "$artifacts/resources/face-module-sync.ps1" "$stage/resources/face-module-sync.ps1"
-
-          # ADB platform-tools: bundled for the Guardian-pause feature.
-          # Apache-2.0 (GPL-3.0 compatible). Source is third_party/platform-tools/
-          # in the repository -- committed binaries, no download step needed.
-          New-Item -ItemType Directory -Force -Path "$stage/bin/adb" | Out-Null
-          Copy-Item "third_party/platform-tools/adb.exe"          "$stage/bin/adb/adb.exe"
-          Copy-Item "third_party/platform-tools/AdbWinApi.dll"    "$stage/bin/adb/AdbWinApi.dll"
-          Copy-Item "third_party/platform-tools/AdbWinUsbApi.dll" "$stage/bin/adb/AdbWinUsbApi.dll"
-          Copy-Item "third_party/platform-tools/adb-LICENSE.txt"  "$stage/bin/adb/adb-LICENSE.txt"
+          New-Item -ItemType Directory -Force -Path "$stage/resources/questapp" | Out-Null
+          Copy-Item "$artifacts/resources/questapp/install-platform-tools.ps1" "$stage/resources/questapp/install-platform-tools.ps1"
+          Copy-Item "$artifacts/resources/questapp/uninstall-questapp.ps1" "$stage/resources/questapp/uninstall-questapp.ps1"
+          Copy-Item "$artifacts/resources/questapp/WKOpenVRQuestCompanion.apk" "$stage/resources/questapp/WKOpenVRQuestCompanion.apk"
 
           # Stage the C# face-tracking host. CMake publishes it to
           # build/artifacts/FaceModuleHost/; the workflow runs cmake directly
@@ -393,14 +397,13 @@ jobs:
             'build/artifacts/Release/manifest.vrmanifest',
             'build/artifacts/Release/dashboard_icon.png',
             'build/artifacts/Release/resources/face-module-sync.ps1',
+            'build/artifacts/Release/resources/questapp/install-platform-tools.ps1',
+            'build/artifacts/Release/resources/questapp/uninstall-questapp.ps1',
+            'build/artifacts/Release/resources/questapp/WKOpenVRQuestCompanion.apk',
             'build/driver_wkopenvr/driver.vrdrivermanifest',
             'build/driver_wkopenvr/resources/driver.vrresources',
             'build/driver_wkopenvr/resources/settings/default.vrsettings',
-            'build/driver_wkopenvr/bin/win64/driver_wkopenvr.dll',
-            'third_party/platform-tools/adb.exe',
-            'third_party/platform-tools/AdbWinApi.dll',
-            'third_party/platform-tools/AdbWinUsbApi.dll',
-            'third_party/platform-tools/adb-LICENSE.txt'
+            'build/driver_wkopenvr/bin/win64/driver_wkopenvr.dll'
           )
           # Per-module artifacts: only verify the ones whose modules are
           # actually built into this release (the disabled-in-release marker

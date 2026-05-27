@@ -50,6 +50,10 @@ exit `$LASTEXITCODE
 	}
 }
 
+function Quote-NativeArg([string] $Value) {
+	return '"' + ($Value -replace '"', '\"') + '"'
+}
+
 # ---- workspace -----------------------------------------------------------
 
 if (-not $WorkingRoot) {
@@ -85,12 +89,21 @@ $tmpListener.Stop()
 $FixtureBaseUrl = "http://127.0.0.1:$Port/"
 Write-Host "Fixture base URL: $FixtureBaseUrl"
 
-# ---- start the fixture server in a background job ------------------------
+# ---- start the fixture server in a child process -------------------------
 
-$serverJob = Start-Job -Name 'wkopenvr-fixture-server' -ScriptBlock {
-	param($ServerScript, $Port, $StagingDir)
-	& $ServerScript -Port $Port -FixturesRoot $StagingDir
-} -ArgumentList $ServerPs1, $Port, $StagingDir
+$PwshExe = (Get-Command pwsh.exe -ErrorAction Stop).Source
+$ServerStdout = Join-Path $WorkingRoot 'fixture-server.out.log'
+$ServerStderr = Join-Path $WorkingRoot 'fixture-server.err.log'
+$serverArgs = @(
+	'-NoProfile',
+	'-File',
+	(Quote-NativeArg $ServerPs1),
+	'-Port',
+	([string]$Port),
+	'-FixturesRoot',
+	(Quote-NativeArg $StagingDir)
+) -join ' '
+$serverProcess = Start-Process -FilePath $PwshExe -ArgumentList $serverArgs -WindowStyle Hidden -RedirectStandardOutput $ServerStdout -RedirectStandardError $ServerStderr -PassThru
 
 try {
 	# Wait for the server's /__ping route to answer 200.
@@ -225,16 +238,17 @@ try {
 finally {
 	Remove-Item Env:WKOPENVR_LOCALAPPDATA_OVERRIDE -ErrorAction SilentlyContinue
 
-	if ($serverJob) {
-		Stop-Job -Job $serverJob -ErrorAction SilentlyContinue
-		Receive-Job -Job $serverJob -ErrorAction SilentlyContinue | Out-Null
-		Remove-Job -Job $serverJob -Force -ErrorAction SilentlyContinue
+	if ($serverProcess) {
+		try { $serverProcess.Refresh() } catch { }
+		if (-not $serverProcess.HasExited) {
+			try { $serverProcess.Kill() } catch { }
+			try { [void]$serverProcess.WaitForExit(2000) } catch { }
+		}
 	}
 	Write-Host "Phase 4 working root left at: $WorkingRoot"
 }
 
-# Stop-Job leaves $LASTEXITCODE in whatever state the background job set it to
-# (typically 1 because the HttpListener loop bails out of GetContext when the
-# listener stops). Clear it so test.ps1's outer success check passes.
+# Stopping the fixture server may leave $LASTEXITCODE in a non-test state.
+# Clear it so test.ps1's outer success check passes.
 $global:LASTEXITCODE = 0
 exit 0

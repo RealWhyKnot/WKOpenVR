@@ -7,7 +7,6 @@
 #include "BoundaryCapture.h"
 #include "BoundaryPreview.h"
 #include "UserInterfaceHeadMount.h"
-#include "UserInterfaceTabsGuardian.h"
 #include "UiHelpers.h"
 
 #include <openvr.h>
@@ -26,7 +25,7 @@ void SaveProfile(CalibrationContext& ctx);
 // User journey for this tab:
 //   1. Stabilize SLAM drift with the continuous target.
 //   2. Draw your own play-space safety polygon.
-//   3. Hide Quest's overlapping guardian.
+//   3. Hand off Quest-specific headset setup to the Quest App module.
 
 namespace {
 
@@ -284,6 +283,16 @@ void DrawBoundarySection(ImVec2 panelSize) {
     }
 
     }
+}
+
+void DrawQuestAppPointerSection(ImVec2 panelSize) {
+    openvr_pair::overlay::ui::PanelScope panel("Step 3: Quest App", panelSize);
+    openvr_pair::overlay::ui::DrawTextWrapped(
+        "Quest Boundary and headset app setup now live in the Quest App module.");
+    ImGui::Spacing();
+    ImGui::TextDisabled(
+        "Enable Quest App from the Modules tab for Developer Mode setup, "
+        "the Physical Space Features guide, and companion app install.");
 }
 
 struct BoundaryInputStats {
@@ -550,15 +559,12 @@ void CCal_DrawBoundaryTab() {
     // independent feature islands. Each step depends on the previous one,
     // and the disabled-state copy nudges the user forward.
     ImGui::TextDisabled(
-        "Continuous-mode headset tracker, lighthouse boundary, and Quest Guardian pause.");
+        "Continuous-mode headset tracker, lighthouse boundary, and Quest App handoff.");
     ImGui::Spacing();
 
     CCal_DrawHeadMountSection(panelSize);
     ImGui::Spacing();
     DrawBoundarySection(panelSize);
     ImGui::Spacing();
-    CCal_DrawGuardianSection(panelSize);
-
-    // Wizard modal: rendered in the same stack frame as the OpenPopup call.
-    CCal_DrawSetupWizardModal();
+    DrawQuestAppPointerSection(panelSize);
 }

@@ -18,6 +18,7 @@ set(OPENVR_PAIR_OVERLAY_DEFINES "")
 wkopenvr_add_overlay_module(inputhealth)
 wkopenvr_add_overlay_module(smoothing)
 wkopenvr_add_overlay_module(calibration)
+wkopenvr_add_overlay_module(questapp)
 wkopenvr_add_overlay_module(facetracking)
 wkopenvr_add_overlay_module(oscrouter)
 wkopenvr_add_overlay_module(captions)
@@ -66,10 +67,6 @@ if(MSVC)
 endif()
 
 add_executable(OpenVRPairOverlay WIN32
-	AdbController.cpp
-	AdbController.h
-	AdbSetupWizard.cpp
-	AdbSetupWizard.h
 	BugReportUi.cpp
 	BugReportUi.h
 	CalibrationAnchor.cpp
@@ -171,22 +168,17 @@ add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
 		"${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/face-module-sync.ps1"
 		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/resources/face-module-sync.ps1")
 
-# Stage ADB platform-tools into bin/adb/ next to the exe.
-# AdbController resolves adb.exe from <exe_dir>/bin/adb/ at runtime.
-# The four files are committed under third_party/platform-tools/ (Apache-2.0).
-set(WKOPENVR_ADB_SRC "${CMAKE_SOURCE_DIR}/third_party/platform-tools")
+# Stage Quest App resources next to the exe. The Quest App module downloads
+# platform-tools into LocalLow at runtime; only its setup script is shipped.
 add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E make_directory
-		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/bin/adb"
+		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/resources/questapp"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${WKOPENVR_ADB_SRC}/adb.exe"
-		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/bin/adb/adb.exe"
+		"${CMAKE_SOURCE_DIR}/modules/questapp/resources/install-platform-tools.ps1"
+		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/resources/questapp/install-platform-tools.ps1"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${WKOPENVR_ADB_SRC}/AdbWinApi.dll"
-		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/bin/adb/AdbWinApi.dll"
+		"${CMAKE_SOURCE_DIR}/modules/questapp/resources/uninstall-questapp.ps1"
+		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/resources/questapp/uninstall-questapp.ps1"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${WKOPENVR_ADB_SRC}/AdbWinUsbApi.dll"
-		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/bin/adb/AdbWinUsbApi.dll"
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${WKOPENVR_ADB_SRC}/adb-LICENSE.txt"
-		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/bin/adb/adb-LICENSE.txt")
+		"${CMAKE_SOURCE_DIR}/modules/questapp/resources/WKOpenVRQuestCompanion.apk"
+		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/resources/questapp/WKOpenVRQuestCompanion.apk")

@@ -64,8 +64,6 @@ namespace Metrics {
     TimeSeries<uint32_t> driverSynthFallbackCount;
     TimeSeries<bool>     boundaryActive;
     TimeSeries<uint32_t> chaperoneRePushCount;
-    TimeSeries<bool>     guardianPaused;
-    TimeSeries<bool>     adbConnected;
 
     TimeSeries<double> fallbackApplyRate;
     TimeSeries<double> perIdApplyRate;
