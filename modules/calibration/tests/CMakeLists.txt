@@ -63,6 +63,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_driver_synth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_head_from_tracker_solve.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_head_mount_panel_logic.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_head_mount_visibility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_prediction_smoothing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_recording_retention.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs.cpp
