@@ -268,6 +268,41 @@ TEST(GuardianAutoApply, ApplyGuardianPauseSetting_false_skips_when_no_endpoint)
     EXPECT_EQ(adb.calls.connectCalls, 0);
 }
 
+TEST(GuardianAutoApply, RecordGuardianPausedConfirmation_marks_state_paused)
+{
+    ResetCalCtx(CalCtx);
+    CalCtx.adb.guardianPauseEnabled = false;
+    CalCtx.adb.guardianPauseValue = 1;
+    Metrics::guardianPaused.Push(false);
+
+    wkopenvr::adb::RecordGuardianPausedConfirmation("test");
+
+    EXPECT_TRUE(CalCtx.adb.guardianPauseEnabled);
+    EXPECT_TRUE(Metrics::guardianPaused.last());
+}
+
+TEST(GuardianAutoApply, SetGuardianPauseValueOverride_returns_confirmed_state)
+{
+    ResetCalCtx(CalCtx);
+    SetupValidCalCtx(CalCtx);
+    CalCtx.adb.guardianPauseEnabled = false;
+    CalCtx.adb.guardianPauseValue = 1;
+    CalCtx.boundary.enabled = false;
+    CalCtx.boundary.vertices.clear();
+
+    StubAdb adb;
+    adb.getGuardianResult = 0;
+
+    const bool result = wkopenvr::adb::SetGuardianPauseValueOverride(adb, 0);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(CalCtx.adb.guardianPauseValue, 0);
+    EXPECT_EQ(adb.calls.setGuardianCalls, 1);
+    EXPECT_TRUE(adb.calls.lastSetPaused);
+    EXPECT_EQ(adb.calls.lastSetValue, 0);
+    EXPECT_TRUE(Metrics::guardianPaused.last());
+}
+
 // ---------------------------------------------------------------------------
 // TickGuardianHealth cadence test
 // ---------------------------------------------------------------------------

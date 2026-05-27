@@ -24,24 +24,27 @@ namespace {
 
 // Returns true if CalCtx satisfies all preconditions for pausing Guardian.
 // Logs the first failing condition so the log shows exactly which gate blocked.
-bool PreconditionsMet(const char* site)
+bool PreconditionsMet(
+    const char* site,
+    bool requirePauseEnabled = true,
+    bool requireBoundary = true)
 {
     const auto& a = CalCtx.adb;
     const auto& b = CalCtx.boundary;
 
-    if (!a.guardianPauseEnabled) {
+    if (requirePauseEnabled && !a.guardianPauseEnabled) {
         fprintf(stderr, "[guardian-auto] %s: skip -- guardianPauseEnabled=false\n", site);
         openvr_pair::common::DiagnosticLog(
             "guardian-auto", "%s precondition_failed gate=guardian_pause_disabled", site);
         return false;
     }
-    if (!b.enabled) {
+    if (requireBoundary && !b.enabled) {
         fprintf(stderr, "[guardian-auto] %s: skip -- boundary.enabled=false\n", site);
         openvr_pair::common::DiagnosticLog(
             "guardian-auto", "%s precondition_failed gate=boundary_disabled", site);
         return false;
     }
-    if (b.vertices.size() < 3) {
+    if (requireBoundary && b.vertices.size() < 3) {
         fprintf(stderr, "[guardian-auto] %s: skip -- boundary has %zu vertices (need >=3)\n",
                 site, b.vertices.size());
         openvr_pair::common::DiagnosticLog(
@@ -255,7 +258,25 @@ bool ApplyGuardianPauseSetting(AdbController& adb, bool desired)
     }
 }
 
-void SetGuardianPauseValueOverride(AdbController& adb, int newValue)
+void RecordGuardianPausedConfirmation(const char* site)
+{
+    CalCtx.adb.guardianPauseEnabled = true;
+    Metrics::guardianPaused.Push(true);
+
+    const char* label = site && site[0] ? site : "unknown";
+    char lbuf[128];
+    snprintf(lbuf, sizeof lbuf,
+        "[guardian-auto] manual pause confirmed: site='%s' value=%d",
+        label,
+        CalCtx.adb.guardianPauseValue);
+    Metrics::WriteLogAnnotation(lbuf);
+    openvr_pair::common::DiagnosticLog(
+        "guardian-auto", "manual_pause_confirmed site='%s' value=%d",
+        label,
+        CalCtx.adb.guardianPauseValue);
+}
+
+bool SetGuardianPauseValueOverride(AdbController& adb, int newValue)
 {
     CalCtx.adb.guardianPauseValue = newValue;
     fprintf(stderr,
@@ -268,14 +289,17 @@ void SetGuardianPauseValueOverride(AdbController& adb, int newValue)
         Metrics::WriteLogAnnotation(lbuf);
     }
 
-    if (!PreconditionsMet("polarity-override")) {
-        return;
+    if (!PreconditionsMet("polarity-override",
+                          /*requirePauseEnabled=*/false,
+                          /*requireBoundary=*/false)) {
+        return false;
     }
     bool aborted = false;
-    RunPauseSequence(adb, true, &aborted);
+    const bool ok = RunPauseSequence(adb, true, &aborted);
     if (aborted) {
         fprintf(stderr, "[guardian-auto] polarity-override: timed out\n");
     }
+    return ok && !aborted;
 }
 
 void TickGuardianHealth(AdbController& adb)

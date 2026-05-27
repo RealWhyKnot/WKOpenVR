@@ -24,11 +24,18 @@ bool MaybeAutoApplyAtStart(AdbController& adb);
 // end of the call.
 bool ApplyGuardianPauseSetting(AdbController& adb, bool desired);
 
+// Record an in-headset confirmation from the setup wizard that Guardian is
+// currently paused. The wizard's polarity probe already wrote the property;
+// this keeps the panel state and saved auto-apply preference in sync with the
+// confirmed headset state.
+void RecordGuardianPausedConfirmation(const char* site);
+
 // UI-driven polarity override. Called when in-headset confirmation shows that
 // the stored guardianPauseValue is wrong (e.g. the property semantics changed
 // across a runtime update). Updates CalCtx.adb.guardianPauseValue and
-// re-runs the auto-apply sequence.
-void SetGuardianPauseValueOverride(AdbController& adb, int newValue);
+// re-runs the auto-apply sequence. Returns true when readback confirms the
+// new value.
+bool SetGuardianPauseValueOverride(AdbController& adb, int newValue);
 
 // Periodic connection health check. Call from a low-rate tick (5-10 s cadence
 // is enforced internally). Updates Metrics::adbConnected. Logs a warning if

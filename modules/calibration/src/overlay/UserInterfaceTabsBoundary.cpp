@@ -531,10 +531,11 @@ void DrawSetupWizardModal() {
             ImGui::TextWrapped("Did Quest Guardian visibly disappear in-headset just now?");
             ImGui::Spacing();
             if (ImGui::Button("Yes, Guardian disappeared", actionButtonSize)) {
-                Metrics::WriteLogAnnotation("[adb-wizard-ui] guardian confirmation: user_confirmed_disappeared");
+                Metrics::WriteLogAnnotation("[adb-wizard-ui] guardian confirmation: manual_confirmed_disappeared");
                 openvr_pair::common::DiagnosticLog(
-                    "adb-wizard-ui", "guardian confirmation user_confirmed_disappeared value=%d",
+                    "adb-wizard-ui", "guardian confirmation manual_confirmed_disappeared value=%d",
                     CalCtx.adb.guardianPauseValue);
+                wkopenvr::adb::RecordGuardianPausedConfirmation("wizard_probe");
                 CalCtx.adb.setupCompleted = true;
                 SaveProfile(CalCtx);
                 s_awaitPolarityConfirm = false;
@@ -544,17 +545,22 @@ void DrawSetupWizardModal() {
                 ImGui::SameLine();
             }
             if (ImGui::Button("No, flip the value", actionButtonSize)) {
-                Metrics::WriteLogAnnotation("[adb-wizard-ui] guardian confirmation: user_requested_flip");
+                Metrics::WriteLogAnnotation("[adb-wizard-ui] guardian confirmation: manual_requested_flip");
                 openvr_pair::common::DiagnosticLog(
-                    "adb-wizard-ui", "guardian confirmation user_requested_flip old_value=%d new_value=%d",
+                    "adb-wizard-ui", "guardian confirmation manual_requested_flip old_value=%d new_value=%d",
                     CalCtx.adb.guardianPauseValue,
                     CalCtx.adb.guardianPauseValue == 1 ? 0 : 1);
-                wkopenvr::adb::SetGuardianPauseValueOverride(CCal_GetAdb(),
+                const bool confirmed = wkopenvr::adb::SetGuardianPauseValueOverride(CCal_GetAdb(),
                     CalCtx.adb.guardianPauseValue == 1 ? 0 : 1);
-                CalCtx.adb.setupCompleted = true;
-                SaveProfile(CalCtx);
-                s_awaitPolarityConfirm = false;
-                s_showWizard = false;
+                if (confirmed) {
+                    wkopenvr::adb::RecordGuardianPausedConfirmation("wizard_flip");
+                    CalCtx.adb.setupCompleted = true;
+                    SaveProfile(CalCtx);
+                    s_awaitPolarityConfirm = false;
+                    s_showWizard = false;
+                } else {
+                    s_guardianError = "Guardian did not confirm after flipping the pause value.";
+                }
             }
         } else {
             ImGui::TextColored(pal.statusOk, "Setup complete.");
