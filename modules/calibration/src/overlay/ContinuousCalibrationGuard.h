@@ -9,13 +9,10 @@
 namespace spacecal::continuous {
 
 constexpr double kMaxFirstAcceptedJumpM = 1.0;
-constexpr double kMaxFirstFullSolveAcceptedJumpM = 5.0;
 constexpr double kMaxSteadyAcceptedJumpM = 0.25;
 constexpr double kMinPublishRotationRad = 1e-3;
 constexpr double kMinPublishTranslationCm = 0.1;
 constexpr int kStableLargeFullSolveSamples = 3;
-constexpr double kStableLargeFullSolveTranslationDeltaCm = 15.0;
-constexpr double kStableLargeFullSolveRotationDeltaRad = 0.25;
 
 struct CandidateGuardResult {
 	bool accepted = true;
@@ -41,8 +38,14 @@ struct LargeFullSolveStabilityResult {
 	bool stable = false;
 	int nextSampleCount = 0;
 	bool storeAsPendingAnchor = false;
+	bool separatedFromBaseline = false;
+	double uncertaintyCm = 0.0;
+	double expectedDeltaCm = 0.0;
+	double combinedDeltaCm = 0.0;
 	double translationDeltaCm = 0.0;
 	double rotationDeltaRad = 0.0;
+	double rotationEquivalentCm = 0.0;
+	double jumpCm = 0.0;
 };
 
 inline RelPoseTrustResult EvaluateRelPoseTrust(
@@ -98,18 +101,65 @@ inline double RotationAngleRad(const Eigen::Matrix3d& rotation)
 	return std::acos(std::clamp((rotation.trace() - 1.0) * 0.5, -1.0, 1.0));
 }
 
+inline double PositiveFiniteOrZero(double value)
+{
+	return (std::isfinite(value) && value > 0.0) ? value : 0.0;
+}
+
+inline double UnitConditionOrOne(double condition)
+{
+	if (!std::isfinite(condition) || condition <= 0.0) {
+		return 1.0;
+	}
+	return std::clamp(condition, 1e-6, 1.0);
+}
+
+inline double EstimateSolveUncertaintyCm(double candidateErrorM,
+                                         double referenceJitterM,
+                                         double targetJitterM,
+                                         double rotationConditionRatio,
+                                         double translationConditionRatio)
+{
+	const double fitM = PositiveFiniteOrZero(candidateErrorM);
+	const double refM = PositiveFiniteOrZero(referenceJitterM);
+	const double targetM = PositiveFiniteOrZero(targetJitterM);
+	const double observedNoiseM = std::sqrt(fitM * fitM + refM * refM + targetM * targetM);
+	const double condition = std::min(
+		UnitConditionOrOne(rotationConditionRatio),
+		UnitConditionOrOne(translationConditionRatio));
+	return observedNoiseM * 100.0 / condition;
+}
+
 inline LargeFullSolveStabilityResult EvaluateLargeFullSolveStability(
 	bool hasPending,
 	int pendingSampleCount,
 	const Eigen::Vector3d& pendingTranslationCm,
 	const Eigen::Matrix3d& pendingRotation,
+	double pendingUncertaintyCm,
+	const Eigen::Vector3d& baselineTranslationCm,
 	const Eigen::Vector3d& candidateTranslationCm,
-	const Eigen::Matrix3d& candidateRotation)
+	const Eigen::Matrix3d& candidateRotation,
+	double candidateErrorM,
+	double referenceJitterM,
+	double targetJitterM,
+	double rotationConditionRatio,
+	double translationConditionRatio)
 {
 	LargeFullSolveStabilityResult result{};
 	if (!candidateTranslationCm.allFinite() || !candidateRotation.allFinite()) {
 		return result;
 	}
+
+	result.jumpCm = baselineTranslationCm.allFinite()
+		? (candidateTranslationCm - baselineTranslationCm).norm()
+		: candidateTranslationCm.norm();
+	result.uncertaintyCm = EstimateSolveUncertaintyCm(
+		candidateErrorM,
+		referenceJitterM,
+		targetJitterM,
+		rotationConditionRatio,
+		translationConditionRatio);
+	result.separatedFromBaseline = result.jumpCm > result.uncertaintyCm;
 
 	if (!hasPending || pendingSampleCount <= 0
 		|| !pendingTranslationCm.allFinite() || !pendingRotation.allFinite())
@@ -123,14 +173,23 @@ inline LargeFullSolveStabilityResult EvaluateLargeFullSolveStability(
 		(candidateTranslationCm - pendingTranslationCm).norm();
 	result.rotationDeltaRad =
 		RotationAngleRad(pendingRotation.transpose() * candidateRotation);
+	result.rotationEquivalentCm = result.rotationDeltaRad * result.jumpCm;
+	result.combinedDeltaCm =
+		std::hypot(result.translationDeltaCm, result.rotationEquivalentCm);
 
+	const double pendingUncertainty =
+		PositiveFiniteOrZero(pendingUncertaintyCm);
+	result.expectedDeltaCm =
+		std::sqrt(pendingUncertainty * pendingUncertainty
+			+ result.uncertaintyCm * result.uncertaintyCm);
 	const bool closeEnough =
-		result.translationDeltaCm <= kStableLargeFullSolveTranslationDeltaCm
-		&& result.rotationDeltaRad <= kStableLargeFullSolveRotationDeltaRad;
+		result.combinedDeltaCm <= result.expectedDeltaCm;
 	result.nextSampleCount = closeEnough ? (pendingSampleCount + 1) : 1;
 	result.storeAsPendingAnchor = !closeEnough;
 	result.stable =
-		closeEnough && result.nextSampleCount >= kStableLargeFullSolveSamples;
+		closeEnough
+		&& result.separatedFromBaseline
+		&& result.nextSampleCount >= kStableLargeFullSolveSamples;
 	return result;
 }
 
@@ -138,8 +197,6 @@ inline PublishCandidateGuardResult EvaluatePublishCandidate(
 	bool inContinuous,
 	bool hasBaseline,
 	bool hasAcceptedThisSession,
-	bool candidateFromRelPose,
-	bool allowLargeFirstFullSolveCorrection,
 	const Eigen::Vector3d& baselineTranslationCm,
 	const Eigen::Vector3d& candidateTranslationCm,
 	const Eigen::Matrix3d& candidateRotation)
@@ -174,9 +231,7 @@ inline PublishCandidateGuardResult EvaluatePublishCandidate(
 		baselineTranslationCm,
 		candidateTranslationCm,
 		candidateRotation,
-		(!candidateFromRelPose && allowLargeFirstFullSolveCorrection)
-			? kMaxFirstFullSolveAcceptedJumpM
-			: kMaxFirstAcceptedJumpM);
+		kMaxFirstAcceptedJumpM);
 	result.accepted = jumpGuard.accepted;
 	result.reason = jumpGuard.reason;
 	result.jumpM = jumpGuard.jumpM;

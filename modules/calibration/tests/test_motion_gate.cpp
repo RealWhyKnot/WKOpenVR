@@ -83,10 +83,17 @@ TEST(AutoRecoverySnapTest, FirstMeaningfulContinuousCandidateSnaps) {
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/3.0));
+        /*jumpCm=*/3.0,
+        /*solveUncertaintyCm=*/0.5));
 
-    EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(true, false, true, 12.5));
-    EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(true, false, true, 25.0));
+    EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(
+        true, false, true,
+        /*jumpCm=*/12.5,
+        /*solveUncertaintyCm=*/12.5));
+    EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(
+        true, false, true,
+        /*jumpCm=*/25.0,
+        /*solveUncertaintyCm=*/30.0));
 }
 
 TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnsafeDeltas) {
@@ -94,27 +101,32 @@ TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnsafeDe
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/2.99));
+        /*jumpCm=*/2.99,
+        /*solveUncertaintyCm=*/12.0));
     EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
         /*continuous=*/false,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/12.0));
+        /*jumpCm=*/12.0,
+        /*solveUncertaintyCm=*/12.0));
     EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/true,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/12.0));
+        /*jumpCm=*/12.0,
+        /*solveUncertaintyCm=*/12.0));
     EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/false,
-        /*jumpCm=*/12.0));
+        /*jumpCm=*/12.0,
+        /*solveUncertaintyCm=*/12.0));
     EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
         /*continuous=*/true,
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/true,
-        /*jumpCm=*/25.01));
+        /*jumpCm=*/25.01,
+        /*solveUncertaintyCm=*/25.0));
 }
 
 static_assert(!ShouldBlendCycle(true, false, true),
@@ -123,7 +135,7 @@ static_assert(ShouldBlendCycle(true, false, false),
     "the only blend-true case is continuous + established + no snap");
 static_assert(!ShouldBlendCycle(false, false, false),
     "non-continuous state must snap");
-static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 3.0),
+static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 3.0, 0.5),
     "first meaningful continuous correction must snap");
-static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 25.01),
-    "meter-scale first continuous corrections must blend, not snap");
+static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 25.01, 25.0),
+    "first continuous corrections beyond solve uncertainty must blend");

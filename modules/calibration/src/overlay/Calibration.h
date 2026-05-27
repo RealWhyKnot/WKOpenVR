@@ -707,6 +707,7 @@ struct CalibrationContext
 	int pendingLargeFullSolveSamples = 0;
 	Eigen::Vector3d pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
 	Eigen::Matrix3d pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
+	double pendingLargeFullSolveUncertaintyCm = 0.0;
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
@@ -873,6 +874,7 @@ struct CalibrationContext
 		pendingLargeFullSolveSamples = 0;
 		pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
 		pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
+		pendingLargeFullSolveUncertaintyCm = 0.0;
 	}
 
 	void ClearRuntimeCalibrationForRecovery()
@@ -889,6 +891,7 @@ struct CalibrationContext
 		pendingLargeFullSolveSamples = 0;
 		pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
 		pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
+		pendingLargeFullSolveUncertaintyCm = 0.0;
 	}
 
 	CalibrationProfileSnapshot CaptureProfileSnapshot() const

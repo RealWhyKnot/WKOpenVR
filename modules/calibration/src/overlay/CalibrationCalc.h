@@ -145,6 +145,10 @@ public:
 		return m_lastPriorRetargetingErrorM;
 	}
 
+	double LastCandidateErrorM() const {
+		return m_lastCandidateRetargetingErrorM;
+	}
+
 	const Eigen::AffineCompact3d RelativeTransformation() const
 	{
 		return m_refToTargetPose;
@@ -319,6 +323,7 @@ public:
 	// Clear). Exposed via LastPriorErrorM() for the common-mode
 	// coherence check.
 	double m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
+	double m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 
 private:
 

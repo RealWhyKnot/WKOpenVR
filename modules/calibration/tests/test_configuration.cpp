@@ -295,8 +295,6 @@ TEST(ConfigurationTest, PublishCandidateGuardAllowsTranslationOnlyCandidate) {
         /*inContinuous=*/false,
         /*hasBaseline=*/false,
         /*hasAcceptedThisSession=*/false,
-        /*candidateFromRelPose=*/false,
-        /*allowLargeFirstFullSolveCorrection=*/true,
         Eigen::Vector3d::Zero(),
         candidateCm,
         Eigen::Matrix3d::Identity());
@@ -312,8 +310,6 @@ TEST(ConfigurationTest, PublishCandidateGuardRejectsExactNoopCandidate) {
         /*inContinuous=*/false,
         /*hasBaseline=*/false,
         /*hasAcceptedThisSession=*/false,
-        /*candidateFromRelPose=*/false,
-        /*allowLargeFirstFullSolveCorrection=*/true,
         Eigen::Vector3d::Zero(),
         Eigen::Vector3d::Zero(),
         Eigen::Matrix3d::Identity());
@@ -322,7 +318,7 @@ TEST(ConfigurationTest, PublishCandidateGuardRejectsExactNoopCandidate) {
     EXPECT_STREQ(result.reason, "identity_candidate");
 }
 
-TEST(ConfigurationTest, PublishCandidateGuardAllowsLargeFirstFullSolveCorrection) {
+TEST(ConfigurationTest, PublishCandidateGuardQuarantinesLargeFirstFullSolveCorrection) {
     const Eigen::Vector3d baselineCm(-160.0, 210.0, -115.0);
     const Eigen::Vector3d candidateCm(230.0, 150.0, 125.0);
 
@@ -330,14 +326,12 @@ TEST(ConfigurationTest, PublishCandidateGuardAllowsLargeFirstFullSolveCorrection
         /*inContinuous=*/true,
         /*hasBaseline=*/true,
         /*hasAcceptedThisSession=*/false,
-        /*candidateFromRelPose=*/false,
-        /*allowLargeFirstFullSolveCorrection=*/true,
         baselineCm,
         candidateCm,
         Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitY()).toRotationMatrix());
 
-    EXPECT_TRUE(result.accepted);
-    EXPECT_STREQ(result.reason, "accepted");
+    EXPECT_FALSE(result.accepted);
+    EXPECT_STREQ(result.reason, "jump_exceeds_limit");
     EXPECT_GT(result.jumpM, spacecal::continuous::kMaxFirstAcceptedJumpM);
 }
 
@@ -349,8 +343,6 @@ TEST(ConfigurationTest, PublishCandidateGuardBlocksLateFirstFullSolveAfterJumpRe
         /*inContinuous=*/true,
         /*hasBaseline=*/true,
         /*hasAcceptedThisSession=*/false,
-        /*candidateFromRelPose=*/false,
-        /*allowLargeFirstFullSolveCorrection=*/false,
         baselineCm,
         candidateCm,
         Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitY()).toRotationMatrix());
@@ -361,61 +353,180 @@ TEST(ConfigurationTest, PublishCandidateGuardBlocksLateFirstFullSolveAfterJumpRe
 }
 
 TEST(ConfigurationTest, LargeFullSolveStabilityRequiresRepeatedCluster) {
+    const Eigen::Vector3d baselineCm(-166.06, 202.62, -109.37);
     const Eigen::Vector3d anchorCm(-64.69, 217.40, -126.24);
     const Eigen::Matrix3d anchorRot = Eigen::Matrix3d::Identity();
+    constexpr double kCandidateErrorM = 0.04;
+    constexpr double kJitterM = 0.0;
+    constexpr double kCondition = 0.5;
 
     const auto first = spacecal::continuous::EvaluateLargeFullSolveStability(
         /*hasPending=*/false,
         /*pendingSampleCount=*/0,
         Eigen::Vector3d::Zero(),
         Eigen::Matrix3d::Identity(),
+        /*pendingUncertaintyCm=*/0.0,
+        baselineCm,
         anchorCm,
-        anchorRot);
+        anchorRot,
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
 
     EXPECT_FALSE(first.stable);
     EXPECT_EQ(first.nextSampleCount, 1);
     EXPECT_TRUE(first.storeAsPendingAnchor);
+    EXPECT_TRUE(first.separatedFromBaseline);
+    EXPECT_GT(first.uncertaintyCm, 0.0);
 
     const auto second = spacecal::continuous::EvaluateLargeFullSolveStability(
         /*hasPending=*/true,
         /*pendingSampleCount=*/1,
         anchorCm,
         anchorRot,
-        anchorCm + Eigen::Vector3d(10.0, 0.0, 0.0),
-        Eigen::AngleAxisd(0.10, Eigen::Vector3d::UnitY()).toRotationMatrix());
+        first.uncertaintyCm,
+        baselineCm,
+        anchorCm + Eigen::Vector3d(5.0, 0.0, 0.0),
+        Eigen::AngleAxisd(0.02, Eigen::Vector3d::UnitY()).toRotationMatrix(),
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
 
     EXPECT_FALSE(second.stable);
     EXPECT_EQ(second.nextSampleCount, 2);
     EXPECT_FALSE(second.storeAsPendingAnchor);
+    EXPECT_LE(second.combinedDeltaCm, second.expectedDeltaCm);
 
     const auto third = spacecal::continuous::EvaluateLargeFullSolveStability(
         /*hasPending=*/true,
         /*pendingSampleCount=*/2,
         anchorCm,
         anchorRot,
-        anchorCm + Eigen::Vector3d(14.0, 1.0, 0.0),
-        Eigen::AngleAxisd(0.20, Eigen::Vector3d::UnitY()).toRotationMatrix());
+        first.uncertaintyCm,
+        baselineCm,
+        anchorCm + Eigen::Vector3d(7.0, 1.0, 0.0),
+        Eigen::AngleAxisd(0.03, Eigen::Vector3d::UnitY()).toRotationMatrix(),
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
 
     EXPECT_TRUE(third.stable);
     EXPECT_EQ(third.nextSampleCount, spacecal::continuous::kStableLargeFullSolveSamples);
     EXPECT_FALSE(third.storeAsPendingAnchor);
+    EXPECT_LE(third.combinedDeltaCm, third.expectedDeltaCm);
 }
 
 TEST(ConfigurationTest, LargeFullSolveStabilityResetsWhenCandidateLeavesCluster) {
+    const Eigen::Vector3d baselineCm(-166.06, 202.62, -109.37);
     const Eigen::Vector3d anchorCm(-64.69, 217.40, -126.24);
+    constexpr double kCandidateErrorM = 0.005;
+    constexpr double kJitterM = 0.0;
+    constexpr double kCondition = 1.0;
 
     const auto result = spacecal::continuous::EvaluateLargeFullSolveStability(
         /*hasPending=*/true,
         /*pendingSampleCount=*/2,
         anchorCm,
         Eigen::Matrix3d::Identity(),
+        /*pendingUncertaintyCm=*/0.5,
+        baselineCm,
         anchorCm + Eigen::Vector3d(16.0, 0.0, 0.0),
-        Eigen::Matrix3d::Identity());
+        Eigen::Matrix3d::Identity(),
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
 
     EXPECT_FALSE(result.stable);
     EXPECT_EQ(result.nextSampleCount, 1);
     EXPECT_TRUE(result.storeAsPendingAnchor);
-    EXPECT_GT(result.translationDeltaCm, spacecal::continuous::kStableLargeFullSolveTranslationDeltaCm);
+    EXPECT_GT(result.combinedDeltaCm, result.expectedDeltaCm);
+}
+
+TEST(ConfigurationTest, LargeFullSolveStabilityRequiresSeparationFromBaseline) {
+    const Eigen::Vector3d baselineCm(0.0, 0.0, 0.0);
+    const Eigen::Vector3d anchorCm(10.0, 0.0, 0.0);
+    constexpr double kCandidateErrorM = 0.20;
+    constexpr double kJitterM = 0.0;
+    constexpr double kCondition = 1.0;
+
+    const auto result = spacecal::continuous::EvaluateLargeFullSolveStability(
+        /*hasPending=*/true,
+        /*pendingSampleCount=*/2,
+        anchorCm,
+        Eigen::Matrix3d::Identity(),
+        /*pendingUncertaintyCm=*/20.0,
+        baselineCm,
+        anchorCm,
+        Eigen::Matrix3d::Identity(),
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
+
+    EXPECT_FALSE(result.stable);
+    EXPECT_FALSE(result.separatedFromBaseline);
+    EXPECT_EQ(result.nextSampleCount, spacecal::continuous::kStableLargeFullSolveSamples);
+}
+
+TEST(ConfigurationTest, LargeFullSolveStabilityDoesNotUseFixedMagnitudeCap) {
+    const Eigen::Vector3d baselineCm(0.0, 0.0, 0.0);
+    const Eigen::Vector3d anchorCm(700.0, 20.0, -30.0);
+    const Eigen::Matrix3d anchorRot = Eigen::Matrix3d::Identity();
+    constexpr double kCandidateErrorM = 0.05;
+    constexpr double kJitterM = 0.0;
+    constexpr double kCondition = 0.5;
+    const double uncertaintyCm = spacecal::continuous::EstimateSolveUncertaintyCm(
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
+
+    const auto result = spacecal::continuous::EvaluateLargeFullSolveStability(
+        /*hasPending=*/true,
+        /*pendingSampleCount=*/2,
+        anchorCm,
+        anchorRot,
+        uncertaintyCm,
+        baselineCm,
+        anchorCm + Eigen::Vector3d(4.0, 0.0, 0.0),
+        Eigen::AngleAxisd(0.005, Eigen::Vector3d::UnitY()).toRotationMatrix(),
+        kCandidateErrorM,
+        kJitterM,
+        kJitterM,
+        kCondition,
+        kCondition);
+
+    EXPECT_TRUE(result.stable);
+    EXPECT_GT(result.jumpCm, 500.0);
+    EXPECT_LE(result.combinedDeltaCm, result.expectedDeltaCm);
+}
+
+TEST(ConfigurationTest, SolveUncertaintyScalesWithNoiseAndConditioning) {
+    const double clean = spacecal::continuous::EstimateSolveUncertaintyCm(
+        /*candidateErrorM=*/0.005,
+        /*referenceJitterM=*/0.0,
+        /*targetJitterM=*/0.0,
+        /*rotationConditionRatio=*/1.0,
+        /*translationConditionRatio=*/1.0);
+    const double noisy = spacecal::continuous::EstimateSolveUncertaintyCm(
+        /*candidateErrorM=*/0.005,
+        /*referenceJitterM=*/0.003,
+        /*targetJitterM=*/0.004,
+        /*rotationConditionRatio=*/0.5,
+        /*translationConditionRatio=*/0.25);
+
+    EXPECT_NEAR(clean, 0.5, 1e-12);
+    EXPECT_GT(noisy, clean);
 }
 
 TEST(ConfigurationTest, PublishCandidateGuardKeepsRelPoseFirstJumpLimit) {
@@ -426,8 +537,6 @@ TEST(ConfigurationTest, PublishCandidateGuardKeepsRelPoseFirstJumpLimit) {
         /*inContinuous=*/true,
         /*hasBaseline=*/true,
         /*hasAcceptedThisSession=*/false,
-        /*candidateFromRelPose=*/true,
-        /*allowLargeFirstFullSolveCorrection=*/true,
         baselineCm,
         candidateCm,
         Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitY()).toRotationMatrix());
@@ -444,8 +553,6 @@ TEST(ConfigurationTest, PublishCandidateGuardKeepsSteadyLimitForFullSolves) {
         /*inContinuous=*/true,
         /*hasBaseline=*/true,
         /*hasAcceptedThisSession=*/true,
-        /*candidateFromRelPose=*/false,
-        /*allowLargeFirstFullSolveCorrection=*/true,
         baselineCm,
         candidateCm,
         Eigen::Matrix3d::Identity());
@@ -498,6 +605,7 @@ TEST(ConfigurationTest, RuntimeRecoveryClearDoesNotLeaveIdentityProfileValid) {
     ctx.pendingLargeFullSolveTranslation = Eigen::Vector3d(1.0, 2.0, 3.0);
     ctx.pendingLargeFullSolveRotation =
         Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    ctx.pendingLargeFullSolveUncertaintyCm = 4.0;
 
     ctx.ClearRuntimeCalibrationForRecovery();
 
@@ -512,6 +620,7 @@ TEST(ConfigurationTest, RuntimeRecoveryClearDoesNotLeaveIdentityProfileValid) {
     EXPECT_EQ(ctx.continuousPreAcceptJumpRejects, 0);
     EXPECT_FALSE(ctx.pendingLargeFullSolve);
     EXPECT_EQ(ctx.pendingLargeFullSolveSamples, 0);
+    EXPECT_DOUBLE_EQ(ctx.pendingLargeFullSolveUncertaintyCm, 0.0);
 }
 
 TEST(ConfigurationTest, LegacyMathMasterDisablesEffectiveValidatedFeatures) {

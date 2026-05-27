@@ -146,6 +146,7 @@ void CalibrationCalc::Clear() {
 	spacecal::blendfilter::Reset(m_blendFilter);
 	m_blendFilterLastUpdateTime = 0.0;
 	m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
+	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 	// `m_lastSampleTime` and `m_lastSuccessfulIncrementalTime` deliberately retained
 	// across Clear() so the watchdog can still see the gap if continuous calibration
 	// is restarted faster than fresh samples can be collected.
@@ -167,6 +168,7 @@ void CalibrationCalc::SeedEstimatedTransformation(const Eigen::AffineCompact3d& 
 	m_healthyHoldAnnotated = false;
 	m_motionQualityHoldAnnotated = false;
 	m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
+	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 
 	const Eigen::Quaterniond q(transform.rotation());
 	const Eigen::Quaterniond twistY(q.w(), 0.0, q.y(), 0.0);
@@ -1404,6 +1406,7 @@ void CalibrationCalc::ComputeInstantOffset() {
 bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold, double relPoseMaxError, const bool ignoreOutliers) {
 	Metrics::RecordTimestamp();
 	m_lastComputeUsedRelPose = false;
+	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 
 	// Same minimum-sample guard as ComputeOneshot; see comment there.
 	if (m_samples.size() < 6) {
@@ -1471,6 +1474,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold, double re
 			m_isValid = true;
 			m_lastComputeUsedRelPose = true;
 			m_estimatedTransformation = byRelPose;
+			m_lastCandidateRetargetingErrorM = relPoseError;
 			return true;
 		}
 		logRelPoseReject(
@@ -1819,6 +1823,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold, double re
 		}
 
 		Metrics::calibrationApplied.Push(!usingRelPose);
+		m_lastCandidateRetargetingErrorM = newError;
 
 		m_consecutiveRejections = 0;
 		m_lastSuccessfulIncrementalTime = m_lastSampleTime;
