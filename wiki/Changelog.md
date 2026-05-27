@@ -6,6 +6,43 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 
 ### Added
 - **calibration:** Warm-restart snap path for HMD wake from standby (454ed8a)
+- **calibration:** Preview boundary drawing (07dec3e)
+- **overlay:** Add support diagnostics and Quest setup fixes (1375e27)
+- **boundary:** Paint floor outline from controller aim (de05639)
+
+### Changed
+- **calibration:** Split guardian setup ui (0e96267)
+- ui(adb): add prompt retry and wireless fallback (32cae4d)
+- **calibration:** Isolate progress popup diagnostics (1b0bf54)
+- ui(calibration): show one-shot readiness progress (3c8efc1)
+- ui(adb): enlarge setup wizard (4099b90)
+- Stabilize continuous calibration exit behavior (2162291)
+- Close shell tab bar before ending window (a9a9738)
+- Bundle ADB platform tools for Guardian support (02ee9f1)
+- Add head-mounted calibration and boundary support (830d6d6)
+- Adjust InputHealth UI gating and defaults (f8b7602)
+- Refactor overlay UI composition helpers (25ed3d1)
+
+### Fixed
+- **calibration:** Gate head tracker offset solve (00d21bd)
+- **calibration:** Stop continuous planar restart loops (e764c40)
+- **calibration:** Align boundary preview and adb reconnect (e31c822)
+- **calibration:** Sync guardian setup status (6bf918d)
+- **calibration:** Keep driver synth fallback live (6ac3202)
+- **calibration:** Enable strict driver synth mode (f5326ce)
+- **logging:** Flush runtime logs to disk (cdeb0a5)
+- **calibration:** Target adb and boundary capture (73c3e20)
+- **calibration:** Suspend solver during driver synth (630afdf)
+- **calibration:** Snap visible continuous corrections (3d7b287)
+- **calibration:** Stabilize headset sampling and adb flow (0c3eab4)
+- **calibration:** Admit first full solve correction (f7bbeba)
+- **calibration:** Gate continuous rel-pose recovery (c8e8f5b)
+- **calibration:** Allow translation-only candidates (643c31e)
+- **adb:** Show retry failure on authorization step (73f7592)
+- **headmount:** Gate offset solve by readiness (7d9f074)
+- **adb:** Clarify Quest authorization steps (1fd866a)
+- **calibration:** Require fresh continuous candidates (aac7fe2)
+- **calibration:** Seed continuous solver from profile (94db885)
 
 ---
 
