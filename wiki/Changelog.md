@@ -22,6 +22,8 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - Add head-mounted calibration and boundary support (830d6d6)
 - Adjust InputHealth UI gating and defaults (f8b7602)
 - Refactor overlay UI composition helpers (25ed3d1)
+- **overlay:** Split logs helpers (2026.5.27.0-beta) (075f03c)
+- diag(debug): improve runtime diagnostics (2026.5.27.0-beta) (148a650)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -43,6 +45,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **adb:** Clarify Quest authorization steps (1fd866a)
 - **calibration:** Require fresh continuous candidates (aac7fe2)
 - **calibration:** Seed continuous solver from profile (94db885)
+- **driver:** Use synth timestamp for freshness (4f60cdb)
 
 ---
 
