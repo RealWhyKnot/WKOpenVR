@@ -3,14 +3,17 @@
 
 #include "DiagnosticsLog.h"
 #include "Win32Paths.h"
+#include "Win32Text.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <regex>
@@ -86,6 +89,17 @@ std::string TrimAsciiForLog(std::string s)
         ++start;
     }
     return s.substr(start);
+}
+
+std::wstring QuoteForCmd(const std::wstring& value)
+{
+    std::wstring out = L"\"";
+    for (wchar_t ch : value) {
+        if (ch == L'"') out += L"\\\"";
+        else out += ch;
+    }
+    out += L"\"";
+    return out;
 }
 
 std::string TruncateForLog(std::string text, size_t limit = 420)
@@ -497,5 +511,66 @@ bool AdbController::DisableWirelessAdb(const std::string& endpoint)
     fprintf(stderr, "[adb] usb endpoint='%s' ok=%d exit=%d out='%s' err='%s'\n",
             endpoint.c_str(), ok ? 1 : 0, r.exitCode,
             TrimAscii(r.out).c_str(), TrimAscii(r.err).c_str());
+    return ok;
+}
+
+bool AdbController::EnableWirelessAdb(int port)
+{
+    if (port <= 0 || port > 65535) port = 5555;
+
+    std::vector<std::string> args;
+    if (!m_targetSerial.empty()) {
+        args.push_back("-s");
+        args.push_back(m_targetSerial);
+    }
+    args.push_back("tcpip");
+    args.push_back(std::to_string(port));
+
+    Result r = Run(args, std::chrono::seconds(8));
+    if (r.timedOut) {
+        fprintf(stderr, "[adb] tcpip timed out port=%d\n", port);
+        return false;
+    }
+    const bool ok = (r.exitCode == 0);
+    fprintf(stderr, "[adb] tcpip port=%d ok=%d exit=%d out='%s' err='%s'\n",
+            port, ok ? 1 : 0, r.exitCode,
+            TrimAscii(r.out).c_str(), TrimAscii(r.err).c_str());
+    return ok;
+}
+
+bool AdbController::OpenInteractiveShell() const
+{
+    if (!BinaryAvailable()) return false;
+
+    const std::wstring adbPath = openvr_pair::common::Utf8ToWide(m_adbPath);
+    if (adbPath.empty()) return false;
+    const std::filesystem::path toolsDir = std::filesystem::path(adbPath).parent_path();
+    const std::wstring directory = toolsDir.wstring();
+    std::wstring args = L"/K \"";
+    args += QuoteForCmd(adbPath);
+    args += L" shell\"";
+
+    HINSTANCE launched = ShellExecuteW(
+        nullptr, L"open", L"cmd.exe", args.c_str(),
+        directory.empty() ? nullptr : directory.c_str(), SW_SHOWNORMAL);
+    const bool ok = reinterpret_cast<intptr_t>(launched) > 32;
+    openvr_pair::common::DiagnosticLog("adb", "open_shell_terminal ok=%d", ok ? 1 : 0);
+    return ok;
+}
+
+bool AdbController::OpenToolsTerminal() const
+{
+    if (!BinaryAvailable()) return false;
+
+    const std::wstring adbPath = openvr_pair::common::Utf8ToWide(m_adbPath);
+    if (adbPath.empty()) return false;
+    const std::filesystem::path toolsDir = std::filesystem::path(adbPath).parent_path();
+    const std::wstring directory = toolsDir.wstring();
+
+    HINSTANCE launched = ShellExecuteW(
+        nullptr, L"open", L"cmd.exe", L"/K",
+        directory.empty() ? nullptr : directory.c_str(), SW_SHOWNORMAL);
+    const bool ok = reinterpret_cast<intptr_t>(launched) > 32;
+    openvr_pair::common::DiagnosticLog("adb", "open_tools_terminal ok=%d", ok ? 1 : 0);
     return ok;
 }

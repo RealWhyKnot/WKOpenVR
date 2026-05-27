@@ -6,12 +6,42 @@
 
 #include <imgui.h>
 
+#include <chrono>
 #include <memory>
+#include <regex>
 #include <utility>
 
 using wkopenvr::questapp::CuratedLaunchTargets;
 using wkopenvr::questapp::LaunchTargetDisplayName;
 using wkopenvr::questapp::QuestLaunchTarget;
+
+#if WKOPENVR_BUILD_IS_DEV
+namespace {
+
+std::string TrimAscii(std::string s)
+{
+    while (!s.empty() && static_cast<unsigned char>(s.back()) <= ' ') {
+        s.pop_back();
+    }
+    size_t start = 0;
+    while (start < s.size() && static_cast<unsigned char>(s[start]) <= ' ') {
+        ++start;
+    }
+    return s.substr(start);
+}
+
+std::string ExtractWifiAdbEndpoint(const std::string& routeOutput, int port)
+{
+    std::smatch match;
+    const std::regex srcPattern(R"(\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})\b)");
+    if (std::regex_search(routeOutput, match, srcPattern) && match.size() >= 2) {
+        return match[1].str() + ":" + std::to_string(port);
+    }
+    return {};
+}
+
+} // namespace
+#endif
 
 void QuestAppPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 {
@@ -31,6 +61,9 @@ void QuestAppPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
         openvr_pair::overlay::ui::DrawTabItem("Setup", [&] { DrawSetup(context); });
         openvr_pair::overlay::ui::DrawTabItem("Boundary", [&] { DrawBoundaryGuide(); });
         openvr_pair::overlay::ui::DrawTabItem("Companion", [&] { DrawCompanion(context); });
+#if WKOPENVR_BUILD_IS_DEV
+        openvr_pair::overlay::ui::DrawTabItem("ADB Dev", [&] { DrawAdbDevTools(); });
+#endif
     }
 
     if (!status_.empty()) {
@@ -232,6 +265,116 @@ void QuestAppPlugin::RefreshPackages()
     showAllPackages_ = true;
     SetStatus("Package list refreshed.", false);
 }
+
+#if WKOPENVR_BUILD_IS_DEV
+void QuestAppPlugin::DrawAdbDevTools()
+{
+    const auto& pal = openvr_pair::overlay::ui::GetPalette();
+    openvr_pair::overlay::ui::DrawInfoBanner(
+        "Developer build only",
+        "ADB controls here are for local headset testing. They are not exposed in release builds.");
+
+    ImGui::Spacing();
+    openvr_pair::overlay::ui::DrawSectionHeading("ADB status");
+    adb_.RefreshResolvedBinaryPath();
+    const bool adbInstalled = adb_.BinaryAvailable();
+    openvr_pair::overlay::ui::DrawStatusDot(adbInstalled ? pal.dotOk : pal.dotPending);
+    ImGui::SameLine();
+    ImGui::TextUnformatted(adbInstalled ? "platform-tools ready" : "Install ADB from Setup first");
+
+    ImGui::Spacing();
+    {
+        openvr_pair::overlay::ui::DisabledSection disabled(
+            !adbInstalled, "Install ADB platform-tools from the Setup tab first.");
+        if (ImGui::Button("List ADB devices")) {
+            const auto result = adb_.Run({"devices", "-l"}, std::chrono::seconds(8));
+            if (result.timedOut || result.exitCode != 0) {
+                lastDevicesOutput_ = TrimAscii(result.err.empty() ? result.out : result.err);
+                SetStatus("adb devices failed.", true);
+            } else {
+                lastDevicesOutput_ = TrimAscii(result.out);
+                SetStatus("ADB device list refreshed.", false);
+            }
+        }
+        disabled.AttachReasonTooltip();
+    }
+    ImGui::SameLine();
+    {
+        openvr_pair::overlay::ui::DisabledSection disabled(
+            !adbInstalled, "Install ADB platform-tools from the Setup tab first.");
+        if (ImGui::Button("Open platform-tools terminal")) {
+            const bool ok = adb_.OpenToolsTerminal();
+            SetStatus(ok ? "Opened platform-tools terminal." : "Could not open platform-tools terminal.", !ok);
+        }
+        disabled.AttachReasonTooltip();
+    }
+    ImGui::SameLine();
+    {
+        openvr_pair::overlay::ui::DisabledSection disabled(
+            !adbInstalled, "Install ADB platform-tools from the Setup tab first.");
+        if (ImGui::Button("Open adb shell")) {
+            const bool ok = adb_.OpenInteractiveShell();
+            SetStatus(ok ? "Opened adb shell terminal." : "Could not open adb shell terminal.", !ok);
+        }
+        disabled.AttachReasonTooltip();
+    }
+
+    if (!lastDevicesOutput_.empty()) {
+        ImGui::Spacing();
+        ImGui::TextUnformatted("adb devices -l");
+        ImGui::BeginChild("questapp_adb_devices_output", ImVec2(0.0f, 92.0f), true);
+        ImGui::TextUnformatted(lastDevicesOutput_.c_str());
+        ImGui::EndChild();
+    }
+
+    ImGui::Spacing();
+    openvr_pair::overlay::ui::DrawSectionHeading("Wi-Fi ADB");
+    openvr_pair::overlay::ui::DrawTextWrapped(
+        "Use this with USB connected and authorized. It asks the headset adb daemon to listen on TCP port 5555 for this boot.");
+    {
+        openvr_pair::overlay::ui::DisabledSection disabled(
+            !adbInstalled, "Install ADB platform-tools from the Setup tab first.");
+        if (ImGui::Button("Enable Wi-Fi ADB on USB headset")) {
+            const int port = 5555;
+            const auto route = adb_.Shell("ip route", std::chrono::seconds(5));
+            std::string endpoint;
+            if (!route.timedOut && route.exitCode == 0) {
+                endpoint = ExtractWifiAdbEndpoint(route.out, port);
+            }
+            const bool ok = adb_.EnableWirelessAdb(port);
+            if (ok) {
+                lastWifiEndpoint_ = endpoint;
+                if (!endpoint.empty()) {
+                    SetStatus("Wi-Fi ADB enabled. Connect with: adb connect " + endpoint, false);
+                } else {
+                    SetStatus("Wi-Fi ADB enabled. Use the headset Wi-Fi IP with port 5555.", false);
+                }
+            } else {
+                SetStatus("Could not enable Wi-Fi ADB. Check USB authorization.", true);
+            }
+        }
+        disabled.AttachReasonTooltip();
+    }
+    ImGui::SameLine();
+    {
+        openvr_pair::overlay::ui::DisabledSection disabled(
+            !adbInstalled, "Install ADB platform-tools from the Setup tab first.");
+        if (ImGui::Button("Return ADB to USB")) {
+            const bool ok = adb_.DisableWirelessAdb();
+            SetStatus(ok ? "ADB switched back to USB mode." : "Could not switch ADB back to USB mode.", !ok);
+        }
+        disabled.AttachReasonTooltip();
+    }
+
+    if (!lastWifiEndpoint_.empty()) {
+        ImGui::Spacing();
+        const std::string connectCommand = "adb connect " + lastWifiEndpoint_;
+        ImGui::TextUnformatted(connectCommand.c_str());
+        ImGui::SameLine();
+        openvr_pair::overlay::ui::CopyToClipboardButton("copy_wifi_adb_connect", connectCommand.c_str());
+    }
+}
+#endif
 
 void QuestAppPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext&)
 {

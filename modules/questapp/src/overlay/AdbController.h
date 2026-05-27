@@ -56,6 +56,16 @@ public:
     // mode and listen on USB again. Returns true if adb exits cleanly.
     virtual bool DisableWirelessAdb(const std::string& endpoint = {});
 
+    // `adb tcpip <port>` asks adbd to listen on Wi-Fi/TCP. This usually needs
+    // an authorized USB connection first and does not survive headset reboot.
+    virtual bool EnableWirelessAdb(int port = 5555);
+
+    // Opens an interactive cmd.exe window running `adb shell`.
+    bool OpenInteractiveShell() const;
+
+    // Opens cmd.exe in the platform-tools directory for ad hoc adb commands.
+    bool OpenToolsTerminal() const;
+
 protected:
     // Resolved at construction from the Quest App platform-tools install.
     // Protected so test subclasses can substitute an alternative binary path

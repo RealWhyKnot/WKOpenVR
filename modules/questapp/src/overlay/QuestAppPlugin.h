@@ -2,6 +2,7 @@
 
 #include "AdbController.h"
 #include "AdbSetupWizard.h"
+#include "BuildChannel.h"
 #include "FeaturePlugin.h"
 #include "QuestAppConfig.h"
 #include "QuestAppCatalog.h"
@@ -31,6 +32,10 @@ private:
     bool packagesLoaded_ = false;
     bool companionSettingsLoaded_ = false;
     std::vector<wkopenvr::questapp::QuestLaunchTarget> detectedPackages_;
+#if WKOPENVR_BUILD_IS_DEV
+    std::string lastWifiEndpoint_;
+    std::string lastDevicesOutput_;
+#endif
 
     void SetStatus(std::string text, bool warn = false);
     void DrawSetup(openvr_pair::overlay::ShellContext& context);
@@ -38,4 +43,7 @@ private:
     void DrawCompanion(openvr_pair::overlay::ShellContext& context);
     void DrawLaunchTargetPicker();
     void RefreshPackages();
+#if WKOPENVR_BUILD_IS_DEV
+    void DrawAdbDevTools();
+#endif
 };

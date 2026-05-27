@@ -9,6 +9,7 @@
 
 #include <imgui.h>
 
+#include <cstring>
 #include <map>
 #include <string>
 
@@ -25,11 +26,11 @@ void DrawTransientStatus(ShellContext &context)
 
 } // namespace
 
-void DrawFeatureTab(ShellContext &context, FeaturePlugin &plugin)
+void DrawFeatureTab(ShellContext &context, FeaturePlugin &plugin, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
 {
 	ui::DrawScrollableTabItem(plugin.Name(), [&] {
 		plugin.DrawTab(context);
-	});
+	}, flags);
 }
 
 void DrawLogsTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
@@ -198,6 +199,8 @@ void DrawThemesTab(ShellContext &)
 
 void DrawShellWindow(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
 {
+	static bool desktopDefaultTabApplied = false;
+
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);
 	ImGui::SetNextWindowSize(vp->WorkSize);
@@ -220,7 +223,14 @@ void DrawShellWindow(ShellContext &context, std::vector<std::unique_ptr<FeatureP
 		if (tabs) {
 			for (auto &plugin : plugins) {
 				if (!plugin->IsInstalled(context)) continue;
-				DrawFeatureTab(context, *plugin);
+				ImGuiTabItemFlags tabFlags = ImGuiTabItemFlags_None;
+				if (!desktopDefaultTabApplied &&
+					!context.dashboardVisible &&
+					std::strcmp(plugin->FlagFileName(), "enable_questapp.flag") == 0) {
+					tabFlags |= ImGuiTabItemFlags_SetSelected;
+					desktopDefaultTabApplied = true;
+				}
+				DrawFeatureTab(context, *plugin, tabFlags);
 			}
 			ui::DrawScrollableTabItem("Logs", [&] {
 				DrawLogsTab(context, plugins);

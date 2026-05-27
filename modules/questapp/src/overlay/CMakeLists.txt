@@ -28,6 +28,7 @@ target_link_libraries(openvr_pair_feature_questapp_overlay PRIVATE
 
 target_link_libraries(openvr_pair_feature_questapp_overlay PUBLIC
     bcrypt
+    shell32
     winhttp)
 
 target_compile_definitions(openvr_pair_feature_questapp_overlay PRIVATE

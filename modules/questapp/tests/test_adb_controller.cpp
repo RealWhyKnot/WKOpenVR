@@ -118,6 +118,35 @@ TEST(AdbControllerTest, DisableWirelessAdb_targets_saved_tcp_endpoint)
               (std::vector<std::string>{"-s", "192.168.1.10:5555", "usb"}));
 }
 
+TEST(AdbControllerTest, EnableWirelessAdb_uses_tcpip_port)
+{
+    StubAdbController ctrl;
+    ctrl.stubOut = "restarting in TCP mode port: 5555\n";
+    ctrl.stubExit = 0;
+
+    EXPECT_TRUE(ctrl.EnableWirelessAdb(5555));
+    ASSERT_EQ(ctrl.calls.size(), 1u);
+    EXPECT_EQ(ctrl.calls[0],
+              (std::vector<std::string>{"tcpip", "5555"}));
+}
+
+TEST(AdbControllerTest, EnableWirelessAdb_targets_saved_endpoint_when_present)
+{
+    StubAdbController ctrl;
+    ctrl.stubOut = "connected to 192.168.1.10:5555\n";
+    ctrl.stubExit = 0;
+
+    EXPECT_TRUE(ctrl.Connect("192.168.1.10:5555"));
+
+    ctrl.stubOut = "restarting in TCP mode port: 5555\n";
+    EXPECT_TRUE(ctrl.EnableWirelessAdb(5555));
+
+    ASSERT_EQ(ctrl.calls.size(), 2u);
+    EXPECT_EQ(ctrl.calls[1],
+              (std::vector<std::string>{
+                  "-s", "192.168.1.10:5555", "tcpip", "5555"}));
+}
+
 TEST(AdbControllerTest, Shell_targets_last_connected_endpoint)
 {
     StubAdbController ctrl;

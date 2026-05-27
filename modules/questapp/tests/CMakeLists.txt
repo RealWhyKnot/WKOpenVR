@@ -33,7 +33,8 @@ target_include_directories(questapp_tests
 target_link_libraries(questapp_tests
     PRIVATE GTest::gtest_main
     PRIVATE openvr_pair_common
-    PRIVATE bcrypt)
+    PRIVATE bcrypt
+    PRIVATE shell32)
 
 target_compile_definitions(questapp_tests
     PRIVATE NOMINMAX
