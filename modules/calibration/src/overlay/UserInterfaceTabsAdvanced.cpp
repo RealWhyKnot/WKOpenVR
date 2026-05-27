@@ -147,9 +147,9 @@ void CCal_DrawSettings() {
 	ImVec2 panel_size { ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0 };
 
 	// Non-continuous and continuous Advanced read as two different surfaces.
-	// Continuous owns the long-session refinement knobs (slew rate, latency,
+	// Continuous owns the long-session refinement knobs (slew rate,
 	// recalibration threshold, tracker offset, target-quash); one-shot only
-	// uses the broad math switches and a couple of always-applicable thresholds.
+	// uses a couple of always-applicable thresholds.
 	// Everything that only does something while continuous calibration is
 	// running is gated on this flag and hidden in one-shot.
 	const bool kInContinuous =
@@ -417,52 +417,10 @@ void CCal_DrawSettings() {
 			ImGui::EndGroupPanel();
 		}
 
-		// Latency tuning + slew rate are continuous-only knobs. Hide them
-		// outside continuous mode so the Advanced tab doesn't read as a
-		// settings dump for one-shot users.
+		// Slew rate is a continuous-only knob. Hide it outside continuous
+		// mode so the Advanced tab doesn't read as a settings dump for
+		// one-shot users.
 		if (kInContinuous) {
-		// Latency tuning (one knob, less of a "Thresholds" grouping)
-		{
-			ImGui::BeginGroupPanel("Continuous calibration (advanced)", panel_size);
-
-			// Target latency offset (manual)
-			ImGui::Text("Target latency offset (ms)");
-			ImGui::SameLine();
-			ImGui::PushID("target_latency_offset");
-			{
-				float latencyMs = (float)CalCtx.targetLatencyOffsetMs;
-				if (ImGui::SliderFloat("##target_latency_offset_slider", &latencyMs, -100.0f, 100.0f, "%.1f", 0)) {
-					CalCtx.targetLatencyOffsetMs = (double)latencyMs;
-				}
-			}
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Manual end-to-end-latency offset for the target tracking system, in milliseconds.\n"
-					"Use this when the target system (e.g. Slime IMU, Quest) lags the reference (e.g. Lighthouse).\n"
-					"At sample-collection time the reference pose is extrapolated by this amount using its\n"
-					"reported velocity, so quick motions don't bias the calibration.\n"
-					"Default 0 disables the feature. Auto-detect below overrides this when on.");
-			}
-			AddResetContextMenu("target_latency_ctx", [] { CalCtx.targetLatencyOffsetMs = 0.0; });
-			ImGui::PopID();
-
-			// Auto-detect runs cross-correlation across the rolling sample
-			// buffer that only fills during continuous calibration; in one-shot
-			// mode the estimator never fires. This is a persisted preference,
-			// so it's always interactive -- the tooltip explains when the path
-			// actually runs.
-			ImGui::Checkbox("Auto-detect target latency", &CalCtx.latencyAutoDetect);
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Uses cross-correlation of tracker velocities to estimate the inter-system\n"
-					"latency once per second when both devices are moving. Overrides the manual\n"
-					"offset above when on.\n\n"
-					"Active in: continuous calibration only. In one-shot mode the rolling sample\n"
-					"buffer that this estimator reads doesn't fill, so the value freezes; the\n"
-					"manual offset slider above still applies.");
-			}
-
-			ImGui::EndGroupPanel();
-		}
-
 		// Calibration slew rate -- the absolute mm/sec and deg/sec caps on
 		// how fast the user-visible transform is allowed to converge toward
 		// the calibration target. Active only when the Basic tab's
@@ -580,185 +538,7 @@ void CCal_DrawSettings() {
 			}
 			ImGui::EndGroupPanel();
 		}
-		} // if (kInContinuous): latency + slew rate
-
-		// Math panel. Single home for every math-stack toggle. The upstream
-		// legacy master switch stays separate because it disables several
-		// paths at once without overwriting individual toggle preferences.
-		//
-		// Each toggle is wrapped in a previous-value compare so that a user
-		// flip emits a one-shot log annotation -- session log shows "behavior
-		// changed at time T because the user enabled X". Statics initialize
-		// to the loaded-profile values on first frame so we do not log a
-		// spurious flip just because the panel rendered for the first time.
-		auto logToggleFlip = [](const char* key, bool& prev, bool current) {
-			if (prev != current) {
-				char buf[128];
-				snprintf(buf, sizeof buf, "math_toggle_flip: key=%s value=%d", key, (int)current);
-				Metrics::WriteLogAnnotation(buf);
-				prev = current;
-			}
-		};
-		{
-			ImGui::BeginGroupPanel("Math", panel_size);
-			ImGui::TextWrapped("The core math path is the default. Optional paths can be enabled for testing or specific rigs.");
-			ImGui::Spacing();
-
-			bool mathChanged = false;
-			mathChanged |= ImGui::Checkbox("Enable legacy math", &CalCtx.useUpstreamMath);
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Reverts the effective math stack toward the old upstream behavior.\n"
-					"This overrides the disable switches below while it is on, but keeps their\n"
-					"stored choices so turning legacy math back off restores the selected defaults.");
-			}
-			if (CalCtx.useUpstreamMath) {
-				ImGui::TextDisabled("Legacy math is active; optional paths below are effectively disabled.");
-			}
-			ImGui::Spacing();
-
-			// --- Core defaults ------------------------------------------------
-			ImGui::TextDisabled("Core defaults");
-			if (CalCtx.useUpstreamMath) ImGui::BeginDisabled();
-
-			// Direct O(N) latent-offset translation solve. Default on, graduated
-			// 2026-05-11. Disabling reverts to pairwise O(N^2) IRLS.
-			mathChanged |= ImGui::Checkbox("Disable direct translation solve (use pairwise IRLS)", &CalCtx.useLegacyMath);
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Reverts the translation solve to the prior pairwise O(N^2) IRLS path.\n"
-					"The default direct O(N) latent-offset solver jointly estimates the calibration\n"
-					"translation and the reference-to-target offset, then runs per-sample Cauchy IRLS;\n"
-					"it is faster and statistically cleaner.\n\n"
-					"Active in: both one-shot and continuous calibration.");
-			}
-
-			// GCC-PHAT latency estimator. Default on (graduated 2026-05-11).
-			bool legacyTimeDomainLatency = !CalCtx.useGccPhatLatency;
-			if (ImGui::Checkbox("Disable GCC-PHAT latency estimator (use time-domain CC)", &legacyTimeDomainLatency)) {
-				CalCtx.useGccPhatLatency = !legacyTimeDomainLatency;
-				mathChanged = true;
-			}
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Reverts the latency estimator from the default whitened-spectrum\n"
-					"cross-correlator (GCC-PHAT, Knapp-Carter 1976) to the prior time-domain CC.\n"
-					"GCC-PHAT is drop-in better across the latency-relevant range.\n\n"
-					"Active in: continuous calibration with auto-detect target latency on.");
-			}
-
-			// Velocity-aware IRLS weighting. Default on (graduated 2026-05-11).
-			bool legacyUniformIRLS = !CalCtx.useVelocityAwareWeighting;
-			if (ImGui::Checkbox("Disable velocity-aware IRLS weighting", &legacyUniformIRLS)) {
-				CalCtx.useVelocityAwareWeighting = !legacyUniformIRLS;
-				mathChanged = true;
-			}
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Reverts the IRLS translation solve to the prior uniform per-pair\n"
-					"threshold. The default velocity-aware path scales the threshold down with motion\n"
-					"magnitude so fast-motion glitches get a sharper cutoff while stationary\n"
-					"high-residual rows stay informative.\n\n"
-					"Active in: both one-shot and continuous calibration.");
-			}
-
-			// Rest-locked yaw drift correction. Default on (graduated 2026-05-11).
-			bool disableRestLockedYaw = !CalCtx.restLockedYawEnabled;
-			if (ImGui::Checkbox("Disable rest-locked yaw drift correction", &disableRestLockedYaw)) {
-				CalCtx.restLockedYawEnabled = !disableRestLockedYaw;
-				mathChanged = true;
-			}
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Disables the rest-locked yaw drift correction. When a tracker stays\n"
-					"still for 1 s, the default path locks its orientation as an absolute reference\n"
-					"and applies bounded-rate yaw nudges on subsequent at-rest ticks.\n\n"
-					"Active in: continuous calibration OFF (one-shot, idle, editing, standby).");
-			}
-
-			ImGui::Spacing();
-			ImGui::Separator();
-			ImGui::Spacing();
-
-			// CUSUM geometry-shift detector.
-			if (kInContinuous) {
-				mathChanged |= ImGui::Checkbox("Enable CUSUM geometry-shift detector", &CalCtx.useCusumGeometryShift);
-				if (ImGui::IsItemHovered(0)) {
-					ImGui::SetTooltip("Uses CUSUM geometry-shift detection instead of the older\n"
-						"5x-rolling-median rule. Same recovery action when fired.\n\n"
-						"Active in: continuous calibration only.");
-				}
-			}
-
-			mathChanged |= ImGui::Checkbox("Enable Tukey biweight robust kernel", &CalCtx.useTukeyBiweight);
-			if (ImGui::IsItemHovered(0)) {
-				ImGui::SetTooltip("Uses Tukey + Qn instead of Cauchy + MAD.\n"
-					"This path gives high-residual rows zero weight\n"
-					"after the cutoff while using a higher-breakdown scale estimate.\n\n"
-					"Active in: both one-shot and continuous calibration.");
-			}
-
-			// Kalman-filter blend at publish. Continuous-only.
-			if (kInContinuous) {
-				mathChanged |= ImGui::Checkbox("Enable Kalman-filter blend at publish", &CalCtx.useBlendFilter);
-				if (ImGui::IsItemHovered(0)) {
-					ImGui::SetTooltip("Uses a 4-state Kalman filter on yaw + translation instead of\n"
-						"the older single-step EMA publish blend.\n\n"
-						"Active in: continuous calibration only.");
-				}
-			}
-
-			// Predictive recovery pre-correction. Continuous-only buffer fill.
-			if (kInContinuous) {
-				mathChanged |= ImGui::Checkbox("Enable predictive recovery pre-correction", &CalCtx.predictiveRecoveryEnabled);
-				if (ImGui::IsItemHovered(0)) {
-					ImGui::SetTooltip("Each Quest re-anchor event (the 30 cm HMD-jump trigger) pushes its direction\n"
-						"and magnitude into a 6-deep rolling buffer. Once 3+ events accumulate with a consistent\n"
-						"direction, apply 10 percent of the predicted next-jump per tick as a bounded-rate\n"
-						"translation nudge.\n\n"
-						"Active in: continuous calibration (buffer fill requires the 30 cm detector to fire).");
-				}
-			}
-
-			// Chi-square re-anchor sub-detector. Continuous-only.
-			if (kInContinuous) {
-				mathChanged |= ImGui::Checkbox("Enable chi-square re-anchor sub-detector", &CalCtx.reanchorChiSquareEnabled);
-				if (ImGui::IsItemHovered(0)) {
-					ImGui::SetTooltip("Mahalanobis distance between HMD-pose-from-rolling-velocity and observed\n"
-						"HMD pose. Threshold at chi-square 6 DoF p<1e-4 (about 27.86). Needs angular-velocity\n"
-						"prediction before it can trust rotation residuals during normal head turns; without\n"
-						"that it can false-fire on routine motion. Detection-only -- never triggers recovery.\n\n"
-						"Active in: continuous calibration only.");
-				}
-			}
-			if (CalCtx.useUpstreamMath) ImGui::EndDisabled();
-			if (mathChanged) {
-				SaveProfile(CalCtx);
-			}
-
-			// Toggle-flip diagnostic. useUpstreamMath is still tracked (it can
-			// be set via the profile JSON) so a flip in either direction still
-			// lands a log line.
-			static bool s_prevAutoDetect = CalCtx.latencyAutoDetect;
-			static bool s_prevUpstream   = CalCtx.useUpstreamMath;
-			static bool s_prevGccPhat    = CalCtx.useGccPhatLatency;
-			static bool s_prevCusum      = CalCtx.useCusumGeometryShift;
-			static bool s_prevVelAware   = CalCtx.useVelocityAwareWeighting;
-			static bool s_prevTukey      = CalCtx.useTukeyBiweight;
-			static bool s_prevLegacy     = CalCtx.useLegacyMath;
-			static bool s_prevKalman     = CalCtx.useBlendFilter;
-			static bool s_prevRestYaw    = CalCtx.restLockedYawEnabled;
-			static bool s_prevPredRecov  = CalCtx.predictiveRecoveryEnabled;
-			static bool s_prevChiSq      = CalCtx.reanchorChiSquareEnabled;
-			logToggleFlip("latency_auto_detect",       s_prevAutoDetect, CalCtx.latencyAutoDetect);
-			logToggleFlip("translation_use_upstream",  s_prevUpstream,   CalCtx.useUpstreamMath);
-			logToggleFlip("latency_use_gcc_phat",      s_prevGccPhat,    CalCtx.useGccPhatLatency);
-			logToggleFlip("geometry_shift_use_cusum",  s_prevCusum,      CalCtx.useCusumGeometryShift);
-			logToggleFlip("irls_velocity_aware",       s_prevVelAware,   CalCtx.useVelocityAwareWeighting);
-			logToggleFlip("irls_use_tukey",            s_prevTukey,      CalCtx.useTukeyBiweight);
-			logToggleFlip("translation_use_legacy",    s_prevLegacy,     CalCtx.useLegacyMath);
-			logToggleFlip("blend_use_kalman",          s_prevKalman,     CalCtx.useBlendFilter);
-			logToggleFlip("rest_locked_yaw",           s_prevRestYaw,    CalCtx.restLockedYawEnabled);
-			logToggleFlip("predictive_recovery",       s_prevPredRecov,  CalCtx.predictiveRecoveryEnabled);
-			logToggleFlip("reanchor_chi_square",       s_prevChiSq,      CalCtx.reanchorChiSquareEnabled);
-
-			ImGui::EndGroupPanel();
-		}
+		} // if (kInContinuous): slew rate
 
 		// Tracker offset is continuous-only: only the Continuous path applies
 		// it via continuousCalibrationOffset. Hide outside continuous so the

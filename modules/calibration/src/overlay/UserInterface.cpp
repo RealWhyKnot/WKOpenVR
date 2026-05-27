@@ -328,7 +328,7 @@ void BuildContinuousCalDisplay() {
 	//   - Play Space: head-mounted tracker setup, safety boundary drawing,
 	//                 and Quest Guardian controls in one room-scale flow.
 	//   - Graphs:    live plots for users who want to watch the math.
-	//   - Advanced:  technical knobs (speed, alignment thresholds, latency
+	//   - Advanced:  technical knobs (speed, alignment thresholds,
 	//                tuning); the only place to override AUTO defaults.
 	//   - Logs:      debug-log CSV files for bug reports. Lives in the
 	//                umbrella's global Logs tab now.
@@ -430,7 +430,7 @@ inline const char* GetPrettyTrackingSystemName(const std::string& value) {
 // touches: outlier rejection, universe-shift correction, calibration speed,
 // chaperone bounds, maintenance. Continuous-only knobs (Lock relative
 // position, Recalibrate on movement, recalibration threshold, alignment
-// thresholds, latency tuning, slew rate) live on the continuous Basic /
+// thresholds, slew rate) live on the continuous Basic /
 // Advanced tabs where they actually do something.
 //
 // The reasoning for having both this AND CCal_BasicInfo's Common settings

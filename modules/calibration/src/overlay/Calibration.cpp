@@ -13,23 +13,14 @@
 #include "DevFakeDevices.h"
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
-#include "ContinuousCalibrationGuard.h"
 #include "VRState.h"
 #include "WedgeDetector.h"   // ShouldFireRuntimeWedgeRecovery, kMaxPlausibleCalibrationMagnitudeCm
 #include "GeometryShiftDetector.h"  // IsCurrentErrorSpike, ShouldFireGeometryShiftRecovery
 #include "CommonModeCoherence.h"   // spacecal::coherence::ComputeCoherenceScore
 #include "SnapSuppression.h"       // spacecal::snap_suppression::EffectiveSpeedMps
 #include "MotionGate.h"      // ShouldBlendCycle -- auto-recovery snap decision
-#include "LatencyEstimator.h"  // spacecal::latency::EstimateLagTimeDomain / EstimateLagGccPhat
-#include "TiltDiagnostic.h"    // spacecal::gravity::EvaluateTilt -- sustained gravity-disagreement annotation
 #include "Wizard.h"          // spacecal::wizard::IsActive -- gate the runtime wedge detector
                              // off while the user is mid-setup so it can't disrupt them.
-#include "RestLockedYaw.h"   // spacecal::rest_yaw::* -- rest-locked yaw drift correction
-                             // (continuous-cal-OFF mode). Default OFF; opt-in via Experimental tab.
-#include "RecoveryDeltaBuffer.h" // spacecal::recovery_delta::* -- predictive pre-correction
-                             // from the rolling buffer of 30 cm relocalization events.
-#include "ReanchorChiSquareDetector.h" // spacecal::reanchor_chi::* -- sub-30 cm re-anchor
-                             // sub-detector. Detection-only; freezes recs A/C on candidate.
 #include "BoundaryRePush.h"   // TickBoundaryRePush -- safety boundary chaperone re-push.
 #include "ControllerInput.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
@@ -187,13 +178,8 @@ static void TickCpuPressureMonitor(double computationTimeMs, double now_s) {
         char buf[256];
         snprintf(buf, sizeof buf,
             "cpu_pressure_warning_on: ema_pct=%.1f inst_pct=%.1f cores=%d"
-            " upstream=%d gcc_phat=%d cusum=%d velocity_aware=%d tukey=%d kalman=%d"
-            " auto_detect_latency=%d state=%d",
+            " state=%d",
             s.emaPct, instPct, s.logicalProcessors,
-            (int)CalCtx.useUpstreamMath,
-            (int)CalCtx.EffectiveGccPhatLatency(), (int)CalCtx.EffectiveCusumGeometryShift(),
-            (int)CalCtx.EffectiveVelocityAwareWeighting(), (int)CalCtx.EffectiveTukeyBiweight(),
-            (int)CalCtx.EffectiveBlendFilter(), (int)CalCtx.latencyAutoDetect,
             (int)CalCtx.state);
         Metrics::WriteLogAnnotation(buf);
     } else if (s.alarmed && s.emaPct < kCpuPressureOffThresholdPct) {
@@ -215,12 +201,9 @@ static void TickCpuPressureMonitor(double computationTimeMs, double now_s) {
         char buf[256];
         snprintf(buf, sizeof buf,
             "cpu_pressure_spike: computationTime_ms=%.1f ema_pct=%.1f"
-            " upstream=%d gcc_phat=%d cusum=%d velocity_aware=%d tukey=%d kalman=%d state=%d",
+            " state=%d",
             computationTimeMs, s.emaPct,
-            (int)CalCtx.useUpstreamMath,
-            (int)CalCtx.EffectiveGccPhatLatency(), (int)CalCtx.EffectiveCusumGeometryShift(),
-            (int)CalCtx.EffectiveVelocityAwareWeighting(), (int)CalCtx.EffectiveTukeyBiweight(),
-            (int)CalCtx.EffectiveBlendFilter(), (int)CalCtx.state);
+            (int)CalCtx.state);
         Metrics::WriteLogAnnotation(buf);
     }
 }
@@ -264,7 +247,6 @@ static double g_lastAutoLockTranslMad = 0.0;
 static double g_lastAutoLockRotMad = 0.0;
 static int g_geomShiftConsecutiveBadTicks = 0;
 static spacecal::geometry_shift::CusumState g_cusumState;
-static spacecal::geometry_shift::DeferralState g_geomShiftDeferral;
 
 static Eigen::Affine3d CalibrationTransformFromContext(const CalibrationContext& ctx)
 {
@@ -463,10 +445,6 @@ static double ComputeEffectiveSpeedMps(const CalibrationContext& ctx)
 // Commit a queued AUTO Lock flip when the user is still enough that the
 // resulting calibration jump won't be jarring. Returns true if a commit
 // happened this call (caller may want to log / kick the calibration math).
-//
-// `now` is the CalibrationTick time stamp. Used to gate commits during the
-// post-reanchor suppression window -- see kReanchorSuppressSeconds for why
-// reanchor noise needs to be held off the lock-state decision.
 bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSpeedMps, double now)
 {
 	if (!ctx.autoLockHasPendingFlip) {
@@ -486,32 +464,25 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 
 	const double heldSec = now - ctx.autoLockPendingFlipFirstSeen;
 	const auto gate = spacecal::autolock::EvaluateCommitGate(
-		ctx.autoLockPendingFlipTo, hmdSpeedMps, now,
-		ctx.autoLockReanchorSuppressUntil, heldSec);
+		ctx.autoLockPendingFlipTo, hmdSpeedMps, now, heldSec);
 
 	if (!gate.commit) {
 		// Held by a gate. Emit a one-shot diagnostic per pending flip once
 		// the hold exceeds the warn threshold, so a chronic block becomes
 		// visible without per-tick log noise. Re-armed by the !pending
-		// path above. The reason string needs the raw stationary/suppressed
-		// pair so a reader can distinguish motion from reanchor-suppress;
-		// the gate helper collapses both into mode="held".
+		// path above.
 		if (!ctx.autoLockGateHeldWarned
 			&& heldSec >= spacecal::autolock::kAutoLockGateHeldWarnSeconds) {
 			ctx.autoLockGateHeldWarned = true;
 			const bool stationary = spacecal::autolock::HmdIsStationary(hmdSpeedMps);
-			const bool suppressed = spacecal::autolock::ShouldSuppressForReanchor(
-				now, ctx.autoLockReanchorSuppressUntil);
 			char gbuf[280];
 			snprintf(gbuf, sizeof gbuf,
 				"[autolock][gate-held] pending_target=%d current=%d held_sec=%.2f"
-				" reason=%s hmdSpeed=%.3fmps suppress_until=%.3f now=%.3f",
+				" reason=%s hmdSpeed=%.3fmps now=%.3f",
 				(int)ctx.autoLockPendingFlipTo, (int)ctx.autoLockEffectivelyLocked,
 				heldSec,
-				(!stationary && suppressed) ? "motion+suppress"
-					: !stationary           ? "motion"
-					:                          "suppress",
-				hmdSpeedMps, ctx.autoLockReanchorSuppressUntil, now);
+				!stationary ? "motion" : "held",
+				hmdSpeedMps, now);
 			Metrics::WriteLogAnnotation(gbuf);
 		}
 		return false;
@@ -728,8 +699,6 @@ void StartContinuousCalibration(const char* reason) {
 	CalCtx.hasAppliedCalibrationResult = false;
 	CalCtx.continuousStartSnapshot = CalCtx.CaptureProfileSnapshot();
 	CalCtx.lastAcceptedContinuousSnapshot = {};
-	CalCtx.continuousPreAcceptJumpRejects = 0;
-	CalCtx.ClearPendingLargeFullSolve();
 	AssignTargets();
 	if (CalCtx.headMount.mode != HeadMountMode::Off || !CalCtx.headMount.trackerSerial.empty()) {
 		if (wkopenvr::headmount::BindHeadMountToContinuousTarget(CalCtx)) {
@@ -864,16 +833,12 @@ void CalibrationTick(double time)
 	// post-fix log readers will see lockRelativePosition=1 in fires after
 	// AUTO Lock engages (previously stuck at 0).
 	calibration.lockRelativePosition = ctx.lockRelativePosition;
-	calibration.warmRestartGraceActive = (ctx.warmRestartGraceSamples > 0);
 
 	// Warm-restart detection. The user takes the HMD off (activity level
 	// falls to Standby), comes back later, puts it on (activity level
 	// snaps back to UserInteraction). If the away duration cleared the
 	// threshold and the saved profile is valid, snap the driver to the
-	// saved transform and grant a grace window in which CalibrationCalc
-	// skips the prior-vs-new error rejection gate. Convergence then picks
-	// the saved offset back up within ~30 s instead of fighting it back
-	// from an empty sample buffer over the next 4-7 min.
+	// saved transform and grant a validation grace window.
 	//
 	// GetTrackedDeviceActivityLevel is preferred over Prop_UserPresent_Bool
 	// here because the activity-level path is driven by both the proximity
@@ -1108,7 +1073,7 @@ void CalibrationTick(double time)
 	// types just to learn the cal's current state. Fields chosen to maximize
 	// signal-per-character: state, lock resolution (mode + resolved + detector
 	// internal), recent error level, sample-buffer size, time since last
-	// reset / reanchor.
+	// reset.
 	if (ctx.state == CalibrationState::Continuous
 		|| ctx.state == CalibrationState::ContinuousStandby)
 	{
@@ -1117,7 +1082,6 @@ void CalibrationTick(double time)
 			s_lastHeartbeatTime = time;
 			const auto& errSeries = Metrics::error_currentCal;
 			const double errLast = errSeries.size() > 0 ? errSeries.last() : 0.0;
-			const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
 			// Geometry-shift cooldown remaining (0 when no active cooldown).
 			// The deadline ctx.geometryShiftCooldownUntil is wall-clock-style
 			// time matching CalibrationTick's `time` argument; the heartbeat
@@ -1199,8 +1163,7 @@ void CalibrationTick(double time)
 				" mad_floor_mm=%.3f enter_threshold_mm=%.3f"
 				" settled=%s settled_since_sec=%.1f"
 				" err_last_mm=%.2f err_samples=%d"
-				" sec_since_reanchor=%.2f autolock_suppress_until=%.3f"
-				" reloc_cooldown_until=%.3f grace_until=%.3f"
+				" grace_until=%.3f"
 				" geom_cusumS=%.3f geom_sustain=%d/%d"
 				" geom_cooldown_remaining_sec=%.1f"
 				" relPosCal=%d hmdStalls=%d"
@@ -1217,8 +1180,7 @@ void CalibrationTick(double time)
 				settled ? "yes" : "no",
 				settled ? secsSinceLastFlip : 0.0,
 				errLast, errSeries.size(),
-				secSinceReanchor, ctx.autoLockReanchorSuppressUntil,
-				ctx.relocalizationCooldownUntil, ctx.geometryShiftGraceUntil,
+				ctx.geometryShiftGraceUntil,
 				g_cusumState.S, g_cusumState.sustainedAboveThreshold,
 				spacecal::geometry_shift::kMinSustainedSpikes,
 				cooldownRemaining,
@@ -1241,20 +1203,9 @@ void CalibrationTick(double time)
 			s_loggedConfigDump = true;
 			char dumpBuf[512];
 			snprintf(dumpBuf, sizeof dumpBuf,
-				"session_config_dump: upstream=%d gcc_phat=%d cusum=%d velocity_aware=%d tukey=%d kalman=%d"
-				" eff_gcc_phat=%d eff_cusum=%d eff_velocity_aware=%d eff_tukey=%d eff_kalman=%d"
-				" auto_detect_latency=%d ignore_outliers=%d static_recal=%d"
+				"session_config_dump: ignore_outliers=%d static_recal=%d"
 				" recalibrate_on_movement=%d one_shot_speed=%.2f continuous_speed=%.2f active_speed=%.2f jitter_threshold=%.2f",
-				(int)ctx.useUpstreamMath,
-				(int)ctx.useGccPhatLatency, (int)ctx.useCusumGeometryShift,
-				(int)ctx.useVelocityAwareWeighting, (int)ctx.useTukeyBiweight,
-				(int)ctx.useBlendFilter,
-				(int)ctx.EffectiveGccPhatLatency(),
-				(int)ctx.EffectiveCusumGeometryShift(),
-				(int)ctx.EffectiveVelocityAwareWeighting(),
-				(int)ctx.EffectiveTukeyBiweight(),
-				(int)ctx.EffectiveBlendFilter(),
-				(int)ctx.latencyAutoDetect, (int)ctx.ignoreOutliers,
+				(int)ctx.ignoreOutliers,
 				(int)ctx.enableStaticRecalibration, (int)ctx.recalibrateOnMovement,
 				(double)ctx.oneShotCalibrationSpeed,
 				(double)ctx.continuousCalibrationSpeed,
@@ -1293,27 +1244,6 @@ void CalibrationTick(double time)
 	// detector compares against THIS tick's poses; the universe-shift
 	// detector cares about pose changes between consecutive ticks).
 	TickHmdRelocalizationDetector(time);
-
-	// Chi-square re-anchor sub-detector (rec F). When fired, returns true so
-	// recs A and C skip their tick for the freeze window. Detection-only:
-	// the 30 cm detector above is still the only path to actual recovery.
-	const bool restAndRecCFrozen = TickReanchorChiSquare(time);
-
-	// Rest-locked yaw drift correction (rec A). Opt-in via Experimental tab,
-	// default OFF. Skips Continuous mode (continuous-cal already handles drift)
-	// and active one-shot sub-states. When at-rest signal is available, applies
-	// a bounded-rate yaw nudge to ctx.calibratedRotation(1); the existing
-	// publish path picks up the change via SendFallbackIfChanged.
-	if (!restAndRecCFrozen) {
-		TickRestLockedYaw(time);
-	}
-
-	// Predictive recovery pre-correction (rec C). Opt-in via Experimental tab,
-	// default OFF. Reads the rolling buffer of 30 cm relocalization events and
-	// applies a bounded-rate translation nudge if the gate passes.
-	if (!restAndRecCFrozen) {
-		TickPredictiveRecovery(time);
-	}
 
 	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
 		ctx.ClearLogOnMessage();
@@ -1365,7 +1295,6 @@ void CalibrationTick(double time)
 		if (inGeometryShiftGrace) {
 			g_geomShiftConsecutiveBadTicks = 0;
 			g_cusumState.Reset();
-			g_geomShiftDeferral.Reset();
 			if ((time - s_lastGraceLogTime) >= 1.0) {
 				s_lastGraceLogTime = time;
 				char gBuf[200];
@@ -1393,7 +1322,7 @@ void CalibrationTick(double time)
 				double current = errSeries[N - 1].second;
 				const double ratio = (median > spacecal::geometry_shift::kMedianFloor)
 					? current / median : 0.0;
-				const bool useCusumGeometryShift = ctx.EffectiveCusumGeometryShift();
+				const bool useCusumGeometryShift = false;
 
 				bool fire = false;
 				bool isSpike = false;
@@ -1434,9 +1363,8 @@ void CalibrationTick(double time)
 				// Common-mode coherence check. The primary detector above
 				// votes from the primary HMD<->target pair's residual
 				// stream alone. If a vote-to-fire actually reflects a
-				// shared-frame event (worldFromDriver reanchor coming
-				// from outside the chi-square detector, runtime
-				// relocalization, base-station perturbation), then the
+				// shared-frame event (runtime relocalization or base-station
+				// perturbation), then the
 				// active multi-system extras should be showing the same
 				// spike with the same shape. Score that explicitly and
 				// suppress the fire when the spike is coherent across
@@ -1498,160 +1426,20 @@ void CalibrationTick(double time)
 					}
 				}
 
-				// Reanchor-gate with deferral. When the chi-square reanchor is
-				// frozen the underlying worldFromDriver was just reset and the
-				// cal solver naturally produces larger residuals as it re-
-				// anchors against the new frame. The previous suppress-and-
-				// reset path dropped those fires entirely, which on rigs with
-				// continuous reanchor activity (Quest+Lighthouse, reanchor
-				// every 0.8-1.5 s with 0.5 s freeze each) starved real shifts
-				// of any remediation -- the 2026-05-25 session log showed 1
-				// committed fire across 5.3 h despite continuous candidate
-				// activity. Deferral preserves the fire intent: commit on the
-				// next non-frozen tick, or fire through after
-				// kFireThroughSeconds of continuous freeze (storm itself is
-				// shift signature at that duration). See
-				// GeometryShiftDetector.h::DeferralState for the contract.
-				const bool reanchorFrozen = IsReanchorChiFrozen(time);
-
-				// Process an existing deferral first -- it can promote into a
-				// real fire even if no new fire was decided this tick.
-				if (g_geomShiftDeferral.HasPending()) {
-					const double deferredFor = time - g_geomShiftDeferral.pendingFireSince;
-					const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
-					if (!reanchorFrozen) {
-						// Reanchor cleared. Commit the deferred fire using the
-						// latched diagnostics so the upcoming [fire] log
-						// describes the originally-triggering values, not the
-						// post-defer current sample.
-						char dcBuf[320];
-						snprintf(dcBuf, sizeof dcBuf,
-							"[geometry-shift][deferred-fire-committed] deferred_for_sec=%.3f"
-							" current_mm=%.3f median_mm=%.3f ratio=%.2fx"
-							" cusum_S_at_pending=%.3f sustain_at_pending=%d mode=%s"
-							" sec_since_reanchor=%.3f",
-							deferredFor,
-							g_geomShiftDeferral.currentMmAtPending,
-							g_geomShiftDeferral.medianMmAtPending,
-							g_geomShiftDeferral.ratioAtPending,
-							g_geomShiftDeferral.cusumSAtPending,
-							g_geomShiftDeferral.sustainAtPending,
-							g_geomShiftDeferral.modeWasCusum ? "cusum" : "legacy",
-							secSinceReanchor);
-						Metrics::WriteLogAnnotation(dcBuf);
-						current = g_geomShiftDeferral.currentMmAtPending;
-						median  = g_geomShiftDeferral.medianMmAtPending;
-						cusumValueAtFire   = g_geomShiftDeferral.cusumSAtPending;
-						cusumSustainAtFire = g_geomShiftDeferral.sustainAtPending;
-						fire = true;
-						g_geomShiftDeferral.Reset();
-					} else if (spacecal::geometry_shift::ShouldFireThroughDeferral(
-							time, g_geomShiftDeferral)) {
-						// Reanchor still frozen past kFireThroughSeconds --
-						// fire anyway. Continued suppression at this point
-						// would leave the bad calibration sitting indefinitely.
-						char ftBuf[320];
-						snprintf(ftBuf, sizeof ftBuf,
-							"[geometry-shift][fired-through-reanchor] deferred_for_sec=%.3f"
-							" current_mm=%.3f median_mm=%.3f ratio=%.2fx"
-							" cusum_S_at_pending=%.3f sustain_at_pending=%d mode=%s"
-							" sec_since_reanchor=%.3f",
-							deferredFor,
-							g_geomShiftDeferral.currentMmAtPending,
-							g_geomShiftDeferral.medianMmAtPending,
-							g_geomShiftDeferral.ratioAtPending,
-							g_geomShiftDeferral.cusumSAtPending,
-							g_geomShiftDeferral.sustainAtPending,
-							g_geomShiftDeferral.modeWasCusum ? "cusum" : "legacy",
-							secSinceReanchor);
-						Metrics::WriteLogAnnotation(ftBuf);
-						current = g_geomShiftDeferral.currentMmAtPending;
-						median  = g_geomShiftDeferral.medianMmAtPending;
-						cusumValueAtFire   = g_geomShiftDeferral.cusumSAtPending;
-						cusumSustainAtFire = g_geomShiftDeferral.sustainAtPending;
-						fire = true;
-						g_geomShiftDeferral.Reset();
-					} else if (!fire) {
-						// Reanchor still frozen, no new fire AND signal has
-						// subsided below the relevant accumulator's noise
-						// floor. The original spike turned out to be
-						// transient -- clear the deferral without firing.
-						// CUSUM mode: S well below threshold (S>=1 indicates
-						// the increment is still pushing past the drift).
-						// Legacy mode: consecutive bad ticks dropped to 0
-						// (any tick without a 5x median spike resets it).
-						const bool subsided = useCusumGeometryShift
-							? (g_cusumState.S < 1.0)
-							: (g_geomShiftConsecutiveBadTicks == 0);
-						if (subsided) {
-							char clrBuf[240];
-							snprintf(clrBuf, sizeof clrBuf,
-								"[geometry-shift][deferral-cleared] deferred_for_sec=%.3f"
-								" mode=%s reason=subsided cusum_S=%.3f legacy_sustained=%d",
-								deferredFor,
-								g_geomShiftDeferral.modeWasCusum ? "cusum" : "legacy",
-								g_cusumState.S, g_geomShiftConsecutiveBadTicks);
-							Metrics::WriteLogAnnotation(clrBuf);
-							g_geomShiftDeferral.Reset();
-						}
-					}
-					// else: deferred, reanchor frozen, elapsed < kFireThroughSeconds,
-					// new fire still active or signal still hot -- keep waiting.
-				}
-
-				// New fire while reanchor is frozen and no deferral already
-				// pending: latch the deferral so the fire intent survives the
-				// freeze instead of being dropped. If a deferral is already
-				// pending, the original timestamp wins (don't re-latch and
-				// extend the fire-through window).
-				if (fire && reanchorFrozen && !g_geomShiftDeferral.HasPending()) {
-					char defBuf[320];
-					const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
-					snprintf(defBuf, sizeof defBuf,
-						"[geometry-shift][deferred-by-reanchor] current_mm=%.3f median_mm=%.3f"
-						" ratio=%.2fx cusum_S_at_fire=%.3f sustain=%d mode=%s"
-						" sec_since_reanchor=%.3f lockRelativePosition=%d",
-						current, median, ratio,
-						cusumValueAtFire, cusumSustainAtFire,
-						useCusumGeometryShift ? "cusum" : "legacy",
-						secSinceReanchor, (int)ctx.lockRelativePosition);
-					Metrics::WriteLogAnnotation(defBuf);
-					g_geomShiftDeferral.Latch(time,
-						cusumValueAtFire, cusumSustainAtFire,
-						current, median, ratio,
-						useCusumGeometryShift);
-					fire = false;
-					// Reset accumulators so the next tick's spike detection
-					// starts fresh; the latched values carry the original
-					// fire decision. If the underlying shift is real, the
-					// fire-through timeout will commit it; if transient, the
-					// subsided check will clear it.
-					g_geomShiftConsecutiveBadTicks = 0;
-					g_cusumState.Reset();
-				}
-
 				// Diagnostic: per-tick spike candidate trace. Throttled to ~1/s
 				// so a sustained spike storm produces a readable trail rather
-				// than a per-tick flood. Logs early-warning data (current vs
-				// median + cusum state + reanchor proximity) so the next
-				// session log can show what was building toward a fire that
-				// did or did not happen.
+				// than a per-tick flood.
 				const bool spikeWorthLogging = isSpike || g_cusumState.S > 0.5;
 				if (spikeWorthLogging && (time - s_lastSpikeLogTime) >= 1.0) {
 					s_lastSpikeLogTime = time;
-					const bool reanchorFrozen =
-						IsReanchorChiFrozen(time);
-					const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
 					char spikeBuf[320];
 					snprintf(spikeBuf, sizeof spikeBuf,
 						"[geometry-shift][spike-candidate] current_mm=%.3f median_mm=%.3f"
-						" ratio=%.2fx sustained=%d/%d cusum_S=%.3f cusum_h=%.3f mode=%s"
-						" reanchor_frozen=%d sec_since_reanchor=%.3f",
+						" ratio=%.2fx sustained=%d/%d cusum_S=%.3f cusum_h=%.3f mode=%s",
 						current, median, ratio,
 						g_geomShiftConsecutiveBadTicks, spacecal::geometry_shift::kMinSustainedSpikes,
 						g_cusumState.S, spacecal::geometry_shift::kCusumThreshold,
-						useCusumGeometryShift ? "cusum" : "legacy",
-						(int)reanchorFrozen, secSinceReanchor);
+						useCusumGeometryShift ? "cusum" : "legacy");
 					Metrics::WriteLogAnnotation(spikeBuf);
 				}
 
@@ -1740,10 +1528,6 @@ void CalibrationTick(double time)
 							slopeMmPerSample = (n * sumXY - sumX * sumY) / denom;
 						}
 					}
-					const bool reanchorFrozen =
-						IsReanchorChiFrozen(time);
-					const double secSinceReanchor = SecondsSinceLastReanchorChiLog(time);
-					const std::string chiSqTail = RenderChiSqTail();
 					const double cooldownStarts =
 						time + spacecal::geometry_shift::kPostFireCooldownSeconds;
 					// Pre-reset sustain count: in CUSUM mode the in-function
@@ -1758,17 +1542,15 @@ void CalibrationTick(double time)
 					snprintf(fireBuf, sizeof fireBuf,
 						"[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
 						" ratio=%.2fx sustained=%d cusum_S_at_fire=%.3f mode=%s"
-						" reanchor_frozen=%d sec_since_reanchor=%.3f"
 						" lockRelativePosition=%d lockMode=%d"
 						" errTail_slope_mm_per_sample=%.3f errTail=[%s]"
-						" chi_sq_tail=%s cooldown_until=%.3f",
+						" cooldown_until=%.3f",
 						current, median, ratio,
 						sustainedAtFire, cusumValueAtFire,
 						useCusumGeometryShift ? "cusum" : "legacy",
-						(int)reanchorFrozen, secSinceReanchor,
 						(int)ctx.lockRelativePosition, (int)ctx.lockRelativePositionMode,
 						slopeMmPerSample, tailStr.c_str(),
-						chiSqTail.c_str(), cooldownStarts);
+						cooldownStarts);
 					Metrics::WriteLogAnnotation(fireBuf);
 
 					CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
@@ -1816,103 +1598,6 @@ void CalibrationTick(double time)
 		}  // close `if (inGeometryShiftGrace) ... else { ...`
 	}
 
-	// Latency cross-correlation. Once per second, if the rolling speed buffers
-	// are full and the user has actually been moving (RMS speed > 0.1 m/s on both
-	// signals), compute a discrete cross-correlation and update the EMA estimate.
-	// The active value is then used by CollectSample on subsequent ticks when
-	// latencyAutoDetect is on.
-	if (!ctx.useUpstreamMath
-		&& (time - ctx.timeLastLatencyEstimate) > 1.0
-		&& ctx.refSpeedHistory.size() >= CalibrationContext::kLatencyHistoryCapacity
-		&& ctx.targetSpeedHistory.size() >= CalibrationContext::kLatencyHistoryCapacity
-		&& ctx.speedSampleTimes.size() >= CalibrationContext::kLatencyHistoryCapacity)
-	{
-		ctx.timeLastLatencyEstimate = time;
-		double lagSamples = 0.0;
-		const int kMaxTau = 10;
-		if (EstimateLatencyLagSamples(ctx.refSpeedHistory, ctx.targetSpeedHistory, kMaxTau, ctx.EffectiveGccPhatLatency(), &lagSamples)) {
-			// Convert sample lag to ms using the *empirical* sample rate from the
-			// timestamp ring. This is more honest than assuming a fixed 20 Hz: the
-			// rate is whatever CollectSample is being called at right now.
-			double dur =
-				ctx.speedSampleTimes.back() - ctx.speedSampleTimes.front();
-			size_t intervals = ctx.speedSampleTimes.size() - 1;
-			if (dur > 1e-3 && intervals > 0) {
-				double sampleRateHz = (double)intervals / dur;
-				double lagMs = lagSamples * 1000.0 / sampleRateHz;
-				// Bound the per-update step to keep one bad correlation from
-				// teleporting the offset estimate.
-				if (std::isfinite(lagMs) && std::fabs(lagMs) <= 200.0) {
-					const double prevEma = ctx.estimatedLatencyOffsetMs;
-					ctx.estimatedLatencyOffsetMs = 0.7 * ctx.estimatedLatencyOffsetMs + 0.3 * lagMs;
-					// Forensic diagnostic for audit row #12 (project_upstream_regression_audit_2026-05-04).
-					// The cross-correlation buffer doesn't reset across HMD
-					// stalls -- `dur` here can span the stall duration while
-					// `intervals` is bounded by buffer size, producing a
-					// deflated sample rate and inflating lagMs. The 200 ms
-					// clamp above bounds this, but the EMA can still drift
-					// for a few cycles.
-					//
-					// Log policy: emit every time when the EMA moves more than
-					// 0.5 ms vs the last logged value, OR when it's been more
-					// than 30 s since the last log (heartbeat). Otherwise the
-					// loop produces ~290 lines/session of essentially-identical
-					// rows. Anomalies (negative EMA, rate dropout) are logged
-					// separately below regardless of throttle.
-					static double s_lastLoggedEma = -1e9;
-					static double s_lastLatencyLogTime = -1e9;
-					const bool changed = std::fabs(ctx.estimatedLatencyOffsetMs - s_lastLoggedEma) > 0.5;
-					const bool heartbeat = (time - s_lastLatencyLogTime) >= 30.0;
-					if (changed || heartbeat || s_lastLoggedEma == -1e9) {
-						s_lastLoggedEma = ctx.estimatedLatencyOffsetMs;
-						s_lastLatencyLogTime = time;
-						char latbuf[280];
-						snprintf(latbuf, sizeof latbuf,
-							"latency_ema_update: lagMs=%.2f sampleRateHz=%.2f intervals=%zu dur=%.2fs prev=%.2f new=%.2f reason=%s",
-							lagMs, sampleRateHz, intervals, dur,
-							prevEma, ctx.estimatedLatencyOffsetMs,
-							changed ? "ema_changed" : "heartbeat");
-						Metrics::WriteLogAnnotation(latbuf);
-					}
-
-					// Latency anomaly: physically lagMs cannot be negative
-					// (samples can't arrive before their reference timestamp).
-					// When it crosses the zero negative threshold, log a
-					// dedicated diagnostic so the cause can be hunted (clock
-					// skew, post-stall sample-rate deflation, timestamp
-					// domain mismatch). Edge-triggered: emit on the
-					// transition from prev_ema >= -1.0 to new_ema < -1.0,
-					// not every tick while negative.
-					if (prevEma >= -1.0 && ctx.estimatedLatencyOffsetMs < -1.0) {
-						char anomBuf[280];
-						snprintf(anomBuf, sizeof anomBuf,
-							"[latency][anomaly] lagMs=%.2f new_ema=%.2f prev_ema=%.2f"
-							" sampleRateHz=%.2f intervals=%zu dur=%.2fs"
-							" sampleRateOk=%d durOk=%d note=negative_ema_crossed",
-							lagMs, ctx.estimatedLatencyOffsetMs, prevEma,
-							sampleRateHz, intervals, dur,
-							(int)(sampleRateHz >= 9.0),
-							(int)(dur < 20.0));
-						Metrics::WriteLogAnnotation(anomBuf);
-					}
-
-					// Sample-rate dropout: log when sampleRateHz drops below
-					// 9 Hz (well under the ~11 Hz typical). This catches the
-					// post-stall buffer-not-reset case where `dur` inflates
-					// without `intervals` keeping up.
-					if (sampleRateHz < 9.0) {
-						char rateBuf[240];
-						snprintf(rateBuf, sizeof rateBuf,
-							"[latency][rate-dropout] sampleRateHz=%.2f intervals=%zu dur=%.2fs"
-							" lagMs=%.2f note=below_9hz_threshold",
-							sampleRateHz, intervals, dur, lagMs);
-						Metrics::WriteLogAnnotation(rateBuf);
-					}
-				}
-			}
-		}
-	}
-
 	// External smoothing-tool detection moved to the Smoothing overlay's
 	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
 	// cadence and surfaces the banner inside its Prediction sub-tab.
@@ -1922,8 +1607,6 @@ void CalibrationTick(double time)
 		shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
 			if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
 				ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
-				// Track per-device shmem QPC timestamps so CollectSample can compute the
-				// inter-system time delta when applying targetLatencyOffsetMs.
 				ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
 			}
 		});
@@ -2277,8 +1960,7 @@ void CalibrationTick(double time)
 		// Commit any queued AUTO-Lock flip if the user is paused enough to
 		// hide the resulting calibration jump. Re-resolve lockRelativePosition
 		// afterward so the same tick's downstream `calibration.lockRelativePosition`
-		// write below reflects the new state. `time` participates in the
-		// post-reanchor suppression gate inside the commit helper.
+		// write below reflects the new state.
 		if (CommitPendingAutoLockFlipIfStationary(ctx, hmdSpeedMps, time)) {
 			ctx.ResolveLockMode();
 		}
@@ -2297,7 +1979,7 @@ void CalibrationTick(double time)
 			in.posHash           = HashPositionLow64(dp.vecPosition);
 			in.deviceIsConnected = dp.deviceIsConnected;
 			in.hmdSpeedMps       = hmdSpeedMps;
-			in.lastEmaUpdateSec  = ctx.timeLastLatencyEstimate;
+			in.lastEmaUpdateSec  = 0.0;
 			in.now               = time;
 
 			const bool wentOffline = spacecal::liveness::TickTrackerLiveness(state, in);
@@ -2305,13 +1987,11 @@ void CalibrationTick(double time)
 				char buf[256];
 				const double frozenForSec = state.poseHashSinceSec >= 0.0
 					? (time - state.poseHashSinceSec) : 0.0;
-				const double emaGapSec = ctx.timeLastLatencyEstimate > 0.0
-					? (time - ctx.timeLastLatencyEstimate) : 0.0;
 				snprintf(buf, sizeof buf,
 					"tracker_offline_detected: which=%s id=%d frozenForSec=%.1f "
 					"deviceIsConnected=%d emaGapSec=%.1f",
 					whichLabel, (int)id, frozenForSec,
-					(int)dp.deviceIsConnected, emaGapSec);
+					(int)dp.deviceIsConnected, 0.0);
 				Metrics::WriteLogAnnotation(buf);
 				CalCtx.Log("Calibration anchor offline -- waiting to reconnect\n");
 			}
@@ -2575,9 +2255,6 @@ void CalibrationTick(double time)
 	bool lerp = false;
 	bool solveAttempted = false;
 	bool solveProducedCandidate = false;
-	calibration.useVelocityAwareWeighting = CalCtx.EffectiveVelocityAwareWeighting();
-	calibration.useTukeyBiweight = CalCtx.EffectiveTukeyBiweight();
-	calibration.useBlendFilter = CalCtx.EffectiveBlendFilter();
 
 	if (CalCtx.state == CalibrationState::Continuous) {
 		CalCtx.messages.clear();
@@ -2603,11 +2280,6 @@ void CalibrationTick(double time)
 						: (Metrics::lastRejectReason.empty()
 							? "none"
 							: Metrics::lastRejectReason.c_str());
-					const char* calcRejectReason = producedValidCandidate
-						? "none"
-						: (calibration.m_rejectReasonTag.empty()
-							? "none"
-							: calibration.m_rejectReasonTag.c_str());
 					const Eigen::Vector3d candidateCm =
 						calibration.Transformation().translation() * 100.0;
 					char solveBuf[960];
@@ -2616,8 +2288,7 @@ void CalibrationTick(double time)
 						" calc_valid=%d source=%s sample_count=%zu required=%zu"
 						" relPosCal=%d lockRel=%d validProfile=%d hasAccepted=%d"
 						" candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f"
-						" reject_reason=%s calc_reject_reason=%s reject_count=%d"
-						" rot_cond=%.4f trans_cond=%.4f warm_grace=%d",
+						" reject_reason=%s warm_grace=%d",
 						(int)ctx.state, CalibrationStateName(ctx.state),
 						(int)CalCtx.calibrationPaused,
 						(int)solveProducedCandidate,
@@ -2630,10 +2301,7 @@ void CalibrationTick(double time)
 						(int)CalCtx.lastAcceptedContinuousSnapshot.captured,
 						candidateCm.x(), candidateCm.y(), candidateCm.z(),
 						candidateCm.norm(),
-						rejectReason, calcRejectReason,
-						calibration.m_consecutiveRejections,
-						calibration.m_rotationConditionRatio,
-						calibration.m_translationConditionRatio,
+						rejectReason,
 						CalCtx.warmRestartGraceSamples);
 					Metrics::WriteLogAnnotation(solveBuf);
 				}
@@ -2762,40 +2430,6 @@ void CalibrationTick(double time)
 						"[warm-restart][grace-ended] reason=samples_exhausted");
 				}
 			}
-
-			// Sustained gravity-axis disagreement diagnostic. Push the per-tick
-			// residual pitch+roll reading into a rolling 60s window and ask
-			// the pure-helper decision (TiltDiagnostic.h) whether the median
-			// has crossed the 1.0 deg sustained threshold. Logging-only:
-			// surfaces "your two systems disagree about which way is down"
-			// as a sustained signal so the user can re-run room setup. No
-			// calibration behavior change. See project_future_improvements_
-			// 2026-05-05.md for the eventual Pacher-2021 RFU-style
-			// correction that this diagnostic is the prerequisite for.
-			{
-				const double tiltDeg = calibration.m_residualPitchRollDeg;
-				if (std::isfinite(tiltDeg) && tiltDeg >= 0.0) {
-					CalCtx.tiltDiagnosticWindow.push_back({time, tiltDeg});
-					const double cutoff = time - spacecal::gravity::kSustainedWindowSeconds;
-					while (!CalCtx.tiltDiagnosticWindow.empty()
-						&& CalCtx.tiltDiagnosticWindow.front().timestamp_s < cutoff) {
-						CalCtx.tiltDiagnosticWindow.pop_front();
-					}
-					const auto decision = spacecal::gravity::EvaluateTilt(
-						CalCtx.tiltDiagnosticWindow, time, CalCtx.tiltSustainedAlarmed);
-					if (decision.sustainedDisagreement != CalCtx.tiltSustainedAlarmed) {
-						CalCtx.tiltSustainedAlarmed = decision.sustainedDisagreement;
-						CalCtx.tiltLastAnnotatedMedian = decision.medianDeg;
-						char tbuf[224];
-						snprintf(tbuf, sizeof tbuf,
-							"gravity_disagreement_%s: median_tilt_deg=%.3f window_samples=%zu threshold=%.2f",
-							decision.sustainedDisagreement ? "sustained_on" : "sustained_off",
-							decision.medianDeg, CalCtx.tiltDiagnosticWindow.size(),
-							spacecal::gravity::kSustainedTiltThresholdDeg);
-						Metrics::WriteLogAnnotation(tbuf);
-					}
-				}
-			}
 		}
 		else {
 			static double s_lastPausedSolveAnnotation = -1e9;
@@ -2830,12 +2464,7 @@ void CalibrationTick(double time)
 			if (refPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
 			if (tgtPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
 
-			auto vmag = [](const double v[3]) -> double {
-				const double s = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-				return std::isfinite(s) ? s : 0.0;
-			};
-			Sample s(ConvertPose(refPose), ConvertPose(tgtPose), glfwGetTime(),
-			         vmag(refPose.vecVelocity), vmag(tgtPose.vecVelocity));
+			Sample s(ConvertPose(refPose), ConvertPose(tgtPose), glfwGetTime());
 			extra.calc->PushSample(s);
 			while (extra.calc->SampleCount() > CalCtx.SampleCount()) extra.calc->ShiftSample();
 
@@ -2906,10 +2535,8 @@ void CalibrationTick(double time)
 							extra.autoLockGateHeldWarned = false;
 						}
 						const double heldSec = time - extra.autoLockPendingFlipFirstSeen;
-						// Extras have no reanchor concept -- suppressUntil = 0.0.
 						const auto gate = spacecal::autolock::EvaluateCommitGate(
-							extra.autoLockPendingFlipTo, hmdSpeedMps, time,
-							/*reanchorSuppressUntil=*/0.0, heldSec);
+							extra.autoLockPendingFlipTo, hmdSpeedMps, time, heldSec);
 						if (gate.commit) {
 							const bool prev = extra.autoLockEffectivelyLocked;
 							extra.autoLockEffectivelyLocked = extra.autoLockPendingFlipTo;
@@ -2982,195 +2609,43 @@ void CalibrationTick(double time)
 	const bool hasPublishableCandidate = solveProducedCandidate && calibration.isValid();
 
 	if (hasPublishableCandidate) {
-		const Eigen::Matrix3d R = calibration.Transformation().rotation();
-		const Eigen::Vector3d T = calibration.Transformation().translation();
-		const Eigen::Vector3d candidateTranslationCm = T * 100.0;
-		const bool hasAcceptedSnapshot =
-			ctx.lastAcceptedContinuousSnapshot.captured;
-		const Eigen::Vector3d guardBaseline =
-			hasAcceptedSnapshot
-				? ctx.lastAcceptedContinuousSnapshot.calibratedTranslation
-				: ctx.calibratedTranslation;
-		const bool hasGuardBaseline =
-			inContinuousState && (hasAcceptedSnapshot || ctx.validProfile);
-		const bool candidateFromRelPose = calibration.LastComputeUsedRelPose();
-		const double candidateSolveUncertaintyCm =
-			spacecal::continuous::EstimateSolveUncertaintyCm(
-				calibration.LastCandidateErrorM(),
-				calibration.ReferenceJitter(),
-				calibration.TargetJitter(),
-				calibration.m_rotationConditionRatio,
-				calibration.m_translationConditionRatio);
-		const auto guard = spacecal::continuous::EvaluatePublishCandidate(
-			inContinuousState, hasGuardBaseline, hasAcceptedSnapshot,
-			guardBaseline, candidateTranslationCm, R);
-		bool acceptedByStability = false;
-		const bool largeFullSolveCandidate =
-			inContinuousState
-			&& !candidateFromRelPose
-			&& std::strcmp(guard.reason, "jump_exceeds_limit") == 0;
-		spacecal::continuous::LargeFullSolveStabilityResult stability{};
-		if (!guard.accepted && largeFullSolveCandidate) {
-			stability = spacecal::continuous::EvaluateLargeFullSolveStability(
-				ctx.pendingLargeFullSolve,
-				ctx.pendingLargeFullSolveSamples,
-				ctx.pendingLargeFullSolveTranslation,
-				ctx.pendingLargeFullSolveRotation,
-				ctx.pendingLargeFullSolveUncertaintyCm,
-				guardBaseline,
-				candidateTranslationCm,
-				R,
-				calibration.LastCandidateErrorM(),
-				calibration.ReferenceJitter(),
-				calibration.TargetJitter(),
-				calibration.m_rotationConditionRatio,
-				calibration.m_translationConditionRatio);
-			ctx.pendingLargeFullSolve = true;
-			ctx.pendingLargeFullSolveSamples = stability.nextSampleCount;
-			if (stability.storeAsPendingAnchor) {
-				ctx.pendingLargeFullSolveTranslation = candidateTranslationCm;
-				ctx.pendingLargeFullSolveRotation = R;
-				ctx.pendingLargeFullSolveUncertaintyCm = stability.uncertaintyCm;
-			}
-			else if (stability.uncertaintyCm > 0.0) {
-				if (ctx.pendingLargeFullSolveUncertaintyCm <= 0.0) {
-					ctx.pendingLargeFullSolveUncertaintyCm = stability.uncertaintyCm;
-				}
-			}
-			acceptedByStability = stability.stable;
-			if (acceptedByStability) {
-				char stableBuf[520];
-				std::snprintf(stableBuf, sizeof stableBuf,
-					"continuous_large_full_solve_stable: samples=%d jump_cm=%.2f"
-					" combined_delta_cm=%.2f expected_delta_cm=%.2f uncertainty_cm=%.2f"
-					" trans_delta_cm=%.2f rot_delta_deg=%.2f rot_equiv_cm=%.2f",
-					ctx.pendingLargeFullSolveSamples,
-					stability.jumpCm,
-					stability.combinedDeltaCm,
-					stability.expectedDeltaCm,
-					stability.uncertaintyCm,
-					stability.translationDeltaCm,
-					stability.rotationDeltaRad * 180.0 / EIGEN_PI,
-					stability.rotationEquivalentCm);
-				Metrics::WriteLogAnnotation(stableBuf);
-			}
-		}
-		else if (!guard.accepted) {
-			ctx.ClearPendingLargeFullSolve();
+		const Eigen::Vector3d candidateTranslationCm =
+			calibration.Transformation().translation() * 100.0;
+
+		ctx.calibratedRotation = calibration.EulerRotation();
+		ctx.calibratedTranslation = candidateTranslationCm;
+		ctx.refToTargetPose = calibration.RelativeTransformation();
+		ctx.relativePosCalibrated = calibration.isRelativeTransformationCalibrated();
+
+		auto vrTrans = VRTranslationVec(ctx.calibratedTranslation);
+		auto vrRot = VRRotationQuat(Eigen::Quaterniond(calibration.Transformation().rotation()));
+
+		ctx.validProfile = true;
+		SaveProfile(ctx);
+
+		ScanAndApplyProfile(ctx);
+
+		CalCtx.hasAppliedCalibrationResult = true;
+		if (ctx.state == CalibrationState::Continuous) {
+			ctx.lastAcceptedContinuousSnapshot = ctx.CaptureProfileSnapshot();
 		}
 
-		if (!guard.accepted && !acceptedByStability) {
-			if (inContinuousState
-				&& !hasAcceptedSnapshot
-				&& std::strcmp(guard.reason, "jump_exceeds_limit") == 0)
-			{
-				++ctx.continuousPreAcceptJumpRejects;
-			}
-			const bool restoredPrior =
-				inContinuousState && RestoreCalibrationSolverFromProfile(ctx);
-			const char* baselineTag =
-				hasAcceptedSnapshot ? "last_accepted" : (ctx.validProfile ? "profile" : "none");
-			char rejBuf[980];
-			std::snprintf(rejBuf, sizeof rejBuf,
-				"calibration_candidate_rejected: state=%d(%s) finiteT=%d rotAngle=%.6f reason=%s source=%s jump_cm=%.2f baseline=%s "
-				"baseline_cm=(%.2f,%.2f,%.2f) candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f restored_prior=%d "
-				"pre_accept_jump_rejects=%d pending_large_full=%d pending_samples=%d stable_delta_cm=%.2f expected_delta_cm=%.2f "
-				"uncertainty_cm=%.2f separated=%d",
-				(int)ctx.state,
-				CalibrationStateName(ctx.state),
-				guard.finiteTranslation ? 1 : 0,
-				guard.rotAngleRad,
-				guard.reason,
-				candidateFromRelPose ? "relpose" : "full",
-				guard.jumpM * 100.0,
-				baselineTag,
-				guardBaseline.x(),
-				guardBaseline.y(),
-				guardBaseline.z(),
-				candidateTranslationCm.x(),
-				candidateTranslationCm.y(),
-				candidateTranslationCm.z(),
-				candidateTranslationCm.norm(),
-				restoredPrior ? 1 : 0,
-				ctx.continuousPreAcceptJumpRejects,
-				ctx.pendingLargeFullSolve ? 1 : 0,
-				ctx.pendingLargeFullSolveSamples,
-				stability.combinedDeltaCm,
-				stability.expectedDeltaCm,
-				stability.uncertaintyCm,
-				stability.separatedFromBaseline ? 1 : 0);
-			Metrics::WriteLogAnnotation(rejBuf);
-			CalCtx.Log("Calibration candidate rejected; keeping previous profile.\n");
-		} else {
-			const double candidateJumpCm = guard.jumpM * 100.0;
-			const bool snapFirstContinuousCandidate =
-				spacecal::motiongate::ShouldSnapFirstContinuousCandidate(
-					inContinuousState,
-					hasAcceptedSnapshot,
-					hasGuardBaseline,
-					candidateJumpCm,
-					candidateSolveUncertaintyCm);
-			if (snapFirstContinuousCandidate) {
-				g_snapNextProfileApply = true;
-				char snapBuf[240];
-				std::snprintf(snapBuf, sizeof snapBuf,
-					"continuous_first_candidate_snap: jump_cm=%.2f threshold_cm=%.2f uncertainty_cm=%.2f"
-					" baseline=%s",
-					candidateJumpCm,
-					spacecal::motiongate::kFirstContinuousSnapJumpCm,
-					candidateSolveUncertaintyCm,
-					hasAcceptedSnapshot ? "last_accepted" : "profile");
-				Metrics::WriteLogAnnotation(snapBuf);
-			}
+		char acceptBuf[360];
+		std::snprintf(acceptBuf, sizeof acceptBuf,
+			"calibration_candidate_accepted: state=%d(%s) source=%s trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f relPosCal=%d validProfile=%d",
+			(int)ctx.state,
+			CalibrationStateName(ctx.state),
+			calibration.LastComputeUsedRelPose() ? "relpose" : "full",
+			ctx.calibratedTranslation.x(),
+			ctx.calibratedTranslation.y(),
+			ctx.calibratedTranslation.z(),
+			ctx.calibratedTranslation.norm(),
+			(int)ctx.relativePosCalibrated,
+			(int)ctx.validProfile);
+		Metrics::WriteLogAnnotation(acceptBuf);
 
-			ctx.calibratedRotation = calibration.EulerRotation();
-			ctx.calibratedTranslation = candidateTranslationCm; // convert to cm units for profile storage
-			ctx.refToTargetPose = calibration.RelativeTransformation();
-			ctx.relativePosCalibrated = calibration.isRelativeTransformationCalibrated();
-
-			auto vrTrans = VRTranslationVec(ctx.calibratedTranslation);
-			auto vrRot = VRRotationQuat(Eigen::Quaterniond(calibration.Transformation().rotation()));
-
-			ctx.validProfile = true;
-			SaveProfile(ctx);
-
-			ScanAndApplyProfile(ctx);
-
-			CalCtx.hasAppliedCalibrationResult = true;
-			if (ctx.state == CalibrationState::Continuous) {
-				ctx.lastAcceptedContinuousSnapshot = ctx.CaptureProfileSnapshot();
-			}
-
-			char acceptBuf[360];
-			std::snprintf(acceptBuf, sizeof acceptBuf,
-				"calibration_candidate_accepted: state=%d(%s) source=%s trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f relPosCal=%d validProfile=%d",
-				(int)ctx.state,
-				CalibrationStateName(ctx.state),
-				calibration.LastComputeUsedRelPose() ? "relpose" : "full",
-				ctx.calibratedTranslation.x(),
-				ctx.calibratedTranslation.y(),
-				ctx.calibratedTranslation.z(),
-				ctx.calibratedTranslation.norm(),
-				(int)ctx.relativePosCalibrated,
-				(int)ctx.validProfile);
-			Metrics::WriteLogAnnotation(acceptBuf);
-			ctx.continuousPreAcceptJumpRejects = 0;
-			ctx.ClearPendingLargeFullSolve();
-
-			CalCtx.Log("Finished calibration, profile saved\n");
-
-			// Runtime wedge detector REMOVED 2026-05-05 -- fired in a 3-fire
-			// reset loop on the user's Quest+Lighthouse setup whose legitimate
-			// continuous-cal convergence values (~265-295 cm) sit above any
-			// fixed magnitude threshold we picked. See
-			// project_wedge_guard_removed_2026-05-05.md (memory). Quest
-			// re-localization auto-recovery in TickHmdRelocalizationDetector
-			// (HMD-jump signal, not magnitude) is unchanged and still active.
-		}
+		CalCtx.Log("Finished calibration, profile saved\n");
 	} else {
-		if (inContinuousState) {
-			ctx.ClearPendingLargeFullSolve();
-		}
 		if (!inContinuousState || (solveAttempted && !calibration.isValid())) {
 			CalCtx.Log("Calibration failed.\n");
 		}
@@ -3310,7 +2785,7 @@ void DebugApplyRandomOffset() {
 }
 
 int GetWatchdogResetCount() {
-	return calibration.m_watchdogResets;
+	return 0;
 }
 
 // (RecenterPlayspaceToCurrentHmd removed: superseded by lighthouse-anchored

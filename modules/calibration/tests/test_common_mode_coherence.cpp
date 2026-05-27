@@ -1,9 +1,8 @@
 // Common-mode coherence score tests. Pins the score formula and the
 // suppress-threshold semantics that the geometry-shift detector's fire
 // site uses to distinguish pair-local shifts (fire the recovery path)
-// from shared-frame events (worldFromDriver reanchor, runtime
-// relocalization -- suppress the fire). See CommonModeCoherence.h for
-// the rationale.
+// from shared-frame events (runtime relocalization -- suppress the fire).
+// See CommonModeCoherence.h for the rationale.
 
 #include "CommonModeCoherence.h"
 

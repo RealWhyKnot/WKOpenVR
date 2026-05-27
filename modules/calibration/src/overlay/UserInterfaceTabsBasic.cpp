@@ -248,15 +248,11 @@ void CCal_BasicInfo() {
 				const auto prev = CalCtx.lockRelativePositionMode;
 				CalCtx.lockRelativePositionMode = lockModes[i];
 				SaveProfile(CalCtx);
-				// Force-resolve and clear suppression so a deliberate UI
-				// action takes effect this frame instead of waiting for the
-				// reanchor-suppression chain to lapse. See the matching block
-				// in UserInterface.cpp for the longer comment.
-				CalCtx.autoLockReanchorSuppressUntil = 0.0;
+				// Force-resolve so a deliberate UI action takes effect this frame.
 				CalCtx.ResolveLockMode();
 				char lmbuf[200];
 				snprintf(lmbuf, sizeof lmbuf,
-					"lock_mode_ui_write: site=basic prev=%d now=%d resolved_lockRel=%d (suppress_cleared)",
+					"lock_mode_ui_write: site=basic prev=%d now=%d resolved_lockRel=%d",
 					(int)prev, (int)CalCtx.lockRelativePositionMode,
 					(int)CalCtx.lockRelativePosition);
 				Metrics::WriteLogAnnotation(lmbuf);

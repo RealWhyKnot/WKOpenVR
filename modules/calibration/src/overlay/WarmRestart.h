@@ -84,13 +84,11 @@ enum class ValidationOutcome {
     Failed       = 2,
 };
 
-// Number of Continuous-mode ticks to keep the prior-vs-new error rejection
-// gate bypassed once a warm restart engages. At the calibrator's ~3.5 Hz
-// continuous-tick cadence this is ~30 s of grace -- long enough for the
-// rolling sample buffer to refill and the solver to converge against the
-// saved transform, short enough that a wrong snap (user moved a base station
-// while away) is bounded in how long the bad calibration sits there before
-// the normal continuous-cal recovery takes over.
+// Number of Continuous-mode ticks to keep warm-restart validation active.
+// At the calibrator's ~3.5 Hz continuous-tick cadence this is ~30 s of
+// grace -- long enough for the rolling sample buffer to refill, short enough
+// that a wrong snap is bounded before normal continuous-cal recovery takes
+// over.
 constexpr int kGraceSamples = 100;
 
 // Inputs to the engage decision. Built once per tick from the live OpenVR

@@ -8,8 +8,6 @@
 #include <iostream>
 #include <limits>
 
-#include "BlendFilter.h"  // spacecal::blendfilter::State (member of CalibrationCalc)
-
 struct Pose
 {
 	Eigen::Matrix3d rot;
@@ -55,16 +53,6 @@ struct Sample
 	Pose ref, target;
 	bool valid;
 	double timestamp;
-	// Linear-speed magnitudes (m/s) of the reference and target devices at
-	// sample-collection time. Sourced from vr::DriverPose_t::vecVelocity in
-	// the production CollectSample path; left at zero for replay-harness and
-	// test paths that don't have velocity data. Used by the velocity-aware
-	// outlier weighting (default-off experimental flag) to scale the per-row
-	// IRLS Cauchy threshold so high-residual samples taken during fast motion
-	// can be suppressed as glitches while stationary high-residual samples
-	// stay informative.
-	double refSpeed = 0.0;
-	double targetSpeed = 0.0;
 	// True when both the reference and target devices showed correlated
 	// motion since the previous sample (or both were stationary; that is
 	// not a failure mode -- it just doesn't contribute new variety). False
@@ -78,9 +66,6 @@ struct Sample
 	bool pairedMotionValid = true;
 	Sample() : valid(false), timestamp(0) { }
 	Sample(Pose ref, Pose target, double timestamp) : valid(true), ref(ref), target(target), timestamp(timestamp){ }
-	Sample(Pose ref, Pose target, double timestamp, double refSpeed, double targetSpeed)
-		: valid(true), ref(ref), target(target), timestamp(timestamp),
-		  refSpeed(refSpeed), targetSpeed(targetSpeed) { }
 };
 
 class CalibrationCalc {
@@ -89,30 +74,6 @@ public:
 
 	bool enableStaticRecalibration;
 	bool lockRelativePosition = false;
-	// Opt-in: when true, the per-pair IRLS Cauchy threshold scales with the
-	// pair's motion magnitude so stationary high-residual rows stay
-	// informative while fast-motion high-residual rows are aggressively
-	// suppressed as glitches. Set by the caller per-tick from
-	// CalCtx.useVelocityAwareWeighting; default-off path is unchanged.
-	bool useVelocityAwareWeighting = false;
-	// Opt-in: when true, the IRLS robust kernel switches from Cauchy + MAD
-	// to Tukey biweight + Qn-scale. Tukey is redescending (large residuals
-	// -> exactly zero weight); Qn replaces MAD with a no-symmetry,
-	// no-saturation 50%-breakdown estimator. Set by the caller per-tick
-	// from CalCtx.useTukeyBiweight; default-off path is unchanged.
-	bool useTukeyBiweight = false;
-	// Opt-in: when true, the publish-time blend uses a Kalman filter on
-	// (yaw, tx, ty, tz) instead of the single-step EMA at alpha=0.3.
-	// Filter state is stored on CalibrationCalc (m_blendFilter) so it
-	// persists across ticks. Set by the caller per-tick from
-	// CalCtx.useBlendFilter; default-off path is unchanged.
-	bool useBlendFilter = false;
-	// When true, the prior-vs-new error rejection gate inside
-	// ComputeIncremental is bypassed for this tick. Set by CalibrationTick
-	// when a warm-restart proximity edge fires and counted down per call;
-	// see CalibrationContext::warmRestartGraceSamples for the rationale.
-	// Off path is unchanged.
-	bool warmRestartGraceActive = false;
 	
 	const Eigen::AffineCompact3d Transformation() const 
 	{
@@ -229,38 +190,7 @@ public:
 	double m_axisVariance = 0.0;
 	long m_calcCycle;
 
-	// Smallest/largest singular-value ratio of the 2D Kabsch cross-covariance from the
-	// most recent CalibrateRotation. Near-zero means the user only rotated in one
-	// axis (degenerate motion), so the yaw solution is ill-conditioned. Set by
-	// CalibrateRotation, consulted by ComputeIncremental to reject bad solutions.
-	mutable double m_rotationConditionRatio = 0.0;
-
-	// Diagnostics: number of consecutive ComputeIncremental rejections, and the last
-	// time we successfully collected a sample. Used by the stuck-loop watchdog to
-	// drop m_isValid (and trigger ContinuousStandby) when continuous calibration can
-	// no longer produce a better estimate but isn't admitting it.
-	int m_consecutiveRejections = 0;
-	double m_lastSuccessfulIncrementalTime = 0.0;
 	double m_lastSampleTime = 0.0;
-	int m_watchdogResets = 0;
-
-	// Short tag describing why the most recent ComputeIncremental rejected (or
-	// "" if the last call accepted). Surfaced in the debug log so a stuck-loop
-	// row can be traced back to the gate that tripped: "below_floor_or_worse",
-	// "axis_variance_low", "rotation_planar", "translation_planar",
-	// "rms_above_gate", "healthy_below_floor", "validate_failed".
-	// Distinct from the older enum-typed `m_lastRejectReason` further down,
-	// which tracks ValidateCalibration's RMS-gate decisions specifically.
-	std::string m_rejectReasonTag;
-
-	// Latch that prevents the "watchdog_skipped: ... healthy" annotation from
-	// repeating on every tick once the healthy-skip path has fired. Cleared on
-	// the next successful accept so a subsequent fresh stuck-run still gets one
-	// annotation. Strictly diagnostic; doesn't affect math.
-	bool m_healthyHoldAnnotated = false;
-	// Same latch for motion-quality holds: planar motion means "wait for
-	// better samples", not "clear the saved profile and restart".
-	bool m_motionQualityHoldAnnotated = false;
 
 private:
 	bool m_isValid;
@@ -280,43 +210,6 @@ private:
 	mutable Eigen::MatrixXd m_outlierCoefficients;
 	mutable Eigen::VectorXd m_outlierConstraints;
 
-	// Smallest/largest singular-value ratio of the translation LS coefficient
-	// matrix from the most recent CalibrateTranslation. Mirrors
-	// m_rotationConditionRatio: near-zero means the user moved through too few
-	// independent directions to constrain the translation, so the result is
-	// dominated by noise. Set by CalibrateTranslation, consulted by
-	// ComputeIncremental to reject ill-conditioned solves.
-public:
-	mutable double m_translationConditionRatio = 0.0;
-
-	// Residual pitch+roll (in degrees) of the most recent SO(3) Kabsch fit. If
-	// this is large (~> 2 deg), the reference and target spaces' gravity axes
-	// don't agree, which the yaw-only solver cannot represent — we log a hint
-	// for the user but don't reject the solution.
-	mutable double m_residualPitchRollDeg = 0.0;
-
-	// SO(3) Kabsch result + validity, computed in DetectOutliers and reused by
-	// CalibrateRotation for the yaw projection (item #3 from the math review).
-	// Without this DetectOutliers and CalibrateRotation each ran their own
-	// Kabsch SVD, with CalibrateRotation throwing away the Y axis before the
-	// SVD step — that 2D simplification leaks any pitch/roll discrepancy into
-	// the yaw answer. The shared 3D fit projected to yaw is the principled
-	// answer.
-	mutable Eigen::Matrix3d m_so3KabschResult = Eigen::Matrix3d::Identity();
-	mutable bool m_so3KabschValid = false;
-
-	// Diagnostics: which gate caused the most recent ValidateCalibration to
-	// reject. Set by ValidateCalibration and consulted by ComputeOneshot for
-	// branching the user-facing log line.
-	enum class RejectReason {
-		None,
-		RmsTooHigh,
-		// (other gates live further out; ValidateCalibration only checks RMS today)
-	};
-	mutable RejectReason m_lastRejectReason = RejectReason::None;
-	mutable double m_lastRejectRms = 0.0;
-	mutable double m_lastRejectRmsThreshold = 0.0;
-
 	// Cached priorCalibrationError from the most recent successful
 	// ValidateCalibration call inside ComputeIncremental, in metres.
 	// INFINITY when no successful compute has happened yet (or after a
@@ -333,12 +226,6 @@ private:
 	 */
 	Eigen::AffineCompact3d m_refToTargetPose = Eigen::AffineCompact3d::Identity();
 
-	// Kalman-filter state for the opt-in blend path. Persists across
-	// ComputeIncremental calls; reset by Clear() and on detected divergence.
-	// Accessed only when useBlendFilter is true; otherwise it sits idle.
-	spacecal::blendfilter::State m_blendFilter;
-	double m_blendFilterLastUpdateTime = 0.0;
-
 	std::deque<Sample> m_samples;
 
 	// Frozen rotation-phase samples (see FreezeRotationPhaseSamples comment in
@@ -350,7 +237,6 @@ private:
 	std::vector<bool> DetectOutliers() const;
 	Eigen::Vector3d CalibrateRotation(const bool ignoreOutliers) const;
 	Eigen::Vector3d CalibrateTranslation(const Eigen::Matrix3d &rotation) const;
-	Eigen::Vector3d CalibrateTranslationLegacyPairwise(const Eigen::Matrix3d &rotation) const;
 
 	Eigen::AffineCompact3d ComputeCalibration(const bool ignoreOutliers) const;
 

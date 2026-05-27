@@ -39,14 +39,6 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_state_transitions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_gate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_slew_rate_cap.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_latency_estimator.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_tilt_diagnostic.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_robust_scale.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_blend_filter.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_rest_locked_yaw.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_recovery_delta_buffer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_reanchor_chi_square.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_translation_solve_direct.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_common_helpers.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_device_filters.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dev_fake_devices.cpp
@@ -73,7 +65,6 @@ add_executable(spacecal_tests
     ${SPACECAL_SRC}/overlay/DevFakeDevices.cpp
     ${SPACECAL_SRC}/overlay/CalibrationCalc.cpp
     ${SPACECAL_SRC}/overlay/MotionRecording.cpp
-    ${SPACECAL_SRC}/overlay/TranslationSolveDirect.cpp
     ${SPACECAL_SRC}/overlay/HeadFromTrackerSolve.cpp
     ${SPACECAL_SRC}/overlay/Configuration.cpp
     ${SPACECAL_SRC}/overlay/VRState.cpp

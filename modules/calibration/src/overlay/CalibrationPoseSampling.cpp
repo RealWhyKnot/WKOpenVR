@@ -4,7 +4,6 @@
 #include "CalibrationMetrics.h"
 #include "ControllerInput.h"
 #include "HeadMountPoseSampling.h"
-#include "LatencyEstimator.h"
 #include "RotationMatrix3.h"
 #include "VRState.h"
 
@@ -410,72 +409,6 @@ CalibrationCalc calibration;
 			reference.vecPosition[2] += ctx.continuousCalibrationOffset.z();
 		}
 
-		// Manual inter-system latency compensation. With a non-zero offset we shift the
-		// reference pose forward/backward in time to align with the *effective* moment
-		// the target sample represents. We use velocity extrapolation rather than a
-		// history buffer (cheaper, bounded, and good enough for the small +/-100 ms range
-		// the UI exposes). If velocity data is invalid the reference pose is left
-		// un-shifted for this tick -- better one bad-but-bounded sample than a thrown
-		// exception or a teleporting reference.
-		//
-		// Bit-for-bit identical behaviour to before this feature is preserved when the
-		// active offset is 0: the shift in seconds is exactly 0.0 and
-		// ExtrapolateReferencePose returns immediately without touching the pose. The
-		// `if` below only enters when both that AND we have valid sample-time data,
-		// i.e. when there's actually work to do.
-		double activeOffsetMs = GetActiveLatencyOffsetMs(ctx);
-		if (activeOffsetMs != 0.0
-			&& ctx.devicePoseSampleTimes[ctx.referenceID].QuadPart != 0
-			&& ctx.devicePoseSampleTimes[ctx.targetID].QuadPart != 0)
-		{
-			LARGE_INTEGER freq;
-			QueryPerformanceFrequency(&freq);
-			// Delta shmem = how stale the reference pose is relative to the target pose
-			// (target ahead -> positive). Then we additionally subtract the user's
-			// configured offset. We extrapolate the reference forward by this delta to put
-			// it on the same effective timeline as the target.
-			double shmemDeltaSec =
-				double(ctx.devicePoseSampleTimes[ctx.targetID].QuadPart -
-					   ctx.devicePoseSampleTimes[ctx.referenceID].QuadPart)
-				/ double(freq.QuadPart);
-			double offsetSec = activeOffsetMs / 1000.0;
-			// effectiveTargetTime = targetSampleTime - offset, so the reference needs to
-			// move to (effectiveTargetTime) - referenceSampleTime = shmemDelta - offset.
-			double dt = shmemDeltaSec - offsetSec;
-			ExtrapolateReferencePose(reference, dt);
-		}
-
-		// Auto-detection feed: push linear-speed magnitudes for both devices into the
-		// rolling history buffers. The cross-correlation in CalibrationTick consumes
-		// these to estimate the lag between reference and target signal arrival.
-		// Linear velocity is preferred over angular for these speed signals -- angular
-		// velocity from optical trackers is often filter-shaped (low-pass), which
-		// blurs the transient that the cross-correlator looks for.
-		auto speedFromVel = [](const double v[3]) -> double {
-			double s = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-			if (!std::isfinite(s)) return 0.0;
-			return s;
-		};
-		const double refSpeed = speedFromVel(ctx.devicePoses[ctx.referenceID].vecVelocity);
-		const double tgtSpeed = speedFromVel(ctx.devicePoses[ctx.targetID].vecVelocity);
-		{
-			double now = glfwGetTime();
-
-			CalibrationContext& mctx = const_cast<CalibrationContext&>(ctx);
-			mctx.refSpeedHistory.push_back(refSpeed);
-			mctx.targetSpeedHistory.push_back(tgtSpeed);
-			mctx.speedSampleTimes.push_back(now);
-			while (mctx.refSpeedHistory.size() > CalibrationContext::kLatencyHistoryCapacity) {
-				mctx.refSpeedHistory.pop_front();
-			}
-			while (mctx.targetSpeedHistory.size() > CalibrationContext::kLatencyHistoryCapacity) {
-				mctx.targetSpeedHistory.pop_front();
-			}
-			while (mctx.speedSampleTimes.size() > CalibrationContext::kLatencyHistoryCapacity) {
-				mctx.speedSampleTimes.pop_front();
-			}
-		}
-
 		// Paired-motion validity. We want the diversity bars to reflect data
 		// the math can actually use, not raw target-tracker motion. If only
 		// one device moved meaningfully since the previous sample (the
@@ -527,7 +460,7 @@ CalibrationCalc calibration;
 			}
 		}
 
-		Sample collectedSample(refPose, tgtPose, glfwGetTime(), refSpeed, tgtSpeed);
+		Sample collectedSample(refPose, tgtPose, glfwGetTime());
 		collectedSample.pairedMotionValid = pairedMotionValid;
 		calibration.PushSample(collectedSample);
 
@@ -686,35 +619,3 @@ CalibrationCalc calibration;
 	// DetectExternalSmoothingTool) relocated to the Smoothing overlay on
 	// 2026-05-11 (Protocol v12 migration). The Smoothing plugin scans on
 	// its own Tick and surfaces the banner inside its Prediction sub-tab.
-
-	// Discrete cross-correlation between two equal-length speed series. Returns false
-	// if there isn't enough signal energy to produce a trustworthy estimate. On
-	// success, *lagSamplesOut is the lag (in samples) at which the correlation is
-	// maximised, with sub-sample resolution from a quadratic fit around the peak.
-	// Positive lag means the target signal lags the reference signal (target arrives later).
-	//
-	// 2026-05-05: math extracted to spacecal::latency::EstimateLagTimeDomain in
-	// LatencyEstimator.h so it can be unit-tested directly. This wrapper
-	// dispatches to either the original time-domain CC (default) or to the
-	// GCC-PHAT variant (Knapp & Carter 1976) based on `useGccPhat`. GCC-PHAT
-	// is opt-in until real-session evidence confirms the whitened-spectrum
-	// estimate is preferable; the math review pinned time-domain CC as
-	// "empirically validated, not a sore point".
-	bool EstimateLatencyLagSamples(
-		const std::deque<double>& ref,
-		const std::deque<double>& tgt,
-		int maxTau,
-		bool useGccPhat,
-		double* lagSamplesOut)
-	{
-		if (useGccPhat) {
-			return spacecal::latency::EstimateLagGccPhat(ref, tgt, maxTau, lagSamplesOut);
-		}
-		return spacecal::latency::EstimateLagTimeDomain(ref, tgt, maxTau, lagSamplesOut);
-	}
-
-double GetActiveLatencyOffsetMs(const CalibrationContext& ctx)
-{
-	if (ctx.useUpstreamMath) return 0.0;
-	return ctx.latencyAutoDetect ? ctx.estimatedLatencyOffsetMs : ctx.targetLatencyOffsetMs;
-}

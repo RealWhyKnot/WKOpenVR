@@ -246,7 +246,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 				opts.maxRelError, opts.ignoreOutliers);
 			tick.accepted = ok;
 			if (ok) ++res.accepts; else ++res.rejects;
-			tick.consecutiveRejections = calc.m_consecutiveRejections;
 			// CalibrationCalc doesn't expose its post-validate prior error
 			// directly, so use the public Validate path against the current
 			// estimate — only valid after the first accept, otherwise we
@@ -258,10 +257,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 					tick.currentCalErrMm = err * 1000.0;
 				}
 			}
-			// Tag mirrors CalibrationCalc::m_rejectReasonTag, which is private.
-			// We approximate from the public state: empty when the tick accepted,
-			// "rejected" otherwise. The detailed tag is already streamed to the
-			// debug log if logging is on; this trace is the lighter-weight UI view.
 			if (!ok) tick.rejectReason = "rejected";
 		} else {
 			// Oneshot mode just keeps appending samples. The single Compute below
@@ -277,7 +272,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 	}
 
 	res.rowsReplayed = (int)rec.rows.size();
-	res.watchdogResets = calc.m_watchdogResets;
 	res.finalTransformValid = calc.isValid();
 	if (calc.isValid()) {
 		res.finalTransform = calc.Transformation();

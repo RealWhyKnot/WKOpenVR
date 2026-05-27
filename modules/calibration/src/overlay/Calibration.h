@@ -21,7 +21,6 @@
 // in Calibration.cpp -- keeps the destructor available everywhere without
 // dragging the stubs through extra link steps.
 #include "CalibrationCalc.h"
-#include "TiltDiagnostic.h"  // spacecal::gravity::TiltSample for the diagnostic window
 
 enum class CalibrationState
 {
@@ -90,9 +89,7 @@ struct AdditionalCalibration {
 	// fields (autoLockHasPendingFlip / autoLockPendingFlipTo /
 	// autoLockPendingFlipFirstSeen / autoLockGateHeldWarned); see
 	// UpdateAutoLockDetector and CommitPendingAutoLockFlipIfStationary in
-	// Calibration.cpp for the rationale. Extras have no reanchor concept
-	// of their own, so no per-extra autoLockReanchorSuppressUntil field --
-	// the gate helper receives 0.0 for that argument.
+	// Calibration.cpp for the rationale.
 	bool autoLockHasPendingFlip = false;
 	bool autoLockPendingFlipTo = false;
 	double autoLockPendingFlipFirstSeen = 0.0;
@@ -278,129 +275,6 @@ struct CalibrationContext
 	float maxRelativeErrorThreshold = 0.005f;
 	Eigen::Vector3d continuousCalibrationOffset;
 
-	// Manual per-target-system end-to-end-latency offset (milliseconds). When non-zero,
-	// CollectSample extrapolates the most recent reference pose forward/backward by the
-	// time delta between the reference and target shmem sample timestamps plus this
-	// offset, using the reference pose's reported linear/angular velocity. This
-	// compensates for systems with different latencies (e.g. a wireless tracker
-	// running ~10–30 ms behind a Lighthouse-tracked reference). Default 0 produces
-	// identical behaviour to before the offset was introduced. Auto-detection (see
-	// latencyAutoDetect / estimatedLatencyOffsetMs below) can override this at runtime.
-	double targetLatencyOffsetMs = 0.0;
-
-	// When true, the cross-correlation latency auto-detector overrides
-	// targetLatencyOffsetMs at each scan tick with the most recent estimate.
-	// When false, the manual targetLatencyOffsetMs value is used.
-	bool latencyAutoDetect = false;
-	// EMA of the estimated latency offset in milliseconds, produced by the
-	// auto-detector (see refSpeedHistory / targetSpeedHistory below). Persisted
-	// across overlay restarts so the auto-detect value is restored when the
-	// user re-enables latencyAutoDetect.
-	double estimatedLatencyOffsetMs = 0.0;
-
-	// Ring buffers of recent reference / target device linear-speed magnitudes,
-	// timestamped with the glfw time at the moment CollectSample pushed them. The
-	// auto-detector cross-correlates these once per second to estimate the time
-	// shift that maximises signal alignment; that lag is converted to ms and
-	// fed into estimatedLatencyOffsetMs through an EMA. Capacity targets ~5 s
-	// of history at the calibrator's natural sample rate. The buffers are
-	// trimmed in CollectSample when they exceed kLatencyHistoryCapacity below.
-	static const size_t kLatencyHistoryCapacity = 100;
-	std::deque<double> refSpeedHistory;
-	std::deque<double> targetSpeedHistory;
-	std::deque<double> speedSampleTimes;
-	double timeLastLatencyEstimate = 0.0;
-
-	// Opt-in switch for the GCC-PHAT latency estimator (Knapp & Carter 1976)
-	// alongside the original time-domain cross-correlator. Default ON
-	// (graduated 2026-05-11): real-session evidence over many weeks of
-	// continuous use showed GCC-PHAT's whitened-spectrum estimate is
-	// drop-in better than the time-domain CC across the latency-relevant
-	// range. The time-domain helper stays callable for fallback. Both
-	// algorithms are pure helpers in src/overlay/LatencyEstimator.h.
-	// Persisted via Configuration.cpp.
-	bool useGccPhatLatency = true;
-
-	// Optional geometry-shift detector. Uses the CUSUM path instead of the
-	// older 5x-rolling-median rule. Both share the same recovery action.
-	// Persisted as geometry_shift_use_cusum in profile JSON.
-	bool useCusumGeometryShift = false;
-
-	// Opt-in switch for velocity-aware outlier weighting in the IRLS
-	// translation solve. When on, the per-pair Cauchy threshold c is
-	// scaled DOWN with motion magnitude: c_pair = c0 / (1 + kappa *
-	// v_pair / v_ref) where v_pair = max(refSpeed, targetSpeed) across
-	// the pair. Stationary pairs keep c0 (high-residual stays informative
-	// — "the cal is wrong here"); fast-motion pairs get a sharper cutoff
-	// that suppresses high-residual rows as glitches. Default ON
-	// (graduated 2026-05-11): observed sessions confirmed the velocity
-	// scaling is a clean win on Quest-rig motion glitches without
-	// degrading the stationary case. Persisted as irls_velocity_aware in
-	// profile JSON.
-	bool useVelocityAwareWeighting = true;
-
-	// Optional Tukey biweight + Qn-scale path in the IRLS translation solve.
-	// Replaces Cauchy + MAD with a redescending kernel and a 50% breakdown
-	// scale estimator. Persisted as irls_use_tukey in profile JSON.
-	bool useTukeyBiweight = false;
-
-	// When true, the translation solve falls back to the pre-revamp pairwise
-	// O(N^2) IRLS path. Provided as a safety hatch if the direct O(N)
-	// latent-offset solve regresses on a real session. Default false.
-	// Persisted as translation_use_legacy in profile JSON.
-	bool useLegacyMath = false;
-
-	// When true, the calibration math stack reverts to the pre-fork upstream
-	// shape as closely as the current codebase allows: bare pairwise BDCSVD
-	// translation solve, no latency correction, no velocity-aware weighting,
-	// and no rest-locked yaw. This is a broader compatibility switch than
-	// useLegacyMath, which only selects the previous fork's pairwise IRLS
-	// translation solver. Default false. Persisted as translation_use_upstream.
-	bool useUpstreamMath = false;
-
-	// Optional Kalman-filter blend at publish. Replaces the single-step EMA
-	// at alpha=0.3 in CalibrationCalc::ComputeIncremental with a 4-state
-	// filter on yaw + translation. Divergence falls back to the EMA path for
-	// that tick. Persisted as blend_use_kalman in profile JSON.
-	bool useBlendFilter = false;
-
-	// Opt-in switch for the rest-locked yaw drift correction. Per-tracker
-	// rest detector locks the orientation 1 s of dwell; subsequent at-rest
-	// ticks compare current vs locked rotation and apply a bounded-rate
-	// yaw nudge (per-class cap, global ceiling) to the active SE(3).
-	// Activates only outside Continuous mode (continuous-cal already
-	// handles drift in its own loop). Default ON (graduated 2026-05-11
-	// after the Phase A rate-invariant rest detection + circular-mean
-	// fusion fixes landed; observed sessions over multiple weeks confirm
-	// the corrections are useful and not over-eager). The math lives in
-	// src/overlay/RestLockedYaw.h. Persisted as rest_locked_yaw in
-	// profile JSON.
-	bool restLockedYawEnabled = true;
-
-	// Optional predictive recovery pre-correction (rec C). Each recovery
-	// fire pushes a displacement into a 6-deep ring; a consistent trend
-	// applies a small bounded-rate translation nudge. Persisted as
-	// predictive_recovery in profile JSON.
-	bool predictiveRecoveryEnabled = false;
-
-	// Optional chi-square re-anchor sub-detector (rec F). Runs a chi-square
-	// test on the residual between HMD-pose-from-rolling-velocity and the
-	// observed HMD pose, then freezes rec A/C corrections briefly on a
-	// candidate. Persisted as reanchor_chi_square in profile JSON.
-	bool reanchorChiSquareEnabled = false;
-
-	// Rolling window of per-solve residual pitch+roll readings (degrees), used
-	// by spacecal::gravity::EvaluateTilt to flag sustained gravity-axis
-	// disagreement between the reference and target tracking systems. Pushed
-	// each ComputeIncremental tick that produces a candidate; trimmed to the
-	// last kSustainedWindowSeconds of history. Logging-only diagnostic:
-	// surfaces "your two systems disagree about which way is down by X
-	// degrees" as a sustained signal so the user can correct (e.g. re-run
-	// room setup) -- the calibration math itself is unchanged.
-	std::deque<spacecal::gravity::TiltSample> tiltDiagnosticWindow;
-	bool tiltSustainedAlarmed = false;
-	double tiltLastAnnotatedMedian = -1.0;
-
 	protocol::AlignmentSpeedParams alignmentSpeedParams;
 	bool enableStaticRecalibration;
 
@@ -467,15 +341,6 @@ struct CalibrationContext
 	bool autoLockHasPendingFlip = false;
 	bool autoLockPendingFlipTo = false;
 
-	// AUTO Lock post-reanchor suppression deadline (seconds, same clock as
-	// CalibrationTick's `time` parameter). Set when chi-square reanchor fires;
-	// while CalibrationTick's `time` is less than this, queued AUTO Lock flips
-	// are held off (the reanchor briefly spikes stddev past the leave
-	// threshold, which alone would trip an unlock for a few ticks before the
-	// swing-back path absorbs it). Zero means no active suppression. Like
-	// the pending-flip fields above this is reset on Clear().
-	double autoLockReanchorSuppressUntil = 0.0;
-
 	// Time the current pending AUTO Lock flip was first observed. Used by
 	// CommitPendingAutoLockFlipIfStationary to compute how long the commit
 	// gate has held a target verdict, so a chronic block becomes visible in
@@ -489,16 +354,6 @@ struct CalibrationContext
 	// fired? Prevents a per-tick flood while the gate continues to block
 	// the same target verdict. Cleared whenever a new pending flip starts.
 	bool autoLockGateHeldWarned = false;
-
-	// Quest re-localization recovery cooldown. Set by RecoverFromWedgedCalibration
-	// to a deadline a few seconds in the future. While now < this value, the
-	// chi-square reanchor sub-detector is skipped entirely -- the relocalization
-	// already triggered the full recovery path (auto_recover_from_relocalization),
-	// so re-firing the chi-square detector on the same physical event just
-	// produces redundant 1e6+ chi_sq values whose suppress-windows cascade and
-	// re-extend autoLockReanchorSuppressUntil. Cleared (set to 0) only via Clear();
-	// otherwise it naturally expires when `now` passes the deadline.
-	double relocalizationCooldownUntil = 0.0;
 
 	// Recovery-convergence watch: set by RecoverFromWedgedCalibration to the
 	// recovery timestamp + recorded hmdDelta. The first post-recovery
@@ -538,13 +393,10 @@ struct CalibrationContext
 	// "fly away and fly back" as the candidate solver flips between two
 	// minima per tick. The warm-restart snap path detects the HMD's
 	// proximity sensor going false -> true after a sustained absence and
-	// (a) re-applies the saved profile transform immediately, (b) sets a
-	// grace window in which CalibrationCalc bypasses the prior-error
-	// rejection gate so fresh candidates that converge toward the saved
-	// profile are accepted right away. If a real geometry shift fires
-	// during the grace window (e.g. the user actually moved a base
-	// station while away), grace drops to zero and the normal
-	// continuous-cal recovery takes over.
+	// re-applies the saved profile transform immediately, then tracks a
+	// validation grace window. If a real geometry shift fires during the
+	// grace window (e.g. the user actually moved a base station while away),
+	// grace drops to zero and the normal continuous-cal recovery takes over.
 	//
 	// `lastUserPresent` defaults to true so a session that starts with
 	// the user already wearing the HMD sees no rising edge -- the snap
@@ -557,9 +409,7 @@ struct CalibrationContext
 	// hiccups).
 	//
 	// `warmRestartGraceSamples` is a downcounter ticked by
-	// CalibrationTick after each ComputeIncremental. > 0 means
-	// CalibrationCalc skips the prior-vs-new error rejection (see
-	// `CalibrationCalc::warmRestartGraceActive`).
+	// CalibrationTick after each ComputeIncremental.
 	bool lastUserPresent = true;
 	double userAwaySince = 0.0;
 	int warmRestartGraceSamples = 0;
@@ -702,19 +552,12 @@ struct CalibrationContext
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
-	int continuousPreAcceptJumpRejects = 0;
-	bool pendingLargeFullSolve = false;
-	int pendingLargeFullSolveSamples = 0;
-	Eigen::Vector3d pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
-	Eigen::Matrix3d pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
-	double pendingLargeFullSolveUncertaintyCm = 0.0;
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
 	// Per-device shmem-side QPC timestamps captured alongside the most recent pose.
 	// Populated by CalibrationTick when ingesting AugmentedPose entries from the
-	// driver shared-memory ring; consumed by CollectSample to compute the inter-system
-	// time delta used for velocity extrapolation when targetLatencyOffsetMs != 0.
+	// driver shared-memory ring.
 	LARGE_INTEGER devicePoseSampleTimes[vr::k_unMaxTrackedDeviceCount];
 
 	CalibrationContext() {
@@ -722,15 +565,6 @@ struct CalibrationContext
 		memset(devicePoses, 0, sizeof(devicePoses));
 		memset(devicePoseSampleTimes, 0, sizeof(devicePoseSampleTimes));
 		ResetConfig();
-	}
-
-	void ClearPendingLargeFullSolve()
-	{
-		pendingLargeFullSolve = false;
-		pendingLargeFullSolveSamples = 0;
-		pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
-		pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
-		pendingLargeFullSolveUncertaintyCm = 0.0;
 	}
 
 	void ResetConfig() {
@@ -808,18 +642,6 @@ struct CalibrationContext
 		validProfile = false;
 		refToTargetPose = Eigen::AffineCompact3d::Identity();
 
-		// Per-profile fields added by recent passes. Without these resets
-		// the user's stale latency settings would carry over after a profile
-		// clear and silently apply to the next calibration session.
-		// (trackerSmoothness lives on the Smoothing overlay now, Protocol
-		// v12 migration 2026-05-11.)
-		targetLatencyOffsetMs = 0.0;
-		latencyAutoDetect = false;
-		estimatedLatencyOffsetMs = 0.0;
-		refSpeedHistory.clear();
-		targetSpeedHistory.clear();
-		speedSampleTimes.clear();
-		timeLastLatencyEstimate = 0.0;
 		// Runtime UI state — pausing on an empty profile makes no sense.
 		calibrationPaused = false;
 		// Default this back ON when clearing — it's the safer setting and
@@ -834,13 +656,11 @@ struct CalibrationContext
 		autoLockEffectivelyLocked = false;
 		autoLockHasPendingFlip = false;
 		autoLockPendingFlipTo = false;
-		autoLockReanchorSuppressUntil = 0.0;
 		autoLockPendingFlipFirstSeen = 0.0;
 		autoLockGateHeldWarned = false;
 		autoLockMadHistory.clear();
 		autoLockMadFloor = 0.0;
 		autoLockLastFlipTime = 0.0;
-		relocalizationCooldownUntil = 0.0;
 		recoveryWaitingSince = 0.0;
 		recoveryHmdDeltaAtStart = 0.0;
 		geometryShiftGraceUntil = 0.0;
@@ -878,8 +698,6 @@ struct CalibrationContext
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 		continuousStartSnapshot = {};
 		lastAcceptedContinuousSnapshot = {};
-		continuousPreAcceptJumpRejects = 0;
-		ClearPendingLargeFullSolve();
 	}
 
 	void ClearRuntimeCalibrationForRecovery()
@@ -891,8 +709,6 @@ struct CalibrationContext
 		calibratedTranslation = Eigen::Vector3d::Zero();
 		calibratedRotation = Eigen::Vector3d::Zero();
 		lastAcceptedContinuousSnapshot = {};
-		continuousPreAcceptJumpRejects = 0;
-		ClearPendingLargeFullSolve();
 	}
 
 	CalibrationProfileSnapshot CaptureProfileSnapshot() const
@@ -936,15 +752,6 @@ struct CalibrationContext
 			? continuousCalibrationSpeed
 			: oneShotCalibrationSpeed;
 	}
-
-	bool EffectiveGccPhatLatency() const { return useGccPhatLatency && !useUpstreamMath; }
-	bool EffectiveCusumGeometryShift() const { return useCusumGeometryShift && !useUpstreamMath; }
-	bool EffectiveVelocityAwareWeighting() const { return useVelocityAwareWeighting && !useUpstreamMath; }
-	bool EffectiveTukeyBiweight() const { return useTukeyBiweight && !useUpstreamMath; }
-	bool EffectiveBlendFilter() const { return useBlendFilter && !useUpstreamMath; }
-	bool EffectivePredictiveRecoveryEnabled() const { return predictiveRecoveryEnabled && !useUpstreamMath; }
-	bool EffectiveReanchorChiSquareEnabled() const { return reanchorChiSquareEnabled && !useUpstreamMath; }
-	bool EffectiveRestLockedYawEnabled() const { return restLockedYawEnabled && !useUpstreamMath; }
 
 	// Resolve the user's selected speed to a concrete FAST/SLOW/VERY_SLOW. When
 	// the user picks AUTO, we look at the recent observed jitter on both
@@ -1035,9 +842,7 @@ extern CalibrationContext CalCtx;
 
 // Commits a queued AUTO-Lock-mode flip (held by UpdateAutoLockDetector to
 // hide visible jumps) when the HMD is nearly still. No-op when the queue is
-// empty, the user is currently moving, or a chi-square reanchor recently
-// fired (see AutoLockHysteresis.h::kReanchorSuppressSeconds). `now` is the
-// CalibrationTick time stamp, used by the post-reanchor suppression gate.
+// empty or the user is currently moving.
 // Called once per CalibrationTick in continuous-cal mode. Public so unit
 // tests can drive it directly.
 bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSpeedMps, double now);
@@ -1060,12 +865,8 @@ void ApplyChaperoneBounds();
 void ShowCalibrationDebug(int r, int c);
 void DebugApplyRandomOffset();
 
-// Dump drift-subsystem state (rec A rest detector, rec C recovery delta
-// buffer, rec F chi-square detector) to the structured log. Captures a
-// one-time snapshot of every per-device rest state, ring-buffer contents,
-// freeze status, and toggle values so a user attaching a session log to a
-// bug report can include the in-memory state alongside the rolling
-// annotations. Called from the Logs tab's "Dump drift state" button.
+// Dump relocalization state to the structured log. Called from the Logs tab's
+// "Dump drift state" button.
 void DumpDriftSubsystemState();
 
 // Accessor for the session-counter of stuck-loop watchdog firings. The
@@ -1106,10 +907,3 @@ void DismissAutoRecoveryBanner();
 // silently, and ReadNewPoses() begins yielding zeros. Re-opening picks up the
 // new mapping the freshly-respawned driver creates.
 void ReopenShmem();
-
-// Returns the latency offset (in ms) that should currently be applied to
-// reference-pose extrapolation. When ctx.latencyAutoDetect is true, this is
-// the auto-detected EMA value (estimatedLatencyOffsetMs); otherwise it is the
-// user-supplied manual value (targetLatencyOffsetMs). Centralising the choice
-// here keeps the manual/auto switch a single read.
-double GetActiveLatencyOffsetMs(const CalibrationContext& ctx);

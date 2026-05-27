@@ -169,45 +169,6 @@ TEST(AutoLockHysteresisTest, StationaryThresholdIsStrictLessThan)
     EXPECT_FALSE(al::HmdIsStationary(al::kStationaryHmdMps));
 }
 
-// --- Reanchor suppression --------------------------------------------------
-
-// Default unset deadline (0.0) never suppresses, regardless of current time.
-// Important so a fresh session before any reanchor has fired doesn't
-// accidentally hold every queued flip.
-TEST(AutoLockHysteresisTest, ReanchorSuppressionUnsetByDefault)
-{
-    EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/0.0, /*suppressUntil=*/0.0));
-    EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/100.0, /*suppressUntil=*/0.0));
-    EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/1e9, /*suppressUntil=*/0.0));
-}
-
-// While `now` sits inside the window (now < suppressUntil), the gate holds.
-// The reanchor that armed the window was emitted at suppressUntil - 2.0 s
-// per kReanchorSuppressSeconds; we exercise both fresh-after-reanchor and
-// nearly-expired points inside the band.
-TEST(AutoLockHysteresisTest, ReanchorSuppressionHoldsInsideWindow)
-{
-    const double armedAt = 1000.0;
-    const double until   = armedAt + al::kReanchorSuppressSeconds;
-
-    EXPECT_TRUE(al::ShouldSuppressForReanchor(/*now=*/armedAt, until));
-    EXPECT_TRUE(al::ShouldSuppressForReanchor(/*now=*/armedAt + 0.5, until));
-    EXPECT_TRUE(al::ShouldSuppressForReanchor(/*now=*/until - 1e-6, until));
-}
-
-// Once `now >= suppressUntil`, the gate releases. Boundary uses `<` so the
-// exact-equal sample is the first allowed tick; the next tick onward also
-// passes. A legitimate flip queued during the window must be commit-able
-// the moment the window expires.
-TEST(AutoLockHysteresisTest, ReanchorSuppressionReleasesAtAndAfterDeadline)
-{
-    const double until = 1000.0;
-
-    EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/until, until));
-    EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/until + 1e-6, until));
-    EXPECT_FALSE(al::ShouldSuppressForReanchor(/*now=*/until + 10.0, until));
-}
-
 // --- MAD-based robust deviation metrics ------------------------------------
 
 // 28 tight samples (sub-mm scatter around origin) plus 2 outliers at 25mm.
@@ -563,10 +524,9 @@ TEST(AutoLockSettledTest, AdaptiveEnterPath)
 
 // --- Commit-gate decision ---------------------------------------------------
 
-// Shared between the primary and extras detectors. Pin the three-way
+// Shared between the primary and extras detectors. Pin the two-way
 // decision: stationary lets any flip through, unlock-timeout escapes
-// sustained motion, reanchor-suppress blocks even when stationary, and
-// lock-direction flips have no escape.
+// sustained motion, and lock-direction flips have no escape.
 
 TEST(AutoLockCommitGateTest, StationaryCommitsImmediately)
 {
@@ -574,7 +534,6 @@ TEST(AutoLockCommitGateTest, StationaryCommitsImmediately)
         /*pendingFlipTo=*/true,
         /*hmdSpeedMps=*/0.02,        // below kStationaryHmdMps (0.05)
         /*now=*/100.0,
-        /*reanchorSuppressUntil=*/0.0,
         /*pendingHeldSec=*/0.1);
     EXPECT_TRUE(d.commit);
     EXPECT_STREQ(d.mode, "stationary_gate");
@@ -588,7 +547,6 @@ TEST(AutoLockCommitGateTest, HmdMotionHoldsLockFlipForever)
         /*pendingFlipTo=*/true,
         /*hmdSpeedMps=*/0.50,        // well above stationary
         /*now=*/1000.0,
-        /*reanchorSuppressUntil=*/0.0,
         /*pendingHeldSec=*/30.0);    // way past kAutoLockUnlockMaxWaitSeconds
     EXPECT_FALSE(d.commit);
     EXPECT_STREQ(d.mode, "held");
@@ -600,7 +558,6 @@ TEST(AutoLockCommitGateTest, UnlockTimeoutEscapesMotion)
         /*pendingFlipTo=*/false,     // unlock direction
         /*hmdSpeedMps=*/0.50,        // moving
         /*now=*/1000.0,
-        /*reanchorSuppressUntil=*/0.0,
         /*pendingHeldSec=*/al::kAutoLockUnlockMaxWaitSeconds);
     EXPECT_TRUE(d.commit);
     EXPECT_STREQ(d.mode, "unlock_timeout");
@@ -613,22 +570,7 @@ TEST(AutoLockCommitGateTest, UnlockBelowTimeoutStaysHeld)
         /*pendingFlipTo=*/false,
         /*hmdSpeedMps=*/0.50,
         /*now=*/1000.0,
-        /*reanchorSuppressUntil=*/0.0,
         /*pendingHeldSec=*/half);
-    EXPECT_FALSE(d.commit);
-    EXPECT_STREQ(d.mode, "held");
-}
-
-TEST(AutoLockCommitGateTest, ReanchorSuppressBlocksEvenStationary)
-{
-    // Stationary + reanchor still active -> held. The reanchor window
-    // exists to hide post-reanchor stddev spikes from the lock decision.
-    const auto d = al::EvaluateCommitGate(
-        /*pendingFlipTo=*/true,
-        /*hmdSpeedMps=*/0.0,
-        /*now=*/100.0,
-        /*reanchorSuppressUntil=*/100.5,   // still suppressing
-        /*pendingHeldSec=*/0.2);
     EXPECT_FALSE(d.commit);
     EXPECT_STREQ(d.mode, "held");
 }
@@ -642,7 +584,6 @@ TEST(AutoLockCommitGateTest, UnlockTimeoutBeatsStationaryInTag)
         /*pendingFlipTo=*/false,
         /*hmdSpeedMps=*/0.0,                // stationary
         /*now=*/1000.0,
-        /*reanchorSuppressUntil=*/0.0,
         /*pendingHeldSec=*/al::kAutoLockUnlockMaxWaitSeconds + 1.0);
     EXPECT_TRUE(d.commit);
     EXPECT_STREQ(d.mode, "unlock_timeout");

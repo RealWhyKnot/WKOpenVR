@@ -4,15 +4,13 @@
 // Calibration.cpp and CalibrationRecoveryTick.cpp so unit tests can exercise
 // the corroboration decisions without a live OpenVR runtime.
 //
-// Four sites in the calibration loop consult this logic:
+// Three sites in the calibration loop consult this logic:
 //   1. ComputeEffectiveSpeedMps -- AUTO Lock stationary gate takes max of HMD
 //      and head-tracker speeds when Corroborate is active.
 //   2. JumpDetectorClassification -- 30 cm jump detector classifies the event
 //      as SLAM snap when the head-tracker reports < 2 cm displacement.
 //   3. GeometryShiftCoherenceSource -- who_moved block uses tracker actual
 //      displacement instead of velocity-integrated HMD estimate.
-//   4. ChiSquareSnapClassification -- parallel chi-square on head-tracker;
-//      HMD fires but tracker quiet = SLAM snap.
 //
 // All functions are pure: no CalCtx access, no vr::* calls. Callers read
 // device-pose arrays and pass the extracted values here.
@@ -79,26 +77,6 @@ inline bool ShouldUseTrackerDisplacement(HeadMountMode mode,
 {
     if (mode < HeadMountMode::Corroborate) return false;
     return trackerDeltaM >= 0.0;
-}
-
-// Chi-square parallel snap classification.
-//
-// Returns true when the event is a SLAM snap based on chi-square signals:
-//   - HMD chi-square fired (hmdFired)
-//   - Tracker chi-square did NOT fire (trackerFired == false)
-//   - Tracker has warmed up (trackerWarmed -- detector has enough variance
-//     samples that the threshold is meaningful)
-//   - Mode >= Corroborate
-//
-// Same outcome as IsJumpClassifiedAsSnap; this path fires on sub-30 cm
-// snaps that the relocalization detector wouldn't otherwise catch.
-inline bool IsChiSquareClassifiedAsSnap(HeadMountMode mode,
-                                         bool hmdFired,
-                                         bool trackerFired,
-                                         bool trackerWarmed)
-{
-    if (mode < HeadMountMode::Corroborate) return false;
-    return hmdFired && !trackerFired && trackerWarmed;
 }
 
 }  // namespace spacecal::snap_suppression

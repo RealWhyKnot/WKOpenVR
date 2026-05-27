@@ -6,14 +6,10 @@
 // Common-mode coherence score for the geometry-shift detector. When the
 // primary HMD<->target pair's residual spikes, the question is whether the
 // spike is pair-local (real attachment shift on the primary tracker) or
-// shared across every active calibration pair (worldFromDriver reanchor,
-// runtime relocalization, base-station perturbation affecting all pairs
-// together). The wall-clock reanchor-freeze gate already suppresses the
-// 0.5 s window right after a chi-square fire, but it doesn't see
-// reanchor-equivalent events that come from outside that detector --
-// e.g. a Quest Link space-recenter or a runtime-issued tracking-origin
-// reset. The coherence score answers the same question directly from the
-// residual streams: a spike that affects every pair coherently is common-
+// shared across every active calibration pair (runtime relocalization,
+// base-station perturbation, or tracking-origin reset affecting all pairs
+// together). The coherence score answers that question directly from the
+// residual streams: a spike that affects every pair coherently is common
 // mode regardless of which subsystem caused it.
 //
 // Lives next to the existing geometry-shift detector at

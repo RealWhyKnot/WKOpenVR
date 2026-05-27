@@ -1,13 +1,12 @@
 // Tests for the snap-suppression pure helpers in SnapSuppression.h.
 //
-// Covers the seven cases required by the plan:
+// Covers the snap-suppression helper cases:
 //   1. Speed_gate_max_of_hmd_and_tracker
 //   2. Speed_gate_falls_back_when_tracker_invalid
 //   3. Jump_detector_classifies_slam_snap
 //   4. Jump_detector_real_jump_passes_through
 //   5. Geometry_shift_coherence_uses_tracker_displacement
-//   6. Chi_square_parallel_test_classifies_snap
-//   7. Off_mode_unchanged_recovery
+//   6. Off_mode_unchanged_recovery
 
 #include "SnapSuppression.h"
 
@@ -191,61 +190,6 @@ TEST(SnapSuppression, Geometry_shift_zero_tracker_displacement_accepted)
 }
 
 // ---------------------------------------------------------------------------
-// Site 1213: IsChiSquareClassifiedAsSnap (parallel chi-square)
-// ---------------------------------------------------------------------------
-
-TEST(SnapSuppression, Chi_square_parallel_test_classifies_snap)
-{
-    // HMD chi-square fired, tracker stayed quiet, tracker is warmed up:
-    // SLAM snap.
-    EXPECT_TRUE(ss::IsChiSquareClassifiedAsSnap(
-        HeadMountMode::Corroborate,
-        true,   // hmdFired
-        false,  // trackerFired
-        true)); // trackerWarmed
-}
-
-TEST(SnapSuppression, Chi_square_both_fire_not_snap)
-{
-    // Both HMD and tracker fired: genuine shared-frame event.
-    EXPECT_FALSE(ss::IsChiSquareClassifiedAsSnap(
-        HeadMountMode::Corroborate,
-        true,  // hmdFired
-        true,  // trackerFired
-        true));
-}
-
-TEST(SnapSuppression, Chi_square_tracker_not_warmed_no_snap)
-{
-    // Tracker warmed up flag is false: don't classify (startup noise risk).
-    EXPECT_FALSE(ss::IsChiSquareClassifiedAsSnap(
-        HeadMountMode::Corroborate,
-        true,   // hmdFired
-        false,  // trackerFired
-        false));// trackerWarmed -- not ready
-}
-
-TEST(SnapSuppression, Chi_square_hmd_not_fired_no_snap)
-{
-    // HMD didn't fire: nothing to classify.
-    EXPECT_FALSE(ss::IsChiSquareClassifiedAsSnap(
-        HeadMountMode::Corroborate,
-        false,  // hmdFired
-        false,  // trackerFired
-        true));
-}
-
-TEST(SnapSuppression, Chi_square_off_mode_no_snap)
-{
-    // Off mode: corroboration disabled.
-    EXPECT_FALSE(ss::IsChiSquareClassifiedAsSnap(
-        HeadMountMode::Off,
-        true,
-        false,
-        true));
-}
-
-// ---------------------------------------------------------------------------
 // Off_mode_unchanged_recovery: verify every function returns the "unchanged"
 // value when mode == Off, regardless of other inputs.
 // ---------------------------------------------------------------------------
@@ -262,9 +206,6 @@ TEST(SnapSuppression, Off_mode_unchanged_recovery)
 
     // Geometry-shift source: always HMD-IMU.
     EXPECT_FALSE(ss::ShouldUseTrackerDisplacement(off, 0.0));
-
-    // Chi-square: never classifies as snap.
-    EXPECT_FALSE(ss::IsChiSquareClassifiedAsSnap(off, true, false, true));
 }
 
 // ---------------------------------------------------------------------------

@@ -113,8 +113,8 @@ struct CusumState {
     int sustainedAboveThreshold = 0;
 
     // Clear both fields together. Used at every reset site (grace window,
-    // toggle flip, reanchor suppression, cooldown suppression, post-fire,
-    // not-enough-samples) so the two counters never drift apart.
+    // toggle flip, cooldown suppression, post-fire, not-enough-samples) so
+    // the two counters never drift apart.
     constexpr void Reset() {
         S = 0.0;
         sustainedAboveThreshold = 0;
@@ -193,81 +193,5 @@ constexpr bool ShouldSuppressForCooldown(double now, double cooldownUntil) {
     return now < cooldownUntil;
 }
 
-// -------------------------------------------------------------------------
-// Deferral: holds a fire decision while the chi-square reanchor freeze is
-// active, rather than dropping it. Background: the previous behaviour
-// reset the CUSUM accumulators on every reanchor-frozen fire, which on
-// rigs with continuous reanchor activity (Quest+Lighthouse cross-system
-// noise observed at ~0.8-1.5 s reanchor cadence, 0.5 s freeze window each)
-// produced a state where freezes overlap continuously and no fire ever
-// committed. In a 5.3 h session log captured 2026-05-25, only 1 of 32+
-// candidate fires reached the recovery path; the rest were dropped while
-// the underlying geometry shifts remained un-remediated.
-//
-// Deferral preserves the fire intent and commits it either (a) on the
-// next tick where reanchor is not frozen, or (b) after kFireThroughSeconds
-// of continuous freeze with the deferral still latched -- the freeze
-// storm itself is shift signature at that duration, not noise to
-// suppress. A subsided signal while deferred clears the deferral without
-// firing (handled at the call site).
-// -------------------------------------------------------------------------
-
-// Maximum time (seconds) a fire stays deferred before firing through the
-// reanchor-frozen gate. Sized at 6x kFreezeWindowSec=0.5: a freeze chain
-// lasting past 3 s is itself a geometry-shift signature, not transient
-// noise to be suppressed. Worst case the user sees one extra
-// geometry-shift fire per ~3 s of pathological reanchor cascade; best
-// case (the common case) the deferral resolves naturally inside the
-// window without firing through.
-constexpr double kFireThroughSeconds = 3.0;
-
-// Latched state of a fire that was deferred. Captured at the original
-// fire decision so the [deferred-fire-committed] / [fired-through-reanchor]
-// log lines carry the original cusum/median values that triggered the
-// decision, not the post-defer current state.
-struct DeferralState {
-    double pendingFireSince = 0.0;       // 0.0 = no deferral active
-    double cusumSAtPending  = 0.0;
-    int    sustainAtPending = 0;
-    double currentMmAtPending = 0.0;
-    double medianMmAtPending  = 0.0;
-    double ratioAtPending     = 0.0;
-    bool   modeWasCusum       = false;
-
-    constexpr bool HasPending() const { return pendingFireSince > 0.0; }
-
-    constexpr void Reset() {
-        pendingFireSince = 0.0;
-        cusumSAtPending = 0.0;
-        sustainAtPending = 0;
-        currentMmAtPending = 0.0;
-        medianMmAtPending = 0.0;
-        ratioAtPending = 0.0;
-        modeWasCusum = false;
-    }
-
-    constexpr void Latch(double now,
-                         double cusumS, int sustain,
-                         double currentMm, double medianMm, double ratio,
-                         bool wasCusum) {
-        pendingFireSince = now;
-        cusumSAtPending = cusumS;
-        sustainAtPending = sustain;
-        currentMmAtPending = currentMm;
-        medianMmAtPending = medianMm;
-        ratioAtPending = ratio;
-        modeWasCusum = wasCusum;
-    }
-};
-
-// Should the deferred fire commit through a still-frozen reanchor? Returns
-// true when the deferral has been latched for at least `fireThroughSec`
-// (default kFireThroughSeconds). A reanchor storm sustained past this
-// duration is itself geometry-shift signature.
-constexpr bool ShouldFireThroughDeferral(double now,
-                                          const DeferralState& d,
-                                          double fireThroughSec = kFireThroughSeconds) {
-    return d.HasPending() && (now - d.pendingFireSince) >= fireThroughSec;
-}
 
 } // namespace spacecal::geometry_shift

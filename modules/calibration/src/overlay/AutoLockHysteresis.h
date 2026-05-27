@@ -21,7 +21,7 @@
 //    user is paused, hidden by the natural stillness rather than mid-motion.
 //
 // Pure helpers, header-only, testable in isolation. Same pattern as
-// MotionGate.h, GeometryShiftDetector.h, WatchdogDecisions.h, TiltDiagnostic.h.
+// MotionGate.h, GeometryShiftDetector.h, WatchdogDecisions.h.
 
 #include <Eigen/Geometry>
 #include <algorithm>
@@ -31,12 +31,9 @@
 namespace spacecal::autolock {
 
 // Forward declarations for the leaf inline helpers. Lets composite helpers
-// (EvaluateCommitGate and any future addition) call HmdIsStationary /
-// ShouldSuppressForReanchor regardless of where the composite is placed in
-// this file. Without these, defining a composite above its callees would
-// fail to compile -- the d1a7e9e -> 988bbf8 work hit exactly that.
+// (EvaluateCommitGate and any future addition) call HmdIsStationary regardless
+// of where the composite is placed in this file.
 inline bool HmdIsStationary(double hmdSpeedMps);
-inline bool ShouldSuppressForReanchor(double now, double suppressUntil);
 
 // Window size of the relative-pose history. With samples arriving at the
 // continuous-cal cadence (~2 Hz post-buffer-fill), 20 samples ~ 10 s. Was
@@ -95,23 +92,6 @@ inline double EnterThresholdFor(double madFloor)
 // a paused user (looking around, holding still to read) does.
 constexpr double kStationaryHmdMps = 0.05;
 
-// When a chi-square reanchor fires, the underlying re-anchor briefly spikes
-// translation stddev past the leave threshold (kLeaveTranslM = 8 mm), which
-// alone would trip an unlock for ~1 tick before stddev settles back. The
-// detector's swing-back logic at UpdateAutoLockDetector drops the pending
-// flip if the verdict reverts inside this window -- but only if the commit
-// hasn't already fired. This gate holds the commit for kReanchorSuppressSeconds
-// after each reanchor, giving the swing-back path time to absorb the spike.
-//
-// Sized to ~0.6 s -- just above the reanchor's own freezeUntil window
-// (kFreezeWindowSec = 0.5 in ReanchorChiSquareDetector.h). Originally 2.0 s,
-// but at the observed reanchor cadence of ~25 fires/min (one every ~2.4 s),
-// a 2.0 s window unconditionally re-extended on every fire kept the
-// suppression chain continuous for entire multi-hour sessions, locking AUTO
-// Lock out completely. 0.6 s keeps the chain broken in steady state while
-// still covering the reanchor's own dispersion window.
-constexpr double kReanchorSuppressSeconds = 0.6;
-
 // AUTO Lock commit-gate "pending flip held too long" threshold (seconds).
 // When a target verdict has been queued but the commit gate has held it for
 // this long, emit a diagnostic so we can see whether the gate is the dominant
@@ -140,11 +120,8 @@ constexpr double kAutoLockUnlockMaxWaitSeconds = 5.0;
 // output. Callers should bypass the queue and write the effective state
 // directly when this predicate fires.
 //
-// 40 mm = 5 x kLeaveTranslM. Sized so a chi-square reanchor spike plus
-// normal motion noise cannot land at panic level -- the reanchor freeze
-// window (kFreezeWindowSec = 0.5 in ReanchorChiSquareDetector.h) bounds
-// the reanchor displacement, and even worst-case translation jumps stay
-// well under 40 mm in the 30-sample MAD. The 2026-05-22 session log
+// 40 mm = 5 x kLeaveTranslM. Sized so normal motion noise cannot land at
+// panic level. The 2026-05-22 session log
 // (the calibration robustness pass) showed the worst-case real outlier
 // at ~670 mm, comfortably past this threshold; sub-30 mm spikes are
 // absorbed by the normal 5 s unlock-timeout path.
@@ -216,20 +193,9 @@ inline bool HmdIsStationary(double hmdSpeedMps)
     return hmdSpeedMps < kStationaryHmdMps;
 }
 
-// Returns true while a pending AUTO Lock flip should be held off because a
-// chi-square reanchor recently fired. `now` is the current tick time in the
-// same units as `suppressUntil` (the deadline timestamp written when the
-// reanchor fired). A zero/unset suppressUntil never suppresses.
-inline bool ShouldSuppressForReanchor(double now, double suppressUntil)
-{
-    return now < suppressUntil;
-}
-
 // Per-tick commit-gate decision for a pending AUTO Lock flip. Captures the
 // three-way logic shared between the primary and extras detectors:
 //   - HMD stationary lets any pending flip commit (lock or unlock).
-//   - Reanchor-suppress window blocks commits regardless (primary only;
-//     extras pass suppressUntil = 0.0 since they have no reanchor concept).
 //   - Asymmetric unlock-timeout escape: pending unlocks commit after
 //     kAutoLockUnlockMaxWaitSeconds regardless of motion. Lock-direction
 //     flips have no escape -- locking under sustained motion is exactly
@@ -245,16 +211,15 @@ struct CommitGateDecision {
 inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo,
                                              double hmdSpeedMps,
                                              double now,
-                                             double reanchorSuppressUntil,
                                              double pendingHeldSec)
 {
+    (void)now;
     const bool stationary = HmdIsStationary(hmdSpeedMps);
-    const bool suppressed = ShouldSuppressForReanchor(now, reanchorSuppressUntil);
     const bool isUnlock = (pendingFlipTo == false);
     const bool unlockTimeoutFired = isUnlock
         && pendingHeldSec >= kAutoLockUnlockMaxWaitSeconds;
 
-    if ((!stationary || suppressed) && !unlockTimeoutFired) {
+    if (!stationary && !unlockTimeoutFired) {
         return { false, "held" };
     }
     if (unlockTimeoutFired) return { true, "unlock_timeout" };

@@ -517,33 +517,6 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		ctx.jitterThreshold = (float)obj["jitter_threshold"].get<double>();
 	if (obj["max_relative_error_threshold"].is<double>())
 		ctx.maxRelativeErrorThreshold = (float)obj["max_relative_error_threshold"].get<double>();
-	if (obj["target_latency_offset_ms"].is<double>())
-		ctx.targetLatencyOffsetMs = obj["target_latency_offset_ms"].get<double>();
-	if (obj["latency_auto_detect"].is<bool>())
-		ctx.latencyAutoDetect = obj["latency_auto_detect"].get<bool>();
-	if (obj["estimated_latency_offset_ms"].is<double>())
-		ctx.estimatedLatencyOffsetMs = obj["estimated_latency_offset_ms"].get<double>();
-	if (obj["latency_use_gcc_phat"].is<bool>())
-		ctx.useGccPhatLatency = obj["latency_use_gcc_phat"].get<bool>();
-	if (obj["geometry_shift_use_cusum"].is<bool>())
-		ctx.useCusumGeometryShift = obj["geometry_shift_use_cusum"].get<bool>();
-	if (obj["irls_velocity_aware"].is<bool>())
-		ctx.useVelocityAwareWeighting = obj["irls_velocity_aware"].get<bool>();
-	if (obj["irls_use_tukey"].is<bool>())
-		ctx.useTukeyBiweight = obj["irls_use_tukey"].get<bool>();
-	if (obj["translation_use_upstream"].is<bool>())
-		ctx.useUpstreamMath = obj["translation_use_upstream"].get<bool>();
-	if (obj["translation_use_legacy"].is<bool>())
-		ctx.useLegacyMath = obj["translation_use_legacy"].get<bool>();
-	if (obj["blend_use_kalman"].is<bool>())
-		ctx.useBlendFilter = obj["blend_use_kalman"].get<bool>();
-	if (obj["rest_locked_yaw"].is<bool>())
-		ctx.restLockedYawEnabled = obj["rest_locked_yaw"].get<bool>();
-	if (obj["predictive_recovery"].is<bool>())
-		ctx.predictiveRecoveryEnabled = obj["predictive_recovery"].get<bool>();
-	if (obj["reanchor_chi_square"].is<bool>())
-		ctx.reanchorChiSquareEnabled = obj["reanchor_chi_square"].get<bool>();
-
 	// Native prediction-suppression settings.
 	//
 	// New schema (v2026.4.28+): "tracker_smoothness" is an object mapping
@@ -862,19 +835,6 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	WRITE_IF_CHANGED_BOOL  ("static_calibration",           enableStaticRecalibration);
 	WRITE_IF_CHANGED_DOUBLE("jitter_threshold",             jitterThreshold);
 	WRITE_IF_CHANGED_DOUBLE("max_relative_error_threshold", maxRelativeErrorThreshold);
-	WRITE_IF_CHANGED_DOUBLE("target_latency_offset_ms",     targetLatencyOffsetMs);
-	WRITE_IF_CHANGED_BOOL  ("latency_auto_detect",          latencyAutoDetect);
-	WRITE_IF_CHANGED_DOUBLE("estimated_latency_offset_ms",  estimatedLatencyOffsetMs);
-	WRITE_IF_CHANGED_BOOL  ("latency_use_gcc_phat",         useGccPhatLatency);
-	WRITE_IF_CHANGED_BOOL  ("geometry_shift_use_cusum",     useCusumGeometryShift);
-	WRITE_IF_CHANGED_BOOL  ("irls_velocity_aware",          useVelocityAwareWeighting);
-	WRITE_IF_CHANGED_BOOL  ("irls_use_tukey",               useTukeyBiweight);
-	WRITE_IF_CHANGED_BOOL  ("translation_use_upstream",     useUpstreamMath);
-	WRITE_IF_CHANGED_BOOL  ("translation_use_legacy",       useLegacyMath);
-	WRITE_IF_CHANGED_BOOL  ("blend_use_kalman",             useBlendFilter);
-	WRITE_IF_CHANGED_BOOL  ("rest_locked_yaw",              restLockedYawEnabled);
-	WRITE_IF_CHANGED_BOOL  ("predictive_recovery",          predictiveRecoveryEnabled);
-	WRITE_IF_CHANGED_BOOL  ("reanchor_chi_square",          reanchorChiSquareEnabled);
 	WRITE_IF_CHANGED_BOOL  ("recalibrate_on_movement",      recalibrateOnMovement);
 	WRITE_IF_CHANGED_BOOL  ("base_station_drift_correction", baseStationDriftCorrectionEnabled);
 	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed",   oneShotCalibrationSpeed);

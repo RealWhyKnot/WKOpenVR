@@ -71,7 +71,7 @@ struct ReplayTickResult {
 	double currentCalErrMm = 0.0; // RMS error against the (running) prior calibration, mm
 	double rawErrMm = 0.0;        // RMS error of the candidate computed this tick, mm (NaN if no candidate)
 	int    consecutiveRejections = 0;
-	std::string rejectReason;     // empty on accept; tag from CalibrationCalc::m_rejectReasonTag
+	std::string rejectReason;     // empty on accept
 };
 
 // Replay parameters. Mirror the user-facing knobs in the live CalCtx so
