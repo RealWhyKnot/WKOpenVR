@@ -173,7 +173,7 @@ void CCal_DrawSettings() {
 			CalCtx.headMount.mode >= HeadMountMode::AutoPaired
 			&& wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx);
 		if (headMountOwnsTargetHide) {
-			ImGui::TextDisabled("Tracker visibility is controlled on the Headset tab.");
+			ImGui::TextDisabled("Tracker visibility is controlled on the Play Space tab.");
 		} else {
 			if (ImGui::Checkbox("Hide calibration target tracker in OpenVR", &CalCtx.quashTargetInContinuous)) {
 				if (wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx)) {

@@ -325,11 +325,8 @@ void BuildContinuousCalDisplay() {
 	// Tab bar layout. User-facing categories:
 	//   - Basic:     the currently-running calibration -- device status, action
 	//                buttons, common settings.
-	//   - Headset:   the lighthouse-anchored story. Pick a head-mounted tracker,
-	//                solve its offset, choose a mode, draw the safety boundary
-	//                and (optionally) hide Quest's Guardian. Ordered to read as
-	//                a single user journey (pick -> calibrate -> mode -> boundary
-	//                -> guardian).
+	//   - Play Space: head-mounted tracker setup, safety boundary drawing,
+	//                 and Quest Guardian controls in one room-scale flow.
 	//   - Graphs:    live plots for users who want to watch the math.
 	//   - Advanced:  technical knobs (speed, alignment thresholds, latency
 	//                tuning); the only place to override AUTO defaults.
@@ -341,7 +338,7 @@ void BuildContinuousCalDisplay() {
 			ImGui::EndTabItem();
 		}
 
-		if (ImGui::BeginTabItem("Headset")) {
+		if (ImGui::BeginTabItem("Play Space")) {
 			CCal_DrawBoundaryTab();
 			ImGui::EndTabItem();
 		}
@@ -462,7 +459,7 @@ static void OneShot_DrawSettings() {
 
 		// (Hide tracker controls moved out of one-shot Settings. The
 		// calibration-target hide lives on the Advanced tab (continuous-only).
-		// The head-mount tracker hide lives on the Headset tab.)
+		// The head-mount tracker hide lives on the Play Space tab.)
 
 		// --- Ignore outliers ---
 		ImGui::TableNextRow();

@@ -330,9 +330,8 @@ void CCal_BasicInfo() {
 	}, panelSize);
 
 	// Head-mount tracker, drawable boundary, and Quest Guardian pause all
-	// live on the Stability tab now -- they form one coherent journey
-	// (drift -> boundary -> guardian) that doesn't belong inside the
-	// continuous-cal status surface.
+	// live on the Play Space tab; they form one setup flow that doesn't
+	// belong inside the continuous-cal status surface.
 
 	// === Status messages ===================================================
 	// Whatever the calibration state machine has logged this session, plus
