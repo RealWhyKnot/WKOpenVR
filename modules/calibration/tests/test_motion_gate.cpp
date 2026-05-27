@@ -86,6 +86,7 @@ TEST(AutoRecoverySnapTest, FirstMeaningfulContinuousCandidateSnaps) {
         /*jumpCm=*/3.0));
 
     EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(true, false, true, 12.5));
+    EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(true, false, true, 25.0));
 }
 
 TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnsafeDeltas) {
@@ -109,6 +110,11 @@ TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnsafeDe
         /*hasAcceptedSnapshot=*/false,
         /*hasGuardBaseline=*/false,
         /*jumpCm=*/12.0));
+    EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
+        /*continuous=*/true,
+        /*hasAcceptedSnapshot=*/false,
+        /*hasGuardBaseline=*/true,
+        /*jumpCm=*/25.01));
 }
 
 static_assert(!ShouldBlendCycle(true, false, true),
@@ -119,3 +125,5 @@ static_assert(!ShouldBlendCycle(false, false, false),
     "non-continuous state must snap");
 static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 3.0),
     "first meaningful continuous correction must snap");
+static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 25.01),
+    "meter-scale first continuous corrections must blend, not snap");

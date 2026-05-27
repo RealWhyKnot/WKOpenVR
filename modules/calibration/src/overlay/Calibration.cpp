@@ -55,6 +55,7 @@ void CCal_TickBoundaryCapture();
 #include <algorithm>
 #include <map>
 #include <cmath>
+#include <cstring>
 
 #include <Eigen/Dense>
 #include <GLFW/glfw3.h>
@@ -727,6 +728,11 @@ void StartContinuousCalibration(const char* reason) {
 	CalCtx.hasAppliedCalibrationResult = false;
 	CalCtx.continuousStartSnapshot = CalCtx.CaptureProfileSnapshot();
 	CalCtx.lastAcceptedContinuousSnapshot = {};
+	CalCtx.continuousPreAcceptJumpRejects = 0;
+	CalCtx.pendingLargeFullSolve = false;
+	CalCtx.pendingLargeFullSolveSamples = 0;
+	CalCtx.pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
+	CalCtx.pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
 	AssignTargets();
 	if (CalCtx.headMount.mode != HeadMountMode::Off || !CalCtx.headMount.trackerSerial.empty()) {
 		if (wkopenvr::headmount::BindHeadMountToContinuousTarget(CalCtx)) {
@@ -2990,11 +2996,57 @@ void CalibrationTick(double time)
 				: ctx.calibratedTranslation;
 		const bool hasGuardBaseline =
 			inContinuousState && (hasAcceptedSnapshot || ctx.validProfile);
+		const bool candidateFromRelPose = calibration.LastComputeUsedRelPose();
 		const auto guard = spacecal::continuous::EvaluatePublishCandidate(
 			inContinuousState, hasGuardBaseline, hasAcceptedSnapshot,
-			calibration.LastComputeUsedRelPose(),
+			candidateFromRelPose,
+			/*allowLargeFirstFullSolveCorrection=*/false,
 			guardBaseline, candidateTranslationCm, R);
-		if (!guard.accepted) {
+		bool acceptedByStability = false;
+		const bool largeFullSolveCandidate =
+			inContinuousState
+			&& !candidateFromRelPose
+			&& std::strcmp(guard.reason, "jump_exceeds_limit") == 0
+			&& guard.jumpM <= spacecal::continuous::kMaxFirstFullSolveAcceptedJumpM;
+		spacecal::continuous::LargeFullSolveStabilityResult stability{};
+		if (!guard.accepted && largeFullSolveCandidate) {
+			stability = spacecal::continuous::EvaluateLargeFullSolveStability(
+				ctx.pendingLargeFullSolve,
+				ctx.pendingLargeFullSolveSamples,
+				ctx.pendingLargeFullSolveTranslation,
+				ctx.pendingLargeFullSolveRotation,
+				candidateTranslationCm,
+				R);
+			ctx.pendingLargeFullSolve = true;
+			ctx.pendingLargeFullSolveSamples = stability.nextSampleCount;
+			if (stability.storeAsPendingAnchor) {
+				ctx.pendingLargeFullSolveTranslation = candidateTranslationCm;
+				ctx.pendingLargeFullSolveRotation = R;
+			}
+			acceptedByStability = stability.stable;
+			if (acceptedByStability) {
+				char stableBuf[360];
+				std::snprintf(stableBuf, sizeof stableBuf,
+					"continuous_large_full_solve_stable: samples=%d jump_cm=%.2f delta_cm=%.2f delta_rot_deg=%.2f",
+					ctx.pendingLargeFullSolveSamples,
+					guard.jumpM * 100.0,
+					stability.translationDeltaCm,
+					stability.rotationDeltaRad * 180.0 / EIGEN_PI);
+				Metrics::WriteLogAnnotation(stableBuf);
+			}
+		}
+		else if (!guard.accepted) {
+			ctx.pendingLargeFullSolve = false;
+			ctx.pendingLargeFullSolveSamples = 0;
+		}
+
+		if (!guard.accepted && !acceptedByStability) {
+			if (inContinuousState
+				&& !hasAcceptedSnapshot
+				&& std::strcmp(guard.reason, "jump_exceeds_limit") == 0)
+			{
+				++ctx.continuousPreAcceptJumpRejects;
+			}
 			const bool restoredPrior =
 				inContinuousState && RestoreCalibrationSolverFromProfile(ctx);
 			const char* baselineTag =
@@ -3002,13 +3054,13 @@ void CalibrationTick(double time)
 			char rejBuf[768];
 			std::snprintf(rejBuf, sizeof rejBuf,
 				"calibration_candidate_rejected: state=%d(%s) finiteT=%d rotAngle=%.6f reason=%s source=%s jump_cm=%.2f baseline=%s "
-				"baseline_cm=(%.2f,%.2f,%.2f) candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f restored_prior=%d",
+				"baseline_cm=(%.2f,%.2f,%.2f) candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f restored_prior=%d pre_accept_jump_rejects=%d pending_large_full=%d pending_samples=%d",
 				(int)ctx.state,
 				CalibrationStateName(ctx.state),
 				guard.finiteTranslation ? 1 : 0,
 				guard.rotAngleRad,
 				guard.reason,
-				calibration.LastComputeUsedRelPose() ? "relpose" : "full",
+				candidateFromRelPose ? "relpose" : "full",
 				guard.jumpM * 100.0,
 				baselineTag,
 				guardBaseline.x(),
@@ -3018,7 +3070,10 @@ void CalibrationTick(double time)
 				candidateTranslationCm.y(),
 				candidateTranslationCm.z(),
 				candidateTranslationCm.norm(),
-				restoredPrior ? 1 : 0);
+				restoredPrior ? 1 : 0,
+				ctx.continuousPreAcceptJumpRejects,
+				ctx.pendingLargeFullSolve ? 1 : 0,
+				ctx.pendingLargeFullSolveSamples);
 			Metrics::WriteLogAnnotation(rejBuf);
 			CalCtx.Log("Calibration candidate rejected; keeping previous profile.\n");
 		} else {
@@ -3072,6 +3127,9 @@ void CalibrationTick(double time)
 				(int)ctx.relativePosCalibrated,
 				(int)ctx.validProfile);
 			Metrics::WriteLogAnnotation(acceptBuf);
+			ctx.continuousPreAcceptJumpRejects = 0;
+			ctx.pendingLargeFullSolve = false;
+			ctx.pendingLargeFullSolveSamples = 0;
 
 			CalCtx.Log("Finished calibration, profile saved\n");
 

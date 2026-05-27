@@ -18,6 +18,7 @@
 namespace spacecal::motiongate {
 
 constexpr double kFirstContinuousSnapJumpCm = 3.0;
+constexpr double kMaxFirstContinuousSnapJumpCm = 25.0;
 
 // Returns false (i.e. SNAP -- driver assigns transform := target without
 // blending) in three cases:
@@ -39,7 +40,8 @@ constexpr bool ShouldBlendCycle(bool inContinuousState,
 // First accepted continuous candidate after entering continuous mode gets
 // special handling: if it differs enough from the profile that was just
 // loaded/applied, snap so the user sees the calibration take effect instead
-// of waiting for motion-gated slew to catch up.
+// of waiting for motion-gated slew to catch up. Large corrections still
+// blend so a bad first solve cannot move the whole playspace in one frame.
 constexpr bool ShouldSnapFirstContinuousCandidate(bool inContinuousState,
                                                   bool hasAcceptedSnapshot,
                                                   bool hasGuardBaseline,
@@ -47,7 +49,8 @@ constexpr bool ShouldSnapFirstContinuousCandidate(bool inContinuousState,
     return inContinuousState
         && !hasAcceptedSnapshot
         && hasGuardBaseline
-        && jumpCm >= kFirstContinuousSnapJumpCm;
+        && jumpCm >= kFirstContinuousSnapJumpCm
+        && jumpCm <= kMaxFirstContinuousSnapJumpCm;
 }
 
 }  // namespace spacecal::motiongate

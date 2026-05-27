@@ -321,10 +321,10 @@ struct CalibrationContext
 	// Persisted via Configuration.cpp.
 	bool useGccPhatLatency = true;
 
-	// Validated geometry-shift detector. Uses the CUSUM path instead of the
+	// Optional geometry-shift detector. Uses the CUSUM path instead of the
 	// older 5x-rolling-median rule. Both share the same recovery action.
 	// Persisted as geometry_shift_use_cusum in profile JSON.
-	bool useCusumGeometryShift = true;
+	bool useCusumGeometryShift = false;
 
 	// Opt-in switch for velocity-aware outlier weighting in the IRLS
 	// translation solve. When on, the per-pair Cauchy threshold c is
@@ -339,10 +339,10 @@ struct CalibrationContext
 	// profile JSON.
 	bool useVelocityAwareWeighting = true;
 
-	// Validated Tukey biweight + Qn-scale path in the IRLS translation solve.
+	// Optional Tukey biweight + Qn-scale path in the IRLS translation solve.
 	// Replaces Cauchy + MAD with a redescending kernel and a 50% breakdown
 	// scale estimator. Persisted as irls_use_tukey in profile JSON.
-	bool useTukeyBiweight = true;
+	bool useTukeyBiweight = false;
 
 	// When true, the translation solve falls back to the pre-revamp pairwise
 	// O(N^2) IRLS path. Provided as a safety hatch if the direct O(N)
@@ -358,11 +358,11 @@ struct CalibrationContext
 	// translation solver. Default false. Persisted as translation_use_upstream.
 	bool useUpstreamMath = false;
 
-	// Validated Kalman-filter blend at publish. Replaces the single-step EMA
+	// Optional Kalman-filter blend at publish. Replaces the single-step EMA
 	// at alpha=0.3 in CalibrationCalc::ComputeIncremental with a 4-state
 	// filter on yaw + translation. Divergence falls back to the EMA path for
 	// that tick. Persisted as blend_use_kalman in profile JSON.
-	bool useBlendFilter = true;
+	bool useBlendFilter = false;
 
 	// Opt-in switch for the rest-locked yaw drift correction. Per-tracker
 	// rest detector locks the orientation 1 s of dwell; subsequent at-rest
@@ -377,17 +377,17 @@ struct CalibrationContext
 	// profile JSON.
 	bool restLockedYawEnabled = true;
 
-	// Validated predictive recovery pre-correction (rec C). Each recovery
+	// Optional predictive recovery pre-correction (rec C). Each recovery
 	// fire pushes a displacement into a 6-deep ring; a consistent trend
 	// applies a small bounded-rate translation nudge. Persisted as
 	// predictive_recovery in profile JSON.
-	bool predictiveRecoveryEnabled = true;
+	bool predictiveRecoveryEnabled = false;
 
-	// Validated chi-square re-anchor sub-detector (rec F). Runs a chi-square
+	// Optional chi-square re-anchor sub-detector (rec F). Runs a chi-square
 	// test on the residual between HMD-pose-from-rolling-velocity and the
 	// observed HMD pose, then freezes rec A/C corrections briefly on a
 	// candidate. Persisted as reanchor_chi_square in profile JSON.
-	bool reanchorChiSquareEnabled = true;
+	bool reanchorChiSquareEnabled = false;
 
 	// Rolling window of per-solve residual pitch+roll readings (degrees), used
 	// by spacecal::gravity::EvaluateTilt to flag sustained gravity-axis
@@ -702,6 +702,11 @@ struct CalibrationContext
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
+	int continuousPreAcceptJumpRejects = 0;
+	bool pendingLargeFullSolve = false;
+	int pendingLargeFullSolveSamples = 0;
+	Eigen::Vector3d pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
+	Eigen::Matrix3d pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
@@ -863,6 +868,11 @@ struct CalibrationContext
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 		continuousStartSnapshot = {};
 		lastAcceptedContinuousSnapshot = {};
+		continuousPreAcceptJumpRejects = 0;
+		pendingLargeFullSolve = false;
+		pendingLargeFullSolveSamples = 0;
+		pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
+		pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
 	}
 
 	void ClearRuntimeCalibrationForRecovery()
@@ -873,6 +883,12 @@ struct CalibrationContext
 		hasAppliedCalibrationResult = false;
 		calibratedTranslation = Eigen::Vector3d::Zero();
 		calibratedRotation = Eigen::Vector3d::Zero();
+		lastAcceptedContinuousSnapshot = {};
+		continuousPreAcceptJumpRejects = 0;
+		pendingLargeFullSolve = false;
+		pendingLargeFullSolveSamples = 0;
+		pendingLargeFullSolveTranslation = Eigen::Vector3d::Zero();
+		pendingLargeFullSolveRotation = Eigen::Matrix3d::Identity();
 	}
 
 	CalibrationProfileSnapshot CaptureProfileSnapshot() const
