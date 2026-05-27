@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
 #include <string>
 
 // SaveProfile is defined in Calibration.cpp; expose via forward declaration
@@ -31,6 +32,22 @@ struct ModalState {
     Solver      solver;
     SolveResult lastResult;     // copy of solver.result() at the moment Finish ran
     bool        showResult  = false;  // true while awaiting Save/Discard after Done/Failed
+
+    bool            hasFrozenFrame = false;
+    Eigen::Affine3d targetFromReferenceAtStart = Eigen::Affine3d::Identity();
+    bool            loggedMissingCommonFrame = false;
+
+    bool            hasPreviousMotionPose = false;
+    Eigen::Affine3d previousMotionPose = Eigen::Affine3d::Identity();
+    double          previousMotionTime = 0.0;
+
+    double          lastCollectingLogTime = 0.0;
+    int             acceptedInWindow = 0;
+    int             rejectedInWindow = 0;
+    double          lastReportedSpeedMps = 0.0;
+    double          lastDerivedLinearSpeedMps = 0.0;
+    double          lastDerivedAngularSpeedRadps = 0.0;
+    double          lastEffectiveSpeedMps = 0.0;
 };
 
 ModalState& MS() {
@@ -39,6 +56,80 @@ ModalState& MS() {
 }
 
 constexpr const char* kPopupId = "##hmt_offset_modal";
+constexpr double kAngularMotionToLinearMps = 0.50;
+
+double NowSeconds() {
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void ResetCollectionFrame(ModalState& s) {
+    s.hasFrozenFrame = false;
+    s.targetFromReferenceAtStart = Eigen::Affine3d::Identity();
+    s.loggedMissingCommonFrame = false;
+    s.hasPreviousMotionPose = false;
+    s.previousMotionPose = Eigen::Affine3d::Identity();
+    s.previousMotionTime = 0.0;
+    s.lastCollectingLogTime = 0.0;
+    s.acceptedInWindow = 0;
+    s.rejectedInWindow = 0;
+    s.lastReportedSpeedMps = 0.0;
+    s.lastDerivedLinearSpeedMps = 0.0;
+    s.lastDerivedAngularSpeedRadps = 0.0;
+    s.lastEffectiveSpeedMps = 0.0;
+}
+
+void CancelSolverAndFrame(ModalState& s) {
+    s.solver.Cancel();
+    ResetCollectionFrame(s);
+}
+
+double RotationDeltaRad(const Eigen::Affine3d& previous,
+                        const Eigen::Affine3d& current)
+{
+    const Eigen::Matrix3d delta =
+        previous.rotation().transpose() * current.rotation();
+    const double cosAngle = std::clamp((delta.trace() - 1.0) * 0.5, -1.0, 1.0);
+    return std::acos(cosAngle);
+}
+
+void LogCollectingStatus(ModalState& s, double now) {
+    if (s.lastCollectingLogTime != 0.0
+        && now - s.lastCollectingLogTime < 1.0) {
+        return;
+    }
+
+    const CollectionReadiness ready = s.solver.readiness();
+    char cbuf[640];
+    std::snprintf(cbuf, sizeof cbuf,
+        "[head-mount-modal] collecting:"
+        " frame_frozen=%d samples=%zu ready=%d overall=%.2f sample=%.2f motion=%.2f"
+        " consistency=%.2f residual_mm=%.2f axes_deg=(%.1f,%.1f,%.1f)"
+        " accepted=%d rejected=%d speed_reported=%.3f speed_derived=%.3f"
+        " angular_radps=%.3f speed_effective=%.3f",
+        s.hasFrozenFrame ? 1 : 0,
+        ready.samplesUsed,
+        ready.ready ? 1 : 0,
+        ready.overallScore,
+        ready.sampleScore,
+        ready.motionScore,
+        ready.residualScore,
+        ready.residualMm,
+        ready.axisRangeDeg[0],
+        ready.axisRangeDeg[1],
+        ready.axisRangeDeg[2],
+        s.acceptedInWindow,
+        s.rejectedInWindow,
+        s.lastReportedSpeedMps,
+        s.lastDerivedLinearSpeedMps,
+        s.lastDerivedAngularSpeedRadps,
+        s.lastEffectiveSpeedMps);
+    Metrics::WriteLogAnnotation(cbuf);
+
+    s.lastCollectingLogTime = now;
+    s.acceptedInWindow = 0;
+    s.rejectedInWindow = 0;
+}
 
 } // namespace
 
@@ -49,7 +140,7 @@ constexpr const char* kPopupId = "##hmt_offset_modal";
 void OpenOffsetModal() {
     auto& s = MS();
     // Reset state but keep the solver clean until the user hits Start.
-    s.solver.Cancel();
+    CancelSolverAndFrame(s);
     s.showResult  = false;
     s.popupOpened = false;
     s.wantOpen    = true;
@@ -98,6 +189,7 @@ bool DrawOffsetModal() {
                     "pitch, yaw, and roll for ~10 seconds.");
                 ImGui::Spacing();
                 if (ImGui::Button("Start##hmt_start")) {
+                    ResetCollectionFrame(s);
                     s.solver.Start();
                     Metrics::WriteLogAnnotation("[head-mount-modal] solver started");
                 }
@@ -132,8 +224,18 @@ bool DrawOffsetModal() {
 
                 char statusBuf[160];
                 std::snprintf(statusBuf, sizeof statusBuf,
-                    "%zu samples, residual %.2f mm", collected, ready.residualMm);
+                    "%zu samples, residual %.2f mm, frame %s",
+                    collected, ready.residualMm,
+                    s.hasFrozenFrame ? "locked" : "waiting");
                 ImGui::TextDisabled("%s", statusBuf);
+                if (!s.hasFrozenFrame) {
+                    ImGui::TextDisabled("Waiting for a valid calibration profile.");
+                }
+                else if (collected >= 2 && !ready.residualGood) {
+                    ImGui::TextDisabled(
+                        "Consistency needs residual <= %.1f mm.",
+                        Solver::kResidualThresholdMm);
+                }
                 ImGui::Spacing();
 
                 bool canFinish = ready.ready;
@@ -170,7 +272,7 @@ bool DrawOffsetModal() {
                 if (!canFinish) ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel##hmt_cancel_coll")) {
-                    s.solver.Cancel();
+                    CancelSolverAndFrame(s);
                     ImGui::CloseCurrentPopup();
                     s.popupOpened = false;
                 }
@@ -223,7 +325,7 @@ bool DrawOffsetModal() {
                 ImGui::Spacing();
                 // Let the user retry from scratch.
                 if (ImGui::Button("Retry##hmt_retry")) {
-                    s.solver.Cancel();
+                    CancelSolverAndFrame(s);
                     s.showResult = false;
                 }
                 ImGui::SameLine();
@@ -231,7 +333,7 @@ bool DrawOffsetModal() {
 
             if (ImGui::Button("Discard##hmt_discard")) {
                 s.showResult  = false;
-                s.solver.Cancel();
+                CancelSolverAndFrame(s);
                 ImGui::CloseCurrentPopup();
                 s.popupOpened = false;
             }
@@ -244,7 +346,7 @@ bool DrawOffsetModal() {
         if (s.popupOpened) {
             s.popupOpened = false;
             s.showResult  = false;
-            s.solver.Cancel();
+            CancelSolverAndFrame(s);
         }
     }
 
@@ -384,35 +486,87 @@ void DrawOffsetInlinePanel() {
     }
 }
 
-// Called from HeadMountPoseSampling tick to feed the modal's Solver.
-// The function signature matches what CalibrationTick can call after building
-// the world-space poses from DriverPose_t fields.
+// Called from CalibrationTick to feed the modal's Solver after building
+// HMD reference-frame and tracker target-frame poses from DriverPose_t fields.
 void FeedSolverTick(const Eigen::Affine3d& hmdPose,
                     const Eigen::Affine3d& trackerPose,
+                    const Eigen::Affine3d& targetFromReference,
+                    bool targetFromReferenceValid,
                     double hmdSpeedMps)
 {
-    const bool accepted = MS().solver.Tick(hmdPose, trackerPose, hmdSpeedMps);
+    auto& s = MS();
+    if (s.solver.state() != SolveState::Collecting) return;
 
-    // Rate-limited rejection log: count rejections in the current 1 s window and
-    // emit one annotation per second when any rejections occurred.
-    if (MS().solver.state() == SolveState::Collecting && !accepted) {
-        static int    s_rejCount    = 0;
-        static double s_windowStart = 0.0;
-        const double  now = std::chrono::duration<double>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        if (s_windowStart == 0.0) s_windowStart = now;
-        ++s_rejCount;
-        if (now - s_windowStart >= 1.0) {
-            char rbuf[128];
-            snprintf(rbuf, sizeof rbuf,
-                "[head-mount-modal] rejecting samples:"
-                " hmdSpeed below threshold (%d rejections last 1s)",
-                s_rejCount);
-            Metrics::WriteLogAnnotation(rbuf);
-            s_rejCount    = 0;
-            s_windowStart = now;
+    const double now = NowSeconds();
+
+    if (!targetFromReferenceValid || !targetFromReference.matrix().allFinite()) {
+        if (!s.loggedMissingCommonFrame) {
+            s.loggedMissingCommonFrame = true;
+            Metrics::WriteLogAnnotation(
+                "[head-mount-modal] collecting blocked: no valid calibration profile for common-frame conversion");
         }
+        s.rejectedInWindow++;
+        LogCollectingStatus(s, now);
+        return;
     }
+
+    if (!s.hasFrozenFrame) {
+        s.targetFromReferenceAtStart = targetFromReference;
+        s.hasFrozenFrame = true;
+        s.hasPreviousMotionPose = false;
+
+        const Eigen::Vector3d tcm =
+            s.targetFromReferenceAtStart.translation() * 100.0;
+        const Eigen::Vector3d rpy =
+            s.targetFromReferenceAtStart.rotation().eulerAngles(2, 1, 0)
+            * (180.0 / EIGEN_PI);
+        char fbuf[240];
+        std::snprintf(fbuf, sizeof fbuf,
+            "[head-mount-modal] common frame frozen:"
+            " target_from_reference_trans_cm=(%.2f,%.2f,%.2f)"
+            " rpy_deg=(%.2f,%.2f,%.2f)",
+            tcm.x(), tcm.y(), tcm.z(),
+            rpy(0), rpy(1), rpy(2));
+        Metrics::WriteLogAnnotation(fbuf);
+    }
+
+    const Eigen::Affine3d hmdTargetPose =
+        s.targetFromReferenceAtStart * hmdPose;
+
+    double derivedLinearSpeedMps = 0.0;
+    double derivedAngularSpeedRadps = 0.0;
+    if (s.hasPreviousMotionPose && now > s.previousMotionTime) {
+        const double dt = now - s.previousMotionTime;
+        derivedLinearSpeedMps =
+            (hmdTargetPose.translation()
+                - s.previousMotionPose.translation()).norm() / dt;
+        derivedAngularSpeedRadps =
+            RotationDeltaRad(s.previousMotionPose, hmdTargetPose) / dt;
+    }
+    s.previousMotionPose = hmdTargetPose;
+    s.previousMotionTime = now;
+    s.hasPreviousMotionPose = true;
+
+    const double reportedSpeed =
+        std::isfinite(hmdSpeedMps) && hmdSpeedMps > 0.0 ? hmdSpeedMps : 0.0;
+    const double angularEquivalentSpeed =
+        derivedAngularSpeedRadps * kAngularMotionToLinearMps;
+    const double effectiveSpeed = std::max(
+        reportedSpeed,
+        std::max(derivedLinearSpeedMps, angularEquivalentSpeed));
+
+    s.lastReportedSpeedMps = reportedSpeed;
+    s.lastDerivedLinearSpeedMps = derivedLinearSpeedMps;
+    s.lastDerivedAngularSpeedRadps = derivedAngularSpeedRadps;
+    s.lastEffectiveSpeedMps = effectiveSpeed;
+
+    const bool accepted = s.solver.Tick(hmdTargetPose, trackerPose, effectiveSpeed);
+    if (accepted) {
+        s.acceptedInWindow++;
+    } else {
+        s.rejectedInWindow++;
+    }
+    LogCollectingStatus(s, now);
 }
 
 } // namespace wkopenvr::headmount

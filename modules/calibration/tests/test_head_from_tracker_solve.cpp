@@ -283,3 +283,58 @@ TEST(Solver, CommonFrameConversionRecoversOffsetAcrossCalibrationTransform) {
     EXPECT_LT((s.result().headFromTracker.translation()
         - headFromTracker.translation()).norm() * 1000.0, 1.0);
 }
+
+TEST(Solver, MixedCalibrationFramesKeepConsistencyAtZero) {
+    const double kYaw = 7.0 * EIGEN_PI / 180.0;
+    Eigen::AffineCompact3d headFromTracker;
+    headFromTracker.linear() =
+        (Eigen::AngleAxisd(kYaw, Eigen::Vector3d::UnitY())).toRotationMatrix();
+    headFromTracker.translation() = Eigen::Vector3d(0.02, 0.03, -0.04);
+
+    auto targetFramePairs = MakePairs(
+        headFromTracker,
+        static_cast<int>(Solver::kMinReadySampleCount) + 40,
+        91);
+
+    Eigen::Affine3d targetToReferenceAtStart =
+        Eigen::Translation3d(Eigen::Vector3d(1.2, -0.4, 0.8)) *
+        Eigen::AngleAxisd(0.35, Eigen::Vector3d::UnitZ());
+    const Eigen::Affine3d frozenTargetFromReference =
+        targetToReferenceAtStart.inverse();
+
+    Solver frozen;
+    Solver mixed;
+    frozen.Start();
+    mixed.Start();
+
+    for (size_t i = 0; i < targetFramePairs.size(); ++i) {
+        const auto& hmdTargetFrame = targetFramePairs[i].first;
+        const auto& trackerTargetFrame = targetFramePairs[i].second;
+        const Eigen::Affine3d hmdReferenceFrame =
+            targetToReferenceAtStart * hmdTargetFrame;
+
+        frozen.Tick(
+            frozenTargetFromReference * hmdReferenceFrame,
+            trackerTargetFrame,
+            1.0);
+
+        const double drift = 0.0015 * static_cast<double>(i);
+        const Eigen::Affine3d liveTargetToReference =
+            targetToReferenceAtStart *
+            Eigen::Translation3d(Eigen::Vector3d(drift, 0.0, 0.0)) *
+            Eigen::AngleAxisd(drift, Eigen::Vector3d::UnitZ());
+        mixed.Tick(
+            liveTargetToReference.inverse() * hmdReferenceFrame,
+            trackerTargetFrame,
+            1.0);
+    }
+
+    const CollectionReadiness frozenReady = frozen.readiness();
+    ASSERT_TRUE(frozenReady.ready);
+    EXPECT_LT(frozenReady.residualMm, 1.0);
+
+    const CollectionReadiness mixedReady = mixed.readiness();
+    EXPECT_FALSE(mixedReady.ready);
+    EXPECT_GT(mixedReady.residualMm, Solver::kResidualThresholdMm * 2.0);
+    EXPECT_DOUBLE_EQ(mixedReady.residualScore, 0.0);
+}

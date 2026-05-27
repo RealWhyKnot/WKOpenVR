@@ -287,6 +287,45 @@ bool AdbController::Connected()
     return (r.exitCode == 0) && (r.out.find("device") != std::string::npos);
 }
 
+bool AdbController::Disconnect(const std::string& endpoint)
+{
+    std::vector<std::string> args = {"disconnect"};
+    if (!endpoint.empty()) {
+        args.push_back(endpoint);
+    }
+
+    Result r = Run(args, std::chrono::seconds(5));
+    if (r.timedOut) {
+        fprintf(stderr, "[adb] disconnect timed out endpoint='%s'\n", endpoint.c_str());
+        return false;
+    }
+    const bool ok = (r.exitCode == 0);
+    fprintf(stderr, "[adb] disconnect endpoint='%s' ok=%d exit=%d out='%s'\n",
+            endpoint.c_str(), ok ? 1 : 0, r.exitCode, TrimAscii(r.out).c_str());
+    return ok;
+}
+
+bool AdbController::DisableWirelessAdb(const std::string& endpoint)
+{
+    std::vector<std::string> args;
+    if (!endpoint.empty()) {
+        args.push_back("-s");
+        args.push_back(endpoint);
+    }
+    args.push_back("usb");
+
+    Result r = Run(args, std::chrono::seconds(8));
+    if (r.timedOut) {
+        fprintf(stderr, "[adb] usb timed out endpoint='%s'\n", endpoint.c_str());
+        return false;
+    }
+    const bool ok = (r.exitCode == 0);
+    fprintf(stderr, "[adb] usb endpoint='%s' ok=%d exit=%d out='%s' err='%s'\n",
+            endpoint.c_str(), ok ? 1 : 0, r.exitCode,
+            TrimAscii(r.out).c_str(), TrimAscii(r.err).c_str());
+    return ok;
+}
+
 bool AdbController::SetGuardianPaused(bool /*paused*/, int valueToWrite)
 {
     Result r = Shell("setprop debug.oculus.guardian_pause " + std::to_string(valueToWrite));

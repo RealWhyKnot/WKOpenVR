@@ -42,6 +42,14 @@ public:
     // `adb get-state`. Returns true if exit==0 and stdout contains "device".
     virtual bool Connected();
 
+    // `adb disconnect <endpoint>`. Passing an empty endpoint disconnects all TCP
+    // endpoints known to the local adb server. Returns true if adb exits cleanly.
+    virtual bool Disconnect(const std::string& endpoint = {});
+
+    // `adb usb` or `adb -s <endpoint> usb`. This asks adbd to leave TCP/Wi-Fi
+    // mode and listen on USB again. Returns true if adb exits cleanly.
+    virtual bool DisableWirelessAdb(const std::string& endpoint = {});
+
     // `adb shell setprop debug.oculus.guardian_pause <valueToWrite>`.
     // Returns true if exit==0.
     virtual bool SetGuardianPaused(bool paused, int valueToWrite);

@@ -51,10 +51,12 @@ public:
     std::string stubErr;
     int         stubExit   = 0;
     bool        stubTimedOut = false;
+    std::vector<std::vector<std::string>> calls;
 
-    AdbController::Result Run(const std::vector<std::string>& /*args*/,
+    AdbController::Result Run(const std::vector<std::string>& args,
                               std::chrono::milliseconds /*timeout*/) override
     {
+        calls.push_back(args);
         AdbController::Result r;
         r.out      = stubOut;
         r.err      = stubErr;
@@ -94,6 +96,30 @@ TEST(AdbControllerTest, BinaryPath_resolves_to_install_relative)
         EXPECT_TRUE(endsWith)
             << "Expected path ending with 'bin\\adb\\adb.exe', got: " << path;
     }
+}
+
+TEST(AdbControllerTest, Disconnect_targets_saved_tcp_endpoint)
+{
+    StubAdbController ctrl;
+    ctrl.stubOut = "disconnected 192.168.1.10:5555\n";
+    ctrl.stubExit = 0;
+
+    EXPECT_TRUE(ctrl.Disconnect("192.168.1.10:5555"));
+    ASSERT_EQ(ctrl.calls.size(), 1u);
+    EXPECT_EQ(ctrl.calls[0],
+              (std::vector<std::string>{"disconnect", "192.168.1.10:5555"}));
+}
+
+TEST(AdbControllerTest, DisableWirelessAdb_targets_saved_tcp_endpoint)
+{
+    StubAdbController ctrl;
+    ctrl.stubOut = "restarting in USB mode\n";
+    ctrl.stubExit = 0;
+
+    EXPECT_TRUE(ctrl.DisableWirelessAdb("192.168.1.10:5555"));
+    ASSERT_EQ(ctrl.calls.size(), 1u);
+    EXPECT_EQ(ctrl.calls[0],
+              (std::vector<std::string>{"-s", "192.168.1.10:5555", "usb"}));
 }
 
 // ---------------------------------------------------------------------------

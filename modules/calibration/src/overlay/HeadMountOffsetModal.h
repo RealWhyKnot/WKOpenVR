@@ -28,9 +28,14 @@ void DrawOffsetInlinePanel();
 
 // Route live pose pairs into the Solver while the modal is in Collecting state.
 // Called from CalibrationTick (or the head-mount pose-sampling path) each tick
-// that the head-mount tracker is valid.
-void FeedSolverTick(const Eigen::Affine3d& hmdPose,
-                    const Eigen::Affine3d& trackerPose,
+// that the head-mount tracker is valid. The HMD pose arrives in the reference
+// tracking frame and the tracker pose arrives in the target frame; the modal
+// freezes targetFromReference for the collection so continuous calibration
+// updates cannot mix coordinate frames inside one solve.
+void FeedSolverTick(const Eigen::Affine3d& hmdReferencePose,
+                    const Eigen::Affine3d& trackerTargetPose,
+                    const Eigen::Affine3d& targetFromReference,
+                    bool targetFromReferenceValid,
                     double hmdSpeedMps);
 
 // Returns true while the offset calibration popup is open (any phase: Idle,

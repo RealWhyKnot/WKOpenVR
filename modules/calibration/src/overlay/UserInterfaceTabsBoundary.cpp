@@ -331,6 +331,8 @@ void DrawHeadMountSection(const ImVec2& panelSize) {
 wkopenvr::boundary::CaptureSession s_capture;
 std::string s_boundaryError;
 std::string s_guardianError;
+std::string s_adbCleanupStatus;
+bool s_adbCleanupHadWarning = false;
 
 void DrawPolygonPreview(const std::vector<BoundaryVertex>& verts) {
     if (verts.size() < 2) return;
@@ -556,6 +558,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
 // Setup wizard modal state.
 bool s_showWizard = false;
 bool s_awaitPolarityConfirm = false;
+bool s_showAdbCleanupConfirm = false;
 char s_wifiHostPort[64] = {};
 char s_wifiCode[16] = {};
 char s_wifiConnectEndpoint[64] = {};
@@ -563,6 +566,48 @@ char s_wifiConnectEndpoint[64] = {};
 wkopenvr::adb::SetupWizard* WizardPtr() {
     static wkopenvr::adb::SetupWizard inst(CCal_GetAdb());
     return &inst;
+}
+
+void RemoveAdbSetupFromQuest() {
+    AdbController& adb = CCal_GetAdb();
+    const std::string endpoint = CalCtx.adb.savedEndpoint;
+    const bool hadEndpoint = !endpoint.empty();
+
+    bool connectOk = !hadEndpoint;
+    if (hadEndpoint) {
+        connectOk = adb.Connect(endpoint);
+    }
+
+    bool guardianCleared = false;
+    if (connectOk) {
+        guardianCleared = adb.SetGuardianPaused(false, 0);
+    }
+
+    const bool wirelessDisabled = adb.DisableWirelessAdb(endpoint);
+    const bool disconnected = adb.Disconnect(endpoint);
+
+    CalCtx.adb.setupCompleted = false;
+    CalCtx.adb.savedEndpoint.clear();
+    CalCtx.adb.guardianPauseEnabled = false;
+    SaveProfile(CalCtx);
+
+    const bool remoteConfirmed = (!hadEndpoint || connectOk) && guardianCleared && wirelessDisabled;
+    s_adbCleanupHadWarning = !remoteConfirmed;
+    if (remoteConfirmed) {
+        s_adbCleanupStatus =
+            "ADB setup removed. Quest Guardian was resumed, Wi-Fi ADB was switched back to USB mode, and the saved endpoint was cleared.";
+    } else {
+        s_adbCleanupStatus =
+            "Local ADB setup was cleared, but the headset did not confirm every cleanup step. If you do not want ADB available, disable Developer Mode in the Meta Horizon app or headset settings.";
+    }
+    s_guardianError.clear();
+    Metrics::adbConnected.Push(false);
+    Metrics::guardianPaused.Push(false);
+
+    fprintf(stderr,
+        "[adb-ui] remove setup: endpoint='%s' connect=%d guardian_clear=%d usb=%d disconnect=%d remote_confirmed=%d\n",
+        endpoint.c_str(), connectOk ? 1 : 0, guardianCleared ? 1 : 0,
+        wirelessDisabled ? 1 : 0, disconnected ? 1 : 0, remoteConfirmed ? 1 : 0);
 }
 
 // Wizard modal -- single-current-step layout. The full 8-step list is collapsed
@@ -585,6 +630,12 @@ void DrawSetupWizardModal() {
         auto ActionButton = [&](const char* label) {
             return ImGui::Button(label, actionButtonSize);
         };
+
+        openvr_pair::overlay::ui::DrawBanner(
+            "ADB warning",
+            "ADB authorization gives this PC debugging access to the Quest while it is trusted. Continue only with your own unlocked headset, and remove ADB setup when you are done if you do not want Wi-Fi debugging left available.",
+            pal.bannerWarnBg, pal.bannerWarnTitle, pal.bannerWarnDetail);
+        ImGui::Spacing();
 
         struct StepInfo { wkopenvr::adb::WizardStep step; const char* label; const char* help; };
         static const StepInfo kSteps[] = {
@@ -623,6 +674,16 @@ void DrawSetupWizardModal() {
             ImGui::Spacing();
             ImGui::TextWrapped("%s", kSteps[curIdx].help);
             ImGui::Spacing();
+
+            if (cur == wkopenvr::adb::WizardStep::WifiTcpip ||
+                cur == wkopenvr::adb::WizardStep::WifiPair ||
+                cur == wkopenvr::adb::WizardStep::WifiVerify) {
+                openvr_pair::overlay::ui::DrawBanner(
+                    "Wireless ADB",
+                    "Wireless ADB opens a debugging endpoint on the headset's network. Use Remove ADB setup from the Guardian panel when finished, or disable Developer Mode in Meta settings.",
+                    pal.bannerWarnBg, pal.bannerWarnTitle, pal.bannerWarnDetail);
+                ImGui::Spacing();
+            }
 
             // Per-step input + run button.
             switch (cur) {
@@ -789,6 +850,39 @@ void DrawSetupWizardModal() {
     ImGui::PopStyleVar(3);
 }
 
+void DrawAdbCleanupConfirmModal() {
+    if (!s_showAdbCleanupConfirm) return;
+
+    ImGui::SetNextWindowSize(ImVec2(680.0f, 300.0f), ImGuiCond_Appearing);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
+    if (ImGui::BeginPopupModal("Remove ADB setup##adb_cleanup",
+                               &s_showAdbCleanupConfirm, 0)) {
+        const auto& pal = openvr_pair::overlay::ui::GetPalette();
+        const float actionHeight = ImGui::GetTextLineHeightWithSpacing() * 1.35f;
+        const ImVec2 actionButtonSize(250.0f, actionHeight);
+
+        openvr_pair::overlay::ui::DrawBanner(
+            "Remove ADB setup",
+            "This resumes Quest Guardian, asks the headset to leave Wi-Fi ADB mode, disconnects the saved endpoint, and clears WKOpenVR's saved ADB setup. No app is installed by this feature.",
+            pal.bannerWarnBg, pal.bannerWarnTitle, pal.bannerWarnDetail);
+        ImGui::Spacing();
+
+        if (ImGui::Button("Remove setup##confirm_adb_cleanup", actionButtonSize)) {
+            RemoveAdbSetupFromQuest();
+            s_showAdbCleanupConfirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##cancel_adb_cleanup", actionButtonSize)) {
+            s_showAdbCleanupConfirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+}
+
 void DrawGuardianSection(ImVec2 panelSize) {
     {
     openvr_pair::overlay::ui::PanelScope panel("Step 3: Quest Guardian", panelSize);
@@ -902,10 +996,36 @@ void DrawGuardianSection(ImVec2 panelSize) {
         }
     }
 
+    if (CalCtx.adb.setupCompleted || !CalCtx.adb.savedEndpoint.empty() ||
+        CalCtx.adb.guardianPauseEnabled) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Remove ADB setup##remove_adb_setup")) {
+            s_showAdbCleanupConfirm = true;
+            ImGui::OpenPopup("Remove ADB setup##adb_cleanup");
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Resume Guardian, turn off Wi-Fi ADB when reachable, disconnect the saved endpoint, and clear the saved setup.");
+        }
+    }
+
+    if (!s_adbCleanupStatus.empty()) {
+        ImGui::Spacing();
+        if (s_adbCleanupHadWarning) {
+            openvr_pair::overlay::ui::DrawBanner(
+                "ADB cleanup", s_adbCleanupStatus.c_str(),
+                pal.bannerWarnBg, pal.bannerWarnTitle, pal.bannerWarnDetail);
+        } else {
+            openvr_pair::overlay::ui::DrawInfoBanner("ADB cleanup", s_adbCleanupStatus.c_str());
+        }
+    }
+
     if (!s_guardianError.empty()) {
         ImGui::Spacing();
         openvr_pair::overlay::ui::DrawErrorBanner("Guardian error", s_guardianError.c_str());
     }
+
+    DrawAdbCleanupConfirmModal();
 
     }
 }

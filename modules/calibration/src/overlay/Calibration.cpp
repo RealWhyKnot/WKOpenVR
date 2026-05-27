@@ -1985,19 +1985,17 @@ void CalibrationTick(double time)
 			};
 			const Eigen::Affine3d trackerWorld = poseFromDriver(hmRaw);
 			const Eigen::Affine3d hmdWorld      = poseFromDriver(hmdRaw);
-			Eigen::Affine3d hmdForSolver = hmdWorld;
+			Eigen::Affine3d targetFromReference = Eigen::Affine3d::Identity();
 			if (ctx.validProfile) {
-				hmdForSolver = CalibrationTransformFromContext(ctx).inverse() * hmdWorld;
-			} else {
-				static bool s_loggedNoCommonFrame = false;
-				if (!s_loggedNoCommonFrame) {
-					s_loggedNoCommonFrame = true;
-					Metrics::WriteLogAnnotation(
-						"[head-mount-solver] no valid profile; feeding raw HMD pose without common-frame conversion");
-				}
+				targetFromReference = CalibrationTransformFromContext(ctx).inverse();
 			}
 			const double hmdSpeed = ComputeHmdSpeedMps(ctx);
-			wkopenvr::headmount::FeedSolverTick(hmdForSolver, trackerWorld, hmdSpeed);
+			wkopenvr::headmount::FeedSolverTick(
+				hmdWorld,
+				trackerWorld,
+				targetFromReference,
+				ctx.validProfile,
+				hmdSpeed);
 		}
 	}
 

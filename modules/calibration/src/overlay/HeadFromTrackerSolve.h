@@ -64,7 +64,8 @@ public:
 
     // Per-tick feed from the calibration loop.
     // hmdPose and trackerPose must be in the same world coordinate frame.
-    // hmdSpeedMps is the HMD linear speed; used to gate on motion.
+    // hmdSpeedMps is measured or estimated HMD motion; used to reject
+    // stationary duplicate frames before the readiness gates check coverage.
     // Returns true when the sample was accepted.
     bool Tick(const Eigen::Affine3d& hmdPose,
               const Eigen::Affine3d& trackerPose,
@@ -78,7 +79,7 @@ public:
     // Collection readiness is threshold-based. kTargetSampleCount remains as
     // the legacy high-water mark for tests and long noisy captures; Finish
     // uses kMinReadySampleCount plus motion/residual quality gates.
-    static constexpr double kMinHmdSpeedMps      = 0.05;
+    static constexpr double kMinHmdSpeedMps      = 0.02;
     static constexpr size_t kTargetSampleCount   = 200;
     static constexpr size_t kMinReadySampleCount = 60;
     static constexpr double kAxisRangeTargetDeg  = 20.0;
