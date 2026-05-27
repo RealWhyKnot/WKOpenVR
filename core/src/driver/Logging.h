@@ -9,6 +9,7 @@ void OpenLogFile();
 bool EnsureLogFileOpen();
 tm TimeForLog();
 void LogFlush();
+void CloseLogFile();
 
 #ifndef LOG
 #define LOG(fmt, ...) do { \

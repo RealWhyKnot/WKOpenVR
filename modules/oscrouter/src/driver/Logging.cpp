@@ -2,6 +2,7 @@
 #include "Logging.h"
 
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <chrono>
@@ -16,10 +17,15 @@ void OrDrvOpenLogFile()
     std::wstring path = openvr_pair::common::TimestampedLogPath(L"oscrouter_log");
     if (!path.empty()) {
         FILE *f = _wfopen(path.c_str(), L"a");
-        if (f) { OrDrvLogFile = f; return; }
+        if (f) {
+            OrDrvLogFile = f;
+            openvr_pair::common::SetLowLatencyLogMode(OrDrvLogFile);
+            return;
+        }
     }
     FILE *f = fopen("oscrouter_drv.log", "a");
     OrDrvLogFile = f ? f : stderr;
+    openvr_pair::common::SetLowLatencyLogMode(OrDrvLogFile);
 }
 
 bool OrDrvEnsureLogFileOpen()
@@ -40,5 +46,5 @@ tm OrDrvTimeForLog()
 
 void OrDrvLogFlush()
 {
-    if (OrDrvLogFile) fflush(OrDrvLogFile);
+    if (OrDrvLogFile) openvr_pair::common::FlushLogFileToDisk(OrDrvLogFile);
 }

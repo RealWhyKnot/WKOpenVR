@@ -1,3 +1,4 @@
+#include "FileLog.h"
 #include "JsonUtil.h"
 #include "LogPaths.h"
 
@@ -9,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <string>
 
@@ -122,5 +124,23 @@ TEST(LogPaths, DeleteOldLogFilesOnlyDeletesMatchingPrefix)
 
 	DeleteFileW(newMatch.c_str());
 	DeleteFileW(oldOther.c_str());
+	RemoveDirectoryW(dir.c_str());
+}
+
+TEST(FileLog, FlushLogFileToDiskAcceptsOpenFile)
+{
+	std::wstring dir = MakeTempDir();
+	ASSERT_FALSE(dir.empty());
+
+	const std::wstring path = dir + L"\\flush.txt";
+	FILE* file = _wfopen(path.c_str(), L"wb");
+	ASSERT_NE(file, nullptr);
+
+	openvr_pair::common::SetLowLatencyLogMode(file);
+	ASSERT_EQ(1u, fwrite("x", 1, 1, file));
+	EXPECT_TRUE(openvr_pair::common::FlushLogFileToDisk(file));
+
+	fclose(file);
+	DeleteFileW(path.c_str());
 	RemoveDirectoryW(dir.c_str());
 }

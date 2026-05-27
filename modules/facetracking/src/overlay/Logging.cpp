@@ -2,6 +2,7 @@
 #include "Logging.h"
 
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <atomic>
@@ -21,10 +22,14 @@ void FtOpenLogFile()
     std::wstring path = openvr_pair::common::TimestampedLogPath(L"facetracking_log");
     if (!path.empty()) {
         FtLogFile = _wfopen(path.c_str(), L"a");
-        if (FtLogFile) return;
+        if (FtLogFile) {
+            openvr_pair::common::SetLowLatencyLogMode(FtLogFile);
+            return;
+        }
     }
     FtLogFile = fopen("openvr_facetracking.log", "a");
     if (!FtLogFile) FtLogFile = stderr;
+    openvr_pair::common::SetLowLatencyLogMode(FtLogFile);
 }
 
 bool FtEnsureLogFileOpen()
@@ -45,5 +50,5 @@ tm FtTimeForLog()
 
 void FtLogFlush()
 {
-    if (FtLogFile) fflush(FtLogFile);
+    if (FtLogFile) openvr_pair::common::FlushLogFileToDisk(FtLogFile);
 }

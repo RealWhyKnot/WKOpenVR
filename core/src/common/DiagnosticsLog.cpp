@@ -3,18 +3,12 @@
 
 #include "BuildChannel.h"
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <chrono>
 #include <cstdio>
 #include <mutex>
-
-#include <io.h>
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
 
 namespace openvr_pair::common {
 namespace {
@@ -46,7 +40,7 @@ bool EnsureDiagnosticsLogOpen()
 		g_logFile = stderr;
 	}
 	if (!g_logFile) return false;
-	setvbuf(g_logFile, nullptr, _IONBF, 0);
+	SetLowLatencyLogMode(g_logFile);
 
 	tm now = LocalTimeForLog();
 	fprintf(g_logFile,
@@ -61,13 +55,7 @@ bool EnsureDiagnosticsLogOpen()
 void FlushDiagnosticsFile()
 {
 	if (!g_logFile) return;
-	fflush(g_logFile);
-	if (g_logFile == stderr) return;
-	const int fd = _fileno(g_logFile);
-	if (fd < 0) return;
-	const intptr_t osHandle = _get_osfhandle(fd);
-	if (osHandle == -1) return;
-	FlushFileBuffers(reinterpret_cast<HANDLE>(osHandle));
+	FlushLogFileToDisk(g_logFile);
 }
 
 } // namespace

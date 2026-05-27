@@ -2,6 +2,7 @@
 #include "Logging.h"
 
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <cerrno>
@@ -18,16 +19,21 @@ void FtDrvOpenLogFile()
     int openErrno = 0;
     if (!path.empty()) {
         FILE *f = _wfopen(path.c_str(), L"a");
-        if (f) { FtDrvLogFile = f; return; }
+        if (f) {
+            FtDrvLogFile = f;
+            openvr_pair::common::SetLowLatencyLogMode(FtDrvLogFile);
+            return;
+        }
         openErrno = errno;
     }
     FILE *f = fopen("facetracking_drv.log", "a");
     FtDrvLogFile = f ? f : stderr;
+    openvr_pair::common::SetLowLatencyLogMode(FtDrvLogFile);
     if (FtDrvLogFile) {
         fprintf(FtDrvLogFile,
             "[log-open] facetracking driver log using fallback path; primary_errno=%d primary_path_empty=%d\n",
             openErrno, path.empty() ? 1 : 0);
-        fflush(FtDrvLogFile);
+        FtDrvLogFlush();
     }
 }
 
@@ -49,5 +55,5 @@ tm FtDrvTimeForLog()
 
 void FtDrvLogFlush()
 {
-    if (FtDrvLogFile) fflush(FtDrvLogFile);
+    if (FtDrvLogFile) openvr_pair::common::FlushLogFileToDisk(FtDrvLogFile);
 }

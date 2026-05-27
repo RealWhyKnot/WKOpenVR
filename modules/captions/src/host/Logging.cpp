@@ -6,6 +6,7 @@
 
 #include "Logging.h"
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <cerrno>
@@ -25,16 +26,20 @@ FILE *OpenTimestampedLog()
     int openErrno = 0;
     if (!path.empty()) {
         FILE *f = _wfopen(path.c_str(), L"a");
-        if (f) return f;
+        if (f) {
+            openvr_pair::common::SetLowLatencyLogMode(f);
+            return f;
+        }
         openErrno = errno;
     }
 
     FILE *f = fopen("captions_host.log", "a");
     if (!f) return nullptr;
+    openvr_pair::common::SetLowLatencyLogMode(f);
     fprintf(f,
         "[log-open] captions host log using fallback path; primary_errno=%d primary_path_empty=%d\n",
         openErrno, path.empty() ? 1 : 0);
-    fflush(f);
+    openvr_pair::common::FlushLogFileToDisk(f);
     return f;
 }
 
@@ -52,7 +57,7 @@ void CaptionsHostOpenLogFile()
 void CaptionsHostFlushLog()
 {
     std::lock_guard<std::mutex> lk(g_logMutex);
-    if (g_logFile) fflush(g_logFile);
+    if (g_logFile) openvr_pair::common::FlushLogFileToDisk(g_logFile);
 }
 
 void CaptionsHostLog(const char *fmt, ...)
@@ -72,6 +77,6 @@ void CaptionsHostLog(const char *fmt, ...)
     if (g_logFile) {
         fputs(buf, g_logFile);
         fputs("\n", g_logFile);
-        fflush(g_logFile);
+        openvr_pair::common::FlushLogFileToDisk(g_logFile);
     }
 }

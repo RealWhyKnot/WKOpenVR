@@ -2,6 +2,7 @@
 #include "Logging.h"
 
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <chrono>
@@ -17,12 +18,16 @@ void OpenLogFile()
 	std::wstring path = openvr_pair::common::TimestampedLogPath(L"smoothing_log");
 	if (!path.empty()) {
 		LogFile = _wfopen(path.c_str(), L"a");
-		if (LogFile) return;
+		if (LogFile) {
+			openvr_pair::common::SetLowLatencyLogMode(LogFile);
+			return;
+		}
 	}
 	LogFile = fopen("openvr_smoothing.log", "a");
 	if (!LogFile) {
 		LogFile = stderr;
 	}
+	openvr_pair::common::SetLowLatencyLogMode(LogFile);
 }
 
 bool EnsureLogFileOpen()
@@ -43,7 +48,7 @@ tm TimeForLog()
 
 void LogFlush()
 {
-	if (LogFile) fflush(LogFile);
+	if (LogFile) openvr_pair::common::FlushLogFileToDisk(LogFile);
 }
 
 } // namespace smoothing::logging

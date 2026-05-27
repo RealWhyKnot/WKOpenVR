@@ -24,6 +24,8 @@ add_library(openvr_pair_common STATIC
 	DebugLogging.h
 	DiagnosticsLog.cpp
 	DiagnosticsLog.h
+	FileLog.cpp
+	FileLog.h
 	DriverMemoryProbe.cpp
 	DriverMemoryProbe.h
 	HostSupervisorBase.cpp

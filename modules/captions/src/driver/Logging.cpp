@@ -6,6 +6,7 @@
 
 #include "Logging.h"
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <cerrno>
@@ -32,24 +33,28 @@ void TrDrvOpenLogFile()
     int openErrno = 0;
     if (!path.empty()) {
         g_logFile = _wfopen(path.c_str(), L"w");
-        if (g_logFile) return;
+        if (g_logFile) {
+            openvr_pair::common::SetLowLatencyLogMode(g_logFile);
+            return;
+        }
         openErrno = errno;
     }
 
     g_logFile = fopen("captions_drv.log", "a");
     if (!g_logFile) g_logFile = stderr;
+    openvr_pair::common::SetLowLatencyLogMode(g_logFile);
     if (g_logFile) {
         fprintf(g_logFile,
             "[log-open] captions driver log using fallback path; primary_errno=%d primary_path_empty=%d\n",
             openErrno, path.empty() ? 1 : 0);
-        fflush(g_logFile);
+        openvr_pair::common::FlushLogFileToDisk(g_logFile);
     }
 }
 
 void TrLogFlushDrv()
 {
     std::lock_guard<std::mutex> lk(g_logMutex);
-    if (g_logFile) fflush(g_logFile);
+    if (g_logFile) openvr_pair::common::FlushLogFileToDisk(g_logFile);
 }
 
 void TrDrvLogV(const char *fmt, va_list args)
@@ -65,11 +70,12 @@ void TrDrvLogV(const char *fmt, va_list args)
         if (!path.empty()) g_logFile = _wfopen(path.c_str(), L"w");
         if (!g_logFile) g_logFile = fopen("captions_drv.log", "a");
         if (!g_logFile) g_logFile = stderr;
+        openvr_pair::common::SetLowLatencyLogMode(g_logFile);
     }
     if (g_logFile) {
         fputs(buf, g_logFile);
         fputs("\n", g_logFile);
-        fflush(g_logFile);
+        openvr_pair::common::FlushLogFileToDisk(g_logFile);
     }
 }
 

@@ -2,12 +2,26 @@
 #include "Logging.h"
 
 #include "DebugLogging.h"
+#include "FileLog.h"
 #include "LogPaths.h"
 
 #include <cerrno>
 #include <chrono>
 
 FILE *LogFile = nullptr;
+
+namespace {
+
+bool g_logFileOwned = false;
+
+void AdoptLogFile(FILE* file, bool owned)
+{
+	LogFile = file;
+	g_logFileOwned = owned;
+	openvr_pair::common::SetLowLatencyLogMode(LogFile);
+}
+
+} // namespace
 
 void OpenLogFile()
 {
@@ -23,22 +37,23 @@ void OpenLogFile()
 	if (!path.empty()) {
 		// _wfopen takes a wide path, which lets us cope with usernames
 		// containing non-ASCII characters that fopen would mangle.
-		LogFile = _wfopen(path.c_str(), L"a");
-		if (LogFile) return;
+		FILE* file = _wfopen(path.c_str(), L"a");
+		if (file) {
+			AdoptLogFile(file, true);
+			return;
+		}
 		openErrno = errno;
 	}
 
 	// Fallback: legacy behavior. Better than nothing if SHGetKnownFolderPath
 	// isn't available or AppDataLow isn't writable.
-	LogFile = fopen("wkopenvr_driver.log", "a");
-	if (!LogFile) {
-		LogFile = stderr;
-	}
+	FILE* file = fopen("wkopenvr_driver.log", "a");
+	AdoptLogFile(file ? file : stderr, file != nullptr);
 	if (LogFile) {
 		fprintf(LogFile,
 			"[log-open] driver log using fallback path; primary_errno=%d primary_path_empty=%d\n",
 			openErrno, path.empty() ? 1 : 0);
-		fflush(LogFile);
+		LogFlush();
 	}
 }
 
@@ -60,5 +75,16 @@ tm TimeForLog()
 
 void LogFlush()
 {
-	if (LogFile) fflush(LogFile);
+	if (LogFile) openvr_pair::common::FlushLogFileToDisk(LogFile);
+}
+
+void CloseLogFile()
+{
+	if (!LogFile) return;
+	LogFlush();
+	if (g_logFileOwned) {
+		fclose(LogFile);
+	}
+	LogFile = nullptr;
+	g_logFileOwned = false;
 }
