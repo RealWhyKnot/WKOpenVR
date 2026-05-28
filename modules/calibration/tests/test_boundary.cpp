@@ -7,6 +7,7 @@
 #include "BoundaryCapture.h"
 #include "BoundaryFloorCapture.h"
 #include "BoundaryPreview.h"
+#include "ControllerInput.h"
 
 #include <Eigen/Geometry>
 
@@ -223,6 +224,110 @@ TEST(BoundaryTransformTest, ProfileTransformAppliesToControllerPose) {
     EXPECT_NEAR(standing.translation().z(), 0.25, 1e-9);
 }
 
+TEST(BoundaryTransformTest, FloorOffsetAdjustsIdentityStandingZeroRawYOnly) {
+    vr::HmdMatrix34_t pose{};
+    pose.m[0][0] = 1.0f;
+    pose.m[1][1] = 1.0f;
+    pose.m[2][2] = 1.0f;
+    pose.m[0][3] = 1.25f;
+    pose.m[1][3] = -0.40f;
+    pose.m[2][3] = 2.50f;
+
+    const auto adjusted = OffsetStandingZeroPoseForFloor(pose, 0.125);
+
+    EXPECT_NEAR(adjusted.m[0][3], 1.25f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[1][3], -0.275f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[2][3], 2.50f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[0][0], 1.0f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[1][1], 1.0f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[2][2], 1.0f, 1e-6f);
+}
+
+TEST(BoundaryTransformTest, FloorOffsetMovesAlongStandingUpBasis) {
+    vr::HmdMatrix34_t pose{};
+    pose.m[0][0] = 1.0f;
+    pose.m[1][1] = 0.95f;
+    pose.m[2][2] = 1.0f;
+    pose.m[0][1] = 0.10f;
+    pose.m[2][1] = -0.20f;
+    pose.m[0][3] = 1.0f;
+    pose.m[1][3] = 2.0f;
+    pose.m[2][3] = 3.0f;
+
+    const auto adjusted = OffsetStandingZeroPoseForFloor(pose, 0.50);
+
+    EXPECT_NEAR(adjusted.m[0][3], 1.05f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[1][3], 2.475f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[2][3], 2.90f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[0][1], 0.10f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[1][1], 0.95f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[2][1], -0.20f, 1e-6f);
+}
+
+TEST(BoundaryTransformTest, FloorOffsetDoesNotChangeRotationColumns) {
+    vr::HmdMatrix34_t pose{};
+    pose.m[0][0] = 0.8660254f;
+    pose.m[0][1] = 0.0500000f;
+    pose.m[0][2] = 0.5000000f;
+    pose.m[1][0] = 0.0000000f;
+    pose.m[1][1] = 0.9950000f;
+    pose.m[1][2] = 0.0000000f;
+    pose.m[2][0] = -0.5000000f;
+    pose.m[2][1] = -0.0800000f;
+    pose.m[2][2] = 0.8660254f;
+    pose.m[0][3] = -1.0f;
+    pose.m[1][3] = 0.5f;
+    pose.m[2][3] = 2.0f;
+
+    const auto adjusted = OffsetStandingZeroPoseForFloor(pose, -0.25);
+
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            EXPECT_NEAR(adjusted.m[r][c], pose.m[r][c], 1e-6f);
+        }
+    }
+    EXPECT_NEAR(adjusted.m[0][3], -1.0125f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[1][3], 0.25125f, 1e-6f);
+    EXPECT_NEAR(adjusted.m[2][3], 2.0200f, 1e-6f);
+}
+
+TEST(BoundaryTransformTest, ControllerContactOffsetsMatchKnownControllerTypes) {
+    Eigen::Affine3d faceUp = Eigen::Affine3d::Identity();
+    EXPECT_NEAR(
+        ControllerFloorContactOffsetMeters("knuckles", faceUp),
+        0.0285,
+        1e-9);
+    EXPECT_NEAR(
+        ControllerFloorContactOffsetMeters("vive_controller", faceUp),
+        0.0620,
+        1e-9);
+
+    Eigen::Affine3d faceDown = Eigen::Affine3d::Identity();
+    faceDown.linear() = Eigen::AngleAxisd(
+        EIGEN_PI,
+        Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    EXPECT_NEAR(
+        ControllerFloorContactOffsetMeters("knuckles", faceDown),
+        0.0310,
+        1e-9);
+    EXPECT_NEAR(
+        ControllerFloorContactOffsetMeters("vive_controller", faceDown),
+        0.0060,
+        1e-9);
+    EXPECT_NEAR(
+        ControllerFloorContactOffsetMeters("unknown_controller", faceUp),
+        0.0,
+        1e-9);
+}
+
+TEST(BoundaryTransformTest, AdjustControllerFloorYSubtractsContactOffset) {
+    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    EXPECT_NEAR(
+        AdjustControllerFloorYForContact(0.4694, "knuckles", pose),
+        0.4409,
+        1e-9);
+}
+
 // ---------------------------------------------------------------------------
 // CaptureSession
 // ---------------------------------------------------------------------------
@@ -428,6 +533,25 @@ TEST(CaptureSessionTest, ProjectedPositionUsesControllerXZAndFloorY) {
     EXPECT_NEAR(verts[0].z, -0.75, 1e-9);
 }
 
+TEST(CaptureSessionTest, ProjectedPositionUsesRawControllerPointNotDisplaySmoothing) {
+    CaptureSession session;
+    session.Start();
+
+    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    pose.translation() = Eigen::Vector3d(0.0, 1.0, 0.0);
+    ASSERT_TRUE(session.TickProjectedPosition(pose, true, 0.0));
+
+    pose.translation() = Eigen::Vector3d(0.50, 1.0, 0.0);
+    ASSERT_TRUE(session.TickProjectedPosition(pose, true, 0.0));
+
+    ASSERT_EQ(session.rawVertexCount(), 2u);
+    const auto& verts = session.vertices();
+    ASSERT_EQ(verts.size(), 2u);
+    EXPECT_NEAR(verts.back().x, 0.50, 1e-9);
+    EXPECT_NEAR(verts.back().y, 0.0, 1e-9);
+    EXPECT_NEAR(verts.back().z, 0.0, 1e-9);
+}
+
 TEST(CaptureSessionTest, ProjectedPositionDebouncesDuplicateSamples) {
     CaptureSession session;
     session.Start();
@@ -440,7 +564,7 @@ TEST(CaptureSessionTest, ProjectedPositionDebouncesDuplicateSamples) {
     EXPECT_EQ(session.rawVertexCount(), 1u);
 }
 
-TEST(FloorCaptureSessionTest, TracksLowestControllerImmediately) {
+TEST(FloorCaptureSessionTest, SmoothsLowPercentileFloorAndReportsReadiness) {
     FloorCaptureSession floor;
     floor.Begin(0.10, 2.60);
 
@@ -451,21 +575,59 @@ TEST(FloorCaptureSessionTest, TracksLowestControllerImmediately) {
     ASSERT_TRUE(floor.candidate().valid);
     EXPECT_NEAR(floor.candidate().floorY, 0.40, 1e-9);
     EXPECT_EQ(floor.candidate().deviceId, 4);
+    EXPECT_FALSE(floor.candidate().ready);
 
-    Eigen::Affine3d higher = Eigen::Affine3d::Identity();
-    higher.translation() = Eigen::Vector3d(1.0, 0.75, 1.0);
-    EXPECT_FALSE(floor.Observe(higher, 5, "lighthouse"));
-    EXPECT_NEAR(floor.candidate().floorY, 0.40, 1e-9);
-    EXPECT_EQ(floor.candidate().sampleCount, 2u);
+    for (int i = 0; i < 7; ++i) {
+        Eigen::Affine3d stable = Eigen::Affine3d::Identity();
+        stable.translation() = Eigen::Vector3d(0.01 * i, 0.405, -0.01 * i);
+        floor.Observe(stable, 4, "lighthouse");
+    }
+
+    EXPECT_TRUE(floor.candidate().ready);
+    EXPECT_TRUE(floor.candidate().stable);
+    EXPECT_LT(floor.candidate().jitterMeters, 0.02);
+    EXPECT_NEAR(floor.candidate().floorY, 0.40275, 0.01);
 
     Eigen::Affine3d lower = Eigen::Affine3d::Identity();
     lower.translation() = Eigen::Vector3d(0.25, -0.02, -0.5);
     EXPECT_TRUE(floor.Observe(lower, 6, "lighthouse"));
 
     ASSERT_TRUE(floor.candidate().valid);
-    EXPECT_NEAR(floor.candidate().floorY, -0.02, 1e-9);
+    EXPECT_LT(floor.candidate().floorY, 0.20);
     EXPECT_EQ(floor.candidate().deviceId, 6);
-    EXPECT_EQ(floor.candidate().sampleCount, 3u);
+    EXPECT_EQ(floor.candidate().sampleCount, 9u);
+}
+
+TEST(FloorCaptureSessionTest, SamplesControllerContactPointInsteadOfOrigin) {
+    FloorCaptureSession floor;
+    floor.Begin(0.0, 2.4);
+
+    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    pose.translation() = Eigen::Vector3d(0.0, 0.50, 0.0);
+    pose.translation().y() = AdjustControllerFloorYForContact(
+        pose.translation().y(),
+        "knuckles",
+        pose);
+
+    ASSERT_TRUE(floor.Observe(pose, 4, "lighthouse"));
+    ASSERT_TRUE(floor.candidate().valid);
+    EXPECT_NEAR(floor.candidate().floorY, 0.4715, 1e-9);
+}
+
+TEST(FloorCaptureSessionTest, ReportsUnstableWhenFloorSamplesAreStillMoving) {
+    FloorCaptureSession floor;
+    floor.Begin(0.10, 2.60);
+
+    for (int i = 0; i < 8; ++i) {
+        Eigen::Affine3d moving = Eigen::Affine3d::Identity();
+        moving.translation() = Eigen::Vector3d(0.0, 0.40 - 0.06 * i, 0.0);
+        EXPECT_TRUE(floor.Observe(moving, 4, "lighthouse"));
+    }
+
+    ASSERT_TRUE(floor.candidate().valid);
+    EXPECT_TRUE(floor.candidate().ready);
+    EXPECT_FALSE(floor.candidate().stable);
+    EXPECT_GT(floor.candidate().jitterMeters, 0.02);
 }
 
 TEST(FloorCaptureSessionTest, BuildsFloorMarkerAtControllerXZ) {
@@ -482,20 +644,15 @@ TEST(FloorCaptureSessionTest, BuildsFloorMarkerAtControllerXZ) {
     EXPECT_NEAR(marker[2].z, -0.55, 1e-9);
 }
 
-TEST(CaptureSessionTest, FallsBackToControllerPositionWhenControllerIsBelowFloor) {
+TEST(CaptureSessionTest, RejectsAimRayWhenControllerIsBelowFloor) {
     CaptureSession session;
     session.Start();
 
     Eigen::Affine3d pose = Eigen::Affine3d::Identity();
     pose.translation() = Eigen::Vector3d(1.25, -1.0, -0.5);
-    EXPECT_TRUE(session.Tick(pose, true, 0.0));
+    EXPECT_FALSE(session.Tick(pose, true, 0.0));
 
-    ASSERT_EQ(session.rawVertexCount(), 1u);
-    const auto& verts = session.vertices();
-    ASSERT_EQ(verts.size(), 1u);
-    EXPECT_NEAR(verts[0].x, 1.25, 1e-9);
-    EXPECT_NEAR(verts[0].y, 0.0, 1e-9);
-    EXPECT_NEAR(verts[0].z, -0.5, 1e-9);
+    EXPECT_EQ(session.rawVertexCount(), 0u);
 }
 
 TEST(CaptureSessionTest, RejectsWhenControllerIsFarBelowFloor) {
@@ -555,6 +712,36 @@ TEST(CaptureSessionTest, FinishUsesOuterHullForSelfIntersectingLoop) {
     const auto& verts = session.vertices();
     EXPECT_EQ(verts.size(), 4u);
     EXPECT_NEAR(AbsoluteAreaXZ(ProjectXZ(verts)), 4.0, 1e-9);
+}
+
+TEST(CaptureSessionTest, FinishClosesAtNearestEarlierPoint) {
+    CaptureSession session;
+    session.Start();
+
+    const std::vector<Eigen::Vector3d> points = {
+        { -5.0, 1.0, -5.0 },
+        { -4.0, 1.0, -5.0 },
+        {  0.0, 1.0,  0.0 },
+        {  2.0, 1.0,  0.0 },
+        {  2.0, 1.0,  2.0 },
+        {  0.0, 1.0,  2.0 },
+        {  0.05, 1.0, 0.03 },
+    };
+
+    for (const auto& p : points) {
+        Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+        pose.translation() = p;
+        session.TickProjectedPosition(pose, true, 0.0);
+    }
+
+    session.Finish();
+    const auto& verts = session.vertices();
+    EXPECT_EQ(verts.size(), 4u);
+    EXPECT_NEAR(AbsoluteAreaXZ(ProjectXZ(verts)), 4.0, 0.25);
+    for (const auto& v : verts) {
+        EXPECT_GT(v.x, -1.0);
+        EXPECT_GT(v.z, -1.0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -656,8 +843,50 @@ TEST(BoundaryPreviewTest, RasterMarksLivePathPixels) {
     EXPECT_GT(closedAlpha, openAlpha);
 }
 
-TEST(BoundaryPreviewTest, RasterUsesHighResolutionTexture) {
-    EXPECT_GE(BoundaryPreviewRaster::kTextureSize, 1024);
+TEST(ControllerSelectionTest, DefaultsToRightControllerWithValidPose) {
+    using wkopenvr::controller_input::ChoosePreferredController;
+    using wkopenvr::controller_input::ControllerSelectionChoice;
+
+    const ControllerSelectionChoice choices[] = {
+        { 3, vr::TrackedControllerRole_LeftHand, true },
+        { 4, vr::TrackedControllerRole_RightHand, true },
+    };
+
+    EXPECT_EQ(ChoosePreferredController(choices, 2, -1), 4);
+}
+
+TEST(ControllerSelectionTest, PreservesCurrentSelection) {
+    using wkopenvr::controller_input::ChoosePreferredController;
+    using wkopenvr::controller_input::ControllerSelectionChoice;
+
+    const ControllerSelectionChoice choices[] = {
+        { 3, vr::TrackedControllerRole_LeftHand, true },
+        { 4, vr::TrackedControllerRole_RightHand, true },
+        { 5, vr::TrackedControllerRole_Invalid, true },
+    };
+
+    EXPECT_EQ(ChoosePreferredController(choices, 3, 5), 5);
+}
+
+TEST(ControllerSelectionTest, PrefersRightEvenBeforePoseThenAnyValidPose) {
+    using wkopenvr::controller_input::ChoosePreferredController;
+    using wkopenvr::controller_input::ControllerSelectionChoice;
+
+    const ControllerSelectionChoice rightWaiting[] = {
+        { 3, vr::TrackedControllerRole_LeftHand, true },
+        { 4, vr::TrackedControllerRole_RightHand, false },
+    };
+    EXPECT_EQ(ChoosePreferredController(rightWaiting, 2, -1), 4);
+
+    const ControllerSelectionChoice noRight[] = {
+        { 6, vr::TrackedControllerRole_LeftHand, false },
+        { 7, vr::TrackedControllerRole_Invalid, true },
+    };
+    EXPECT_EQ(ChoosePreferredController(noRight, 2, -1), 7);
+}
+
+TEST(BoundaryPreviewTest, RasterUsesModerateTextureForFastUploads) {
+    EXPECT_EQ(BoundaryPreviewRaster::kTextureSize, 512);
 }
 
 TEST(BoundaryPreviewTest, ClosedRasterFillsInterior) {
@@ -693,4 +922,118 @@ TEST(BoundaryPreviewTest, UsesStandingTrackingUniverseForFloorOverlay) {
     // Local overlay X lies on world X, and local Y lies on world -Z.
     EXPECT_NEAR(mat.m[0][0], 1.0f, 1e-6f);
     EXPECT_NEAR(mat.m[2][1], -1.0f, 1e-6f);
+}
+
+TEST(BoundaryPreviewTest, FloorOverlayTransformIsWorldLockedAndOrthonormal) {
+    const auto mat = BoundaryPreviewTransform(-0.50, 0.0, 1.75);
+
+    const Eigen::Vector3d xAxis(mat.m[0][0], mat.m[1][0], mat.m[2][0]);
+    const Eigen::Vector3d yAxis(mat.m[0][1], mat.m[1][1], mat.m[2][1]);
+    const Eigen::Vector3d zAxis(mat.m[0][2], mat.m[1][2], mat.m[2][2]);
+
+    EXPECT_NEAR(xAxis.norm(), 1.0, 1e-6);
+    EXPECT_NEAR(yAxis.norm(), 1.0, 1e-6);
+    EXPECT_NEAR(zAxis.norm(), 1.0, 1e-6);
+    EXPECT_NEAR(xAxis.dot(yAxis), 0.0, 1e-6);
+    EXPECT_NEAR(xAxis.dot(zAxis), 0.0, 1e-6);
+    EXPECT_NEAR(yAxis.dot(zAxis), 0.0, 1e-6);
+    EXPECT_NEAR(xAxis.cross(yAxis).dot(zAxis), 1.0, 1e-6);
+    EXPECT_NEAR(mat.m[0][3], -0.50f, 1e-6f);
+    EXPECT_NEAR(mat.m[1][3], 0.025f, 1e-6f);
+    EXPECT_NEAR(mat.m[2][3], 1.75f, 1e-6f);
+}
+
+TEST(BoundaryPreviewTest, StrokeWidthScalesToWorldSpace) {
+    const auto compactRaster = BuildBoundaryPreviewRaster({
+        { -0.5, 0.0, 0.0 },
+        {  0.5, 0.0, 0.0 },
+    }, false);
+    const auto wideRaster = BuildBoundaryPreviewRaster({
+        { -2.0, 0.0, 0.0 },
+        {  2.0, 0.0, 0.0 },
+    }, false);
+    ASSERT_TRUE(compactRaster.plane.valid);
+    ASSERT_TRUE(wideRaster.plane.valid);
+
+    auto verticalAlphaRun = [](const BoundaryPreviewRaster& raster) {
+        const int x = BoundaryPreviewRaster::kTextureSize / 2;
+        int count = 0;
+        for (int y = 0; y < BoundaryPreviewRaster::kTextureSize; ++y) {
+            const size_t alpha =
+                static_cast<size_t>(y * BoundaryPreviewRaster::kTextureSize + x) * 4u + 3u;
+            if (raster.rgba[alpha] != 0) ++count;
+        }
+        return count;
+    };
+
+    EXPECT_GT(verticalAlphaRun(compactRaster), verticalAlphaRun(wideRaster));
+}
+
+TEST(ChaperoneWorkingSetTest, BuildsPerimeterQuadsAndPlayArea) {
+    const std::vector<BoundaryVertex> verts = {
+        { -1.0, 0.0, -2.0 },
+        {  2.0, 0.0, -2.0 },
+        {  2.0, 0.0,  1.0 },
+        { -1.0, 0.0,  1.0 },
+    };
+
+    const auto workingSet = BuildChaperoneWorkingSet(verts, -0.10, 2.40);
+
+    ASSERT_TRUE(workingSet.valid);
+    EXPECT_NEAR(workingSet.playAreaX, 3.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.playAreaZ, 3.0f, 1e-6f);
+    ASSERT_EQ(workingSet.perimeter.size(), 4u);
+    EXPECT_NEAR(workingSet.perimeter[0].v[0], -1.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[0].v[1], -2.0f, 1e-6f);
+    ASSERT_EQ(workingSet.collisionBounds.size(), 4u);
+    const auto& q = workingSet.collisionBounds[0];
+    EXPECT_NEAR(q.vCorners[0].v[0], -1.0f, 1e-6f);
+    EXPECT_NEAR(q.vCorners[0].v[1], -0.10f, 1e-6f);
+    EXPECT_NEAR(q.vCorners[0].v[2], -2.0f, 1e-6f);
+    EXPECT_NEAR(q.vCorners[1].v[0], 2.0f, 1e-6f);
+    EXPECT_NEAR(q.vCorners[1].v[1], -0.10f, 1e-6f);
+    EXPECT_NEAR(q.vCorners[2].v[1], 2.40f, 1e-6f);
+}
+
+TEST(ChaperoneWorkingSetTest, MatchesTransformedCapturedBoundaryNumbers) {
+    const std::vector<BoundaryVertex> targetVerts = {
+        { 0.0, 0.0, 0.0 },
+        { 2.0, 0.0, 0.0 },
+        { 2.0, 0.0, 1.0 },
+        { 0.0, 0.0, 1.0 },
+    };
+    Eigen::AffineCompact3d targetToStanding = Eigen::AffineCompact3d::Identity();
+    targetToStanding.linear() = Eigen::AngleAxisd(
+        EIGEN_PI * 0.5,
+        Eigen::Vector3d::UnitY()).toRotationMatrix();
+    targetToStanding.translation() = Eigen::Vector3d(1.0, 0.0, -0.5);
+
+    const auto standingVerts =
+        TransformToStandingUniverse(targetVerts, targetToStanding);
+    const auto workingSet = BuildChaperoneWorkingSet(standingVerts, 0.0, 2.4);
+
+    ASSERT_TRUE(workingSet.valid);
+    ASSERT_EQ(workingSet.perimeter.size(), 4u);
+    EXPECT_NEAR(workingSet.perimeter[0].v[0], 1.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[0].v[1], -0.5f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[1].v[0], 1.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[1].v[1], -2.5f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[2].v[0], 2.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[2].v[1], -2.5f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[3].v[0], 2.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.perimeter[3].v[1], -0.5f, 1e-6f);
+    EXPECT_NEAR(workingSet.playAreaX, 1.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.playAreaZ, 2.0f, 1e-6f);
+    ASSERT_EQ(workingSet.collisionBounds.size(), 4u);
+    EXPECT_NEAR(workingSet.collisionBounds[0].vCorners[0].v[1], 0.0f, 1e-6f);
+    EXPECT_NEAR(workingSet.collisionBounds[0].vCorners[2].v[1], 2.4f, 1e-6f);
+}
+
+TEST(ChaperoneWorkingSetTest, RejectsInvalidGeometry) {
+    EXPECT_FALSE(BuildChaperoneWorkingSet({}, 0.0, 2.4).valid);
+    EXPECT_FALSE(BuildChaperoneWorkingSet({
+        { 0.0, 0.0, 0.0 },
+        { 1.0, 0.0, 0.0 },
+        { 1.0, 0.0, 1.0 },
+    }, 2.4, 0.0).valid);
 }

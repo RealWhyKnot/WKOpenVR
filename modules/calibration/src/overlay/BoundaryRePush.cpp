@@ -39,6 +39,10 @@ static constexpr double kRotationThresholdRad = 0.005236;  // ~0.3 deg
 // Minimum time between pushes (seconds).
 static constexpr double kMinPushIntervalSec = 1.0;
 
+// Dynamic re-pushes make accepted boundaries chase calibration jitter. Keep
+// the live chaperone fixed after explicit apply/startup push.
+static constexpr bool kDynamicRePushEnabled = false;
+
 // Number of CalibrationTicks to skip after a profile load before pushing the
 // startup boundary. At ~20 Hz this is ~1.5 s -- long enough for the first
 // ComputeIncremental cycle to start filling the sample buffer and produce a
@@ -103,11 +107,15 @@ static void DoPush(const Eigen::AffineCompact3d& xf) {
         // Even if snapshot fails (SteamVR unavailable), still proceed with push.
     }
 
-    auto standing = wkopenvr::boundary::TransformToStandingUniverse(bc.vertices, xf);
-    const double standingFloorY =
-        wkopenvr::boundary::TransformHeightToStandingUniverse(bc.vertices, bc.floorY, xf);
-    const double standingCeilingY =
-        wkopenvr::boundary::TransformHeightToStandingUniverse(bc.vertices, bc.ceilingY, xf);
+    auto standing = bc.standingSpace
+        ? bc.vertices
+        : wkopenvr::boundary::TransformToStandingUniverse(bc.vertices, xf);
+    const double standingFloorY = bc.standingSpace
+        ? bc.floorY
+        : wkopenvr::boundary::TransformHeightToStandingUniverse(bc.vertices, bc.floorY, xf);
+    const double standingCeilingY = bc.standingSpace
+        ? bc.ceilingY
+        : wkopenvr::boundary::TransformHeightToStandingUniverse(bc.vertices, bc.ceilingY, xf);
     const bool ok = wkopenvr::boundary::PushToChaperone(
         standing,
         standingFloorY,
@@ -142,6 +150,19 @@ void ScheduleBoundaryStartupPush() {
     g_firstPush = true;
 }
 
+void NoteBoundaryPushedForTransform(const Eigen::AffineCompact3d& targetToStanding) {
+    g_lastPushedTransform = targetToStanding;
+    g_lastPushAt = std::chrono::steady_clock::now();
+    g_firstPush = false;
+
+    const Eigen::Vector3d t = targetToStanding.translation();
+    char lbuf[192];
+    snprintf(lbuf, sizeof lbuf,
+        "[boundary-re-push] synchronized direct push transform: trans=(%.3f,%.3f,%.3f)",
+        t.x(), t.y(), t.z());
+    Metrics::WriteLogAnnotation(lbuf);
+}
+
 void TickBoundaryRePush(double /*time*/) {
     auto& ctx = CalCtx;
     auto& bc = ctx.boundary;
@@ -168,19 +189,37 @@ void TickBoundaryRePush(double /*time*/) {
         return;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+
     // Throttle to kMinPushIntervalSec.
     if (!g_firstPush) {
-        const auto now = std::chrono::steady_clock::now();
         const double elapsedSec =
             std::chrono::duration<double>(now - g_lastPushAt).count();
         if (elapsedSec < kMinPushIntervalSec) return;
+    }
+
+    if (!g_firstPush && !kDynamicRePushEnabled) {
+        if (TransformDeltaExceedsThreshold(xf, g_lastPushedTransform)) {
+            const double transDelta = (xf.translation() - g_lastPushedTransform.translation()).norm();
+            const Eigen::Matrix3d dR = xf.rotation() * g_lastPushedTransform.rotation().transpose();
+            const double trace = dR.trace();
+            const double cosAngle = std::max(-1.0, std::min(1.0, (trace - 1.0) * 0.5));
+            const double angleDeg = std::acos(cosAngle) * (180.0 / EIGEN_PI);
+            char lbuf[192];
+            snprintf(lbuf, sizeof lbuf,
+                "[boundary-re-push] dynamic push skipped: trans=%.2fmm rot=%.2fdeg",
+                transDelta * 1000.0, angleDeg);
+            Metrics::WriteLogAnnotation(lbuf);
+        }
+        g_lastPushAt = now;
+        return;
     }
 
     // Skip if the transform hasn't moved enough.
     if (!g_firstPush && !TransformDeltaExceedsThreshold(xf, g_lastPushedTransform)) {
         // Still update the timestamp so we don't spin-check every tick when
         // the interval gate would have passed but the delta gate rejects.
-        g_lastPushAt = std::chrono::steady_clock::now();
+        g_lastPushAt = now;
         return;
     } else if (!g_firstPush) {
         // Delta exceeded threshold -- log on edge (one annotation per push).
@@ -197,5 +236,13 @@ void TickBoundaryRePush(double /*time*/) {
         Metrics::WriteLogAnnotation(lbuf);
     }
 
+    {
+        const Eigen::Vector3d t = xf.translation();
+        char lbuf[224];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary-re-push] push using transform: trans=(%.3f,%.3f,%.3f) vertices=%zu",
+            t.x(), t.y(), t.z(), bc.vertices.size());
+        Metrics::WriteLogAnnotation(lbuf);
+    }
     DoPush(xf);
 }

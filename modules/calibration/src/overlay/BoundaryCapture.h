@@ -65,10 +65,10 @@ private:
         double floorY);
 
     // Minimum motion required to record a new vertex.
-    static constexpr double kVertexDebounceMeters = 0.05;
+    static constexpr double kVertexDebounceMeters = 0.035;
     // Perpendicular-distance tolerance for Douglas-Peucker.
-    static constexpr double kSimplifyEpsilonMeters = 0.05;
-    static constexpr double kCloseLoopMeters = 0.15;
+    static constexpr double kSimplifyEpsilonMeters = 0.04;
+    static constexpr double kCloseLoopMeters = 0.22;
 };
 
 }  // namespace wkopenvr::boundary

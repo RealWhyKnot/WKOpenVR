@@ -22,6 +22,8 @@ struct PreviewState {
     vr::VROverlayHandle_t handle = vr::k_ulOverlayHandleInvalid;
     bool created = false;
     uint64_t uploadedHash = 0;
+    int uploadFailureCount = 0;
+    bool uploadsDisabled = false;
 };
 
 PreviewState& State()
@@ -42,9 +44,9 @@ uint64_t HashU64(uint64_t hash, uint64_t value)
 
 uint64_t HashVertex(uint64_t hash, const BoundaryVertex& v)
 {
-    hash = HashU64(hash, static_cast<uint64_t>(std::llround(v.x * 1000.0)));
-    hash = HashU64(hash, static_cast<uint64_t>(std::llround(v.y * 1000.0)));
-    hash = HashU64(hash, static_cast<uint64_t>(std::llround(v.z * 1000.0)));
+    hash = HashU64(hash, static_cast<uint64_t>(std::llround(v.x * 100.0)));
+    hash = HashU64(hash, static_cast<uint64_t>(std::llround(v.y * 100.0)));
+    hash = HashU64(hash, static_cast<uint64_t>(std::llround(v.z * 100.0)));
     return hash;
 }
 
@@ -52,6 +54,12 @@ int ClampPixel(double value)
 {
     const int rounded = static_cast<int>(std::lround(value));
     return std::clamp(rounded, 0, BoundaryPreviewRaster::kTextureSize - 1);
+}
+
+uint8_t CoveredAlpha(uint8_t alpha, double coverage)
+{
+    const double scaled = static_cast<double>(alpha) * std::clamp(coverage, 0.0, 1.0);
+    return static_cast<uint8_t>(std::clamp(static_cast<int>(std::lround(scaled)), 0, 255));
 }
 
 void BlendPixel(std::vector<uint8_t>& pixels, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
@@ -67,35 +75,108 @@ void BlendPixel(std::vector<uint8_t>& pixels, int x, int y, uint8_t r, uint8_t g
     pixels[idx + 3] = static_cast<uint8_t>(std::min<int>(255, pixels[idx + 3] + a));
 }
 
-void DrawDot(std::vector<uint8_t>& pixels, int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+double DistanceToSegment(double px, double py, double ax, double ay, double bx, double by)
 {
-    const int radiusSq = radius * radius;
-    for (int y = cy - radius; y <= cy + radius; ++y) {
-        for (int x = cx - radius; x <= cx + radius; ++x) {
-            const int dx = x - cx;
-            const int dy = y - cy;
-            if (dx * dx + dy * dy <= radiusSq) {
-                BlendPixel(pixels, x, y, r, g, b, a);
-            }
+    const double vx = bx - ax;
+    const double vy = by - ay;
+    const double lenSq = vx * vx + vy * vy;
+    if (lenSq <= 1e-9) {
+        const double dx = px - ax;
+        const double dy = py - ay;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    const double t = std::clamp(((px - ax) * vx + (py - ay) * vy) / lenSq, 0.0, 1.0);
+    const double cx = ax + vx * t;
+    const double cy = ay + vy * t;
+    const double dx = px - cx;
+    const double dy = py - cy;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+void DrawSoftDot(
+    std::vector<uint8_t>& pixels,
+    int cx,
+    int cy,
+    double radius,
+    double feather,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b,
+    uint8_t a)
+{
+    const int reach = static_cast<int>(std::ceil(radius + feather));
+    for (int y = cy - reach; y <= cy + reach; ++y) {
+        for (int x = cx - reach; x <= cx + reach; ++x) {
+            const double dx = (static_cast<double>(x) + 0.5) - static_cast<double>(cx);
+            const double dy = (static_cast<double>(y) + 0.5) - static_cast<double>(cy);
+            const double dist = std::sqrt(dx * dx + dy * dy);
+            const double coverage = (radius + feather - dist) / std::max(feather, 0.001);
+            const uint8_t aa = CoveredAlpha(a, coverage);
+            if (aa != 0) BlendPixel(pixels, x, y, r, g, b, aa);
         }
     }
 }
 
-void DrawLine(std::vector<uint8_t>& pixels, int x0, int y0, int x1, int y1, int radius, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+void DrawSoftRing(
+    std::vector<uint8_t>& pixels,
+    int cx,
+    int cy,
+    double radius,
+    double thickness,
+    double feather,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b,
+    uint8_t a)
 {
-    const int dx = x1 - x0;
-    const int dy = y1 - y0;
-    const int steps = std::max(std::abs(dx), std::abs(dy));
-    if (steps <= 0) {
-        DrawDot(pixels, x0, y0, radius, r, g, b, a);
-        return;
+    const double half = thickness * 0.5;
+    const int reach = static_cast<int>(std::ceil(radius + half + feather));
+    for (int y = cy - reach; y <= cy + reach; ++y) {
+        for (int x = cx - reach; x <= cx + reach; ++x) {
+            const double dx = (static_cast<double>(x) + 0.5) - static_cast<double>(cx);
+            const double dy = (static_cast<double>(y) + 0.5) - static_cast<double>(cy);
+            const double dist = std::sqrt(dx * dx + dy * dy);
+            const double edge = std::fabs(dist - radius);
+            const double coverage = (half + feather - edge) / std::max(feather, 0.001);
+            const uint8_t aa = CoveredAlpha(a, coverage);
+            if (aa != 0) BlendPixel(pixels, x, y, r, g, b, aa);
+        }
     }
+}
 
-    for (int i = 0; i <= steps; ++i) {
-        const double t = static_cast<double>(i) / static_cast<double>(steps);
-        const int x = ClampPixel(static_cast<double>(x0) + dx * t);
-        const int y = ClampPixel(static_cast<double>(y0) + dy * t);
-        DrawDot(pixels, x, y, radius, r, g, b, a);
+void DrawSoftLine(
+    std::vector<uint8_t>& pixels,
+    int x0,
+    int y0,
+    int x1,
+    int y1,
+    double radius,
+    double feather,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b,
+    uint8_t a)
+{
+    const int reach = static_cast<int>(std::ceil(radius + feather));
+    const int minX = std::min(x0, x1) - reach;
+    const int maxX = std::max(x0, x1) + reach;
+    const int minY = std::min(y0, y1) - reach;
+    const int maxY = std::max(y0, y1) + reach;
+
+    for (int y = minY; y <= maxY; ++y) {
+        for (int x = minX; x <= maxX; ++x) {
+            const double dist = DistanceToSegment(
+                static_cast<double>(x) + 0.5,
+                static_cast<double>(y) + 0.5,
+                static_cast<double>(x0),
+                static_cast<double>(y0),
+                static_cast<double>(x1),
+                static_cast<double>(y1));
+            const double coverage = (radius + feather - dist) / std::max(feather, 0.001);
+            const uint8_t aa = CoveredAlpha(a, coverage);
+            if (aa != 0) BlendPixel(pixels, x, y, r, g, b, aa);
+        }
     }
 }
 
@@ -140,6 +221,51 @@ void FillPolygon(std::vector<uint8_t>& pixels, const std::vector<std::pair<int, 
     }
 }
 
+void DrawBoundarySegment(
+    std::vector<uint8_t>& pixels,
+    const std::pair<int, int>& a,
+    const std::pair<int, int>& b,
+    bool closing,
+    double strokeRadius,
+    double strokeFeather)
+{
+    DrawSoftLine(pixels, a.first, a.second, b.first, b.second,
+        closing ? strokeRadius * 0.9 : strokeRadius,
+        strokeFeather,
+        0, closing ? 180 : 255, closing ? 255 : 190, 56);
+    DrawSoftLine(pixels, a.first, a.second, b.first, b.second,
+        closing ? strokeRadius * 0.35 : strokeRadius * 0.42,
+        std::max(1.5, strokeFeather * 0.35),
+        0, closing ? 220 : 255, closing ? 255 : 190, 245);
+    DrawSoftLine(pixels, a.first, a.second, b.first, b.second,
+        std::max(1.25, strokeRadius * 0.14),
+        1.5, 235, 255, 255, 92);
+}
+
+void DrawBoundaryVertex(
+    std::vector<uint8_t>& pixels,
+    const std::pair<int, int>& p,
+    bool first,
+    bool last,
+    double dotRadius)
+{
+    if (last) {
+        DrawSoftDot(pixels, p.first, p.second, dotRadius * 1.6, dotRadius * 0.55, 255, 220, 80, 72);
+        DrawSoftRing(pixels, p.first, p.second, dotRadius, std::max(2.0, dotRadius * 0.28), 2.0, 255, 248, 150, 230);
+        DrawSoftDot(pixels, p.first, p.second, dotRadius * 0.5, 2.0, 255, 245, 90, 255);
+        return;
+    }
+
+    if (first) {
+        DrawSoftRing(pixels, p.first, p.second, dotRadius * 0.95, std::max(2.0, dotRadius * 0.28), 2.0, 120, 230, 255, 220);
+        DrawSoftDot(pixels, p.first, p.second, dotRadius * 0.40, 2.0, 230, 255, 255, 240);
+        return;
+    }
+
+    DrawSoftDot(pixels, p.first, p.second, dotRadius * 0.65, dotRadius * 0.30, 0, 255, 190, 64);
+    DrawSoftDot(pixels, p.first, p.second, dotRadius * 0.33, 1.75, 0, 235, 180, 235);
+}
+
 bool EnsureCreated()
 {
     auto& s = State();
@@ -161,6 +287,7 @@ bool EnsureCreated()
     vr::VROverlay()->SetOverlayAlpha(s.handle, 0.95f);
     s.created = true;
     s.uploadedHash = 0;
+    s.uploadsDisabled = false;
     openvr_pair::common::DiagnosticLog("boundary-preview", "created");
     return true;
 }
@@ -176,7 +303,16 @@ void Destroy()
     s.handle = vr::k_ulOverlayHandleInvalid;
     s.created = false;
     s.uploadedHash = 0;
+    s.uploadFailureCount = 0;
+    s.uploadsDisabled = false;
     openvr_pair::common::DiagnosticLog("boundary-preview", "destroyed");
+}
+
+double WorldMetersToPixels(double spanMeters, double meters, double minPixels, double maxPixels)
+{
+    const double pixels = meters / std::max(spanMeters, 0.001) *
+        static_cast<double>(BoundaryPreviewRaster::kTextureSize - 1);
+    return std::clamp(pixels, minPixels, maxPixels);
 }
 
 } // namespace
@@ -224,6 +360,21 @@ BoundaryPreviewRaster BuildBoundaryPreviewRaster(
     const double maxZ = raster.plane.centerZ + half;
     const double scale = static_cast<double>(BoundaryPreviewRaster::kTextureSize - 1) /
         raster.plane.spanMeters;
+    const double strokeRadius = WorldMetersToPixels(
+        raster.plane.spanMeters,
+        0.035,
+        4.5,
+        18.0);
+    const double strokeFeather = WorldMetersToPixels(
+        raster.plane.spanMeters,
+        0.014,
+        2.0,
+        8.0);
+    const double dotRadius = WorldMetersToPixels(
+        raster.plane.spanMeters,
+        0.070,
+        5.5,
+        20.0);
 
     auto toPixel = [&](const BoundaryVertex& v) {
         const int x = ClampPixel((v.x - minX) * scale);
@@ -242,24 +393,31 @@ BoundaryPreviewRaster BuildBoundaryPreviewRaster(
     }
 
     for (size_t i = 1; i < vertices.size(); ++i) {
-        const auto a = pixelPoints[i - 1];
-        const auto b = pixelPoints[i];
-        DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 8, 0, 255, 190, 245);
+        DrawBoundarySegment(
+            raster.rgba,
+            pixelPoints[i - 1],
+            pixelPoints[i],
+            false,
+            strokeRadius,
+            strokeFeather);
     }
     if (closeLoop && vertices.size() >= 3) {
-        const auto a = pixelPoints.back();
-        const auto b = pixelPoints.front();
-        DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 7, 0, 210, 255, 225);
+        DrawBoundarySegment(
+            raster.rgba,
+            pixelPoints.back(),
+            pixelPoints.front(),
+            true,
+            strokeRadius,
+            strokeFeather);
     }
 
     for (size_t i = 0; i < vertices.size(); ++i) {
-        const auto p = pixelPoints[i];
-        const bool last = i + 1 == vertices.size();
-        DrawDot(raster.rgba, p.first, p.second, last ? 14 : 8,
-            last ? 255 : 0,
-            last ? 245 : 220,
-            last ? 90 : 160,
-            245);
+        DrawBoundaryVertex(
+            raster.rgba,
+            pixelPoints[i],
+            i == 0,
+            i + 1 == vertices.size(),
+            dotRadius);
     }
     return raster;
 }
@@ -313,6 +471,9 @@ void TickBoundaryPreview(
     if (!EnsureCreated()) return;
 
     auto& s = State();
+    if (s.uploadsDisabled) {
+        return;
+    }
     if (raster.hash != s.uploadedHash) {
         vr::EVROverlayError err = vr::VROverlay()->SetOverlayRaw(
             s.handle,
@@ -322,9 +483,26 @@ void TickBoundaryPreview(
             4);
         if (err == vr::VROverlayError_None) {
             s.uploadedHash = raster.hash;
+            s.uploadFailureCount = 0;
         } else {
-            openvr_pair::common::DiagnosticLog(
-                "boundary-preview", "upload_failed err=%d", static_cast<int>(err));
+            ++s.uploadFailureCount;
+            if (s.uploadFailureCount <= 3 || (s.uploadFailureCount % 30) == 0) {
+                openvr_pair::common::DiagnosticLog(
+                    "boundary-preview",
+                    "upload_failed err=%d count=%d",
+                    static_cast<int>(err),
+                    s.uploadFailureCount);
+            }
+            if (s.uploadFailureCount == 3) {
+                if (vr::VROverlay() && s.handle != vr::k_ulOverlayHandleInvalid) {
+                    vr::VROverlay()->HideOverlay(s.handle);
+                }
+                s.uploadsDisabled = true;
+                openvr_pair::common::DiagnosticLog(
+                    "boundary-preview",
+                    "uploads_disabled_after_failures");
+            }
+            return;
         }
     }
 

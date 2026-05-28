@@ -4,6 +4,7 @@
 
 #include <Eigen/Geometry>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace wkopenvr::boundary {
@@ -58,6 +59,42 @@ Eigen::AffineCompact3d ProfileTransformFromCalibration(
 Eigen::Affine3d TransformPoseToStandingUniverse(
     const Eigen::Affine3d& rawPose,
     const Eigen::AffineCompact3d& targetToStanding);
+
+vr::HmdMatrix34_t OffsetStandingZeroPoseForFloor(
+    const vr::HmdMatrix34_t& standingZeroToRaw,
+    double measuredFloorYStanding);
+
+double ControllerFloorContactOffsetMeters(
+    const std::string& controllerType,
+    const Eigen::Affine3d& standingPose);
+
+double AdjustControllerFloorYForContact(
+    double controllerOriginYStanding,
+    const std::string& controllerType,
+    const Eigen::Affine3d& standingPose);
+
+bool ApplySteamVrFloorOffset(
+    double measuredFloorYStanding,
+    char* errorBuffer = nullptr,
+    size_t errorBufferSize = 0);
+
+bool ApplySteamVrFloorOffsetFromDevice(
+    vr::TrackedDeviceIndex_t deviceId,
+    char* errorBuffer = nullptr,
+    size_t errorBufferSize = 0);
+
+struct ChaperoneWorkingSet {
+    bool valid = false;
+    float playAreaX = 0.0f;
+    float playAreaZ = 0.0f;
+    std::vector<vr::HmdVector2_t> perimeter;
+    std::vector<vr::HmdQuad_t> collisionBounds;
+};
+
+ChaperoneWorkingSet BuildChaperoneWorkingSet(
+    const std::vector<BoundaryVertex>& standingUniverseVertices,
+    double floorY,
+    double ceilingY);
 
 // Push the polygon to SteamVR chaperone. Returns false if VRChaperoneSetup
 // is unavailable or any call fails. Builds vertical wall quads from floorY

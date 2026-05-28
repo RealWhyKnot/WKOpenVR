@@ -532,6 +532,38 @@ TEST(ConfigurationTest, SaveStampsCurrentSchemaVersion) {
         << "Saved JSON should contain a schema_version key";
 }
 
+TEST(ConfigurationTest, BoundaryStandingSpaceRoundTrips) {
+    CalibrationContext src;
+    src.referenceTrackingSystem = "lighthouse";
+    src.targetTrackingSystem = "oculus";
+    src.validProfile = true;
+    src.boundary.enabled = true;
+    src.boundary.standingSpace = true;
+    src.boundary.floorY = 0.0;
+    src.boundary.ceilingY = 2.4;
+    src.boundary.vertices = {
+        { -1.0, 0.0, -1.0 },
+        {  1.0, 0.0, -1.0 },
+        {  1.0, 0.0,  1.0 },
+        { -1.0, 0.0,  1.0 },
+    };
+
+    std::stringstream io;
+    WriteProfile(src, io);
+
+    EXPECT_NE(io.str().find("standing_space"), std::string::npos);
+
+    CalibrationContext dst;
+    std::stringstream reload(io.str());
+    ParseProfile(dst, reload);
+
+    ASSERT_TRUE(dst.validProfile);
+    EXPECT_TRUE(dst.boundary.standingSpace);
+    EXPECT_TRUE(dst.boundary.enabled);
+    ASSERT_EQ(dst.boundary.vertices.size(), 4u);
+    EXPECT_NEAR(dst.boundary.ceilingY, 2.4, 1e-9);
+}
+
 // ---------------------------------------------------------------------------
 // Schema migration v3 -> v4. v3 profiles have no head_mount or boundary
 // sections. They must load with both at their disabled defaults.

@@ -14,6 +14,8 @@
 
 namespace wkopenvr::boundary {
 
+static bool ChaperoneSetupOk();
+
 // ---------------------------------------------------------------------------
 // Area helpers
 // ---------------------------------------------------------------------------
@@ -219,6 +221,187 @@ Eigen::Affine3d TransformPoseToStandingUniverse(
     return transform * rawPose;
 }
 
+vr::HmdMatrix34_t OffsetStandingZeroPoseForFloor(
+    const vr::HmdMatrix34_t& standingZeroToRaw,
+    double measuredFloorYStanding)
+{
+    vr::HmdMatrix34_t out = standingZeroToRaw;
+    const float y = static_cast<float>(measuredFloorYStanding);
+    out.m[0][3] += standingZeroToRaw.m[0][1] * y;
+    out.m[1][3] += standingZeroToRaw.m[1][1] * y;
+    out.m[2][3] += standingZeroToRaw.m[2][1] * y;
+    return out;
+}
+
+double ControllerFloorContactOffsetMeters(
+    const std::string& controllerType,
+    const Eigen::Affine3d& standingPose)
+{
+    if (!standingPose.matrix().allFinite()) {
+        return 0.0;
+    }
+
+    const double roll = std::atan2(
+        standingPose.linear()(1, 0),
+        standingPose.linear()(1, 1));
+    const bool faceUp = std::fabs(roll) <= (EIGEN_PI * 0.5);
+
+    if (controllerType == "knuckles") {
+        return faceUp ? 0.0285 : 0.0310;
+    }
+    if (controllerType == "vive_controller") {
+        return faceUp ? 0.0620 : 0.0060;
+    }
+    return 0.0;
+}
+
+double AdjustControllerFloorYForContact(
+    double controllerOriginYStanding,
+    const std::string& controllerType,
+    const Eigen::Affine3d& standingPose)
+{
+    if (!std::isfinite(controllerOriginYStanding)) {
+        return controllerOriginYStanding;
+    }
+    return controllerOriginYStanding
+        - ControllerFloorContactOffsetMeters(controllerType, standingPose);
+}
+
+bool ApplySteamVrFloorOffset(
+    double measuredFloorYStanding,
+    char* errorBuffer,
+    size_t errorBufferSize)
+{
+    auto writeError = [&](const char* message) {
+        if (errorBuffer && errorBufferSize > 0) {
+            snprintf(errorBuffer, errorBufferSize, "%s", message ? message : "");
+        }
+    };
+
+    if (!std::isfinite(measuredFloorYStanding)) {
+        writeError("Measured floor height was not finite.");
+        Metrics::WriteLogAnnotation("[boundary-floor] steamvr floor apply failed: non_finite");
+        return false;
+    }
+    if (!ChaperoneSetupOk()) {
+        writeError("SteamVR chaperone setup is unavailable.");
+        Metrics::WriteLogAnnotation("[boundary-floor] steamvr floor apply failed: setup_unavailable");
+        return false;
+    }
+
+    auto* setup = vr::VRChaperoneSetup();
+    setup->RevertWorkingCopy();
+
+    vr::HmdMatrix34_t before{};
+    if (!setup->GetWorkingStandingZeroPoseToRawTrackingPose(&before)) {
+        writeError("SteamVR did not return the current standing-zero pose.");
+        Metrics::WriteLogAnnotation("[boundary-floor] steamvr floor apply failed: get_pose_failed");
+        return false;
+    }
+
+    const vr::HmdMatrix34_t after =
+        OffsetStandingZeroPoseForFloor(before, measuredFloorYStanding);
+    setup->SetWorkingStandingZeroPoseToRawTrackingPose(&after);
+    const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+    if (committed && vr::VRChaperone()) {
+        vr::VRChaperone()->ReloadInfo();
+    }
+    if (committed) {
+        setup->RevertWorkingCopy();
+    }
+
+    char lbuf[384];
+    snprintf(lbuf, sizeof lbuf,
+        "[boundary-floor] steamvr floor apply: measured_standing_y=%.4f before_raw=(%.4f,%.4f,%.4f) after_raw=(%.4f,%.4f,%.4f) up=(%.4f,%.4f,%.4f) commit=%d",
+        measuredFloorYStanding,
+        static_cast<double>(before.m[0][3]),
+        static_cast<double>(before.m[1][3]),
+        static_cast<double>(before.m[2][3]),
+        static_cast<double>(after.m[0][3]),
+        static_cast<double>(after.m[1][3]),
+        static_cast<double>(after.m[2][3]),
+        static_cast<double>(before.m[0][1]),
+        static_cast<double>(before.m[1][1]),
+        static_cast<double>(before.m[2][1]),
+        committed ? 1 : 0);
+    Metrics::WriteLogAnnotation(lbuf);
+
+    if (!committed) {
+        writeError("SteamVR rejected the floor commit.");
+        return false;
+    }
+
+    writeError("");
+    return true;
+}
+
+bool ApplySteamVrFloorOffsetFromDevice(
+    vr::TrackedDeviceIndex_t deviceId,
+    char* errorBuffer,
+    size_t errorBufferSize)
+{
+    auto writeError = [&](const char* message) {
+        if (errorBuffer && errorBufferSize > 0) {
+            snprintf(errorBuffer, errorBufferSize, "%s", message ? message : "");
+        }
+    };
+
+    auto* system = vr::VRSystem();
+    if (!system) {
+        writeError("SteamVR system is unavailable.");
+        Metrics::WriteLogAnnotation("[boundary-floor] steamvr floor apply failed: system_unavailable");
+        return false;
+    }
+    if (deviceId >= vr::k_unMaxTrackedDeviceCount) {
+        writeError("Selected controller device id is outside the SteamVR device range.");
+        Metrics::WriteLogAnnotation("[boundary-floor] steamvr floor apply failed: invalid_device");
+        return false;
+    }
+
+    vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount]{};
+    system->GetDeviceToAbsoluteTrackingPose(
+        vr::TrackingUniverseStanding,
+        0.0f,
+        poses,
+        vr::k_unMaxTrackedDeviceCount);
+
+    const vr::TrackedDevicePose_t& pose = poses[deviceId];
+    if (!pose.bDeviceIsConnected || !pose.bPoseIsValid) {
+        writeError("Selected controller does not have a valid SteamVR standing pose.");
+        char lbuf[192];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary-floor] steamvr floor apply failed: invalid_pose device=%d connected=%d valid=%d result=%d",
+            static_cast<int>(deviceId),
+            pose.bDeviceIsConnected ? 1 : 0,
+            pose.bPoseIsValid ? 1 : 0,
+            static_cast<int>(pose.eTrackingResult));
+        Metrics::WriteLogAnnotation(lbuf);
+        return false;
+    }
+
+    const double standingY =
+        static_cast<double>(pose.mDeviceToAbsoluteTracking.m[1][3]);
+    if (!std::isfinite(standingY) || standingY < -2.0 || standingY > 2.0) {
+        writeError("Selected controller floor sample was outside the expected SteamVR standing range.");
+        char lbuf[192];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary-floor] steamvr floor apply failed: standing_y_out_of_range device=%d standing_y=%.4f",
+            static_cast<int>(deviceId),
+            standingY);
+        Metrics::WriteLogAnnotation(lbuf);
+        return false;
+    }
+
+    char lbuf[192];
+    snprintf(lbuf, sizeof lbuf,
+        "[boundary-floor] steamvr floor device sample: device=%d standing_y=%.4f",
+        static_cast<int>(deviceId),
+        standingY);
+    Metrics::WriteLogAnnotation(lbuf);
+
+    return ApplySteamVrFloorOffset(standingY, errorBuffer, errorBufferSize);
+}
+
 // ---------------------------------------------------------------------------
 // Chaperone push
 // ---------------------------------------------------------------------------
@@ -262,36 +445,72 @@ static std::vector<vr::HmdQuad_t> BuildWallQuads(
     return quads;
 }
 
-static void SetWorkingBoundary(
-    vr::IVRChaperoneSetup* setup,
+ChaperoneWorkingSet BuildChaperoneWorkingSet(
     const std::vector<BoundaryVertex>& standingUniverseVertices,
     double floorY,
     double ceilingY)
 {
+    ChaperoneWorkingSet out;
+    if (standingUniverseVertices.size() < 3 ||
+        !std::isfinite(floorY) ||
+        !std::isfinite(ceilingY) ||
+        ceilingY <= floorY) {
+        return out;
+    }
+
     double minX = standingUniverseVertices[0].x, maxX = minX;
     double minZ = standingUniverseVertices[0].z, maxZ = minZ;
     for (const auto& v : standingUniverseVertices) {
+        if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) {
+            return ChaperoneWorkingSet{};
+        }
         if (v.x < minX) minX = v.x;
         if (v.x > maxX) maxX = v.x;
         if (v.z < minZ) minZ = v.z;
         if (v.z > maxZ) maxZ = v.z;
     }
-    setup->SetWorkingPlayAreaSize(
-        static_cast<float>(maxX - minX),
-        static_cast<float>(maxZ - minZ));
 
-    std::vector<vr::HmdVector2_t> perimeter;
-    perimeter.reserve(standingUniverseVertices.size());
+    const double spanX = maxX - minX;
+    const double spanZ = maxZ - minZ;
+    if (!std::isfinite(spanX) || !std::isfinite(spanZ) || spanX <= 0.0 || spanZ <= 0.0) {
+        return ChaperoneWorkingSet{};
+    }
+
+    out.playAreaX = static_cast<float>(spanX);
+    out.playAreaZ = static_cast<float>(spanZ);
+    out.perimeter.reserve(standingUniverseVertices.size());
     for (const auto& v : standingUniverseVertices) {
         vr::HmdVector2_t p{};
         p.v[0] = static_cast<float>(v.x);
         p.v[1] = static_cast<float>(v.z);
-        perimeter.push_back(p);
+        out.perimeter.push_back(p);
     }
-    setup->SetWorkingPerimeter(perimeter.data(), static_cast<uint32_t>(perimeter.size()));
+    out.collisionBounds = BuildWallQuads(standingUniverseVertices, floorY, ceilingY);
+    out.valid = out.perimeter.size() >= 3 && out.collisionBounds.size() >= 3;
+    return out;
+}
 
-    auto quads = BuildWallQuads(standingUniverseVertices, floorY, ceilingY);
-    setup->SetWorkingCollisionBoundsInfo(quads.data(), static_cast<uint32_t>(quads.size()));
+static bool SetWorkingBoundary(
+    vr::IVRChaperoneSetup* setup,
+    const std::vector<BoundaryVertex>& standingUniverseVertices,
+    double floorY,
+    double ceilingY)
+{
+    ChaperoneWorkingSet workingSet =
+        BuildChaperoneWorkingSet(standingUniverseVertices, floorY, ceilingY);
+    if (!workingSet.valid) {
+        return false;
+    }
+    setup->SetWorkingPlayAreaSize(
+        workingSet.playAreaX,
+        workingSet.playAreaZ);
+    setup->SetWorkingPerimeter(
+        workingSet.perimeter.data(),
+        static_cast<uint32_t>(workingSet.perimeter.size()));
+    setup->SetWorkingCollisionBoundsInfo(
+        workingSet.collisionBounds.data(),
+        static_cast<uint32_t>(workingSet.collisionBounds.size()));
+    return true;
 }
 
 bool PushToChaperone(const std::vector<BoundaryVertex>& standingUniverseVertices,
@@ -302,18 +521,51 @@ bool PushToChaperone(const std::vector<BoundaryVertex>& standingUniverseVertices
         return false;
     }
     const size_t n = standingUniverseVertices.size();
-    if (n < 3) return false;
+    if (n < 3) {
+        Metrics::WriteLogAnnotation("[boundary] chaperone push failed: fewer_than_3_vertices");
+        return false;
+    }
 
     auto* setup = vr::VRChaperoneSetup();
+    setup->RevertWorkingCopy();
 
-    SetWorkingBoundary(setup, standingUniverseVertices, floorY, ceilingY);
-    setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+    const double area = AbsoluteAreaXZ(ProjectXZ(standingUniverseVertices));
+    const auto bounds = ComputePolygonBoundsXZ(standingUniverseVertices);
+    {
+        char lbuf[384];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary] chaperone push begin: vertices=%zu area=%.3f floor=%.3f ceiling=%.3f bounds_x=(%.3f,%.3f) bounds_z=(%.3f,%.3f)",
+            n,
+            area,
+            floorY,
+            ceilingY,
+            bounds.xMin,
+            bounds.xMax,
+            bounds.zMin,
+            bounds.zMax);
+        Metrics::WriteLogAnnotation(lbuf);
+    }
+
+    if (!SetWorkingBoundary(setup, standingUniverseVertices, floorY, ceilingY)) {
+        Metrics::WriteLogAnnotation("[boundary] chaperone push failed: invalid_working_set");
+        return false;
+    }
+    const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+    if (committed && vr::VRChaperone()) {
+        vr::VRChaperone()->ReloadInfo();
+    }
+    if (committed) {
+        setup->RevertWorkingCopy();
+    }
+    if (!committed) {
+        Metrics::WriteLogAnnotation("[boundary] chaperone push failed: commit_failed");
+        return false;
+    }
 
     // Log on edge: vertex count changed or first push.
     {
         static size_t s_lastN      = SIZE_MAX;
         static double s_lastArea   = -1.0;
-        const double area = AbsoluteAreaXZ(ProjectXZ(standingUniverseVertices));
         if (n != s_lastN || std::fabs(area - s_lastArea) > 0.01) {
             s_lastN    = n;
             s_lastArea = area;
@@ -347,7 +599,9 @@ bool ShowWorkingChaperonePreview(
     if (standingUniverseVertices.size() < 3) return false;
 
     auto* setup = vr::VRChaperoneSetup();
-    SetWorkingBoundary(setup, standingUniverseVertices, floorY, ceilingY);
+    if (!SetWorkingBoundary(setup, standingUniverseVertices, floorY, ceilingY)) {
+        return false;
+    }
     setup->ShowWorkingSetPreview();
     return true;
 }

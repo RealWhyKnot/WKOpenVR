@@ -5,6 +5,7 @@
 #include <Eigen/Geometry>
 
 #include <cstddef>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,9 @@ struct FloorCaptureCandidate {
     bool valid = false;
     double floorY = 0.0;
     size_t sampleCount = 0;
+    double jitterMeters = 0.0;
+    bool ready = false;
+    bool stable = false;
     int deviceId = -1;
     std::string trackingSystem;
     Eigen::Affine3d pose = Eigen::Affine3d::Identity();
@@ -38,6 +42,7 @@ private:
     bool m_active = false;
     double m_originalFloorY = 0.0;
     double m_originalCeilingY = 2.5;
+    std::deque<double> m_recentFloorSamples;
     FloorCaptureCandidate m_candidate;
 };
 

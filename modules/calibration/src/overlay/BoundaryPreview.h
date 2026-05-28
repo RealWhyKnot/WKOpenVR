@@ -17,7 +17,7 @@ struct BoundaryPreviewPlane {
 };
 
 struct BoundaryPreviewRaster {
-    static constexpr int kTextureSize = 1024;
+    static constexpr int kTextureSize = 512;
 
     BoundaryPreviewPlane plane;
     std::vector<uint8_t> rgba;

@@ -1,11 +1,13 @@
 #include "Calibration.h"
 #include "CalibrationMetrics.h"
 #include "Configuration.h"
+#include "ControllerInput.h"
 #include "DiagnosticsLog.h"
 #include "Boundary.h"
 #include "BoundaryCapture.h"
 #include "BoundaryFloorCapture.h"
 #include "BoundaryPreview.h"
+#include "BoundaryRePush.h"
 #include "UserInterfaceHeadMount.h"
 #include "UiHelpers.h"
 
@@ -41,11 +43,26 @@ wkopenvr::boundary::FloorCaptureSession s_floorCapture;
 std::string s_boundaryError;
 uint64_t s_floorSessionId = 0;
 bool s_steamVrWorkingPreviewVisible = false;
+bool s_floorPreviewVisible = false;
 Eigen::AffineCompact3d s_capturePreviewTransform = Eigen::AffineCompact3d::Identity();
 bool s_capturePreviewTransformValid = false;
+bool s_captureUsesStandingSpace = false;
+BoundaryVertex s_smoothedPreviewCursor = {};
+uint64_t s_smoothedPreviewCursorSession = 0;
+bool s_smoothedPreviewCursorValid = false;
+int32_t s_boundaryControllerDeviceId = -1;
+int32_t s_identifyBoundaryControllerDeviceId = -1;
+double s_nextIdentifyPulseAt = 0.0;
+double s_identifyUntil = 0.0;
+
+constexpr double kAutoBoundaryWallHeightMeters = 2.4;
+constexpr double kMinimumBoundaryAreaMetersSq = 0.25;
+
+std::string TrackingSystemName(vr::IVRSystem* vrs, vr::TrackedDeviceIndex_t deviceId);
 
 void HideBoundaryPreviewOverlay() {
     wkopenvr::boundary::TickBoundaryPreview(false, {}, CalCtx.boundary.floorY, false);
+    s_floorPreviewVisible = false;
     if (s_steamVrWorkingPreviewVisible) {
         wkopenvr::boundary::HideWorkingChaperonePreview();
         s_steamVrWorkingPreviewVisible = false;
@@ -68,6 +85,9 @@ double BoundaryHeightToStanding(
     const std::vector<BoundaryVertex>& targetVertices,
     double targetY)
 {
+    if (CalCtx.boundary.standingSpace) {
+        return targetY;
+    }
     return wkopenvr::boundary::TransformHeightToStandingUniverse(
         targetVertices,
         targetY,
@@ -130,9 +150,29 @@ void TickBoundaryPreviewForTargetVerticesAtFloor(
     }
 }
 
-bool PushTargetBoundaryToChaperone(std::string& error)
+void TickBoundaryPreviewForStandingVerticesAtFloor(
+    bool wantVisible,
+    const std::vector<BoundaryVertex>& standingVertices,
+    double floorY,
+    bool closeLoop)
 {
-    if (!BoundaryTransformReady()) {
+    if (!wantVisible || standingVertices.empty()) {
+        HideBoundaryPreviewOverlay();
+        return;
+    }
+    wkopenvr::boundary::TickBoundaryPreview(
+        true,
+        standingVertices,
+        floorY,
+        closeLoop);
+}
+
+bool PushTargetBoundaryToChaperoneWithTransform(
+    std::string& error,
+    const Eigen::AffineCompact3d& targetToStanding,
+    const char* source)
+{
+    if (!CalCtx.boundary.standingSpace && !BoundaryTransformReady()) {
         error = "Run calibration first so the boundary can be mapped into SteamVR space.";
         return false;
     }
@@ -141,14 +181,57 @@ bool PushTargetBoundaryToChaperone(std::string& error)
         return false;
     }
 
+    const auto standingVertices = CalCtx.boundary.standingSpace
+        ? CalCtx.boundary.vertices
+        : BoundaryVerticesToStanding(CalCtx.boundary.vertices, targetToStanding);
+    const double standingFloor = CalCtx.boundary.standingSpace
+        ? CalCtx.boundary.floorY
+        : wkopenvr::boundary::TransformHeightToStandingUniverse(
+            CalCtx.boundary.vertices,
+            CalCtx.boundary.floorY,
+            targetToStanding);
+    const double standingCeiling = CalCtx.boundary.standingSpace
+        ? CalCtx.boundary.ceilingY
+        : wkopenvr::boundary::TransformHeightToStandingUniverse(
+            CalCtx.boundary.vertices,
+            CalCtx.boundary.floorY + kAutoBoundaryWallHeightMeters,
+            targetToStanding);
+    const auto bounds = wkopenvr::boundary::ComputePolygonBoundsXZ(standingVertices);
+    {
+        const Eigen::Vector3d t = targetToStanding.translation();
+        char lbuf[512];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary] target push request: source=%s space=%s target_vertices=%zu standing_floor=%.3f standing_ceiling=%.3f transform_trans=(%.3f,%.3f,%.3f) bounds_x=(%.3f,%.3f) bounds_z=(%.3f,%.3f)",
+            source ? source : "unknown",
+            CalCtx.boundary.standingSpace ? "standing" : "target",
+            CalCtx.boundary.vertices.size(),
+            standingFloor,
+            standingCeiling,
+            t.x(), t.y(), t.z(),
+            bounds.xMin, bounds.xMax,
+            bounds.zMin, bounds.zMax);
+        Metrics::WriteLogAnnotation(lbuf);
+        openvr_pair::common::DiagnosticLog("boundary", "%s", lbuf);
+    }
+
     const bool ok = wkopenvr::boundary::PushToChaperone(
-        BoundaryVerticesToStanding(CalCtx.boundary.vertices),
-        BoundaryHeightToStanding(CalCtx.boundary.vertices, CalCtx.boundary.floorY),
-        BoundaryHeightToStanding(CalCtx.boundary.vertices, CalCtx.boundary.ceilingY));
+        standingVertices,
+        standingFloor,
+        standingCeiling);
     if (!ok) {
         error = "PushToChaperone failed. Is SteamVR running?";
+    } else {
+        NoteBoundaryPushedForTransform(targetToStanding);
     }
     return ok;
+}
+
+bool PushTargetBoundaryToChaperone(std::string& error)
+{
+    return PushTargetBoundaryToChaperoneWithTransform(
+        error,
+        BoundaryTargetToStandingTransform(),
+        "current");
 }
 
 void RepushActiveBoundaryAfterEdit()
@@ -162,36 +245,22 @@ void RepushActiveBoundaryAfterEdit()
     }
 }
 
-double BoundaryRoomHeightMeters()
-{
-    return std::max(0.5, CalCtx.boundary.ceilingY - CalCtx.boundary.floorY);
-}
-
 void ApplyBoundaryFloorY(double floorY)
 {
     if (!std::isfinite(floorY)) return;
 
-    const double height = BoundaryRoomHeightMeters();
     CalCtx.boundary.floorY = floorY;
-    CalCtx.boundary.ceilingY = floorY + height;
+    CalCtx.boundary.ceilingY = floorY + kAutoBoundaryWallHeightMeters;
     for (auto& v : CalCtx.boundary.vertices) {
         v.y = floorY;
     }
-}
-
-void ApplyBoundaryCeilingY(double ceilingY)
-{
-    if (!std::isfinite(ceilingY)) return;
-
-    const double minCeiling = CalCtx.boundary.floorY + 0.5;
-    CalCtx.boundary.ceilingY = std::max(ceilingY, minCeiling);
 }
 
 void RestoreFloorCaptureOriginal()
 {
     if (!s_floorCapture.active()) return;
     CalCtx.boundary.floorY = s_floorCapture.originalFloorY();
-    CalCtx.boundary.ceilingY = s_floorCapture.originalCeilingY();
+    CalCtx.boundary.ceilingY = CalCtx.boundary.floorY + kAutoBoundaryWallHeightMeters;
     for (auto& v : CalCtx.boundary.vertices) {
         v.y = CalCtx.boundary.floorY;
     }
@@ -202,6 +271,14 @@ void TickBoundaryPreviewForTargetVertices(
     const std::vector<BoundaryVertex>& targetVertices,
     bool closeLoop)
 {
+    if (CalCtx.boundary.standingSpace) {
+        TickBoundaryPreviewForStandingVerticesAtFloor(
+            wantVisible,
+            targetVertices,
+            CalCtx.boundary.floorY,
+            closeLoop);
+        return;
+    }
     TickBoundaryPreviewForTargetVerticesAtFloor(
         wantVisible,
         targetVertices,
@@ -211,15 +288,240 @@ void TickBoundaryPreviewForTargetVertices(
 
 void StartBoundaryCapture()
 {
-    s_capturePreviewTransform = BoundaryTargetToStandingTransform();
+    s_capturePreviewTransform = Eigen::AffineCompact3d::Identity();
     s_capturePreviewTransformValid = true;
+    s_captureUsesStandingSpace = true;
+    s_smoothedPreviewCursorValid = false;
     s_capture.Start();
 }
 
 void StopBoundaryCapturePreview()
 {
     s_capturePreviewTransformValid = false;
+    s_smoothedPreviewCursorValid = false;
     HideBoundaryPreviewOverlay();
+}
+
+std::string DeviceStringProperty(
+    vr::IVRSystem* vrs,
+    vr::TrackedDeviceIndex_t deviceId,
+    vr::ETrackedDeviceProperty property)
+{
+    if (!vrs) return {};
+    char buffer[vr::k_unMaxPropertyStringSize] = {};
+    vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+    vrs->GetStringTrackedDeviceProperty(
+        deviceId,
+        property,
+        buffer,
+        vr::k_unMaxPropertyStringSize,
+        &err);
+    return err == vr::TrackedProp_Success ? std::string(buffer) : std::string();
+}
+
+const char* ControllerRoleLabel(vr::ETrackedControllerRole role)
+{
+    switch (role) {
+    case vr::TrackedControllerRole_LeftHand: return "Left";
+    case vr::TrackedControllerRole_RightHand: return "Right";
+    case vr::TrackedControllerRole_OptOut: return "Opt-out";
+    case vr::TrackedControllerRole_Treadmill: return "Treadmill";
+    default: return "Controller";
+    }
+}
+
+struct BoundaryControllerChoice {
+    int32_t deviceId = -1;
+    std::string trackingSystem;
+    std::string model;
+    std::string serial;
+    vr::ETrackedControllerRole role = vr::TrackedControllerRole_Invalid;
+    bool poseValid = false;
+};
+
+std::vector<BoundaryControllerChoice> EnumerateBoundaryControllers(vr::IVRSystem* vrs)
+{
+    std::vector<BoundaryControllerChoice> choices;
+    if (!vrs) return choices;
+
+    vr::TrackedDevicePose_t standingPoses[vr::k_unMaxTrackedDeviceCount]{};
+    vrs->GetDeviceToAbsoluteTrackingPose(
+        vr::TrackingUniverseStanding,
+        0.0f,
+        standingPoses,
+        vr::k_unMaxTrackedDeviceCount);
+
+    for (vr::TrackedDeviceIndex_t deviceId = 0;
+         deviceId < vr::k_unMaxTrackedDeviceCount;
+         ++deviceId)
+    {
+        if (vrs->GetTrackedDeviceClass(deviceId) != vr::TrackedDeviceClass_Controller) {
+            continue;
+        }
+
+        BoundaryControllerChoice choice;
+        choice.deviceId = static_cast<int32_t>(deviceId);
+        choice.trackingSystem = TrackingSystemName(vrs, deviceId);
+
+        choice.model = DeviceStringProperty(vrs, deviceId, vr::Prop_ModelNumber_String);
+        choice.serial = DeviceStringProperty(vrs, deviceId, vr::Prop_SerialNumber_String);
+        vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+        choice.role = static_cast<vr::ETrackedControllerRole>(
+            vrs->GetInt32TrackedDeviceProperty(
+                deviceId,
+                vr::Prop_ControllerRoleHint_Int32,
+                &err));
+        if (err != vr::TrackedProp_Success) {
+            choice.role = vr::TrackedControllerRole_Invalid;
+        }
+
+        const auto& pose = standingPoses[deviceId];
+        choice.poseValid = pose.bDeviceIsConnected
+            && pose.bPoseIsValid
+            && pose.eTrackingResult == vr::ETrackingResult::TrackingResult_Running_OK;
+        choices.push_back(std::move(choice));
+    }
+
+    return choices;
+}
+
+void ResolveBoundaryControllerSelection(
+    const std::vector<BoundaryControllerChoice>& choices)
+{
+    std::vector<wkopenvr::controller_input::ControllerSelectionChoice> selection;
+    selection.reserve(choices.size());
+    for (const auto& choice : choices) {
+        selection.push_back({
+            choice.deviceId,
+            choice.role,
+            choice.poseValid
+        });
+    }
+    s_boundaryControllerDeviceId =
+        wkopenvr::controller_input::ChoosePreferredController(
+            selection.data(),
+            selection.size(),
+            s_boundaryControllerDeviceId);
+}
+
+const BoundaryControllerChoice* SelectedBoundaryController(
+    const std::vector<BoundaryControllerChoice>& choices)
+{
+    for (const auto& choice : choices) {
+        if (choice.deviceId == s_boundaryControllerDeviceId) {
+            return &choice;
+        }
+    }
+    return nullptr;
+}
+
+std::string BoundaryControllerLabel(const BoundaryControllerChoice& choice)
+{
+    char prefix[64];
+    snprintf(prefix, sizeof prefix, "%s controller %d",
+        ControllerRoleLabel(choice.role),
+        choice.deviceId);
+
+    std::string label(prefix);
+    if (!choice.model.empty()) {
+        label += " - ";
+        label += choice.model;
+    }
+    if (!choice.serial.empty()) {
+        label += " (";
+        label += choice.serial;
+        label += ")";
+    }
+    if (!choice.poseValid) {
+        label += " - waiting for pose";
+    }
+    return label;
+}
+
+void StartBoundaryControllerIdentify(int32_t deviceId)
+{
+    if (deviceId < 0) return;
+    s_identifyBoundaryControllerDeviceId = deviceId;
+    const double now = ImGui::GetTime();
+    s_nextIdentifyPulseAt = now;
+    s_identifyUntil = now + 1.25;
+}
+
+void TickBoundaryControllerIdentify()
+{
+    if (s_identifyBoundaryControllerDeviceId < 0) return;
+    auto* vrs = vr::VRSystem();
+    if (!vrs) {
+        s_identifyBoundaryControllerDeviceId = -1;
+        return;
+    }
+
+    const double now = ImGui::GetTime();
+    if (now > s_identifyUntil) {
+        s_identifyBoundaryControllerDeviceId = -1;
+        return;
+    }
+    if (now < s_nextIdentifyPulseAt) return;
+
+    vrs->TriggerHapticPulse(
+        static_cast<vr::TrackedDeviceIndex_t>(s_identifyBoundaryControllerDeviceId),
+        0,
+        2400);
+    s_nextIdentifyPulseAt = now + 0.075;
+}
+
+void DrawBoundaryControllerSelector(
+    const std::vector<BoundaryControllerChoice>& choices)
+{
+    ImGui::TextDisabled("Controller");
+    ImGui::SameLine();
+
+    if (choices.empty()) {
+        int empty = 0;
+        const char* items[] = { "No target-system controllers detected" };
+        ImGui::BeginDisabled();
+        ImGui::Combo("##boundary_controller", &empty, items, 1);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled();
+        ImGui::SmallButton("Identify");
+        ImGui::EndDisabled();
+        return;
+    }
+
+    std::vector<std::string> labels;
+    std::vector<const char*> labelPtrs;
+    labels.reserve(choices.size());
+    labelPtrs.reserve(choices.size());
+    int current = 0;
+    for (size_t i = 0; i < choices.size(); ++i) {
+        labels.push_back(BoundaryControllerLabel(choices[i]));
+        labelPtrs.push_back(labels.back().c_str());
+        if (choices[i].deviceId == s_boundaryControllerDeviceId) {
+            current = static_cast<int>(i);
+        }
+    }
+
+    ImGui::PushItemWidth(std::min(420.0f, ImGui::GetContentRegionAvail().x - 90.0f));
+    if (ImGui::Combo(
+            "##boundary_controller",
+            &current,
+            labelPtrs.data(),
+            static_cast<int>(labelPtrs.size())))
+    {
+        if (current >= 0 && current < static_cast<int>(choices.size())) {
+            s_boundaryControllerDeviceId = choices[static_cast<size_t>(current)].deviceId;
+            s_smoothedPreviewCursorValid = false;
+        }
+    }
+    ImGui::PopItemWidth();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Identify")) {
+        StartBoundaryControllerIdentify(s_boundaryControllerDeviceId);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Vibrates the selected controller so you can confirm which one will set the floor and draw the boundary.");
+    }
 }
 
 bool BoundaryLoopNearlyClosed(const std::vector<BoundaryVertex>& verts)
@@ -259,6 +561,14 @@ void TickBoundaryPreviewForCapture(
     const wkopenvr::boundary::FloorHitPreview* cursor = nullptr)
 {
     const auto preview = BoundaryPreviewPathWithCursor(s_capture.vertices(), cursor);
+    if (s_captureUsesStandingSpace) {
+        TickBoundaryPreviewForStandingVerticesAtFloor(
+            true,
+            preview,
+            0.0,
+            BoundaryLoopNearlyClosed(preview));
+        return;
+    }
     TickBoundaryPreviewForTargetVertices(
         true,
         preview,
@@ -275,8 +585,71 @@ bool ApplyFloorFromControllerPose(
         s_boundaryError = "Controller floor sample was outside the expected tracking range.";
         return false;
     }
+    const double measuredStandingY = rawPose.translation().y();
+    if (!std::isfinite(measuredStandingY) || measuredStandingY < -5.0 || measuredStandingY > 5.0) {
+        s_boundaryError = "Mapped controller floor sample was outside the expected SteamVR range.";
+        char fbuf[256];
+        snprintf(fbuf, sizeof fbuf,
+            "[boundary-floor] apply failed: standing_y_out_of_range device=%d system='%s' target_y=%.4f standing_y=%.4f",
+            static_cast<int>(deviceId),
+            trackingSystem.c_str(),
+            floorY,
+            measuredStandingY);
+        Metrics::WriteLogAnnotation(fbuf);
+        openvr_pair::common::DiagnosticLog("boundary-floor", "%s", fbuf);
+        return false;
+    }
 
-    ApplyBoundaryFloorY(floorY);
+    char floorError[192] = {};
+    const bool steamFloorApplied =
+        wkopenvr::boundary::ApplySteamVrFloorOffset(
+            measuredStandingY,
+            floorError,
+            sizeof floorError);
+    {
+        char lbuf[384];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary-floor] apply requested: device=%d system='%s' standing_y=%.4f steamvr_apply=%d",
+            static_cast<int>(deviceId),
+            trackingSystem.c_str(),
+            measuredStandingY,
+            steamFloorApplied ? 1 : 0);
+        Metrics::WriteLogAnnotation(lbuf);
+        openvr_pair::common::DiagnosticLog("boundary-floor", "%s", lbuf);
+    }
+    if (!steamFloorApplied) {
+        s_boundaryError = floorError[0] ? floorError : "SteamVR floor apply failed.";
+        return false;
+    }
+    if (auto* vrs = vr::VRSystem()) {
+        vr::TrackedDevicePose_t standingPoses[vr::k_unMaxTrackedDeviceCount]{};
+        vrs->GetDeviceToAbsoluteTrackingPose(
+            vr::TrackingUniverseStanding,
+            0.0f,
+            standingPoses,
+            vr::k_unMaxTrackedDeviceCount);
+        if (deviceId < vr::k_unMaxTrackedDeviceCount) {
+            const auto& pose = standingPoses[deviceId];
+            char pbuf[256];
+            snprintf(pbuf, sizeof pbuf,
+                "[boundary-floor] post-apply device pose: device=%d connected=%d valid=%d result=%d standing_y=%.4f",
+                static_cast<int>(deviceId),
+                pose.bDeviceIsConnected ? 1 : 0,
+                pose.bPoseIsValid ? 1 : 0,
+                static_cast<int>(pose.eTrackingResult),
+                static_cast<double>(pose.mDeviceToAbsoluteTracking.m[1][3]));
+            Metrics::WriteLogAnnotation(pbuf);
+            openvr_pair::common::DiagnosticLog("boundary-floor", "%s", pbuf);
+        }
+    }
+
+    const double boundaryFloorY = (!CalCtx.boundary.standingSpace && BoundaryTransformReady())
+        ? wkopenvr::boundary::TargetFloorYForStandingFloor(
+            CalCtx.boundary.vertices,
+            BoundaryTargetToStandingTransform(),
+            0.0)
+        : 0.0;
+    ApplyBoundaryFloorY(boundaryFloorY);
     s_boundaryError.clear();
 
     if (CalCtx.boundary.enabled) {
@@ -291,13 +664,95 @@ bool ApplyFloorFromControllerPose(
 
     char lbuf[224];
     snprintf(lbuf, sizeof lbuf,
-        "[boundary-floor] set from controller: device=%d system='%s' floor_y=%.3f vertices=%zu",
+        "[boundary-floor] set from controller: device=%d system='%s' target_floor_y=%.3f standing_floor_y=%.3f vertices=%zu",
         static_cast<int>(deviceId),
         trackingSystem.c_str(),
         CalCtx.boundary.floorY,
+        measuredStandingY,
         CalCtx.boundary.vertices.size());
     Metrics::WriteLogAnnotation(lbuf);
     openvr_pair::common::DiagnosticLog("boundary-floor", "%s", lbuf);
+    return true;
+}
+
+bool ApplyCapturedBoundary()
+{
+    s_capture.Finish();
+    const auto& verts = s_capture.vertices();
+    const auto pts = wkopenvr::boundary::ProjectXZ(verts);
+    const double area = wkopenvr::boundary::AbsoluteAreaXZ(pts);
+    if (verts.size() < 3 || area < kMinimumBoundaryAreaMetersSq) {
+        s_boundaryError = "Boundary needs at least three floor points and a usable area.";
+        return false;
+    }
+    for (const auto& v : verts) {
+        if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) {
+            s_boundaryError = "Boundary contains an invalid point. Cancel and draw it again.";
+            return false;
+        }
+    }
+
+    const auto bounds = wkopenvr::boundary::ComputePolygonBoundsXZ(verts);
+    if (!std::isfinite(bounds.xMin) ||
+        !std::isfinite(bounds.xMax) ||
+        !std::isfinite(bounds.zMin) ||
+        !std::isfinite(bounds.zMax) ||
+        (bounds.xMax - bounds.xMin) < 0.35 ||
+        (bounds.zMax - bounds.zMin) < 0.35)
+    {
+        s_boundaryError = "Boundary is too narrow to use safely. Cancel and draw a wider area.";
+        return false;
+    }
+
+    auto nextBoundary = CalCtx.boundary;
+    if (!nextBoundary.priorChaperoneCaptured) {
+        auto snapshot = wkopenvr::boundary::SnapshotCurrentChaperone();
+        if (!snapshot.empty()) {
+            nextBoundary.priorChaperone = std::move(snapshot);
+            nextBoundary.priorChaperoneCaptured = true;
+        }
+    }
+    nextBoundary.vertices = verts;
+    nextBoundary.standingSpace = s_captureUsesStandingSpace;
+    nextBoundary.floorY = nextBoundary.standingSpace ? 0.0 : CalCtx.boundary.floorY;
+    nextBoundary.ceilingY = nextBoundary.floorY + kAutoBoundaryWallHeightMeters;
+    for (auto& v : nextBoundary.vertices) {
+        v.y = nextBoundary.floorY;
+    }
+    nextBoundary.enabled = true;
+
+    auto previousBoundary = CalCtx.boundary;
+    CalCtx.boundary = std::move(nextBoundary);
+    const Eigen::AffineCompact3d applyTransform = s_capturePreviewTransformValid
+        ? s_capturePreviewTransform
+        : BoundaryTargetToStandingTransform();
+    {
+        const Eigen::Vector3d t = applyTransform.translation();
+        char lbuf[384];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary] apply captured: raw=%zu cleaned=%zu area=%.3f floor_y=%.3f space=%s transform_trans=(%.3f,%.3f,%.3f)",
+            s_capture.rawVertexCount(),
+            verts.size(),
+            area,
+            CalCtx.boundary.floorY,
+            CalCtx.boundary.standingSpace ? "standing" : "target",
+            t.x(), t.y(), t.z());
+        Metrics::WriteLogAnnotation(lbuf);
+        openvr_pair::common::DiagnosticLog("boundary", "%s", lbuf);
+    }
+    if (!PushTargetBoundaryToChaperoneWithTransform(
+            s_boundaryError,
+            applyTransform,
+            "capture_apply"))
+    {
+        CalCtx.boundary = std::move(previousBoundary);
+        return false;
+    }
+
+    SaveProfile(CalCtx);
+    s_capture.Cancel();
+    StopBoundaryCapturePreview();
+    s_boundaryError.clear();
     return true;
 }
 
@@ -380,18 +835,30 @@ void DrawBoundarySection(ImVec2 panelSize) {
     const auto& pal = openvr_pair::overlay::ui::GetPalette();
     const auto state = s_capture.state();
     const bool transformReady = BoundaryTransformReady();
+    TickBoundaryControllerIdentify();
+    const auto controllerChoices = EnumerateBoundaryControllers(vr::VRSystem());
+    ResolveBoundaryControllerSelection(controllerChoices);
+    const BoundaryControllerChoice* selectedController =
+        SelectedBoundaryController(controllerChoices);
+    const bool controllerReady = selectedController && selectedController->poseValid;
 
     ImGui::TextWrapped(
-        "Draw by moving a lighthouse controller around the play-space edge. No trigger is needed while drawing.");
+        "Set the floor from the selected controller, then walk it around the play-space edge.");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Stored in the target tracking system's coordinates. Unlike Quest Guardian, this\n"
-            "polygon does not move when the headset re-localizes -- it's pinned to your\n"
-            "physical lighthouses.");
+            "New boundaries use SteamVR standing-space controller poses directly. If a controller\n"
+            "is virtual or unstable, choose a tracked lighthouse controller from the list.");
     }
     if (!transformReady) {
         ImGui::TextColored(pal.statusWarn,
             "Waiting for a valid calibration profile before preview or SteamVR chaperone push.");
+    }
+    DrawBoundaryControllerSelector(controllerChoices);
+    if (!controllerReady) {
+        ImGui::TextColored(pal.statusWarn,
+            selectedController
+                ? "Selected controller is detected but does not have a valid pose yet."
+                : "Select a controller before setting the floor or drawing.");
     }
     ImGui::Spacing();
 
@@ -401,17 +868,22 @@ void DrawBoundarySection(ImVec2 panelSize) {
             const auto& floor = s_floorCapture.candidate();
             ImGui::TextColored(pal.statusWarn,
                 floor.valid
-                    ? "Floor preview is following the lowest controller sample."
-                    : "Move a lighthouse controller down to the floor.");
+                    ? "Floor preview is live. Hold still on the floor until it is stable, then apply."
+                    : "Move the selected controller down to the floor.");
             if (floor.valid) {
-                ImGui::TextDisabled("Pending floor %.2f m from device %d (%s)",
+                ImGui::TextDisabled("Measured floor %.2f m from device %d (%s)",
                     floor.floorY,
                     floor.deviceId,
                     floor.trackingSystem.c_str());
                 ImGui::SameLine();
-                ImGui::TextDisabled("Saved %.2f m", CalCtx.boundary.floorY);
+                ImGui::TextDisabled("wall height auto");
+                ImGui::TextDisabled("%zu samples, %.0f mm floor jitter, %s",
+                    floor.sampleCount,
+                    floor.jitterMeters * 1000.0,
+                    floor.stable ? "stable" : (floor.ready ? "ready" : "settling"));
             }
-            if (floor.valid && ImGui::Button("Apply floor")) {
+            if (!floor.valid || !floor.stable) ImGui::BeginDisabled();
+            if (ImGui::Button("Apply floor")) {
                 Eigen::Affine3d floorPose = floor.pose;
                 floorPose.translation().y() = floor.floorY;
                 const bool applied = ApplyFloorFromControllerPose(
@@ -421,8 +893,10 @@ void DrawBoundarySection(ImVec2 panelSize) {
                 if (applied) {
                     s_floorCapture.Reset();
                     s_boundaryError.clear();
+                    HideBoundaryPreviewOverlay();
                 }
             }
+            if (!floor.valid || !floor.stable) ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::SmallButton("Cancel floor set")) {
                 RestoreFloorCaptureOriginal();
@@ -432,6 +906,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
                 HideBoundaryPreviewOverlay();
             }
         } else {
+            if (!controllerReady) ImGui::BeginDisabled();
             if (ImGui::Button("Set floor from controller")) {
                 s_floorCapture.Begin(CalCtx.boundary.floorY, CalCtx.boundary.ceilingY);
                 ++s_floorSessionId;
@@ -439,26 +914,17 @@ void DrawBoundarySection(ImVec2 panelSize) {
                 HideBoundaryPreviewOverlay();
                 Metrics::WriteLogAnnotation("[boundary-floor] preview started");
             }
+            if (!controllerReady) ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("No trigger needed. The lowest tracked lighthouse controller sets the preview; click Apply floor when it looks right.");
+                ImGui::SetTooltip("No numeric floor entry. Touch the controller to the floor, then apply the live preview.");
             }
         }
 
         ImGui::Spacing();
 
         ImGui::TextDisabled(
-            "Floor %.2f m. Use Set floor from controller to change it.",
+            "Floor %.2f m. Boundary wall height is automatic.",
             CalCtx.boundary.floorY);
-        float roomHeight = (float)BoundaryRoomHeightMeters();
-        ImGui::PushItemWidth(110.0f);
-        if (ImGui::DragFloat("Ceiling height (m)##bnd_room_height", &roomHeight, 0.01f, 0.5f, 5.0f, "%.2f")) {
-            ApplyBoundaryCeilingY(CalCtx.boundary.floorY + (double)roomHeight);
-            RepushActiveBoundaryAfterEdit();
-            SaveProfile(CalCtx);
-        }
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        ImGui::TextDisabled("Ceiling %.2f m", CalCtx.boundary.ceilingY);
         if (transformReady) {
             ImGui::TextDisabled("Preview maps floor to SteamVR Y %.2f m",
                 BoundaryHeightToStanding(CalCtx.boundary.vertices, CalCtx.boundary.floorY));
@@ -467,56 +933,26 @@ void DrawBoundarySection(ImVec2 panelSize) {
         ImGui::Spacing();
 
         if (!hasVerts) {
-            if (!transformReady || s_floorCapture.active()) ImGui::BeginDisabled();
+            if (s_floorCapture.active() || !controllerReady) ImGui::BeginDisabled();
             if (ImGui::Button("Draw boundary")) {
                 StartBoundaryCapture();
                 HideBoundaryPreviewOverlay();
                 s_boundaryError.clear();
             }
-            if (!transformReady || s_floorCapture.active()) ImGui::EndDisabled();
+            if (s_floorCapture.active() || !controllerReady) ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("After this starts, move the lowest lighthouse controller around the floor edge. No trigger needed.");
+                ImGui::SetTooltip("After this starts, move the lighthouse controller around the floor edge. Apply or cancel when done.");
             }
         } else {
-            if (!transformReady || s_floorCapture.active()) ImGui::BeginDisabled();
-            if (ImGui::Button("Re-draw")) {
+            if (s_floorCapture.active() || !controllerReady) ImGui::BeginDisabled();
+            if (ImGui::Button("Draw new boundary")) {
                 StartBoundaryCapture();
                 HideBoundaryPreviewOverlay();
                 s_boundaryError.clear();
             }
-            if (!transformReady || s_floorCapture.active()) ImGui::EndDisabled();
-            ImGui::SameLine();
-            if (ImGui::Button("Discard")) {
-                CalCtx.boundary.vertices.clear();
-                CalCtx.boundary.enabled = false;
-                SaveProfile(CalCtx);
-                s_boundaryError.clear();
-            }
-            ImGui::SameLine();
-
-            bool enabled = CalCtx.boundary.enabled;
-            const bool disableActiveCheckbox = !transformReady && !enabled;
-            if (disableActiveCheckbox) ImGui::BeginDisabled();
-            if (ImGui::Checkbox("Active in-headset", &enabled)) {
-                CalCtx.boundary.enabled = enabled;
-                if (enabled) {
-                    if (!CalCtx.boundary.priorChaperoneCaptured) {
-                        CalCtx.boundary.priorChaperone = wkopenvr::boundary::SnapshotCurrentChaperone();
-                        CalCtx.boundary.priorChaperoneCaptured = !CalCtx.boundary.priorChaperone.empty();
-                    }
-                    if (!PushTargetBoundaryToChaperone(s_boundaryError)) {
-                        CalCtx.boundary.enabled = false;
-                    }
-                } else {
-                    if (CalCtx.boundary.priorChaperoneCaptured) {
-                        wkopenvr::boundary::RestoreChaperoneFromSnapshot(CalCtx.boundary.priorChaperone);
-                    }
-                }
-                SaveProfile(CalCtx);
-            }
-            if (disableActiveCheckbox) ImGui::EndDisabled();
+            if (s_floorCapture.active() || !controllerReady) ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Push this boundary to SteamVR chaperone so it appears in-headset.");
+                ImGui::SetTooltip("Replaces the current boundary with a new draw-and-apply pass.");
             }
 
             ImGui::Spacing();
@@ -526,49 +962,35 @@ void DrawBoundarySection(ImVec2 panelSize) {
             const double area = wkopenvr::boundary::AbsoluteAreaXZ(pts);
             ImGui::TextDisabled("%d pts, %.2f m^2",
                 (int)CalCtx.boundary.vertices.size(), area);
+            ImGui::SameLine();
+            ImGui::TextColored(
+                CalCtx.boundary.enabled ? ImVec4(0.0f, 0.85f, 0.45f, 1.0f) : pal.statusWarn,
+                CalCtx.boundary.enabled ? "applied" : "not applied");
 
             DrawPolygonPreview(CalCtx.boundary.vertices);
-
-            if (CalCtx.boundary.priorChaperoneCaptured) {
-                ImGui::Spacing();
-                if (ImGui::SmallButton("Restore SteamVR's original chaperone")) {
-                    if (!wkopenvr::boundary::RestoreChaperoneFromSnapshot(CalCtx.boundary.priorChaperone)) {
-                        s_boundaryError = "Restore failed: snapshot may be corrupted.";
-                    } else {
-                        CalCtx.boundary.enabled = false;
-                        s_boundaryError.clear();
-                    }
-                    SaveProfile(CalCtx);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Reverts SteamVR chaperone to what it was before WKOpenVR first pushed a boundary.");
-                }
-            }
         }
     } else if (state == wkopenvr::boundary::CaptureState::Active) {
         const bool closePreview = BoundaryLoopNearlyClosed(s_capture.vertices());
         const bool enoughPoints = s_capture.rawVertexCount() >= 3;
         ImGui::TextColored(pal.statusWarn,
-            "Recording. Move the lowest lighthouse controller around the floor edge.");
+            "Drawing live. Move the lighthouse controller around the floor edge.");
         if (closePreview && enoughPoints) {
-            ImGui::TextDisabled("Loop is close to the start point. Finish when it looks right.");
+            ImGui::TextDisabled("Loop is close to the start point. Apply when the preview looks right.");
         } else if (enoughPoints) {
-            ImGui::TextDisabled("Raw vertices: %d", (int)s_capture.rawVertexCount());
+            ImGui::TextDisabled("Apply will close the drawn path. Raw vertices: %d",
+                (int)s_capture.rawVertexCount());
         } else {
             ImGui::TextDisabled("Need at least three floor points. Raw vertices: %d",
                 (int)s_capture.rawVertexCount());
         }
         DrawPolygonPreview(s_capture.vertices(), closePreview, true);
         ImGui::Spacing();
-        if (!enoughPoints) ImGui::BeginDisabled();
-        if (ImGui::Button("Done##bnd_done")) {
-            s_capture.Finish();
-            TickBoundaryPreviewForTargetVertices(
-                true,
-                s_capture.vertices(),
-                true);
+        const bool canApply = enoughPoints;
+        if (!canApply) ImGui::BeginDisabled();
+        if (ImGui::Button("Apply boundary##bnd_apply_live")) {
+            ApplyCapturedBoundary();
         }
-        if (!enoughPoints) ImGui::EndDisabled();
+        if (!canApply) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel##bnd_cancel")) {
             s_capture.Cancel();
@@ -580,7 +1002,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
         const double area = wkopenvr::boundary::AbsoluteAreaXZ(pts);
 
         ImGui::Text("%d vertices, %.2f m^2", (int)verts.size(), area);
-        ImGui::TextDisabled("Cleaned to edge vertices.");
+        ImGui::TextDisabled("Cleaned preview. Apply or cancel.");
 
         DrawPolygonPreview(verts);
         TickBoundaryPreviewForTargetVertices(
@@ -589,34 +1011,11 @@ void DrawBoundarySection(ImVec2 panelSize) {
             true);
 
         ImGui::Spacing();
-        if (ImGui::Button("Keep this boundary##bnd_apply")) {
-            if (verts.size() < 3 || area < 0.25) {
-                s_boundaryError = "Boundary needs at least three floor points and a usable area.";
-            } else {
-                if (!CalCtx.boundary.priorChaperoneCaptured) {
-                    auto snapshot = wkopenvr::boundary::SnapshotCurrentChaperone();
-                    if (!snapshot.empty()) {
-                        CalCtx.boundary.priorChaperone = std::move(snapshot);
-                        CalCtx.boundary.priorChaperoneCaptured = true;
-                    }
-                }
-                CalCtx.boundary.vertices = verts;
-                bool appliedOk = true;
-                if (CalCtx.boundary.enabled) {
-                    if (!PushTargetBoundaryToChaperone(s_boundaryError)) {
-                        appliedOk = false;
-                    }
-                }
-                SaveProfile(CalCtx);
-                if (appliedOk) {
-                    s_capture.Cancel();
-                    StopBoundaryCapturePreview();
-                    s_boundaryError.clear();
-                }
-            }
+        if (ImGui::Button("Apply boundary##bnd_apply")) {
+            ApplyCapturedBoundary();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Discard##bnd_discard_fin")) {
+        if (ImGui::Button("Cancel##bnd_discard_fin")) {
             s_capture.Cancel();
             StopBoundaryCapturePreview();
         }
@@ -644,6 +1043,7 @@ struct BoundaryInputStats {
     int trackedControllers = 0;
     int matchingControllers = 0;
     int skippedTrackingSystem = 0;
+    int controllerStateFailed = 0;
     int poseOk = 0;
     int poseInvalid = 0;
     int lastDeviceId = -1;
@@ -657,6 +1057,7 @@ struct ControllerCandidate {
     vr::TrackedDeviceIndex_t deviceId = vr::k_unTrackedDeviceIndexInvalid;
     std::string trackingSystem;
     Eigen::Affine3d rawPose = Eigen::Affine3d::Identity();
+    Eigen::Affine3d standingPose = Eigen::Affine3d::Identity();
 };
 
 std::string TrackingSystemName(vr::IVRSystem* vrs, vr::TrackedDeviceIndex_t deviceId) {
@@ -695,16 +1096,27 @@ Eigen::Affine3d DriverPoseToWorldAffine(const vr::DriverPose_t& dp) {
     return pose;
 }
 
+Eigen::Affine3d HmdMatrix34ToAffine(const vr::HmdMatrix34_t& m)
+{
+    Eigen::Affine3d affine = Eigen::Affine3d::Identity();
+    affine.linear() << m.m[0][0], m.m[0][1], m.m[0][2],
+                       m.m[1][0], m.m[1][1], m.m[1][2],
+                       m.m[2][0], m.m[2][1], m.m[2][2];
+    affine.translation() = Eigen::Vector3d(m.m[0][3], m.m[1][3], m.m[2][3]);
+    return affine;
+}
+
 void WriteBoundaryInputSummary(const BoundaryInputStats& stats, uint64_t sessionId, size_t rawCount) {
     char lbuf[640];
     snprintf(lbuf, sizeof lbuf,
-        "[boundary-capture] waiting: session=%llu raw=%zu target='%s' controllers=%d matching=%d skipped_system=%d pose_ok=%d pose_invalid=%d last_device=%d last_system='%s' chosen_device=%d chosen_system='%s' chosen_y=%.3f",
+        "[boundary-capture] waiting: session=%llu raw=%zu target='%s' controllers=%d matching=%d skipped_system=%d state_failed=%d pose_ok=%d pose_invalid=%d last_device=%d last_system='%s' chosen_device=%d chosen_system='%s' chosen_y=%.3f",
         static_cast<unsigned long long>(sessionId),
         rawCount,
         CalCtx.targetTrackingSystem.c_str(),
         stats.trackedControllers,
         stats.matchingControllers,
         stats.skippedTrackingSystem,
+        stats.controllerStateFailed,
         stats.poseOk,
         stats.poseInvalid,
         stats.lastDeviceId,
@@ -753,6 +1165,12 @@ void CCal_TickBoundaryCapture() {
 
     BoundaryInputStats stats;
     std::vector<ControllerCandidate> candidates;
+    vr::TrackedDevicePose_t standingPoses[vr::k_unMaxTrackedDeviceCount]{};
+    vrs->GetDeviceToAbsoluteTrackingPose(
+        vr::TrackingUniverseStanding,
+        0.0f,
+        standingPoses,
+        vr::k_unMaxTrackedDeviceCount);
     for (vr::TrackedDeviceIndex_t deviceId = 0; deviceId < vr::k_unMaxTrackedDeviceCount; ++deviceId) {
         if (vrs->GetTrackedDeviceClass(deviceId) != vr::TrackedDeviceClass_Controller) {
             continue;
@@ -761,26 +1179,29 @@ void CCal_TickBoundaryCapture() {
         stats.lastDeviceId = static_cast<int>(deviceId);
         stats.lastTrackingSystem = TrackingSystemName(vrs, deviceId);
 
-        if (!CalCtx.targetTrackingSystem.empty()
-            && stats.lastTrackingSystem != CalCtx.targetTrackingSystem)
-        {
-            ++stats.skippedTrackingSystem;
-            continue;
-        }
         ++stats.matchingControllers;
 
-        const auto& dp = CalCtx.devicePoses[deviceId];
-        if (!dp.poseIsValid || dp.result != vr::ETrackingResult::TrackingResult_Running_OK) {
+        const auto& standingTrackedPose = standingPoses[deviceId];
+        if (!standingTrackedPose.bDeviceIsConnected ||
+            !standingTrackedPose.bPoseIsValid ||
+            standingTrackedPose.eTrackingResult != vr::ETrackingResult::TrackingResult_Running_OK)
+        {
             ++stats.poseInvalid;
             continue;
         }
         ++stats.poseOk;
 
-        const Eigen::Affine3d rawPose = DriverPoseToWorldAffine(dp);
         ControllerCandidate candidate;
         candidate.deviceId = deviceId;
         candidate.trackingSystem = stats.lastTrackingSystem;
-        candidate.rawPose = rawPose;
+        candidate.standingPose = HmdMatrix34ToAffine(
+            standingTrackedPose.mDeviceToAbsoluteTracking);
+        const auto& dp = CalCtx.devicePoses[deviceId];
+        if (dp.poseIsValid && dp.result == vr::ETrackingResult::TrackingResult_Running_OK) {
+            candidate.rawPose = DriverPoseToWorldAffine(dp);
+        } else {
+            candidate.rawPose = candidate.standingPose;
+        }
 
         candidates.push_back(candidate);
     }
@@ -794,39 +1215,71 @@ void CCal_TickBoundaryCapture() {
         return;
     }
 
-    const auto chosenIt = std::min_element(
+    const auto chosenIt = std::find_if(
         candidates.begin(),
         candidates.end(),
-        [](const ControllerCandidate& a, const ControllerCandidate& b) {
-            return a.rawPose.translation().y() < b.rawPose.translation().y();
+        [](const ControllerCandidate& c) {
+            return static_cast<int32_t>(c.deviceId) == s_boundaryControllerDeviceId;
         });
+    if (chosenIt == candidates.end()) {
+        tickPreview();
+        ++s_waitTicks;
+        if (s_waitTicks == 1 || (s_waitTicks % 120) == 0) {
+            WriteBoundaryInputSummary(stats, sessionId, s_capture.rawVertexCount());
+        }
+        return;
+    }
     const ControllerCandidate& chosen = *chosenIt;
     stats.chosenDeviceId = static_cast<int>(chosen.deviceId);
     stats.chosenTrackingSystem = chosen.trackingSystem;
-    stats.chosenY = chosen.rawPose.translation().y();
+    stats.chosenY = chosen.standingPose.translation().y();
 
     if (s_floorCapture.active()) {
+        const std::string controllerType = DeviceStringProperty(
+            vrs,
+            chosen.deviceId,
+            vr::Prop_ControllerType_String);
+        const double controllerOriginY = chosen.standingPose.translation().y();
+        const double contactOffset =
+            wkopenvr::boundary::ControllerFloorContactOffsetMeters(
+                controllerType,
+                chosen.standingPose);
+        Eigen::Affine3d contactPose = chosen.standingPose;
+        contactPose.translation().y() =
+            wkopenvr::boundary::AdjustControllerFloorYForContact(
+                controllerOriginY,
+                controllerType,
+                chosen.standingPose);
         const bool updated = s_floorCapture.Observe(
-            chosen.rawPose,
+            contactPose,
             static_cast<int>(chosen.deviceId),
             chosen.trackingSystem);
         const auto& floor = s_floorCapture.candidate();
         if (floor.valid) {
-            const auto marker = wkopenvr::boundary::BuildFloorMarkerVertices(
-                floor.pose,
-                floor.floorY);
-            TickBoundaryPreviewForTargetVerticesAtFloor(
-                true,
-                marker,
-                floor.floorY,
-                true);
+            if (updated || !s_floorPreviewVisible) {
+                const auto marker = wkopenvr::boundary::BuildFloorMarkerVertices(
+                    floor.pose,
+                    floor.floorY);
+                TickBoundaryPreviewForStandingVerticesAtFloor(
+                    true,
+                    marker,
+                    floor.floorY,
+                    true);
+                s_floorPreviewVisible = true;
+            }
             if (updated) {
                 char fbuf[320];
                 snprintf(fbuf, sizeof fbuf,
-                    "[boundary-floor] preview: samples=%zu device=%d system='%s' floor_y=%.3f controller=(%.3f,%.3f,%.3f)",
+                    "[boundary-floor] preview: samples=%zu ready=%d stable=%d jitter_mm=%.1f device=%d system='%s' type='%s' origin_y=%.3f contact_offset=%.4f floor_y=%.3f controller=(%.3f,%.3f,%.3f)",
                     floor.sampleCount,
+                    floor.ready ? 1 : 0,
+                    floor.stable ? 1 : 0,
+                    floor.jitterMeters * 1000.0,
                     floor.deviceId,
                     floor.trackingSystem.c_str(),
+                    controllerType.c_str(),
+                    controllerOriginY,
+                    contactOffset,
                     floor.floorY,
                     floor.pose.translation().x(),
                     floor.pose.translation().y(),
@@ -842,24 +1295,41 @@ void CCal_TickBoundaryCapture() {
 
     wkopenvr::boundary::FloorHitPreview previewCursor;
     previewCursor.valid = true;
-    previewCursor.hit = BoundaryVertex{
-        chosen.rawPose.translation().x(),
-        CalCtx.boundary.floorY,
-        chosen.rawPose.translation().z()
+    const BoundaryVertex measuredCursor{
+        chosen.standingPose.translation().x(),
+        0.0,
+        chosen.standingPose.translation().z()
     };
+    if (!s_smoothedPreviewCursorValid ||
+        s_smoothedPreviewCursorSession != sessionId)
+    {
+        s_smoothedPreviewCursor = measuredCursor;
+        s_smoothedPreviewCursorSession = sessionId;
+        s_smoothedPreviewCursorValid = true;
+    } else {
+        constexpr double kCursorFollow = 0.45;
+        constexpr double kJumpResetMeters = 0.35;
+        const double dx = measuredCursor.x - s_smoothedPreviewCursor.x;
+        const double dz = measuredCursor.z - s_smoothedPreviewCursor.z;
+        if ((dx * dx + dz * dz) > (kJumpResetMeters * kJumpResetMeters)) {
+            s_smoothedPreviewCursor = measuredCursor;
+        } else {
+            s_smoothedPreviewCursor.x += dx * kCursorFollow;
+            s_smoothedPreviewCursor.y = 0.0;
+            s_smoothedPreviewCursor.z += dz * kCursorFollow;
+        }
+    }
+    previewCursor.hit = s_smoothedPreviewCursor;
     previewCursor.rayName = "controllerXZ";
 
+    Eigen::Affine3d capturePose = chosen.standingPose;
+
     const bool accepted = s_capture.TickProjectedPosition(
-        chosen.rawPose,
+        capturePose,
         true,
-        CalCtx.boundary.floorY);
+        0.0);
     if (accepted) {
-        Eigen::Affine3d standingPose = chosen.rawPose;
-        if (CalCtx.validProfile) {
-            standingPose = wkopenvr::boundary::TransformPoseToStandingUniverse(
-                chosen.rawPose,
-                PreviewTargetToStandingTransform());
-        }
+        s_waitTicks = 0;
         char cbuf[760];
         snprintf(cbuf, sizeof cbuf,
             "[boundary-capture] accepted controller_xz: session=%llu device=%d system='%s' raw=%zu floor_y=%.3f raw_pos=(%.3f,%.3f,%.3f) standing_pos=(%.3f,%.3f,%.3f)",
@@ -867,13 +1337,13 @@ void CCal_TickBoundaryCapture() {
             static_cast<int>(chosen.deviceId),
             chosen.trackingSystem.c_str(),
             s_capture.rawVertexCount(),
-            CalCtx.boundary.floorY,
+            0.0,
             chosen.rawPose.translation().x(),
             chosen.rawPose.translation().y(),
             chosen.rawPose.translation().z(),
-            standingPose.translation().x(),
-            standingPose.translation().y(),
-            standingPose.translation().z());
+            capturePose.translation().x(),
+            capturePose.translation().y(),
+            capturePose.translation().z());
         Metrics::WriteLogAnnotation(cbuf);
         openvr_pair::common::DiagnosticLog("boundary-capture", "%s", cbuf);
     }

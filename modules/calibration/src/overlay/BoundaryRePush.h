@@ -13,5 +13,8 @@
 // so a boundary that was enabled in the saved profile gets pushed after the
 // calibration transform converges.
 
+#include <Eigen/Geometry>
+
 void TickBoundaryRePush(double time);
 void ScheduleBoundaryStartupPush();
+void NoteBoundaryPushedForTransform(const Eigen::AffineCompact3d& targetToStanding);

@@ -7,7 +7,7 @@ namespace wkopenvr::controller_input {
 
 namespace {
 
-constexpr float kLegacyFallbackThreshold = 0.90f;
+constexpr float kLegacyFallbackThreshold = 0.75f;
 
 bool TriggerButtonPressed(const vr::VRControllerState_t& state) {
 	return (state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Trigger)) != 0;
@@ -130,7 +130,7 @@ bool IsTriggerHeld(
 		return true;
 	}
 
-	if (typedReading.triggerAxisCount == 0 && propertyErrors > 0) {
+	if (typedReading.triggerAxisCount == 0 || propertyErrors > 0) {
 		return LegacyAxisFallback(state, analogThreshold, reading);
 	}
 
@@ -164,6 +164,45 @@ size_t FillControllerIdsForTrackingSystem(
 	}
 
 	return written;
+}
+
+int32_t ChoosePreferredController(
+	const ControllerSelectionChoice* choices,
+	size_t choiceCount,
+	int32_t currentDeviceId)
+{
+	if (!choices || choiceCount == 0) {
+		return -1;
+	}
+
+	for (size_t i = 0; i < choiceCount; ++i) {
+		if (choices[i].deviceId == currentDeviceId) {
+			return currentDeviceId;
+		}
+	}
+
+	int32_t rightWithPose = -1;
+	int32_t rightAnyPose = -1;
+	int32_t anyWithPose = -1;
+	for (size_t i = 0; i < choiceCount; ++i) {
+		const auto& choice = choices[i];
+		if (choice.deviceId < 0) {
+			continue;
+		}
+		if (choice.role == vr::TrackedControllerRole_RightHand) {
+			if (rightAnyPose < 0) rightAnyPose = choice.deviceId;
+			if (choice.poseValid && rightWithPose < 0) {
+				rightWithPose = choice.deviceId;
+			}
+		}
+		if (choice.poseValid && anyWithPose < 0) {
+			anyWithPose = choice.deviceId;
+		}
+	}
+	if (rightWithPose >= 0) return rightWithPose;
+	if (rightAnyPose >= 0) return rightAnyPose;
+	if (anyWithPose >= 0) return anyWithPose;
+	return choices[0].deviceId;
 }
 
 }  // namespace wkopenvr::controller_input

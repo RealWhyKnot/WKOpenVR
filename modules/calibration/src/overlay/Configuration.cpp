@@ -393,6 +393,8 @@ static void LoadBoundary(BoundaryConfig& bc, picojson::value& value) {
 		bc.floorY = obj["floor_y"].get<double>();
 	if (obj["ceiling_y"].is<double>())
 		bc.ceilingY = obj["ceiling_y"].get<double>();
+	if (obj["standing_space"].is<bool>())
+		bc.standingSpace = obj["standing_space"].get<bool>();
 	if (obj["prior_chaperone_captured"].is<bool>())
 		bc.priorChaperoneCaptured = obj["prior_chaperone_captured"].get<bool>();
 	if (obj["prior_chaperone"].is<std::string>())
@@ -419,6 +421,8 @@ static picojson::object SaveBoundary(const BoundaryConfig& bc) {
 	double fy = bc.floorY, cy = bc.ceilingY;
 	obj["floor_y"].set<double>(fy);
 	obj["ceiling_y"].set<double>(cy);
+	bool standing = bc.standingSpace;
+	obj["standing_space"].set<bool>(standing);
 	bool cap = bc.priorChaperoneCaptured;
 	obj["prior_chaperone_captured"].set<bool>(cap);
 	obj["prior_chaperone"].set<std::string>(BytesToHex(bc.priorChaperone));

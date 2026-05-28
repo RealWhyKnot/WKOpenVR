@@ -53,6 +53,38 @@ bool SameXZ(const BoundaryVertex& a, const BoundaryVertex& b)
     return std::fabs(a.x - b.x) <= 1e-6 && std::fabs(a.z - b.z) <= 1e-6;
 }
 
+bool IsFiniteVertex(const BoundaryVertex& v)
+{
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+std::vector<BoundaryVertex> FilterFiniteVertices(const std::vector<BoundaryVertex>& raw)
+{
+    std::vector<BoundaryVertex> out;
+    out.reserve(raw.size());
+    for (const auto& v : raw) {
+        if (IsFiniteVertex(v)) out.push_back(v);
+    }
+    return out;
+}
+
+double SignedAreaXZ(const std::vector<BoundaryVertex>& poly)
+{
+    if (poly.size() < 3) return 0.0;
+    double twiceArea = 0.0;
+    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+        twiceArea += poly[j].x * poly[i].z - poly[i].x * poly[j].z;
+    }
+    return twiceArea * 0.5;
+}
+
+void NormalizeWindingXZ(std::vector<BoundaryVertex>& poly)
+{
+    if (SignedAreaXZ(poly) < 0.0) {
+        std::reverse(poly.begin(), poly.end());
+    }
+}
+
 int OrientationXZ(const BoundaryVertex& a,
                   const BoundaryVertex& b,
                   const BoundaryVertex& c)
@@ -263,24 +295,6 @@ FloorProjectionAttempt ProjectAimToFloor(
         return bestOk;
     }
 
-    const Eigen::Vector3d origin = controllerPose.translation();
-    const double floorDelta = origin.y() - floorY;
-    if (haveFailed
-        && bestFailed.status == FloorProjectionStatus::DistanceOutOfRange
-        && origin.allFinite()
-        && floorDelta <= 0.25
-        && floorDelta >= -3.0)
-    {
-        FloorProjectionAttempt fallback;
-        fallback.status = FloorProjectionStatus::Ok;
-        fallback.hit = { origin.x(), floorY, origin.z() };
-        fallback.rayName = "originXZ";
-        fallback.originY = origin.y();
-        fallback.aimY = 0.0;
-        fallback.distanceMeters = 0.0;
-        return fallback;
-    }
-
     return bestFailed;
 }
 
@@ -321,6 +335,18 @@ std::vector<BoundaryVertex> RemoveNearDuplicates(
     return out;
 }
 
+std::vector<BoundaryVertex> RemoveClosedShortEdges(
+    const std::vector<BoundaryVertex>& raw,
+    double minDistanceMeters)
+{
+    std::vector<BoundaryVertex> out = RemoveNearDuplicates(raw, minDistanceMeters);
+    const double minDistSq = minDistanceMeters * minDistanceMeters;
+    while (out.size() > 3 && DistanceSq(out.front(), out.back()) < minDistSq) {
+        out.pop_back();
+    }
+    return out;
+}
+
 std::vector<BoundaryVertex> RemoveClosedCollinearVertices(
     const std::vector<BoundaryVertex>& raw,
     double toleranceMeters)
@@ -346,13 +372,52 @@ std::vector<BoundaryVertex> RemoveClosedCollinearVertices(
     return out;
 }
 
+std::vector<BoundaryVertex> TrimToNearestClosure(
+    const std::vector<BoundaryVertex>& raw,
+    double closeLoopMeters)
+{
+    if (raw.size() < 6) {
+        return raw;
+    }
+
+    const BoundaryVertex& last = raw.back();
+    const double closeSq = closeLoopMeters * closeLoopMeters;
+    size_t bestIndex = raw.size();
+    double bestDistSq = closeSq;
+    for (size_t i = 0; i + 3 < raw.size(); ++i) {
+        const double d = DistanceSq(raw[i], last);
+        if (d <= bestDistSq) {
+            bestDistSq = d;
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex == raw.size()) {
+        return raw;
+    }
+
+    std::vector<BoundaryVertex> out;
+    out.reserve(raw.size() - bestIndex);
+    for (size_t i = bestIndex; i < raw.size(); ++i) {
+        out.push_back(raw[i]);
+    }
+    return out;
+}
+
 std::vector<BoundaryVertex> CleanPaintedLoop(
     const std::vector<BoundaryVertex>& raw,
     double debounceMeters,
     double closeLoopMeters,
     double simplifyMeters)
 {
-    std::vector<BoundaryVertex> path = RemoveNearDuplicates(raw, debounceMeters);
+    std::vector<BoundaryVertex> path = RemoveNearDuplicates(
+        FilterFiniteVertices(raw),
+        debounceMeters);
+    if (path.size() < 3) {
+        return path;
+    }
+
+    path = TrimToNearestClosure(path, closeLoopMeters);
     if (path.size() < 3) {
         return path;
     }
@@ -373,15 +438,21 @@ std::vector<BoundaryVertex> CleanPaintedLoop(
         simplified.push_back(path[idx]);
     }
 
-    simplified = RemoveNearDuplicates(simplified, debounceMeters);
+    simplified = RemoveClosedShortEdges(simplified, debounceMeters);
     if (simplified.size() >= 3 &&
         DistanceSq(simplified.front(), simplified.back()) < closeSq) {
         simplified.pop_back();
     }
     simplified = RemoveClosedCollinearVertices(simplified, simplifyMeters);
     if (HasSelfIntersectionXZ(simplified)) {
-        return ConvexHullXZ(simplified);
+        simplified = ConvexHullXZ(simplified);
+        simplified = RemoveClosedShortEdges(simplified, debounceMeters);
+        simplified = RemoveClosedCollinearVertices(simplified, simplifyMeters);
     }
+    if (std::fabs(SignedAreaXZ(simplified)) < 0.05) {
+        return {};
+    }
+    NormalizeWindingXZ(simplified);
     return simplified;
 }
 
