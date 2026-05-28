@@ -11,6 +11,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Preview boundary drawing (07dec3e)
 - **overlay:** Add support diagnostics and Quest setup fixes (1375e27)
 - **boundary:** Paint floor outline from controller aim (de05639)
+- **calibration:** Add quality diagnostics and boundary preview (e9b93d9)
+- **questapp:** Add dev adb tools (cdfa4f6)
+- **questapp:** Add Quest companion setup module (b4c6122)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -48,6 +51,22 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Require fresh continuous candidates (aac7fe2)
 - **calibration:** Seed continuous solver from profile (94db885)
 - **driver:** Use synth timestamp for freshness (4f60cdb)
+- **head-mount:** Make DriverSynth fallback timing tunable (34ccc19)
+- **smoothing:** Close finger tables before controls (ea9bdaf)
+- **boundary:** Simplify floor and draw capture (b3d3f74)
+- **calibration:** Snap first continuous candidate (c719c70)
+- **boundary:** Calibrate floor and target-space push (906ce9b)
+- **calibration:** Bound motion replay sample window (1353db8)
+- **calibration:** Restore legacy solver path (654264f)
+- **calibration:** Require consecutive large-solve candidates (66cfa3e)
+- **calibration:** Use adaptive large-solve confidence (326b4f2)
+- **calibration:** Gate large continuous solves (7c0e67f)
+- **questapp:** Correct companion transport hint (396fa45)
+- **overlay:** Avoid starting SteamVR on desktop launch (be2a93e)
+- **questapp:** Target adb devices explicitly (f960c9e)
+- **installer:** Verify WKOpenVR shortcut (87053d1)
+- **installer:** Escape SteamVR path lookup (a715cec)
+- **calibration:** Keep head tracker hidden by serial (850c924)
 
 ---
 
