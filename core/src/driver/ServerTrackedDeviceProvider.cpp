@@ -563,6 +563,12 @@ void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDeviceP
 	// scaling. 0 = pose untouched, 100 = predictor fully defeated.
 	tf.predictionSmoothness = cfg.predictionSmoothness;
 	tf.smartEnabled         = newSmart;
+#if WKOPENVR_BUILD_IS_DEV
+	tf.smartShadowParams = prediction::smart_shadow::BuildParams(cfg.predictionSmoothness);
+	if (oldSmoothness != cfg.predictionSmoothness) {
+		tf.smartShadow = SmartSmoothingShadowState{};
+	}
+#endif
 	if (newSmart && !oldSmart) {
 		// Re-enable starts from a known state so the first frame after
 		// toggle doesn't inherit a stale motion estimate from an earlier
@@ -657,6 +663,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	std::unique_lock<std::mutex> lock(stateMutex);
 
 	auto& tf = transforms[openVRID];
+	const vr::DriverPose_t rawSmoothingInput = pose;
 
 	// Native pose-prediction suppression. Scales the velocity / acceleration /
 	// poseTimeOffset fields by (1 - smoothness/100), where smoothness comes from
@@ -754,6 +761,10 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		// seeds from the current raw pose rather than a stale snapshot.
 		tf.posEmaSeeded = false;
 	}
+
+#if WKOPENVR_BUILD_IS_DEV
+	UpdateSmartSmoothingShadow(openVRID, tf, rawSmoothingInput, pose);
+#endif
 
 	shmem.SetPose(openVRID, pose);
 

@@ -8,6 +8,7 @@
 #include "IPCServer.h"
 #include "Protocol.h"
 #include "IsometryTransform.h"
+#include "SmartSmoothingShadowMath.h"
 
 #include <Eigen/Dense>
 
@@ -125,6 +126,70 @@ private:
 		LARGE
 	};
 
+#if WKOPENVR_BUILD_IS_DEV
+	struct SmartSmoothingShadowStats
+	{
+		uint64_t samples = 0;
+		uint64_t restSamples = 0;
+		uint64_t invalidReportedLinear = 0;
+		uint64_t invalidReportedAngular = 0;
+		uint64_t reseeds = 0;
+		uint64_t gapReseeds = 0;
+		uint64_t positionJumpReseeds = 0;
+		uint64_t rotationJumpReseeds = 0;
+		uint64_t nonFinitePoseResets = 0;
+
+		double sumPosRelease = 0.0;
+		double maxPosRelease = 0.0;
+		double sumRotRelease = 0.0;
+		double maxRotRelease = 0.0;
+		double sumPosCutoffHz = 0.0;
+		double maxPosCutoffHz = 0.0;
+		double sumRotCutoffHz = 0.0;
+		double maxRotCutoffHz = 0.0;
+
+		double sumSqRestRawStepM = 0.0;
+		double sumSqRestLiveStepM = 0.0;
+		double sumSqRestShadowStepM = 0.0;
+		double sumSqRestRawRotStepRad = 0.0;
+		double sumSqRestLiveRotStepRad = 0.0;
+		double sumSqRestShadowRotStepRad = 0.0;
+
+		double sumSqShadowRawErrM = 0.0;
+		double maxShadowRawErrM = 0.0;
+		double sumSqLiveShadowErrM = 0.0;
+		double maxLiveShadowErrM = 0.0;
+		double sumSqShadowRawRotErrRad = 0.0;
+		double maxShadowRawRotErrRad = 0.0;
+		double sumSqLiveShadowRotErrRad = 0.0;
+		double maxLiveShadowRotErrRad = 0.0;
+	};
+
+	struct SmartSmoothingShadowState
+	{
+		bool initialized = false;
+		bool previousOutputsInitialized = false;
+		LARGE_INTEGER lastSample{};
+		LARGE_INTEGER lastLog{};
+
+		double prevRawPos[3] = {0.0, 0.0, 0.0};
+		double prevLivePos[3] = {0.0, 0.0, 0.0};
+		double prevShadowPos[3] = {0.0, 0.0, 0.0};
+		double filteredPos[3] = {0.0, 0.0, 0.0};
+
+		vr::HmdQuaternion_t prevRawRot{1.0, 0.0, 0.0, 0.0};
+		vr::HmdQuaternion_t prevLiveRot{1.0, 0.0, 0.0, 0.0};
+		vr::HmdQuaternion_t prevShadowRot{1.0, 0.0, 0.0, 0.0};
+		vr::HmdQuaternion_t filteredRot{1.0, 0.0, 0.0, 0.0};
+
+		double linearSpeedHat = 0.0;
+		double angularSpeedHat = 0.0;
+		double posRelease = 0.0;
+		double rotRelease = 0.0;
+		SmartSmoothingShadowStats stats;
+	};
+#endif
+
 	struct DeviceTransform
 	{
 		bool enabled = false;
@@ -189,6 +254,11 @@ private:
 		// flood. Zero-initialised; first non-trivial-pending tick after wrap or
 		// boot emits regardless of the throttle.
 		LARGE_INTEGER lastSlewLogTime{};
+
+#if WKOPENVR_BUILD_IS_DEV
+		prediction::smart_shadow::Params smartShadowParams;
+		SmartSmoothingShadowState smartShadow;
+#endif
 	};
 
 	struct FallbackTransform
@@ -376,4 +446,11 @@ private:
 
 	void BlendTransform(DeviceTransform& device, const IsoTransform& deviceWorldPose) const;
 	void ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const;
+#if WKOPENVR_BUILD_IS_DEV
+	void UpdateSmartSmoothingShadow(
+		uint32_t openVRID,
+		DeviceTransform& device,
+		const vr::DriverPose_t& rawPose,
+		const vr::DriverPose_t& livePose) const;
+#endif
 };

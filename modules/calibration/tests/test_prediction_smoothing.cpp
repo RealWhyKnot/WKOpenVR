@@ -10,6 +10,7 @@
 #include <cstdint>
 
 #include "PredictionSmoothingMath.h"
+#include "SmartSmoothingShadowMath.h"
 
 using prediction::SmoothnessToFactor;
 using prediction::PositionEwmAlpha;
@@ -135,6 +136,55 @@ TEST(PredictionSmoothingTest, JumpGuardThreshold) {
     EXPECT_LT(0.49 * 0.49, kJumpThreshSq) << "0.49 m jump should not trigger reseed";
     // A 0.51 m jump: dist^2 = 0.2601, above threshold -- should reseed.
     EXPECT_GT(0.51 * 0.51, kJumpThreshSq) << "0.51 m jump should trigger reseed";
+}
+
+TEST(PredictionSmoothingTest, CutoffAlphaIsSamplingRateStable) {
+    constexpr double cutoffHz = 2.0;
+    constexpr double durationSeconds = 1.0;
+    auto run = [&](double dt) {
+        double y = 0.0;
+        const int steps = static_cast<int>(durationSeconds / dt);
+        for (int i = 0; i < steps; ++i) {
+            const double alpha = prediction::smart_shadow::AlphaFromCutoffHz(cutoffHz, dt);
+            y += alpha * (1.0 - y);
+        }
+        return y;
+    };
+
+    const double at60Hz = run(1.0 / 60.0);
+    const double at120Hz = run(1.0 / 120.0);
+    EXPECT_NEAR(at60Hz, at120Hz, 0.02)
+        << "cutoff-based alpha should behave similarly across sampling rates";
+}
+
+TEST(PredictionSmoothingTest, SmoothStepHasExpectedEdges) {
+    using prediction::smart_shadow::SmoothStep;
+    EXPECT_DOUBLE_EQ(SmoothStep(2.0, 4.0, 1.0), 0.0);
+    EXPECT_DOUBLE_EQ(SmoothStep(2.0, 4.0, 5.0), 1.0);
+    EXPECT_NEAR(SmoothStep(2.0, 4.0, 3.0), 0.5, 1e-12);
+}
+
+TEST(PredictionSmoothingTest, SmartParamsPreservePredictionFactor) {
+    for (uint8_t smoothness : { uint8_t{0}, uint8_t{50}, uint8_t{80}, uint8_t{100} }) {
+        const auto params = prediction::smart_shadow::BuildParams(smoothness);
+        EXPECT_DOUBLE_EQ(params.basePredictionFactor, SmoothnessToFactor(smoothness));
+    }
+}
+
+TEST(PredictionSmoothingTest, SmartParamsIncreaseRestSmoothingWithSlider) {
+    const auto p20 = prediction::smart_shadow::BuildParams(20);
+    const auto p80 = prediction::smart_shadow::BuildParams(80);
+    EXPECT_LT(p80.posMinCutoffHz, p20.posMinCutoffHz);
+    EXPECT_LT(p80.rotMinCutoffHz, p20.rotMinCutoffHz);
+    EXPECT_GT(p80.posBetaHzPerMps, p20.posBetaHzPerMps);
+    EXPECT_GT(p80.rotBetaHzPerRadps, p20.rotBetaHzPerRadps);
+}
+
+TEST(PredictionSmoothingTest, ReleasedPredictionFactorMovesTowardPassThrough) {
+    using prediction::smart_shadow::ReleasedPredictionFactor;
+    EXPECT_DOUBLE_EQ(ReleasedPredictionFactor(0.25, 0.0), 0.25);
+    EXPECT_DOUBLE_EQ(ReleasedPredictionFactor(0.25, 1.0), 1.0);
+    EXPECT_NEAR(ReleasedPredictionFactor(0.25, 0.5), 0.625, 1e-12);
 }
 
 } // namespace
