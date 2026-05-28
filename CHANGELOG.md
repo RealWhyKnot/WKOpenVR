@@ -16,6 +16,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **questapp:** Add Quest companion setup module (b4c6122)
 - **inputhealth:** Widen safe drift learning (9f81724)
 - **runtime:** Add health summaries (a52ed25)
+- **boundary:** Add spatial drawing framework (848c3c4)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -80,6 +81,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **boundary:** Draw from controller pointer (c0e8ead)
 - **boundary:** Preview floor from lowest controller (81f0c01)
 - **boundary:** Center chaperone play area (ccdcf20)
+- **boundary:** Stabilize floor and trigger drawing (1f6d53a)
 
 ---
 
