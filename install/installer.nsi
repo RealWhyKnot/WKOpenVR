@@ -363,6 +363,7 @@ Section "Uninstall"
     ${CheckProcessNotRunning} "vrserver" "vrserver.exe is still running. Close SteamVR completely and try again."
     ${CheckProcessNotRunning} "WKOpenVR" "WKOpenVR is still running. Close WKOpenVR and try again."
 
+    SetOutPath "$TEMP"
     ReadEnvStr $skipSteamVrRegistration "WKOPENVR_SKIP_STEAMVR_REGISTRATION"
 
     ; Unregister with SteamVR while the exe + manifest still exist on disk.

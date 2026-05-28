@@ -53,6 +53,13 @@ function Assert-PathExists {
 function Assert-PathMissing {
     param([Parameter(Mandatory=$true)][string] $Path)
     if (Test-Path -LiteralPath $Path) {
+        if ((Get-Item -LiteralPath $Path -Force).PSIsContainer) {
+            Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 50 FullName |
+                Format-Table -AutoSize |
+                Out-String |
+                Write-Host
+        }
         throw "Expected path to be removed: $Path"
     }
 }
