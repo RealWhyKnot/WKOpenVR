@@ -81,13 +81,13 @@ void DrawDot(std::vector<uint8_t>& pixels, int cx, int cy, int radius, uint8_t r
     }
 }
 
-void DrawLine(std::vector<uint8_t>& pixels, int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+void DrawLine(std::vector<uint8_t>& pixels, int x0, int y0, int x1, int y1, int radius, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
     const int dx = x1 - x0;
     const int dy = y1 - y0;
     const int steps = std::max(std::abs(dx), std::abs(dy));
     if (steps <= 0) {
-        DrawDot(pixels, x0, y0, 3, r, g, b, a);
+        DrawDot(pixels, x0, y0, radius, r, g, b, a);
         return;
     }
 
@@ -95,7 +95,7 @@ void DrawLine(std::vector<uint8_t>& pixels, int x0, int y0, int x1, int y1, uint
         const double t = static_cast<double>(i) / static_cast<double>(steps);
         const int x = ClampPixel(static_cast<double>(x0) + dx * t);
         const int y = ClampPixel(static_cast<double>(y0) + dy * t);
-        DrawDot(pixels, x, y, 2, r, g, b, a);
+        DrawDot(pixels, x, y, radius, r, g, b, a);
     }
 }
 
@@ -134,7 +134,7 @@ void FillPolygon(std::vector<uint8_t>& pixels, const std::vector<std::pair<int, 
                 0,
                 size - 1);
             for (int x = xStart; x <= xEnd; ++x) {
-                BlendPixel(pixels, x, y, 0, 180, 255, 42);
+                BlendPixel(pixels, x, y, 0, 190, 220, 58);
             }
         }
     }
@@ -244,12 +244,12 @@ BoundaryPreviewRaster BuildBoundaryPreviewRaster(
     for (size_t i = 1; i < vertices.size(); ++i) {
         const auto a = pixelPoints[i - 1];
         const auto b = pixelPoints[i];
-        DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 0, 245, 160, 230);
+        DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 4, 0, 255, 190, 245);
     }
     if (closeLoop && vertices.size() >= 3) {
         const auto a = pixelPoints.back();
         const auto b = pixelPoints.front();
-        DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 0, 180, 255, 170);
+        DrawLine(raster.rgba, a.first, a.second, b.first, b.second, 3, 0, 210, 255, 220);
     }
 
     for (size_t i = 0; i < vertices.size(); ++i) {
