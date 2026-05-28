@@ -15,7 +15,12 @@ param(
 
 	# Developer opt-in for the CUDA whisper backend. Public/local builds force
 	# CPU-only unless this switch or WKOPENVR_CAPTIONS_CUDA=ON is explicit.
-	[switch]$CaptionsCuda
+	[switch]$CaptionsCuda,
+
+	# Optional CMake target names for focused iteration, for example
+	# spacecal_tests. Full build verification and packaging run only when no
+	# explicit target is supplied.
+	[string[]]$Target = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -193,6 +198,29 @@ if (-not $SkipConfigure) {
 $ParallelJobs = [Environment]::ProcessorCount
 if ($ParallelJobs -lt 1) { $ParallelJobs = 1 }
 Write-Host ("Build parallelism: {0} jobs" -f $ParallelJobs)
+
+$TargetNames = @()
+foreach ($TargetName in $Target) {
+	if (-not [string]::IsNullOrWhiteSpace($TargetName)) {
+		$TargetNames += $TargetName.Trim()
+	}
+}
+
+if ($Release -and $TargetNames.Count -gt 0) {
+	throw "-Release cannot be combined with -Target because packaging requires the full driver build."
+}
+
+if ($TargetNames.Count -gt 0) {
+	foreach ($TargetName in $TargetNames) {
+		Write-Host ("Building target: {0}" -f $TargetName)
+		Invoke-NativeQuiet { cmake --build build --config Release --target $TargetName --parallel $ParallelJobs }
+		if ($LASTEXITCODE -ne 0) { throw "Build target '$TargetName' failed (exit $LASTEXITCODE)" }
+	}
+	Write-Host ""
+	Write-Host ("Built {0} requested target(s)." -f $TargetNames.Count)
+	return
+}
+
 Invoke-NativeQuiet { cmake --build build --config Release --parallel $ParallelJobs }
 if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 
