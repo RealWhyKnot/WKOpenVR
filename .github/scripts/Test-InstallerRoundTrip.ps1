@@ -27,6 +27,9 @@ param(
 
     [string] $WorkRoot,
 
+    [ValidateRange(10, 600)]
+    [int] $ProcessTimeoutSeconds = 120,
+
     [switch] $AllowUserDataRemoval
 )
 
@@ -82,7 +85,11 @@ function Invoke-CheckedProcess {
     )
 
     Write-Host "$Label"
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -PassThru -NoNewWindow
+    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow
+    if (-not $process.WaitForExit($ProcessTimeoutSeconds * 1000)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        throw "$Label timed out after $ProcessTimeoutSeconds seconds."
+    }
     if ($process.ExitCode -ne 0) {
         throw "$Label failed with exit code $($process.ExitCode)."
     }
@@ -275,6 +282,8 @@ if ($hadOpenVrPathFile) {
 
 try {
     New-OpenVrPathFile -Path $openVrPathFile -RuntimePath $runtimeDir
+    $previousSkipSteamVrRegistration = [System.Environment]::GetEnvironmentVariable('WKOPENVR_SKIP_STEAMVR_REGISTRATION', 'Process')
+    [System.Environment]::SetEnvironmentVariable('WKOPENVR_SKIP_STEAMVR_REGISTRATION', '1', 'Process')
 
     for ($pass = 1; $pass -le $Passes; $pass++) {
         Write-Host "Installer round-trip pass $pass of $Passes"
@@ -298,6 +307,10 @@ try {
     }
 }
 finally {
+    if (Get-Variable -Name previousSkipSteamVrRegistration -Scope Script -ErrorAction SilentlyContinue) {
+        [System.Environment]::SetEnvironmentVariable('WKOPENVR_SKIP_STEAMVR_REGISTRATION', $previousSkipSteamVrRegistration, 'Process')
+    }
+
     if ($hadOpenVrPathFile) {
         New-Item -ItemType Directory -Force -Path $openVrDir | Out-Null
         Copy-Item -LiteralPath $openVrBackup -Destination $openVrPathFile -Force

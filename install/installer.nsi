@@ -69,6 +69,7 @@ VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
 
 Var vrRuntimePath
+Var skipSteamVrRegistration
 
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
@@ -162,6 +163,8 @@ Section "Install"
     ; Always re-resolve the runtime path so a moved SteamVR is picked up
     ; even when upgrading over a previous install whose registry value is stale.
     !insertmacro ResolveRuntimePath
+
+    ReadEnvStr $skipSteamVrRegistration "WKOPENVR_SKIP_STEAMVR_REGISTRATION"
 
     SetOutPath "$INSTDIR"
     File /oname=WKOpenVR.exe "${ARTIFACTS_BASEDIR}\WKOpenVR.exe"
@@ -329,9 +332,11 @@ Section "Install"
     ; so the first SteamVR start after install opens WKOpenVR without
     ; the user having to launch the exe by hand. --register-only exits as
     ; soon as the in-process registration call completes (no GLFW window).
+    StrCmp $skipSteamVrRegistration "1" skipRegisterOnly
     DetailPrint "Registering WKOpenVR overlay with SteamVR..."
     ExecWait '"$INSTDIR\WKOpenVR.exe" --register-only' $0
     DetailPrint "Registration exit code: $0"
+    skipRegisterOnly:
 
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WKOpenVR" "DisplayName" "WKOpenVR"
@@ -358,6 +363,8 @@ Section "Uninstall"
     ${CheckProcessNotRunning} "vrserver" "vrserver.exe is still running. Close SteamVR completely and try again."
     ${CheckProcessNotRunning} "WKOpenVR" "WKOpenVR is still running. Close WKOpenVR and try again."
 
+    ReadEnvStr $skipSteamVrRegistration "WKOPENVR_SKIP_STEAMVR_REGISTRATION"
+
     ; Unregister with SteamVR while the exe + manifest still exist on disk.
     ; WKOpenVR.exe must run from $INSTDIR because RemoveApplicationManifest
     ; matches registrations by the exact registered manifest path, which
@@ -370,6 +377,7 @@ Section "Uninstall"
     ; without the wait the next Delete on WKOpenVR.exe or openvr_api.dll
     ; intermittently fails with sharing violation, leaving the install
     ; dir half-removed.
+    StrCmp $skipSteamVrRegistration "1" skipUnregister
     IfFileExists "$INSTDIR\WKOpenVR.exe" 0 skipUnregister
         DetailPrint "Unregistering WKOpenVR overlay from SteamVR..."
         ExecWait '"$INSTDIR\WKOpenVR.exe" --unregister-only' $0

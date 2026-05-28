@@ -475,6 +475,7 @@ jobs:
           Write-Host "Installer: $versioned ($size bytes) sha256=$hash"
 
       - name: Test installer uninstall/reinstall
+        timeout-minutes: 8
         shell: pwsh
         run: |
           ./.github/scripts/Test-InstallerRoundTrip.ps1 `
