@@ -36,6 +36,8 @@ add_library(openvr_pair_common STATIC
 	LogPaths.h
 	ProcessPerfLog.cpp
 	ProcessPerfLog.h
+	RuntimeHealthSummary.cpp
+	RuntimeHealthSummary.h
 	Win32Errors.cpp
 	Win32Errors.h
 	Win32Paths.cpp

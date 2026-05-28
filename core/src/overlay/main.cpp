@@ -5,6 +5,7 @@
 #include "ManifestRegistration.h"
 #include "Migration.h"
 #include "ProcessPerfLog.h"
+#include "RuntimeHealthSummary.h"
 #include "ShellContext.h"
 #include "ShellUi.h"
 #include "Theme.h"
@@ -34,7 +35,9 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <cstdio>
+#include <array>
 #include <exception>
 #include <memory>
 #include <string>
@@ -104,6 +107,64 @@ std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins(
 #endif
 	return plugins;
 }
+
+class CompositorTimingSampler {
+public:
+	void MaybeSample(double nowSeconds)
+	{
+		if (lastSampleSeconds_ > 0.0 && nowSeconds >= lastSampleSeconds_
+			&& nowSeconds - lastSampleSeconds_ < 1.0) {
+			return;
+		}
+		lastSampleSeconds_ = nowSeconds;
+
+		vr::IVRCompositor* compositor = vr::VRCompositor();
+		if (!compositor) return;
+
+		std::array<vr::Compositor_FrameTiming, 128> timings{};
+		for (auto& timing : timings) {
+			timing.m_nSize = sizeof(vr::Compositor_FrameTiming);
+		}
+
+		const uint32_t count = compositor->GetFrameTimings(
+			timings.data(),
+			static_cast<uint32_t>(timings.size()));
+		if (count == 0) return;
+
+		uint32_t maxFrameIndex = lastFrameIndex_;
+		for (uint32_t i = 0; i < count && i < timings.size(); ++i) {
+			const vr::Compositor_FrameTiming& timing = timings[i];
+			if (haveLastFrame_ && timing.m_nFrameIndex <= lastFrameIndex_) {
+				continue;
+			}
+
+			openvr_pair::common::RuntimeCompositorTimingSample sample{};
+			sample.frameIndex = timing.m_nFrameIndex;
+			sample.framePresents = timing.m_nNumFramePresents;
+			sample.droppedFrames = timing.m_nNumDroppedFrames;
+			sample.mispresentedFrames = timing.m_nNumMisPresented;
+			sample.reprojectionFlags = timing.m_nReprojectionFlags;
+			sample.clientFrameIntervalMs = timing.m_flClientFrameIntervalMs;
+			sample.totalRenderGpuMs = timing.m_flTotalRenderGpuMs;
+			sample.compositorRenderGpuMs = timing.m_flCompositorRenderGpuMs;
+			sample.compositorRenderCpuMs = timing.m_flCompositorRenderCpuMs;
+			sample.submitFrameMs = timing.m_flSubmitFrameMs;
+			sample.hmdPoseValid = timing.m_HmdPose.bPoseIsValid;
+			sample.hmdTrackingResult = static_cast<int>(timing.m_HmdPose.eTrackingResult);
+			openvr_pair::common::RecordRuntimeCompositorTiming(sample);
+
+			maxFrameIndex = std::max(maxFrameIndex, timing.m_nFrameIndex);
+		}
+
+		haveLastFrame_ = true;
+		lastFrameIndex_ = maxFrameIndex;
+	}
+
+private:
+	double lastSampleSeconds_ = 0.0;
+	bool haveLastFrame_ = false;
+	uint32_t lastFrameIndex_ = 0;
+};
 
 } // namespace
 
@@ -330,17 +391,18 @@ int main(int argc, char **argv)
 	bool prevDashboardVisible = false;
 	bool prevVrConnected = false;
 	openvr_pair::common::ProcessPerfSampler perfSampler;
+	CompositorTimingSampler compositorSampler;
 
 	while (!glfwWindowShouldClose(window) && !vrOverlay->QuitRequested()) {
-		if (openvr_pair::common::IsDebugLoggingEnabled()) {
-			openvr_pair::common::ProcessPerfSample perfSample{};
-			if (perfSampler.MaybeSample(perfSample)) {
+		openvr_pair::common::ProcessPerfSample perfSample{};
+		if (perfSampler.MaybeSample(perfSample)) {
+			openvr_pair::common::RecordRuntimeProcessSample("overlay", perfSample);
+			if (openvr_pair::common::IsDebugLoggingEnabled()) {
 				const std::string line =
 					openvr_pair::common::FormatProcessPerfSample("overlay", perfSample);
 				openvr_pair::common::DiagnosticLog("perf", "%s", line.c_str());
 			}
-		} else {
-			perfSampler.Reset();
+			openvr_pair::common::MaybeWriteRuntimeHealthSummary();
 		}
 
 		context.TickToggles();
@@ -361,6 +423,9 @@ int main(int argc, char **argv)
 		const bool dashboardVisible = vrOverlay->TickFrame();
 		context.vrConnected = vrOverlay->VrConnected();
 		context.dashboardVisible = dashboardVisible;
+		if (context.vrConnected) {
+			compositorSampler.MaybeSample(glfwGetTime());
+		}
 		if (!haveVrState
 			|| dashboardVisible != prevDashboardVisible
 			|| context.vrConnected != prevVrConnected) {
@@ -464,6 +529,7 @@ int main(int argc, char **argv)
 		glfwWaitEventsTimeout(waitSeconds);
 	}
 
+	openvr_pair::common::WriteRuntimeHealthSummary();
 	vrOverlay.reset();
 
 	for (auto it = plugins.rbegin(); it != plugins.rend(); ++it) {

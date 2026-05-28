@@ -3,6 +3,7 @@
 #include "CalibrationMetrics.h"
 #include "Protocol.h"
 #include "CalibrationRejectReason.h"
+#include "RuntimeHealthSummary.h"
 #include "RotationMatrix3.h"    // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
 
 #include <algorithm>
@@ -768,6 +769,14 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(
 		validSamples.push_back(&sample);
 		++report.validSampleCount;
 		if (sample.pairedMotionValid) ++report.pairedSampleCount;
+		if (sample.trackingPoseStale) ++report.trackingStaleSampleCount;
+		if (sample.trackingPoseJump) ++report.trackingJumpSampleCount;
+		report.maxPoseAgeMs = std::max(
+			report.maxPoseAgeMs,
+			std::max(sample.refPoseAgeMs, sample.targetPoseAgeMs));
+		report.maxPoseGapMs = std::max(
+			report.maxPoseGapMs,
+			std::max(sample.refPoseGapMs, sample.targetPoseGapMs));
 		refMin = refMin.cwiseMin(sample.ref.trans);
 		refMax = refMax.cwiseMax(sample.ref.trans);
 		targetMin = targetMin.cwiseMin(sample.target.trans);
@@ -942,11 +951,16 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(
 		(report.holdoutResiduals.p90M <= report.dynamicLimitM &&
 		 report.holdoutResiduals.rmsM <= 0.100);
 
+	report.trackingHealthPass =
+		report.trackingStaleSampleCount == 0 &&
+		report.trackingJumpSampleCount == 0;
+
 	report.shadowDynamicPass =
 		report.geometryPass &&
 		report.robustResidualPass &&
 		report.holdoutPass &&
-		report.legacyRmsPass;
+		report.legacyRmsPass &&
+		report.trackingHealthPass;
 
 	return report;
 }
@@ -963,13 +977,14 @@ void CalibrationCalc::LogCalibrationQualitySnapshot(
 	const Eigen::Vector3d euler =
 		calibration.rotation().eulerAngles(2, 1, 0) * (180.0 / EIGEN_PI);
 
-	char line1[900];
+	char line1[1100];
 	snprintf(line1, sizeof line1,
 		"[cal-quality][%s] samples=%zu valid=%d paired=%d rot_pairs=%d"
 		" ref_range_cm=(%.2f,%.2f,%.2f) target_range_cm=(%.2f,%.2f,%.2f)"
 		" ref_span_cm=%.2f target_span_cm=%.2f rot_span_deg=%.2f"
+		" stale_samples=%d jump_samples=%d max_pose_age_ms=%.1f max_pose_gap_ms=%.1f"
 		" rot_condition=%.9f trans_rank=%d trans_condition=%.9f"
-		" dynamic_limit_mm=%.2f legacy_pass=%s geometry_pass=%s robust_pass=%s holdout_pass=%s shadow_pass=%s",
+		" dynamic_limit_mm=%.2f legacy_pass=%s geometry_pass=%s robust_pass=%s holdout_pass=%s tracking_pass=%s shadow_pass=%s",
 		label ? label : "candidate",
 		q.sampleCount,
 		q.validSampleCount,
@@ -980,6 +995,10 @@ void CalibrationCalc::LogCalibrationQualitySnapshot(
 		q.refSpanM * 100.0,
 		q.targetSpanM * 100.0,
 		q.rotationSpanDeg,
+		q.trackingStaleSampleCount,
+		q.trackingJumpSampleCount,
+		q.maxPoseAgeMs,
+		q.maxPoseGapMs,
 		q.rotationConditionRatio,
 		q.translationRank,
 		q.translationConditionRatio,
@@ -988,6 +1007,7 @@ void CalibrationCalc::LogCalibrationQualitySnapshot(
 		Bool01(q.geometryPass),
 		Bool01(q.robustResidualPass),
 		Bool01(q.holdoutPass),
+		Bool01(q.trackingHealthPass),
 		Bool01(q.shadowDynamicPass));
 	Metrics::WriteLogAnnotation(line1);
 
@@ -1037,6 +1057,18 @@ void CalibrationCalc::LogCalibrationQualitySnapshot(
 		Bool01(q.robustResidualPass),
 		Bool01(q.holdoutPass));
 	Metrics::WriteLogAnnotation(line3);
+
+	openvr_pair::common::RuntimeCalibrationHealthSample runtimeHealth{};
+	runtimeHealth.valid = true;
+	runtimeHealth.sampleCount = static_cast<int>(q.sampleCount);
+	runtimeHealth.validSampleCount = q.validSampleCount;
+	runtimeHealth.pairedSampleCount = q.pairedSampleCount;
+	runtimeHealth.trackingHealthPass = q.trackingHealthPass;
+	runtimeHealth.shadowDynamicPass = q.shadowDynamicPass;
+	runtimeHealth.residualRmsMm = q.residuals.rmsM * 1000.0;
+	runtimeHealth.residualP95Mm = q.residuals.p95M * 1000.0;
+	runtimeHealth.holdoutRmsMm = q.holdoutResiduals.rmsM * 1000.0;
+	openvr_pair::common::RecordRuntimeCalibrationHealth(runtimeHealth);
 }
 
 

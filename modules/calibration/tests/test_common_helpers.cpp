@@ -2,6 +2,7 @@
 #include "JsonUtil.h"
 #include "LogPaths.h"
 #include "ProcessPerfLog.h"
+#include "RuntimeHealthSummary.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -209,4 +210,67 @@ TEST(ProcessPerfLog, FormatsStableLogFields)
 	EXPECT_NE(std::string::npos, line.find("working_set_mb=128.00"));
 	EXPECT_NE(std::string::npos, line.find("private_mb=64.00"));
 	EXPECT_NE(std::string::npos, line.find("handles=55"));
+}
+
+TEST(RuntimeHealthSummary, FormatsRuntimeHealthJson)
+{
+	openvr_pair::common::ResetRuntimeHealthSummaryForTests();
+
+	openvr_pair::common::ProcessPerfSample process{};
+	process.snapshot.processId = 1234;
+	process.snapshot.logicalProcessors = 8;
+	process.snapshot.memoryValid = true;
+	process.snapshot.workingSetBytes = 128ULL * 1024ULL * 1024ULL;
+	process.snapshot.privateBytes = 64ULL * 1024ULL * 1024ULL;
+	process.snapshot.handleCountValid = true;
+	process.snapshot.handleCount = 55;
+	process.cpuValid = true;
+	process.cpuPctTotal = 0.31;
+	process.cpuPctOneCore = 2.50;
+	openvr_pair::common::RecordRuntimeProcessSample("overlay", process);
+
+	openvr_pair::common::RuntimeCompositorTimingSample frame{};
+	frame.frameIndex = 42;
+	frame.framePresents = 2;
+	frame.droppedFrames = 1;
+	frame.mispresentedFrames = 1;
+	frame.reprojectionFlags = 1;
+	frame.clientFrameIntervalMs = 11.1;
+	frame.totalRenderGpuMs = 6.4;
+	frame.hmdPoseValid = false;
+	openvr_pair::common::RecordRuntimeCompositorTiming(frame);
+
+	openvr_pair::common::RuntimePoseHealthSample pose{};
+	pose.refPoseAgeMs = 3.0;
+	pose.targetPoseAgeMs = 5.0;
+	pose.refPoseGapMs = 11.0;
+	pose.targetPoseGapMs = 22.0;
+	pose.stale = true;
+	pose.jump = true;
+	openvr_pair::common::RecordRuntimePoseHealth(pose);
+
+	openvr_pair::common::RuntimeCalibrationHealthSample calibration{};
+	calibration.valid = true;
+	calibration.sampleCount = 60;
+	calibration.validSampleCount = 60;
+	calibration.pairedSampleCount = 58;
+	calibration.trackingHealthPass = false;
+	calibration.shadowDynamicPass = false;
+	calibration.residualRmsMm = 2.5;
+	openvr_pair::common::RecordRuntimeCalibrationHealth(calibration);
+
+	const std::string body = openvr_pair::common::FormatRuntimeHealthSummaryForTests();
+	picojson::value root;
+	std::string err;
+	ASSERT_TRUE(openvr_pair::common::json::ParseObject(root, body, &err)) << err;
+
+	EXPECT_NE(std::string::npos, body.find("\"role\": \"overlay\""));
+	EXPECT_NE(std::string::npos, body.find("\"working_set_mb\": 128.000"));
+	EXPECT_NE(std::string::npos, body.find("\"dropped_frames\": 1"));
+	EXPECT_NE(std::string::npos, body.find("\"hmd_pose_invalid_frames\": 1"));
+	EXPECT_NE(std::string::npos, body.find("\"stale_samples\": 1"));
+	EXPECT_NE(std::string::npos, body.find("\"jump_samples\": 1"));
+	EXPECT_NE(std::string::npos, body.find("\"tracking_health_pass\": false"));
+
+	openvr_pair::common::ResetRuntimeHealthSummaryForTests();
 }

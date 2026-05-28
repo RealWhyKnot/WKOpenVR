@@ -4,12 +4,19 @@
 #include "CalibrationMetrics.h"
 #include "ControllerInput.h"
 #include "HeadMountPoseSampling.h"
+#include "RuntimeHealthSummary.h"
 #include "RotationMatrix3.h"
 #include "VRState.h"
 
 #include <GLFW/glfw3.h>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -164,6 +171,86 @@ CalibrationCalc calibration;
 		return Pose(xform);
 	}
 
+	struct PoseHealthProbe {
+		double ageMs = 0.0;
+		double gapMs = 0.0;
+		bool stale = false;
+		bool jump = false;
+	};
+
+	struct PoseHealthState {
+		bool seeded = false;
+		LARGE_INTEGER sampleTime{};
+		Eigen::Vector3d pos = Eigen::Vector3d::Zero();
+		Eigen::Quaterniond rot = Eigen::Quaterniond::Identity();
+	};
+
+	inline double QpcDeltaMs(LONGLONG newer, LONGLONG older, LONGLONG frequency)
+	{
+		if (frequency <= 0 || newer <= older) return 0.0;
+		return (static_cast<double>(newer - older) * 1000.0) /
+			static_cast<double>(frequency);
+	}
+
+	PoseHealthProbe ProbePoseHealth(
+		int deviceId,
+		const Pose& pose,
+		const LARGE_INTEGER& sampleTime,
+		const LARGE_INTEGER& now,
+		const LARGE_INTEGER& frequency)
+	{
+		constexpr double kStalePoseAgeMs = 120.0;
+		constexpr double kStalePoseGapMs = 150.0;
+		constexpr double kJumpTranslationM = 0.50;
+		constexpr double kJumpSpeedMps = 3.0;
+		constexpr double kJumpAngleDeg = 75.0;
+		constexpr double kJumpAngularSpeedDegPerSec = 360.0;
+
+		static std::array<PoseHealthState, vr::k_unMaxTrackedDeviceCount> s_state;
+
+		PoseHealthProbe out{};
+		if (deviceId < 0 || deviceId >= static_cast<int>(s_state.size())
+			|| sampleTime.QuadPart <= 0 || frequency.QuadPart <= 0) {
+			return out;
+		}
+
+		out.ageMs = QpcDeltaMs(now.QuadPart, sampleTime.QuadPart, frequency.QuadPart);
+		out.stale = out.ageMs > kStalePoseAgeMs;
+
+		PoseHealthState& state = s_state[static_cast<size_t>(deviceId)];
+		const Eigen::Quaterniond currentRot(pose.rot);
+		if (state.seeded && sampleTime.QuadPart > state.sampleTime.QuadPart) {
+			out.gapMs = QpcDeltaMs(
+				sampleTime.QuadPart,
+				state.sampleTime.QuadPart,
+				frequency.QuadPart);
+			if (out.gapMs > kStalePoseGapMs) {
+				out.stale = true;
+			}
+
+			const double dtSeconds = out.gapMs / 1000.0;
+			if (dtSeconds > 0.0 && dtSeconds < 1.0) {
+				const double translationDeltaM = (pose.trans - state.pos).norm();
+				const double angleDeg =
+					currentRot.angularDistance(state.rot) * (180.0 / EIGEN_PI);
+				const double speedMps = translationDeltaM / dtSeconds;
+				const double angularSpeedDegPerSec = angleDeg / dtSeconds;
+				out.jump =
+					(translationDeltaM > kJumpTranslationM && speedMps > kJumpSpeedMps) ||
+					(angleDeg > kJumpAngleDeg && angularSpeedDegPerSec > kJumpAngularSpeedDegPerSec);
+			}
+		}
+
+		if (!state.seeded || sampleTime.QuadPart >= state.sampleTime.QuadPart) {
+			state.seeded = true;
+			state.sampleTime = sampleTime;
+			state.pos = pose.trans;
+			state.rot = currentRot.normalized();
+		}
+
+		return out;
+	}
+
 	// Velocity-based extrapolation of a reference pose by `dtSeconds` (positive = forward
 	// in time, negative = backward). Mutates `pose` in place.
 	//
@@ -222,6 +309,7 @@ CalibrationCalc calibration;
 	bool CollectSample(const CalibrationContext& ctx)
 	{
 		vr::DriverPose_t reference, target;
+		int targetSourceDeviceId = ctx.targetID;
 		reference.poseIsValid = false;
 		reference.result = vr::ETrackingResult::TrackingResult_Uninitialized;
 		target.poseIsValid = false;
@@ -258,6 +346,7 @@ CalibrationCalc calibration;
 		}
 
 		if (headMountEngaged) {
+			targetSourceDeviceId = ctx.headMount.deviceID;
 			const vr::DriverPose_t& trackerRaw = ctx.devicePoses[ctx.headMount.deviceID];
 			if (trackerRaw.poseIsValid
 				&& trackerRaw.result == vr::ETrackingResult::TrackingResult_Running_OK)
@@ -395,6 +484,11 @@ CalibrationCalc calibration;
 		}
 		if (!ok)
 		{
+			openvr_pair::common::RuntimePoseHealthSample runtimeHealth{};
+			runtimeHealth.invalid = true;
+			runtimeHealth.refTrackingResult = static_cast<int>(reference.result);
+			runtimeHealth.targetTrackingResult = static_cast<int>(target.result);
+			openvr_pair::common::RecordRuntimePoseHealth(runtimeHealth);
 			if (CalCtx.state != CalibrationState::Continuous) {
 				CalCtx.Log("Aborting calibration!\n");
 				CalCtx.state = CalibrationState::None;
@@ -425,6 +519,26 @@ CalibrationCalc calibration;
 		constexpr double kPairedMotionDeltaMeters = 0.002;
 		const Pose refPose = ConvertPose(reference);
 		const Pose tgtPose = ConvertPose(target);
+		LARGE_INTEGER nowQpc{};
+		static LARGE_INTEGER qpcFrequency{};
+		static bool haveQpcFrequency = false;
+		QueryPerformanceCounter(&nowQpc);
+		if (!haveQpcFrequency) {
+			QueryPerformanceFrequency(&qpcFrequency);
+			haveQpcFrequency = true;
+		}
+		const PoseHealthProbe refHealth = ProbePoseHealth(
+			ctx.referenceID,
+			refPose,
+			ctx.devicePoseSampleTimes[ctx.referenceID],
+			nowQpc,
+			qpcFrequency);
+		const PoseHealthProbe targetHealth = ProbePoseHealth(
+			targetSourceDeviceId,
+			tgtPose,
+			ctx.devicePoseSampleTimes[targetSourceDeviceId],
+			nowQpc,
+			qpcFrequency);
 		bool pairedMotionValid = true;
 		{
 			CalibrationContext& mctx = const_cast<CalibrationContext&>(ctx);
@@ -462,7 +576,23 @@ CalibrationCalc calibration;
 
 		Sample collectedSample(refPose, tgtPose, glfwGetTime());
 		collectedSample.pairedMotionValid = pairedMotionValid;
+		collectedSample.refPoseAgeMs = refHealth.ageMs;
+		collectedSample.targetPoseAgeMs = targetHealth.ageMs;
+		collectedSample.refPoseGapMs = refHealth.gapMs;
+		collectedSample.targetPoseGapMs = targetHealth.gapMs;
+		collectedSample.trackingPoseStale = refHealth.stale || targetHealth.stale;
+		collectedSample.trackingPoseJump = refHealth.jump || targetHealth.jump;
 		calibration.PushSample(collectedSample);
+		openvr_pair::common::RuntimePoseHealthSample runtimeHealth{};
+		runtimeHealth.refPoseAgeMs = refHealth.ageMs;
+		runtimeHealth.targetPoseAgeMs = targetHealth.ageMs;
+		runtimeHealth.refPoseGapMs = refHealth.gapMs;
+		runtimeHealth.targetPoseGapMs = targetHealth.gapMs;
+		runtimeHealth.stale = collectedSample.trackingPoseStale;
+		runtimeHealth.jump = collectedSample.trackingPoseJump;
+		runtimeHealth.refTrackingResult = static_cast<int>(reference.result);
+		runtimeHealth.targetTrackingResult = static_cast<int>(target.result);
+		openvr_pair::common::RecordRuntimePoseHealth(runtimeHealth);
 
 		// Feed the auto-lock detector with the same sample. We use the world
 		// poses directly (not the post-calibration relative pose) so the

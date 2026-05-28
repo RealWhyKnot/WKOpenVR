@@ -218,6 +218,7 @@ TEST(CalibrationCalcTest, QualityReportPassesWellCoveredLegacyFit) {
     EXPECT_TRUE(report.geometryPass);
     EXPECT_TRUE(report.robustResidualPass);
     EXPECT_TRUE(report.holdoutPass);
+    EXPECT_TRUE(report.trackingHealthPass);
     EXPECT_TRUE(report.shadowDynamicPass);
     const CalibrationQualityVerdict verdict =
         EvaluateCalibrationQualityVerdict(report);
@@ -228,6 +229,32 @@ TEST(CalibrationCalcTest, QualityReportPassesWellCoveredLegacyFit) {
     EXPECT_TRUE(std::isfinite(report.dynamicLimitM));
     EXPECT_LT(report.residuals.rmsM, 1e-4);
     EXPECT_LT(report.holdoutResiduals.rmsM, 1e-3);
+}
+
+TEST(CalibrationCalcTest, QualityReportRejectsStaleTrackingInShadowVerdict) {
+    const double yawRad = 15.0 * EIGEN_PI / 180.0;
+    Eigen::Vector3d trans(0.35, -0.08, 0.22);
+    Eigen::AffineCompact3d expected = MakeTransform(yawRad, 0.0, 0.0, trans);
+
+    CalibrationCalc calc;
+    for (auto& s : MakeSamplePairs(expected, kSampleCount, 0x5150)) {
+        s.refPoseAgeMs = 130.0;
+        s.targetPoseAgeMs = 131.0;
+        s.trackingPoseStale = true;
+        calc.PushSample(s);
+    }
+
+    ASSERT_TRUE(calc.ComputeOneshot(false));
+    const CalibrationQualityReport report =
+        calc.EvaluateCalibrationQuality(calc.Transformation(), true, false);
+
+    EXPECT_TRUE(report.legacyRmsPass);
+    EXPECT_TRUE(report.geometryPass);
+    EXPECT_TRUE(report.robustResidualPass);
+    EXPECT_FALSE(report.trackingHealthPass);
+    EXPECT_FALSE(report.shadowDynamicPass);
+    EXPECT_EQ(report.trackingStaleSampleCount, kSampleCount);
+    EXPECT_GT(report.maxPoseAgeMs, 120.0);
 }
 
 TEST(CalibrationCalcTest, QualityReportRejectsLowGeometryEvenWhenRmsIsSmall) {

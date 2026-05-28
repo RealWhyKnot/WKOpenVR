@@ -64,6 +64,12 @@ struct Sample
 	// callers (tests, replay harness, the two `valid=true` constructors)
 	// behave as they always did.
 	bool pairedMotionValid = true;
+	double refPoseAgeMs = 0.0;
+	double targetPoseAgeMs = 0.0;
+	double refPoseGapMs = 0.0;
+	double targetPoseGapMs = 0.0;
+	bool trackingPoseStale = false;
+	bool trackingPoseJump = false;
 	Sample() : valid(false), timestamp(0) { }
 	Sample(Pose ref, Pose target, double timestamp) : valid(true), ref(ref), target(target), timestamp(timestamp){ }
 };
@@ -83,6 +89,8 @@ struct CalibrationQualityReport {
 	size_t sampleCount = 0;
 	int validSampleCount = 0;
 	int pairedSampleCount = 0;
+	int trackingStaleSampleCount = 0;
+	int trackingJumpSampleCount = 0;
 	int validRotationPairCount = 0;
 	int translationRank = 0;
 	Eigen::Vector3d refRangeM = Eigen::Vector3d::Zero();
@@ -90,6 +98,8 @@ struct CalibrationQualityReport {
 	double refSpanM = 0.0;
 	double targetSpanM = 0.0;
 	double rotationSpanDeg = 0.0;
+	double maxPoseAgeMs = 0.0;
+	double maxPoseGapMs = 0.0;
 	double rotationConditionRatio = 0.0;
 	double translationConditionRatio = 0.0;
 	double dynamicLimitM = std::numeric_limits<double>::infinity();
@@ -97,6 +107,7 @@ struct CalibrationQualityReport {
 	bool geometryPass = false;
 	bool robustResidualPass = false;
 	bool holdoutPass = false;
+	bool trackingHealthPass = true;
 	bool shadowDynamicPass = false;
 	Eigen::Vector3d posOffsetM = Eigen::Vector3d::Zero();
 	CalibrationResidualStats residuals;

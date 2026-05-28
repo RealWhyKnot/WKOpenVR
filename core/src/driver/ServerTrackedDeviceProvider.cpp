@@ -6,6 +6,7 @@
 #include "Logging.h"
 #include "ProcessPerfLog.h"
 #include "PredictionSmoothingMath.h"
+#include "RuntimeHealthSummary.h"
 #include "ServerTrackedDeviceProviderConfigPacking.h"
 #include "inputhealth/PathClassifier.h"
 #include "inputhealth/SerialHash.h"
@@ -323,6 +324,10 @@ void ServerTrackedDeviceProvider::RunFrame()
 	const std::string line =
 		openvr_pair::common::FormatProcessPerfSample("driver-host", perfSample);
 	LOG("[perf] %s", line.c_str());
+	openvr_pair::common::RecordRuntimeProcessSample("driver-host", perfSample);
+	openvr_pair::common::MaybeWriteRuntimeHealthSummary(
+		10000,
+		L"runtime_health_driver_host.json");
 }
 
 void ServerTrackedDeviceProvider::Cleanup()
