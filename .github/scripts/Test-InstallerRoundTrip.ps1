@@ -51,9 +51,12 @@ function Assert-PathExists {
 }
 
 function Assert-PathMissing {
-    param([Parameter(Mandatory=$true)][string] $Path)
+    param(
+        [Parameter(Mandatory=$true)][string] $Path,
+        [switch] $DescribeContents
+    )
     if (Test-Path -LiteralPath $Path) {
-        if ((Get-Item -LiteralPath $Path -Force).PSIsContainer) {
+        if ($DescribeContents -and (Get-Item -LiteralPath $Path -Force).PSIsContainer) {
             Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
                 Select-Object -First 50 FullName |
                 Format-Table -AutoSize |
@@ -62,6 +65,30 @@ function Assert-PathMissing {
         }
         throw "Expected path to be removed: $Path"
     }
+}
+
+function Wait-UninstalledState {
+    param(
+        [Parameter(Mandatory=$true)][string] $InstallDir,
+        [Parameter(Mandatory=$true)][string] $RuntimePath,
+        [Parameter(Mandatory=$true)][string] $LocalLowWkRoot,
+        [Parameter(Mandatory=$true)][int] $TimeoutSeconds
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastError = $null
+    do {
+        try {
+            Assert-UninstalledState -InstallDir $InstallDir -RuntimePath $RuntimePath -LocalLowWkRoot $LocalLowWkRoot
+            return
+        } catch {
+            $lastError = $_
+            Start-Sleep -Milliseconds 500
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    Assert-PathMissing -Path $InstallDir -DescribeContents
+    if ($lastError) { throw $lastError }
 }
 
 function Test-AnyRegistryPath {
@@ -310,7 +337,7 @@ try {
 
         $uninstaller = Join-Path $installDir 'Uninstall.exe'
         Invoke-CheckedProcess -FilePath $uninstaller -ArgumentList '/S' -Label "Uninstalling WKOpenVR"
-        Assert-UninstalledState -InstallDir $installDir -RuntimePath $runtimeDir -LocalLowWkRoot $localLowWkRoot
+        Wait-UninstalledState -InstallDir $installDir -RuntimePath $runtimeDir -LocalLowWkRoot $localLowWkRoot -TimeoutSeconds $ProcessTimeoutSeconds
     }
 }
 finally {
