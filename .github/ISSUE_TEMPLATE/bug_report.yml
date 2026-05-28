@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Before filing, check the README and wiki: https://github.com/RealWhyKnot/WKOpenVR/wiki
-        If WKOpenVR can open, use **Logs -> Report bug** first. It prepares a sanitized report text file from recent logs and opens this form.
+        If WKOpenVR can open, turn on **Enable debug logging**, reproduce the issue, then use **Report bug**. It prepares a sanitized report text file from recent logs and opens this form.
 
   - type: textarea
     id: what-happened
@@ -47,7 +47,7 @@ body:
     id: logs
     attributes:
       label: Diagnostic report, logs, or console output
-      description: Attach the sanitized WKOpenVR bug report .txt file if you used Logs -> Report bug. Otherwise paste relevant logs, build errors, stack traces, or screenshots. Redact tokens and private URLs.
+      description: Attach the sanitized WKOpenVR bug report .txt file if you used Report bug after reproducing with debug logging enabled. Otherwise paste relevant logs, build errors, stack traces, or screenshots. Redact tokens and private URLs.
       render: text
     validations:
       required: false

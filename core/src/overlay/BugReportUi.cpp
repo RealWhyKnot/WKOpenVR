@@ -1,6 +1,7 @@
 #include "BugReportUi.h"
 
 #include "BugReport.h"
+#include "DebugLogging.h"
 #include "ShellContext.h"
 #include "UiControls.h"
 
@@ -22,7 +23,7 @@ namespace openvr_pair::overlay {
 
 void DrawBugReportButton(ShellContext& context)
 {
-	if (ImGui::Button("Report bug##report_bug")) {
+	auto createReport = [&]() {
 		common::BugReportOptions options;
 		options.logRoot = context.logRoot;
 		options.version = OPENVR_PAIR_VERSION_STRING;
@@ -43,10 +44,47 @@ void DrawBugReportButton(ShellContext& context)
 			context.SetStatus(
 				"Bug report opened. A sanitized report file is selected in Explorer and copied to the clipboard.");
 		}
+	};
+
+	if (ImGui::Button("Report bug##report_bug")) {
+		if (!common::IsDebugLoggingEnabled()) {
+			ImGui::OpenPopup("Enable debug logging first?##bug_report_debug_prompt");
+		} else {
+			createReport();
+		}
 	}
 	ui::TooltipForLastItem(
 		"Prepare a sanitized text report from recent WKOpenVR logs, copy it to the clipboard, "
-		"select it in Explorer, and open the GitHub bug form.");
+		"select it in Explorer, and open the GitHub bug form. Turn debug logging on before reproducing "
+		"the issue for a more useful report.");
+
+	if (ImGui::BeginPopupModal(
+		"Enable debug logging first?##bug_report_debug_prompt",
+		nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped(
+			"Debug logging is off. Turn it on, reproduce the issue, then click Report bug again "
+			"so the report includes useful diagnostics.");
+		ImGui::Spacing();
+		if (ImGui::Button("Enable debug logging")) {
+			if (common::SetDebugLoggingEnabled(true)) {
+				context.SetStatus("Debug logging enabled. Reproduce the issue, then click Report bug again.");
+			} else {
+				context.SetStatus("Could not enable debug logging.");
+			}
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Create report anyway")) {
+			createReport();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel")) {
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
 }
 
 } // namespace openvr_pair::overlay
