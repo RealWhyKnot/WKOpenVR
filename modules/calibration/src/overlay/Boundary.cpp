@@ -402,6 +402,24 @@ bool ApplySteamVrFloorOffsetFromDevice(
     return ApplySteamVrFloorOffset(standingY, errorBuffer, errorBufferSize);
 }
 
+double BoundaryFloorYAfterApply(
+    double measuredFloorYStanding,
+    bool moveSteamVrFloor)
+{
+    if (!std::isfinite(measuredFloorYStanding)) {
+        return 0.0;
+    }
+    return moveSteamVrFloor ? 0.0 : measuredFloorYStanding;
+}
+
+bool BoundaryControllerMatchesTargetTrackingSystem(
+    const std::string& controllerTrackingSystem,
+    const std::string& targetTrackingSystem)
+{
+    return !targetTrackingSystem.empty()
+        && controllerTrackingSystem == targetTrackingSystem;
+}
+
 // ---------------------------------------------------------------------------
 // Chaperone push
 // ---------------------------------------------------------------------------

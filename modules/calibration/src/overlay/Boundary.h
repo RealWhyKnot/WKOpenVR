@@ -83,6 +83,14 @@ bool ApplySteamVrFloorOffsetFromDevice(
     char* errorBuffer = nullptr,
     size_t errorBufferSize = 0);
 
+double BoundaryFloorYAfterApply(
+    double measuredFloorYStanding,
+    bool moveSteamVrFloor);
+
+bool BoundaryControllerMatchesTargetTrackingSystem(
+    const std::string& controllerTrackingSystem,
+    const std::string& targetTrackingSystem);
+
 struct ChaperoneWorkingSet {
     bool valid = false;
     float playAreaX = 0.0f;

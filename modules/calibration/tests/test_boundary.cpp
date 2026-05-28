@@ -342,6 +342,19 @@ TEST(BoundaryTransformTest, ControllerContactOffsetCasesMatchKnownControllerType
     }
 }
 
+TEST(BoundaryTransformTest, FloorApplyDefaultsToBoundaryLocalHeight) {
+    EXPECT_NEAR(BoundaryFloorYAfterApply(0.42, false), 0.42, 1e-9);
+    EXPECT_NEAR(BoundaryFloorYAfterApply(-0.12, false), -0.12, 1e-9);
+    EXPECT_NEAR(BoundaryFloorYAfterApply(0.42, true), 0.0, 1e-9);
+}
+
+TEST(BoundaryTransformTest, ControllerTargetMatchRequiresConfiguredTargetSystem) {
+    EXPECT_FALSE(BoundaryControllerMatchesTargetTrackingSystem("lighthouse", ""));
+    EXPECT_FALSE(BoundaryControllerMatchesTargetTrackingSystem("", "lighthouse"));
+    EXPECT_FALSE(BoundaryControllerMatchesTargetTrackingSystem("oculus", "lighthouse"));
+    EXPECT_TRUE(BoundaryControllerMatchesTargetTrackingSystem("lighthouse", "lighthouse"));
+}
+
 // ---------------------------------------------------------------------------
 // CaptureSession
 // ---------------------------------------------------------------------------

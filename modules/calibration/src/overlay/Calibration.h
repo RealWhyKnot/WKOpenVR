@@ -166,8 +166,8 @@ struct HeadMountConfig {
 // One vertex of the safety boundary polygon.
 struct BoundaryVertex { double x = 0, y = 0, z = 0; };
 
-// Safety boundary for SteamVR chaperone. Legacy boundaries store vertices in
-// target space and transform them into standing space before push. New
+// Safety boundary for SteamVR chaperone. Target-space boundaries follow the
+// calibrated tracker space and transform into standing space before push;
 // standing-space boundaries store SteamVR standing-space vertices directly.
 // priorChaperone snapshots the user's pre-existing SteamVR chaperone before
 // our first push so the "Restore original" action returns the user to where
