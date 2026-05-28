@@ -15,6 +15,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **questapp:** Add dev adb tools (cdfa4f6)
 - **questapp:** Add Quest companion setup module (b4c6122)
 - **inputhealth:** Widen safe drift learning (9f81724)
+- **runtime:** Add health summaries (a52ed25)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
