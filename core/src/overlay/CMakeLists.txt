@@ -129,15 +129,12 @@ if(NOT WKOPENVR_RELEASE_BUILD)
 	target_link_libraries(OpenVRPairOverlay PRIVATE wkopenvr_testharness)
 endif()
 
-file(READ "${CMAKE_SOURCE_DIR}/version.txt" OPENVR_PAIR_VERSION_RAW)
-string(STRIP "${OPENVR_PAIR_VERSION_RAW}" OPENVR_PAIR_VERSION_STAMP)
-
 target_compile_definitions(OpenVRPairOverlay PRIVATE
 	NOMINMAX
 	UNICODE
 	_UNICODE
 	${OPENVR_PAIR_OVERLAY_DEFINES}
-	"OPENVR_PAIR_VERSION_STRING=\"${OPENVR_PAIR_VERSION_STAMP}\"")
+	"OPENVR_PAIR_VERSION_STRING=\"${WKOPENVR_VERSION_STAMP}\"")
 
 if(MSVC)
 	target_link_options(OpenVRPairOverlay PRIVATE /ENTRY:mainCRTStartup)

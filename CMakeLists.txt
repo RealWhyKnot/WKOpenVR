@@ -12,6 +12,16 @@ project("OpenVR-WKPair")
 option(WKOPENVR_RELEASE_BUILD "Skip modules marked disabled-in-release" OFF)
 include(${CMAKE_SOURCE_DIR}/cmake/WKOpenVRModules.cmake)
 
+set(WKOPENVR_VERSION_FILE "${CMAKE_SOURCE_DIR}/version.txt")
+set(WKOPENVR_VERSION_STAMP "0.0.0.0-dev")
+if(EXISTS "${WKOPENVR_VERSION_FILE}")
+	file(READ "${WKOPENVR_VERSION_FILE}" WKOPENVR_VERSION_RAW)
+	string(STRIP "${WKOPENVR_VERSION_RAW}" WKOPENVR_VERSION_STAMP)
+	if("${WKOPENVR_VERSION_STAMP}" STREQUAL "")
+		set(WKOPENVR_VERSION_STAMP "0.0.0.0-dev")
+	endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Compiler cache (sccache preferred, ccache fallback).
 # Set CMAKE_C/CXX_COMPILER_LAUNCHER so every C/C++ target benefits.

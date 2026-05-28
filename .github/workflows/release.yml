@@ -182,7 +182,7 @@ jobs:
         # The minhook submodule declares cmake_minimum_required(2.8.12) which
         # CMake 4.x rejects. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 lets us configure
         # without forking. -Wno-dev silences developer-mode warnings from minhook.
-        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -S . -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
+        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
 
       - name: Build
         shell: pwsh
