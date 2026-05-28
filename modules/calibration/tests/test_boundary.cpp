@@ -5,6 +5,7 @@
 
 #include "Boundary.h"
 #include "BoundaryCapture.h"
+#include "BoundaryFloorCapture.h"
 #include "BoundaryPreview.h"
 
 #include <Eigen/Geometry>
@@ -403,6 +404,48 @@ TEST(CaptureSessionTest, ProjectedPositionUsesControllerXZAndFloorY) {
     EXPECT_NEAR(verts[0].x, 1.25, 1e-9);
     EXPECT_NEAR(verts[0].y, -2.50, 1e-9);
     EXPECT_NEAR(verts[0].z, -0.75, 1e-9);
+}
+
+TEST(FloorCaptureSessionTest, TracksLowestControllerImmediately) {
+    FloorCaptureSession floor;
+    floor.Begin(0.10, 2.60);
+
+    Eigen::Affine3d first = Eigen::Affine3d::Identity();
+    first.translation() = Eigen::Vector3d(0.0, 0.40, 0.0);
+    EXPECT_TRUE(floor.Observe(first, 4, "lighthouse"));
+
+    ASSERT_TRUE(floor.candidate().valid);
+    EXPECT_NEAR(floor.candidate().floorY, 0.40, 1e-9);
+    EXPECT_EQ(floor.candidate().deviceId, 4);
+
+    Eigen::Affine3d higher = Eigen::Affine3d::Identity();
+    higher.translation() = Eigen::Vector3d(1.0, 0.75, 1.0);
+    EXPECT_FALSE(floor.Observe(higher, 5, "lighthouse"));
+    EXPECT_NEAR(floor.candidate().floorY, 0.40, 1e-9);
+    EXPECT_EQ(floor.candidate().sampleCount, 2u);
+
+    Eigen::Affine3d lower = Eigen::Affine3d::Identity();
+    lower.translation() = Eigen::Vector3d(0.25, -0.02, -0.5);
+    EXPECT_TRUE(floor.Observe(lower, 6, "lighthouse"));
+
+    ASSERT_TRUE(floor.candidate().valid);
+    EXPECT_NEAR(floor.candidate().floorY, -0.02, 1e-9);
+    EXPECT_EQ(floor.candidate().deviceId, 6);
+    EXPECT_EQ(floor.candidate().sampleCount, 3u);
+}
+
+TEST(FloorCaptureSessionTest, BuildsFloorMarkerAtControllerXZ) {
+    Eigen::Affine3d pose = Eigen::Affine3d::Identity();
+    pose.translation() = Eigen::Vector3d(1.25, 0.08, -0.75);
+
+    const auto marker = BuildFloorMarkerVertices(pose, -0.03, 0.20);
+    ASSERT_EQ(marker.size(), 4u);
+    EXPECT_NEAR(marker[0].x, 1.05, 1e-9);
+    EXPECT_NEAR(marker[0].y, -0.03, 1e-9);
+    EXPECT_NEAR(marker[0].z, -0.95, 1e-9);
+    EXPECT_NEAR(marker[2].x, 1.45, 1e-9);
+    EXPECT_NEAR(marker[2].y, -0.03, 1e-9);
+    EXPECT_NEAR(marker[2].z, -0.55, 1e-9);
 }
 
 TEST(CaptureSessionTest, FallsBackToControllerPositionWhenControllerIsBelowFloor) {
