@@ -767,7 +767,13 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 	g_headMountShadowOffset.hasLastCandidate = true;
 
 	ShadowGateInput gateInput{};
-	gateInput.toggleEnabled = ctx.headMount.autoCorrectOffset;
+	// Demoted to shadow-log-only: the head-mount offset auto-correct never
+	// applies. The gate still computes wouldApply (logged below as
+	// shadow_offset_would_apply) so we can watch what it *would* do, but
+	// readyToApply is forced off, so headFromTracker is only ever set via the
+	// manual offset modal. To re-enable auto-apply for testing, restore this to
+	// ctx.headMount.autoCorrectOffset.
+	gateInput.toggleEnabled = false;
 	gateInput.windowSolved = true;
 	gateInput.posesFresh = hmdFresh && trackerFresh;
 	gateInput.targetMatches = targetMatches;

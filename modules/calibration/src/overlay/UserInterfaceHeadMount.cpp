@@ -348,15 +348,10 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 			"floating tracker in-headset. The continuous calibration math still uses its pose internally.");
 	}
 
-	ImGui::Spacing();
-	if (ImGui::Checkbox("Auto-correct headset tracker offset", &hm.autoCorrectOffset)) {
-		SaveProfile(CalCtx);
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip(
-			"Let continuous calibration update the saved tracker-to-headset offset after multiple stable checks.\n"
-			"When disabled, the same checks are logged without changing the saved offset.");
-	}
+	// Auto-correct headset tracker offset is demoted to shadow-log-only: the
+	// continuous-cal offset check is logged (shadow_offset_would_apply) but never
+	// changes the saved offset, so the toggle is intentionally hidden. The offset
+	// is set via the manual offset calibration.
 
 	ImGui::Spacing();
 	{
