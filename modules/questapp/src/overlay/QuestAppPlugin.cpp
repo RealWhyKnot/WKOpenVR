@@ -68,9 +68,6 @@ void QuestAppPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
         openvr_pair::overlay::ui::DrawTabItem("Setup", [&] { DrawSetup(context); });
         openvr_pair::overlay::ui::DrawTabItem("Boundary", [&] { DrawBoundaryGuide(); });
         openvr_pair::overlay::ui::DrawTabItem("Companion", [&] { DrawCompanion(context); });
-#if WKOPENVR_BUILD_IS_DEV
-        openvr_pair::overlay::ui::DrawTabItem("ADB Dev", [&] { DrawAdbDevTools(); });
-#endif
     }
 
     if (!status_.empty()) {
@@ -276,6 +273,11 @@ void QuestAppPlugin::RefreshPackages()
 }
 
 #if WKOPENVR_BUILD_IS_DEV
+void QuestAppPlugin::DrawDevTools(openvr_pair::overlay::ShellContext&)
+{
+    DrawAdbDevTools();
+}
+
 void QuestAppPlugin::DrawAdbDevTools()
 {
     const auto& pal = openvr_pair::overlay::ui::GetPalette();

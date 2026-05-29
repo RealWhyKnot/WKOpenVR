@@ -75,6 +75,9 @@ struct SpatialPrimitive {
     bool closeLoop = false;
     int layer = 0;
     SpatialStyle style;
+    // When set, a polyline path is stroked with a newest-white -> oldest-gray
+    // age gradient instead of a single flat color.
+    bool ageFade = false;
 };
 
 struct SpatialRenderCommand {
@@ -85,6 +88,7 @@ struct SpatialRenderCommand {
     bool closeLoop = false;
     int layer = 0;
     SpatialStyle style;
+    bool ageFade = false;
 };
 
 SpatialSpace StandingSpace(std::string trackingSystem = {});
@@ -117,5 +121,10 @@ SpatialPrimitive TransformPrimitiveToStanding(
 
 std::vector<SpatialRenderCommand> BuildSpatialRenderCommands(
     const std::vector<SpatialPrimitive>& primitives);
+
+// Maps a path vertex's position-in-time to a grayscale shade: the newest
+// vertex is bright white (255), older vertices fade toward mid-gray. Pure so
+// it can be unit tested without a renderer.
+uint8_t BoundaryAgeShade(size_t vertexIndex, size_t vertexCount);
 
 } // namespace wkopenvr::boundary

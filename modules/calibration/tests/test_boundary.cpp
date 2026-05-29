@@ -429,23 +429,6 @@ TEST(BoundaryTransformTest, FloorApplyDefaultsToBoundaryLocalHeight) {
     EXPECT_NEAR(BoundaryFloorYAfterApply(0.42, true), 0.0, 1e-9);
 }
 
-TEST(BoundaryTransformTest, FloorApplyResolutionFallsBackWhenSteamVrDoesNotMove) {
-    const auto verified = ResolveBoundaryFloorApply(0.42, true, true, true);
-    EXPECT_TRUE(verified.steamVrNativeFloorActive);
-    EXPECT_NEAR(verified.boundaryStandingFloorY, 0.0, 1e-9);
-    EXPECT_STREQ(verified.warning, "");
-
-    const auto stale = ResolveBoundaryFloorApply(0.42, true, true, false);
-    EXPECT_FALSE(stale.steamVrNativeFloorActive);
-    EXPECT_NEAR(stale.boundaryStandingFloorY, 0.42, 1e-9);
-    EXPECT_STRNE(stale.warning, "");
-
-    const auto rejected = ResolveBoundaryFloorApply(-0.20, false, false, false);
-    EXPECT_FALSE(rejected.steamVrNativeFloorActive);
-    EXPECT_NEAR(rejected.boundaryStandingFloorY, -0.20, 1e-9);
-    EXPECT_STRNE(rejected.warning, "");
-}
-
 TEST(BoundaryTransformTest, SteamVrFloorVerificationRequiresObservedPoseShift) {
     StandingYSample before;
     before.valid = true;
@@ -497,7 +480,7 @@ TEST(BoundaryTransformTest, BoundaryCaptureUsesStandingSpaceEvenForTargetControl
     EXPECT_FALSE(BoundaryCaptureShouldUseTargetSpace(true, true));
 }
 
-TEST(BoundaryFloorSourceTest, SavedBoundaryFloorTakesPriorityOverSteamVrFloor) {
+TEST(BoundaryFloorSourceTest, SteamVrFloorTakesPriorityOverSavedBoundary) {
     BoundaryFloorSourceRequest request;
     request.boundaryStandingSpace = true;
     request.hasSavedBoundaryFloor = true;
@@ -507,9 +490,9 @@ TEST(BoundaryFloorSourceTest, SavedBoundaryFloorTakesPriorityOverSteamVrFloor) {
         ResolveBoundaryFloorSource(ValidSteamVrFloorSnapshot(), request);
 
     ASSERT_TRUE(decision.valid);
-    EXPECT_EQ(decision.source, BoundaryFloorSourceKind::SavedBoundary);
-    EXPECT_NEAR(decision.standingFloorY, 0.35, 1e-9);
-    EXPECT_NEAR(decision.boundaryFloorY, 0.35, 1e-9);
+    EXPECT_EQ(decision.source, BoundaryFloorSourceKind::SteamVrStanding);
+    EXPECT_NEAR(decision.standingFloorY, 0.0, 1e-9);
+    EXPECT_NEAR(decision.boundaryFloorY, 0.0, 1e-9);
 }
 
 TEST(BoundaryFloorSourceTest, SteamVrFloorIsUsedWhenSavedFloorIsUnavailable) {
@@ -525,7 +508,7 @@ TEST(BoundaryFloorSourceTest, SteamVrFloorIsUsedWhenSavedFloorIsUnavailable) {
     EXPECT_NEAR(decision.boundaryFloorY, 0.0, 1e-9);
 }
 
-TEST(BoundaryFloorSourceTest, ControllerContactOverridesSteamVrCandidate) {
+TEST(BoundaryFloorSourceTest, SteamVrFloorTakesPriorityOverControllerContact) {
     BoundaryFloorSourceRequest request;
     request.boundaryStandingSpace = true;
     request.controllerContactValid = true;
@@ -537,9 +520,8 @@ TEST(BoundaryFloorSourceTest, ControllerContactOverridesSteamVrCandidate) {
         ResolveBoundaryFloorSource(ValidSteamVrFloorSnapshot(), request);
 
     ASSERT_TRUE(decision.valid);
-    EXPECT_EQ(decision.source, BoundaryFloorSourceKind::ControllerContact);
-    EXPECT_NEAR(decision.standingFloorY, 0.47, 1e-9);
-    EXPECT_NEAR(decision.boundaryFloorY, 0.47, 1e-9);
+    EXPECT_EQ(decision.source, BoundaryFloorSourceKind::SteamVrStanding);
+    EXPECT_NEAR(decision.boundaryFloorY, 0.0, 1e-9);
 }
 
 TEST(BoundaryFloorSourceTest, InvalidSteamVrFallsBackToSavedBoundary) {
@@ -562,7 +544,33 @@ TEST(BoundaryFloorSourceTest, InvalidSteamVrFallsBackToSavedBoundary) {
     EXPECT_FALSE(decision.rejectedReasons.empty());
 }
 
+TEST(BoundaryFloorSourceTest, ControllerContactUsedWhenSteamVrAndSavedUnavailable) {
+    SteamVrFloorSnapshot snapshot = ValidSteamVrFloorSnapshot();
+    snapshot.calibrationState = vr::ChaperoneCalibrationState_Error_PlayAreaInvalid;
+    snapshot.playAreaSizeValid = false;
+    snapshot.playAreaRectValid = false;
+
+    BoundaryFloorSourceRequest request;
+    request.boundaryStandingSpace = true;
+    request.controllerContactValid = true;
+    request.controllerContactStandingY = 0.47;
+
+    const auto decision = ResolveBoundaryFloorSource(snapshot, request);
+
+    ASSERT_TRUE(decision.valid);
+    EXPECT_EQ(decision.source, BoundaryFloorSourceKind::ControllerContact);
+    EXPECT_NEAR(decision.boundaryFloorY, 0.47, 1e-9);
+}
+
 TEST(BoundaryFloorSourceTest, TargetSpaceSavedFloorMapsToStandingHeight) {
+    // Standing space is the path going forward; this exercises the legacy
+    // target-space height mapping used when migrating an old saved boundary,
+    // so SteamVR must be unavailable for the saved value to be selected.
+    SteamVrFloorSnapshot snapshot = ValidSteamVrFloorSnapshot();
+    snapshot.calibrationState = vr::ChaperoneCalibrationState_Error_PlayAreaInvalid;
+    snapshot.playAreaSizeValid = false;
+    snapshot.playAreaRectValid = false;
+
     Eigen::AffineCompact3d targetToStanding = Eigen::AffineCompact3d::Identity();
     targetToStanding.translation() = Eigen::Vector3d(1.0, 2.50, -1.0);
 
@@ -574,8 +582,7 @@ TEST(BoundaryFloorSourceTest, TargetSpaceSavedFloorMapsToStandingHeight) {
     request.hasSavedBoundaryFloor = true;
     request.savedBoundaryFloorY = -2.0;
 
-    const auto decision =
-        ResolveBoundaryFloorSource(ValidSteamVrFloorSnapshot(), request);
+    const auto decision = ResolveBoundaryFloorSource(snapshot, request);
 
     ASSERT_TRUE(decision.valid);
     EXPECT_EQ(decision.source, BoundaryFloorSourceKind::SavedBoundary);
@@ -938,6 +945,41 @@ TEST(FloorCaptureSessionTest, BuildsFloorMarkerAtControllerXZ) {
     EXPECT_NEAR(marker[2].x, 1.45, 1e-9);
     EXPECT_NEAR(marker[2].y, -0.03, 1e-9);
     EXPECT_NEAR(marker[2].z, -0.55, 1e-9);
+}
+
+TEST(FloorCaptureSessionTest, FloorNeverRisesWhenControllerIsLifted) {
+    FloorCaptureSession floor;
+    floor.Begin(0.10, 2.60);
+
+    // Rest the controller on the floor and hold.
+    for (int i = 0; i < 10; ++i) {
+        Eigen::Affine3d down = Eigen::Affine3d::Identity();
+        down.translation() = Eigen::Vector3d(0.0, 0.02, 0.0);
+        floor.Observe(down, 4, "lighthouse");
+    }
+    ASSERT_TRUE(floor.candidate().valid);
+    const double latched = floor.candidate().floorY;
+    EXPECT_LT(latched, 0.10);
+
+    // Lift the controller far above the floor; the latched floor must hold.
+    double maxFloorAfterLift = latched;
+    for (int i = 0; i < 25; ++i) {
+        Eigen::Affine3d up = Eigen::Affine3d::Identity();
+        up.translation() = Eigen::Vector3d(0.0, 0.90, 0.0);
+        floor.Observe(up, 4, "lighthouse");
+        maxFloorAfterLift = std::max(maxFloorAfterLift, floor.candidate().floorY);
+    }
+    EXPECT_LE(floor.candidate().floorY, latched + 1e-9);
+    EXPECT_LE(maxFloorAfterLift, latched + 1e-9);
+}
+
+TEST(BoundarySpatialTest, AgeShadeRampFadesNewestWhiteToOldestGray) {
+    EXPECT_EQ(BoundaryAgeShade(0, 1), 255);
+    EXPECT_EQ(BoundaryAgeShade(9, 10), 255);
+    EXPECT_LT(BoundaryAgeShade(0, 10), BoundaryAgeShade(5, 10));
+    EXPECT_LT(BoundaryAgeShade(5, 10), BoundaryAgeShade(9, 10));
+    EXPECT_GE(BoundaryAgeShade(0, 10), 100);
+    EXPECT_LE(BoundaryAgeShade(0, 10), 110);
 }
 
 TEST(CaptureSessionTest, RejectsAimRayWhenControllerIsBelowFloor) {
@@ -1442,8 +1484,10 @@ TEST(BoundaryPreviewTest, UploadFailuresDisableAfterThreshold) {
     EXPECT_TRUE(BoundaryPreviewShouldDisableUploadsAfterFailureCount(4));
 }
 
-TEST(BoundaryPreviewTest, UsesOpenGlTextureUploadForHmdPreview) {
-    EXPECT_TRUE(BoundaryPreviewUsesOpenGlTextureUpload());
+TEST(BoundaryPreviewTest, UsesRawRgbaUploadForHmdPreview) {
+    // The preview pushes a CPU RGBA buffer via SetOverlayRaw (no GL context),
+    // so the upload works from the capture-tick thread.
+    EXPECT_FALSE(BoundaryPreviewUsesOpenGlTextureUpload());
 }
 
 TEST(BoundaryPreviewTest, StatusExposesInitialUploadDiagnostics) {

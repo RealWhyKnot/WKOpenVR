@@ -63,6 +63,6 @@ endif()
 adjust_bin_paths(inputhealth_tests)
 
 include(GoogleTest)
-gtest_discover_tests(inputhealth_tests)
+gtest_discover_tests(inputhealth_tests DISCOVERY_TIMEOUT 30)
 
 set_property(TARGET inputhealth_tests PROPERTY FOLDER "tests")

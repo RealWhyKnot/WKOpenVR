@@ -296,6 +296,9 @@ jobs:
           if (-not (Test-Path "$artifacts/dashboard_icon.png")) {
             throw "dashboard_icon.png not found at $artifacts"
           }
+          if (-not (Test-Path "$artifacts/boundary_icon.png")) {
+            throw "boundary_icon.png not found at $artifacts"
+          }
           if (-not (Test-Path "$artifacts/resources/face-module-sync.ps1")) {
             throw "face-module-sync.ps1 not found at $artifacts/resources"
           }
@@ -317,6 +320,7 @@ jobs:
           # without it.
           Copy-Item "$artifacts/manifest.vrmanifest" "$stage/manifest.vrmanifest"
           Copy-Item "$artifacts/dashboard_icon.png"  "$stage/dashboard_icon.png"
+          Copy-Item "$artifacts/boundary_icon.png"   "$stage/boundary_icon.png"
           New-Item -ItemType Directory -Force -Path "$stage/resources" | Out-Null
           Copy-Item "$artifacts/resources/face-module-sync.ps1" "$stage/resources/face-module-sync.ps1"
           New-Item -ItemType Directory -Force -Path "$stage/resources/questapp" | Out-Null
@@ -396,6 +400,7 @@ jobs:
             'build/artifacts/Release/openvr_api.dll',
             'build/artifacts/Release/manifest.vrmanifest',
             'build/artifacts/Release/dashboard_icon.png',
+            'build/artifacts/Release/boundary_icon.png',
             'build/artifacts/Release/resources/face-module-sync.ps1',
             'build/artifacts/Release/resources/questapp/install-platform-tools.ps1',
             'build/artifacts/Release/resources/questapp/uninstall-questapp.ps1',

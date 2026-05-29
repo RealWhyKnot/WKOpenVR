@@ -66,6 +66,18 @@ if(MSVC)
 	target_compile_options(openvr_pair_overlay_ui PRIVATE /W4 /wd4100)
 endif()
 
+if(NOT WKOPENVR_RELEASE_BUILD)
+	add_subdirectory(
+		"${CMAKE_SOURCE_DIR}/modules/dev/src/overlay"
+		"${CMAKE_BINARY_DIR}/modules/dev-overlay")
+	set(OPENVR_PAIR_OVERLAY_FEATURE_LIBS
+		${OPENVR_PAIR_OVERLAY_FEATURE_LIBS}
+		openvr_pair_feature_dev_overlay)
+	set(OPENVR_PAIR_OVERLAY_DEFINES
+		${OPENVR_PAIR_OVERLAY_DEFINES}
+		OPENVR_PAIR_HAS_DEV_OVERLAY=1)
+endif()
+
 add_executable(OpenVRPairOverlay WIN32
 	BugReportUi.cpp
 	BugReportUi.h
@@ -81,6 +93,8 @@ add_executable(OpenVRPairOverlay WIN32
 	ManifestRegistration.h
 	Migration.cpp
 	Migration.h
+	ModuleToggleUi.cpp
+	ModuleToggleUi.h
 	ShellContext.cpp
 	ShellContext.h
 	ShellFooter.cpp
@@ -153,6 +167,13 @@ add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"${CMAKE_CURRENT_LIST_DIR}/dashboard_icon.png"
 		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/dashboard_icon.png")
+
+# Stage the boundary marker glyph next to the exe. The boundary preview loads
+# it at runtime for the in-VR floor/start markers via an exe-relative path.
+add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		"${CMAKE_CURRENT_LIST_DIR}/boundary_icon.png"
+		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/boundary_icon.png")
 
 # Stage the face-module sync script into resources/ next to the exe.
 # ModuleSyncRunner looks for it at <exe_dir>/resources/face-module-sync.ps1.

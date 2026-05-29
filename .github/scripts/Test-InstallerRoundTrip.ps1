@@ -222,6 +222,7 @@ function Assert-InstalledState {
         (Join-Path $InstallDir 'openvr_api.dll'),
         (Join-Path $InstallDir 'manifest.vrmanifest'),
         (Join-Path $InstallDir 'dashboard_icon.png'),
+        (Join-Path $InstallDir 'boundary_icon.png'),
         (Join-Path $InstallDir 'resources\face-module-sync.ps1'),
         (Join-Path $InstallDir 'Uninstall.exe'),
         (Join-Path $driverDir 'driver.vrdrivermanifest'),

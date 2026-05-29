@@ -46,7 +46,6 @@ std::string s_boundaryNativeStatus;
 uint64_t s_floorSessionId = 0;
 bool s_steamVrWorkingPreviewVisible = false;
 bool s_floorPreviewVisible = false;
-bool s_moveSteamVrFloorOnApply = false;
 Eigen::AffineCompact3d s_capturePreviewTransform = Eigen::AffineCompact3d::Identity();
 bool s_capturePreviewTransformValid = false;
 bool s_captureUsesStandingSpace = false;
@@ -948,7 +947,8 @@ wkopenvr::boundary::SpatialPrimitive CapturePreviewPrimitive(
     const std::vector<BoundaryVertex>& vertices,
     bool closeLoop,
     wkopenvr::boundary::SpatialStyle style,
-    int layer)
+    int layer,
+    bool ageFade = false)
 {
     wkopenvr::boundary::SpatialPrimitive primitive;
     primitive.kind = kind;
@@ -959,26 +959,8 @@ wkopenvr::boundary::SpatialPrimitive CapturePreviewPrimitive(
     primitive.closeLoop = closeLoop;
     primitive.style = style;
     primitive.layer = layer;
+    primitive.ageFade = ageFade;
     return primitive;
-}
-
-wkopenvr::boundary::SpatialStyle GrayPointStyle(size_t index, size_t count)
-{
-    wkopenvr::boundary::SpatialStyle style;
-    const bool latest = count > 0 && index + 1 == count;
-    const double t = count > 1
-        ? static_cast<double>(index) / static_cast<double>(count - 1)
-        : 1.0;
-    const int shade = latest ? 255 : static_cast<int>(std::lround(100.0 + 105.0 * t));
-    style.r = static_cast<uint8_t>(std::clamp(shade, 0, 255));
-    style.g = style.r;
-    style.b = style.r;
-    style.a = latest ? 255 : static_cast<uint8_t>(std::clamp(shade + 30, 130, 220));
-    style.fillA = latest ? 92 : 42;
-    style.strokeMeters = 0.0;
-    style.dotMeters = latest ? 0.105 : 0.072;
-    style.fill = false;
-    return style;
 }
 
 std::vector<wkopenvr::boundary::SpatialRenderCommand> BuildCapturePreviewCommands(
@@ -1009,13 +991,16 @@ std::vector<wkopenvr::boundary::SpatialRenderCommand> BuildCapturePreviewCommand
     }
 
     if (rawVertices.size() >= 2) {
+        // The drawn path is stroked as a single line with a newest-white ->
+        // oldest-gray age gradient (per-segment shade in the rasterizer), so
+        // the user can read how recently each stretch was walked.
         SpatialStyle pathStyle;
-        pathStyle.r = 176;
-        pathStyle.g = 176;
-        pathStyle.b = 176;
-        pathStyle.a = 210;
+        pathStyle.r = 235;
+        pathStyle.g = 235;
+        pathStyle.b = 235;
+        pathStyle.a = 235;
         pathStyle.fillA = 0;
-        pathStyle.strokeMeters = 0.028;
+        pathStyle.strokeMeters = 0.030;
         pathStyle.dotMeters = 0.0;
         pathStyle.fill = false;
         primitives.push_back(CapturePreviewPrimitive(
@@ -1023,7 +1008,8 @@ std::vector<wkopenvr::boundary::SpatialRenderCommand> BuildCapturePreviewCommand
             rawVertices,
             false,
             pathStyle,
-            2));
+            2,
+            /*ageFade=*/true));
     }
 
     if (cursor && cursor->valid) {
@@ -1053,13 +1039,15 @@ std::vector<wkopenvr::boundary::SpatialRenderCommand> BuildCapturePreviewCommand
                 4));
         }
 
-        SpatialStyle cursorStyle = GrayPointStyle(rawVertices.size(), rawVertices.size() + 1);
+        SpatialStyle cursorStyle;
         cursorStyle.r = 255;
         cursorStyle.g = 255;
         cursorStyle.b = 255;
         cursorStyle.a = 235;
         cursorStyle.fillA = 60;
+        cursorStyle.strokeMeters = 0.0;
         cursorStyle.dotMeters = 0.080;
+        cursorStyle.fill = false;
         primitives.push_back(CapturePreviewPrimitive(
             SpatialPrimitiveKind::Marker,
             { cursor->hit },
@@ -1130,15 +1118,6 @@ std::vector<wkopenvr::boundary::SpatialRenderCommand> BuildCapturePreviewCommand
         }
     }
 
-    for (size_t i = 0; i < rawVertices.size(); ++i) {
-        primitives.push_back(CapturePreviewPrimitive(
-            SpatialPrimitiveKind::Marker,
-            { rawVertices[i] },
-            false,
-            GrayPointStyle(i, rawVertices.size()),
-            static_cast<int>(20 + i)));
-    }
-
     return BuildSpatialRenderCommands(primitives);
 }
 
@@ -1168,117 +1147,110 @@ bool ApplyFloorFromStandingContactPose(
     const std::string& trackingSystem)
 {
     s_boundaryNativeStatus.clear();
-    const double floorY = standingContactPose.translation().y();
-    if (!std::isfinite(floorY) || floorY < -5.0 || floorY > 5.0) {
-        s_boundaryError = "Controller floor sample was outside the expected tracking range.";
-        return false;
-    }
     const double measuredStandingY = standingContactPose.translation().y();
     if (!std::isfinite(measuredStandingY) || measuredStandingY < -5.0 || measuredStandingY > 5.0) {
-        s_boundaryError = "Mapped controller floor sample was outside the expected SteamVR range.";
+        s_boundaryError = "Controller floor sample was outside the expected tracking range.";
         char fbuf[256];
         snprintf(fbuf, sizeof fbuf,
-            "[boundary-floor] apply failed: standing_y_out_of_range device=%d system='%s' target_y=%.4f standing_y=%.4f",
+            "[boundary-floor] apply failed: standing_y_out_of_range device=%d system='%s' standing_y=%.4f",
             static_cast<int>(deviceId),
             trackingSystem.c_str(),
-            floorY,
             measuredStandingY);
         Metrics::WriteLogAnnotation(fbuf);
         openvr_pair::common::DiagnosticLog("boundary-floor", "%s", fbuf);
         return false;
     }
 
+    // SteamVR is the source of truth for the floor. Always move SteamVR's
+    // standing-zero pose so every app sees the new floor, then verify the move
+    // with live poses. If SteamVR will not accept or verify the change, surface
+    // an error rather than silently keeping a local-only floor.
     char floorError[192] = {};
-    bool steamFloorCommitSucceeded = false;
-    bool steamFloorVerificationAttempted = false;
-    bool steamFloorVerified = false;
-    std::string steamFloorWarning;
-    wkopenvr::boundary::SteamVrFloorVerification steamFloorVerification;
-    wkopenvr::boundary::BoundaryFloorApplyResolution applyResolution;
-    applyResolution.boundaryStandingFloorY = measuredStandingY;
-    if (s_moveSteamVrFloorOnApply) {
-        const auto beforeFloorSample =
-            wkopenvr::boundary::SampleDeviceStandingY(deviceId);
-        steamFloorCommitSucceeded =
-            wkopenvr::boundary::ApplySteamVrFloorOffset(
-                measuredStandingY,
-                floorError,
-                sizeof floorError);
-        if (steamFloorCommitSucceeded) {
-            const auto afterFloorSample =
-                wkopenvr::boundary::SampleDeviceStandingY(deviceId);
-            steamFloorVerification =
-                wkopenvr::boundary::EvaluateSteamVrFloorVerification(
-                    beforeFloorSample,
-                    afterFloorSample,
-                    measuredStandingY);
-            steamFloorVerificationAttempted = true;
-            steamFloorVerified = steamFloorVerification.verified;
+    const auto beforeFloorSample =
+        wkopenvr::boundary::SampleDeviceStandingY(deviceId);
+    const bool steamFloorCommitSucceeded =
+        wkopenvr::boundary::ApplySteamVrFloorOffset(
+            measuredStandingY,
+            floorError,
+            sizeof floorError);
 
-            char vbuf[384];
-            snprintf(vbuf, sizeof vbuf,
-                "[boundary-floor] steamvr floor verify: device=%d before_valid=%d after_valid=%d before_y=%.4f after_y=%.4f expected_after_y=%.4f residual_y=%.4f verified=%d",
-                static_cast<int>(deviceId),
-                steamFloorVerification.beforeValid ? 1 : 0,
-                steamFloorVerification.afterValid ? 1 : 0,
-                steamFloorVerification.beforeY,
-                steamFloorVerification.afterY,
-                steamFloorVerification.expectedAfterY,
-                steamFloorVerification.residualY,
-                steamFloorVerified ? 1 : 0);
-            Metrics::WriteLogAnnotation(vbuf);
-            openvr_pair::common::DiagnosticLog("boundary-floor", "%s", vbuf);
-            if (!steamFloorVerified) {
-                openvr_pair::common::DiagnosticLog(
-                    "boundary_floor_native_verify_failed",
-                    "device=%d before_valid=%d after_valid=%d before_y=%.4f after_y=%.4f expected_after_y=%.4f residual_y=%.4f measured_y=%.4f",
-                    static_cast<int>(deviceId),
-                    steamFloorVerification.beforeValid ? 1 : 0,
-                    steamFloorVerification.afterValid ? 1 : 0,
-                    steamFloorVerification.beforeY,
-                    steamFloorVerification.afterY,
-                    steamFloorVerification.expectedAfterY,
-                    steamFloorVerification.residualY,
-                    measuredStandingY);
-            }
-        }
-        applyResolution =
-            wkopenvr::boundary::ResolveBoundaryFloorApply(
-                measuredStandingY,
-                steamFloorCommitSucceeded,
-                steamFloorVerificationAttempted,
-                steamFloorVerified);
-    } else {
-        openvr_pair::common::DiagnosticLog(
-            "boundary_floor_native_skipped",
-            "device=%d system='%s' measured_standing_y=%.4f reason=toggle_off",
+    wkopenvr::boundary::SteamVrFloorVerification steamFloorVerification;
+    bool steamFloorVerified = false;
+    if (steamFloorCommitSucceeded) {
+        const auto afterFloorSample =
+            wkopenvr::boundary::SampleDeviceStandingY(deviceId);
+        steamFloorVerification =
+            wkopenvr::boundary::EvaluateSteamVrFloorVerification(
+                beforeFloorSample,
+                afterFloorSample,
+                measuredStandingY);
+        steamFloorVerified = steamFloorVerification.verified;
+
+        char vbuf[384];
+        snprintf(vbuf, sizeof vbuf,
+            "[boundary-floor] steamvr floor verify: device=%d before_valid=%d after_valid=%d before_y=%.4f after_y=%.4f expected_after_y=%.4f residual_y=%.4f verified=%d",
+            static_cast<int>(deviceId),
+            steamFloorVerification.beforeValid ? 1 : 0,
+            steamFloorVerification.afterValid ? 1 : 0,
+            steamFloorVerification.beforeY,
+            steamFloorVerification.afterY,
+            steamFloorVerification.expectedAfterY,
+            steamFloorVerification.residualY,
+            steamFloorVerified ? 1 : 0);
+        Metrics::WriteLogAnnotation(vbuf);
+        openvr_pair::common::DiagnosticLog("boundary-floor", "%s", vbuf);
+    }
+
+    // A rejected commit is a hard failure: do not fabricate a local-only floor.
+    if (!steamFloorCommitSucceeded) {
+        s_boundaryError = floorError[0]
+            ? std::string(floorError)
+            : std::string("SteamVR did not accept the floor change. Open SteamVR Room Setup once, then try again.");
+        char lbuf[256];
+        snprintf(lbuf, sizeof lbuf,
+            "[boundary-floor] apply failed: steamvr_floor_not_set device=%d system='%s' commit=0 standing_y=%.4f",
             static_cast<int>(deviceId),
             trackingSystem.c_str(),
             measuredStandingY);
-    }
-    if (applyResolution.warning && applyResolution.warning[0]) {
-        steamFloorWarning = floorError[0] ? floorError : applyResolution.warning;
-    }
-    {
-        char lbuf[384];
-        snprintf(lbuf, sizeof lbuf,
-            "[boundary-floor] apply requested: device=%d system='%s' standing_y=%.4f steamvr_toggle=%d steamvr_commit=%d steamvr_verify_attempted=%d steamvr_verified=%d native_floor=%d boundary_floor_standing=%.4f",
+        Metrics::WriteLogAnnotation(lbuf);
+        openvr_pair::common::DiagnosticLog(
+            "boundary_floor_native_failed",
+            "device=%d system='%s' measured_standing_y=%.4f commit=0",
             static_cast<int>(deviceId),
             trackingSystem.c_str(),
-            measuredStandingY,
-            s_moveSteamVrFloorOnApply ? 1 : 0,
-            steamFloorCommitSucceeded ? 1 : 0,
-            steamFloorVerificationAttempted ? 1 : 0,
-            steamFloorVerified ? 1 : 0,
-            applyResolution.steamVrNativeFloorActive ? 1 : 0,
-            applyResolution.boundaryStandingFloorY);
-        Metrics::WriteLogAnnotation(lbuf);
-        openvr_pair::common::DiagnosticLog("boundary-floor", "%s", lbuf);
+            measuredStandingY);
+        return false;
     }
-    const auto sourceRequest =
-        BuildFloorSourceRequest(true, measuredStandingY);
+
+    // The SteamVR floor now sits at the controller, so the controller reads
+    // standing Y ~= 0. The boundary's local floor is just a read-back of that:
+    // in standing space the floor is 0. Verification confirms the universe
+    // shifted; treat an unconfirmed read as advisory (live poses can lag a
+    // frame behind the commit) rather than a failure.
+    ApplyBoundaryFloorY(0.0);
+    s_boundaryError.clear();
+    if (!steamFloorVerified) {
+        s_boundaryNativeStatus =
+            "Floor set in SteamVR. Live poses did not confirm the shift yet; if the floor looks wrong, set it again.";
+    }
+
+    if (CalCtx.boundary.enabled) {
+        std::string pushError;
+        if (!PushTargetBoundaryToChaperone(pushError)) {
+            s_boundaryNativeStatus = "Floor set in SteamVR; the boundary walls were not re-pushed.";
+            if (!pushError.empty()) {
+                s_boundaryNativeStatus += " ";
+                s_boundaryNativeStatus += pushError;
+            }
+        }
+    }
+
+    SaveProfile(CalCtx);
+
     const auto sourceSnapshot =
         wkopenvr::boundary::QuerySteamVrFloorSnapshot();
+    const auto sourceRequest =
+        BuildFloorSourceRequest(true, measuredStandingY);
     const auto sourceDecision =
         wkopenvr::boundary::ResolveBoundaryFloorSource(
             sourceSnapshot,
@@ -1292,58 +1264,18 @@ bool ApplyFloorFromStandingContactPose(
         trackingSystem,
         true);
 
-    double boundaryFloorY = applyResolution.boundaryStandingFloorY;
-    if (!CalCtx.boundary.standingSpace && BoundaryTransformReady()) {
-        boundaryFloorY =
-            wkopenvr::boundary::TargetFloorYForStandingFloor(
-                CalCtx.boundary.vertices,
-                BoundaryTargetToStandingTransform(),
-                boundaryFloorY);
-    }
-    ApplyBoundaryFloorY(boundaryFloorY);
-    s_boundaryError.clear();
-
-    if (CalCtx.boundary.enabled) {
-        std::string pushError;
-        if (!PushTargetBoundaryToChaperone(pushError)) {
-            s_boundaryNativeStatus = "Floor saved locally; SteamVR native boundary was not updated.";
-            if (!pushError.empty()) {
-                s_boundaryNativeStatus += " ";
-                s_boundaryNativeStatus += pushError;
-            }
-        }
-    }
-
-    SaveProfile(CalCtx);
-    if (!steamFloorWarning.empty() && s_boundaryError.empty()) {
-        s_boundaryError = steamFloorWarning;
-    }
-
-    char lbuf[224];
+    char lbuf[256];
     snprintf(lbuf, sizeof lbuf,
-        "[boundary-floor] set from controller: device=%d system='%s' boundary_floor_y=%.3f measured_standing_y=%.3f steamvr_commit=%d steamvr_verified=%d native_floor=%d vertices=%zu",
+        "[boundary-floor] set from controller: device=%d system='%s' steamvr_floor_set=1 boundary_floor_y=%.3f measured_standing_y=%.3f vertices=%zu",
         static_cast<int>(deviceId),
         trackingSystem.c_str(),
         CalCtx.boundary.floorY,
         measuredStandingY,
-        steamFloorCommitSucceeded ? 1 : 0,
-        steamFloorVerified ? 1 : 0,
-        applyResolution.steamVrNativeFloorActive ? 1 : 0,
         CalCtx.boundary.vertices.size());
     Metrics::WriteLogAnnotation(lbuf);
     openvr_pair::common::DiagnosticLog("boundary-floor", "%s", lbuf);
-    openvr_pair::common::DiagnosticLog(
-        "boundary_floor_apply_local",
-        "device=%d system='%s' boundary_floor_y=%.4f measured_standing_y=%.4f steamvr_toggle=%d steamvr_commit=%d steamvr_verified=%d native_floor=%d vertices=%zu",
-        static_cast<int>(deviceId),
-        trackingSystem.c_str(),
-        CalCtx.boundary.floorY,
-        measuredStandingY,
-        s_moveSteamVrFloorOnApply ? 1 : 0,
-        steamFloorCommitSucceeded ? 1 : 0,
-        steamFloorVerified ? 1 : 0,
-        applyResolution.steamVrNativeFloorActive ? 1 : 0,
-        CalCtx.boundary.vertices.size());
+
+    s_cachedFloorSourceInitialized = false;
     return true;
 }
 
@@ -1649,14 +1581,22 @@ void DrawBoundaryPreviewStatus()
 {
     const auto status = wkopenvr::boundary::GetBoundaryPreviewStatus();
     const auto& pal = openvr_pair::overlay::ui::GetPalette();
-    const ImVec4 color = status.uploadsDisabled
+    const bool previewUnavailable =
+        status.uploadsDisabled ||
+        (status.created && status.uploadFailureCount > 0 && !status.visible);
+    const ImVec4 color = previewUnavailable
         ? pal.statusWarn
         : (status.visible ? pal.statusOk : pal.statusIdle);
-    ImGui::TextColored(
-        color,
-        "HMD preview: %s%s",
-        status.uploadsDisabled ? "disabled" : (status.visible ? "visible" : "hidden"),
-        status.uploadsDisabled ? " after upload failures" : "");
+    if (previewUnavailable) {
+        ImGui::TextColored(
+            color,
+            "In-VR preview unavailable - draw still works; the floor line just won't show in the headset.");
+    } else {
+        ImGui::TextColored(
+            color,
+            "In-VR preview: %s",
+            status.visible ? "showing in headset" : "idle");
+    }
     if (status.created || status.uploadFailureCount > 0 || status.lastRasterHash != 0) {
         ImGui::TextDisabled(
             "Preview detail: source=%s mode=%s vertices=%zu failures=%d last_error=%d/%s hash=%llu",
@@ -1711,10 +1651,10 @@ void DrawBoundarySection(ImVec2 panelSize) {
         "Set the floor from the selected controller, then walk it around the play-space edge.");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Target-system controllers draw in calibrated tracker space. Other controllers draw\n"
-            "in SteamVR standing space. If a controller is virtual or unstable, choose a tracked controller.");
+            "Floor and boundary work in SteamVR standing space, independent of space calibration.\n"
+            "If a controller is virtual or unstable, choose a tracked controller.");
     }
-    if (!transformReady) {
+    if (!CalCtx.boundary.standingSpace && !transformReady) {
         ImGui::TextColored(pal.statusWarn,
             "Waiting for a valid calibration profile before preview or SteamVR chaperone push.");
     }
@@ -1746,12 +1686,8 @@ void DrawBoundarySection(ImVec2 panelSize) {
                     floor.sampleCount,
                     floor.jitterMeters * 1000.0,
                     floor.stable ? "stable" : (floor.ready ? "ready" : "settling"));
-                ImGui::TextDisabled("Recent drift %.0f mm. Apply updates WKOpenVR's local floor.",
+                ImGui::TextDisabled("Recent drift %.0f mm. Apply moves the SteamVR floor to the controller.",
                     floor.recentDriftMeters * 1000.0);
-            }
-            ImGui::Checkbox("Also try SteamVR floor correction", &s_moveSteamVrFloorOnApply);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Off keeps the floor local to WKOpenVR. On tries SteamVR once and only treats it as native if live pose verification passes.");
             }
             if (!floor.valid || !floor.stable) ImGui::BeginDisabled();
             if (ImGui::Button("Apply floor")) {
@@ -1789,7 +1725,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
             }
             if (!controllerReady) ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("No numeric floor entry. Touch the controller to the floor, then apply the live preview.");
+                ImGui::SetTooltip("Rest the controller on the floor and apply. This moves the SteamVR floor to the controller, so every app uses the new floor.");
             }
             ImGui::SameLine();
             const bool canUseSteamVrFloor = steamVrFloorDecision.valid &&

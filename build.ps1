@@ -173,6 +173,141 @@ function Invoke-NativeQuiet {
 	}
 }
 
+$TargetNames = @()
+foreach ($TargetName in $Target) {
+	if (-not [string]::IsNullOrWhiteSpace($TargetName)) {
+		$TargetNames += $TargetName.Trim()
+	}
+}
+
+function Get-GitVisibleCMakeLists {
+	$relativePaths = @(& git ls-files -co --exclude-standard -- CMakeLists.txt "**/CMakeLists.txt")
+	if ($LASTEXITCODE -ne 0) {
+		throw "Unable to list CMakeLists.txt files through git."
+	}
+
+	$files = @()
+	foreach ($relativePath in $relativePaths) {
+		if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+		$fullPath = Join-Path $PSScriptRoot $relativePath
+		if (Test-Path -LiteralPath $fullPath) {
+			$files += Get-Item -LiteralPath $fullPath
+		}
+	}
+	return $files
+}
+
+function Get-RepoRelativePath {
+	param([Parameter(Mandatory=$true)][string]$Path)
+
+	$root = (Resolve-Path -LiteralPath $PSScriptRoot).Path.TrimEnd('\')
+	$fullPath = [System.IO.Path]::GetFullPath($Path)
+	if ($fullPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+		return $fullPath.Substring($root.Length + 1).Replace('\', '/')
+	}
+	return $fullPath
+}
+
+function Assert-CMakeStampCurrent {
+	$stampPath = Join-Path $PSScriptRoot "build/CMakeFiles/generate.stamp"
+	if (-not (Test-Path -LiteralPath $stampPath)) {
+		throw "-SkipConfigure requested, but CMake has not generated build/CMakeFiles/generate.stamp. Rerun without -SkipConfigure."
+	}
+
+	$stamp = Get-Item -LiteralPath $stampPath
+	$staleFiles = @()
+	foreach ($cmakeList in Get-GitVisibleCMakeLists) {
+		if ($cmakeList.LastWriteTimeUtc -gt $stamp.LastWriteTimeUtc) {
+			$staleFiles += $cmakeList
+		}
+	}
+
+	if ($staleFiles.Count -gt 0) {
+		$sample = @($staleFiles | Sort-Object FullName | Select-Object -First 8 | ForEach-Object {
+			"  - " + (Get-RepoRelativePath $_.FullName)
+		})
+		$message = "-SkipConfigure requested, but CMake input files are newer than the generated build files. Rerun without -SkipConfigure."
+		$message += [Environment]::NewLine + "Newer CMake files:"
+		$message += [Environment]::NewLine + ($sample -join [Environment]::NewLine)
+		if ($staleFiles.Count -gt $sample.Count) {
+			$message += [Environment]::NewLine + ("  - ... {0} more" -f ($staleFiles.Count - $sample.Count))
+		}
+		throw $message
+	}
+}
+
+function Get-CMakeTargetDirectSources {
+	param(
+		[Parameter(Mandatory=$true)][string]$CMakeListPath,
+		[Parameter(Mandatory=$true)][string]$TargetName
+	)
+
+	$sources = @()
+	$inTarget = $false
+	foreach ($line in Get-Content -LiteralPath $CMakeListPath) {
+		if (-not $inTarget) {
+			if ($line -match ("^\s*add_(executable|library)\(\s*" + [regex]::Escape($TargetName) + "\b")) {
+				$inTarget = $true
+			}
+			continue
+		}
+
+		$trimmedLine = $line.Trim()
+		if ($trimmedLine -eq ")") { break }
+		if ($line -match '^\s*([A-Za-z0-9_.-]+\.(c|cc|cpp|cxx|h|hh|hpp|hxx|rc))\s*$') {
+			$sources += $Matches[1]
+		}
+		if ($trimmedLine.EndsWith(")")) { break }
+	}
+	return $sources
+}
+
+function Test-BuildIncludesOpenVRPairOverlay {
+	if ($TargetNames.Count -eq 0) { return $true }
+	foreach ($TargetName in $TargetNames) {
+		if ($TargetName -eq "OpenVRPairOverlay" -or $TargetName -eq "ALL_BUILD") {
+			return $true
+		}
+	}
+	return $false
+}
+
+function Assert-OpenVRPairOverlayProjectCurrent {
+	if (-not (Test-BuildIncludesOpenVRPairOverlay)) { return }
+
+	$cmakeListPath = Join-Path $PSScriptRoot "core/src/overlay/CMakeLists.txt"
+	$projectPath = Join-Path $PSScriptRoot "build/core/src/overlay/OpenVRPairOverlay.vcxproj"
+	if (-not (Test-Path -LiteralPath $projectPath)) {
+		throw "-SkipConfigure requested, but OpenVRPairOverlay.vcxproj is missing. Rerun without -SkipConfigure."
+	}
+
+	$projectText = Get-Content -LiteralPath $projectPath -Raw
+	$sourceRoot = Join-Path $PSScriptRoot "core/src/overlay"
+	$missingSources = @()
+	foreach ($source in Get-CMakeTargetDirectSources -CMakeListPath $cmakeListPath -TargetName "OpenVRPairOverlay") {
+		$sourcePath = [System.IO.Path]::GetFullPath((Join-Path $sourceRoot $source))
+		if ($projectText.IndexOf($sourcePath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+			$missingSources += $source
+		}
+	}
+
+	if ($missingSources.Count -gt 0) {
+		$sample = @($missingSources | Select-Object -First 8 | ForEach-Object { "  - " + $_ })
+		$message = "-SkipConfigure requested, but OpenVRPairOverlay.vcxproj is missing source entries from core/src/overlay/CMakeLists.txt. Rerun without -SkipConfigure."
+		$message += [Environment]::NewLine + "Missing sources:"
+		$message += [Environment]::NewLine + ($sample -join [Environment]::NewLine)
+		if ($missingSources.Count -gt $sample.Count) {
+			$message += [Environment]::NewLine + ("  - ... {0} more" -f ($missingSources.Count - $sample.Count))
+		}
+		throw $message
+	}
+}
+
+if ($SkipConfigure) {
+	Assert-CMakeStampCurrent
+	Assert-OpenVRPairOverlayProjectCurrent
+}
+
 if (-not $SkipConfigure) {
 	Clear-StaleCMakeGeneratorInstance -BuildDir "build"
 	$captionsCudaValue = "OFF"
@@ -199,13 +334,6 @@ $ParallelJobs = [Environment]::ProcessorCount
 if ($ParallelJobs -lt 1) { $ParallelJobs = 1 }
 Write-Host ("Build parallelism: {0} jobs" -f $ParallelJobs)
 
-$TargetNames = @()
-foreach ($TargetName in $Target) {
-	if (-not [string]::IsNullOrWhiteSpace($TargetName)) {
-		$TargetNames += $TargetName.Trim()
-	}
-}
-
 if ($Release -and $TargetNames.Count -gt 0) {
 	throw "-Release cannot be combined with -Target because packaging requires the full driver build."
 }
@@ -213,7 +341,7 @@ if ($Release -and $TargetNames.Count -gt 0) {
 if ($TargetNames.Count -gt 0) {
 	foreach ($TargetName in $TargetNames) {
 		Write-Host ("Building target: {0}" -f $TargetName)
-		Invoke-NativeQuiet { cmake --build build --config Release --target $TargetName --parallel $ParallelJobs }
+		Invoke-NativeQuiet { cmake --build build --config Release --target $TargetName --parallel $ParallelJobs -- /nodeReuse:false }
 		if ($LASTEXITCODE -ne 0) { throw "Build target '$TargetName' failed (exit $LASTEXITCODE)" }
 	}
 	Write-Host ""
@@ -221,7 +349,7 @@ if ($TargetNames.Count -gt 0) {
 	return
 }
 
-Invoke-NativeQuiet { cmake --build build --config Release --parallel $ParallelJobs }
+Invoke-NativeQuiet { cmake --build build --config Release --parallel $ParallelJobs -- /nodeReuse:false }
 if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 
 # Verify the artifact lands where we expect.

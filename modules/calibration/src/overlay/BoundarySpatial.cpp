@@ -3,6 +3,8 @@
 #include "Boundary.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <utility>
 
 namespace wkopenvr::boundary {
@@ -140,6 +142,7 @@ std::vector<SpatialRenderCommand> BuildSpatialRenderCommands(
         command.closeLoop = standing.closeLoop;
         command.style = standing.style;
         command.layer = standing.layer;
+        command.ageFade = standing.ageFade;
         commands.push_back(std::move(command));
     }
 
@@ -148,6 +151,17 @@ std::vector<SpatialRenderCommand> BuildSpatialRenderCommands(
             return a.layer < b.layer;
         });
     return commands;
+}
+
+uint8_t BoundaryAgeShade(size_t vertexIndex, size_t vertexCount)
+{
+    if (vertexCount <= 1 || vertexIndex + 1 >= vertexCount) {
+        return 255;
+    }
+    const double t =
+        static_cast<double>(vertexIndex) / static_cast<double>(vertexCount - 1);
+    const int shade = static_cast<int>(std::lround(100.0 + 105.0 * t));
+    return static_cast<uint8_t>(std::clamp(shade, 0, 255));
 }
 
 } // namespace wkopenvr::boundary

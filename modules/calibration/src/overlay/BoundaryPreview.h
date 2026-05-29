@@ -38,7 +38,7 @@ struct BoundaryPreviewStatus {
     int fileMarkerLastError = 0;
     const char* lastErrorName = "None";
     const char* fileMarkerLastErrorName = "None";
-    const char* uploadMode = "opengl_texture";
+    const char* uploadMode = "raw_rgba";
     uint64_t uploadedHash = 0;
     uint64_t lastRasterHash = 0;
     size_t lastVertexCount = 0;

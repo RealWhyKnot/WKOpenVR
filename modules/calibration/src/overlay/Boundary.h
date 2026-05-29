@@ -116,18 +116,6 @@ SteamVrFloorVerification EvaluateSteamVrFloorVerification(
     double measuredFloorYStanding,
     double toleranceMeters = 0.05);
 
-struct BoundaryFloorApplyResolution {
-    bool steamVrNativeFloorActive = false;
-    double boundaryStandingFloorY = 0.0;
-    const char* warning = "";
-};
-
-BoundaryFloorApplyResolution ResolveBoundaryFloorApply(
-    double measuredFloorYStanding,
-    bool steamVrCommitSucceeded,
-    bool steamVrVerificationAttempted,
-    bool steamVrVerified);
-
 enum class BoundaryFloorSourceKind {
     None,
     SteamVrStanding,

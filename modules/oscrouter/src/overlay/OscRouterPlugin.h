@@ -17,6 +17,10 @@ public:
     const char *Name()         const override { return "OSC Router"; }
     const char *FlagFileName() const override { return "enable_oscrouter.flag"; }
     const char *PipeName()     const override { return OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME; }
+    openvr_pair::overlay::FeaturePluginChannel Channel() const override
+    {
+        return openvr_pair::overlay::FeaturePluginChannel::Development;
+    }
 
     void Tick(openvr_pair::overlay::ShellContext &ctx) override;
     void DrawTab(openvr_pair::overlay::ShellContext &ctx) override;

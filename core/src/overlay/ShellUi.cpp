@@ -3,6 +3,7 @@
 #include "BugReportUi.h"
 #include "DebugLogging.h"
 #include "FeaturePlugin.h"
+#include "ModuleToggleUi.h"
 #include "ShellContext.h"
 #include "Theme.h"
 #include "UiCore.h"
@@ -10,8 +11,8 @@
 #include <imgui.h>
 
 #include <cstring>
-#include <map>
 #include <string>
+#include <vector>
 
 namespace openvr_pair::overlay {
 
@@ -74,6 +75,7 @@ void DrawLogsTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugi
 
 	bool anyDrawn = false;
 	for (auto &plugin : plugins) {
+		if (plugin->Channel() == FeaturePluginChannel::DevTools) continue;
 		if (!plugin->IsInstalled(context)) continue;
 		ImGui::PushID(plugin->Name());
 		ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
@@ -92,89 +94,19 @@ void DrawLogsTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugi
 
 void DrawModulesTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
 {
-	static std::map<std::string, bool> wanted;
-
 	ImGui::TextUnformatted("Modules");
 	ui::DrawTextWrapped(
 		"Toggle features on or off. Each change pops a UAC prompt. "
 		"Changes take effect the next time SteamVR loads the driver.");
 	ImGui::Spacing();
 
-	ui::TableScope table("modules", 3,
-		ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
-	if (!table) return;
-
-	ui::SetupStretchColumn("Module", 1.0f);
-	ui::SetupFixedColumn("Status", 340.0f);
-	ui::SetupFixedColumn("Enabled", 100.0f);
-	ui::DrawTableHeader();
-
+	std::vector<FeaturePlugin *> releaseModules;
 	for (auto &plugin : plugins) {
-		const bool installed = plugin->IsInstalled(context);
-		const std::string key = plugin->FlagFileName();
-		const bool isPending = context.IsTogglePending(key.c_str());
-
-		auto it = wanted.find(key);
-		if (!isPending && it != wanted.end()) {
-			wanted.erase(it);
-			it = wanted.end();
+		if (ShouldShowInModulesTab(*plugin)) {
+			releaseModules.push_back(plugin.get());
 		}
-		const bool displayState = (it != wanted.end()) ? it->second : installed;
-
-		ui::NextRow();
-
-		ui::NextColumn();
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(plugin->Name());
-
-		ui::NextColumn();
-		ImGui::AlignTextToFramePadding();
-		const char *statusText = nullptr;
-		ui::StatusTone statusTone = ui::StatusTone::Idle;
-		if (isPending) {
-			statusText = (it != wanted.end() && it->second)
-				? "Enabling -- takes effect on next SteamVR launch"
-				: "Disabling -- takes effect on next SteamVR launch";
-			statusTone = ui::StatusTone::Pending;
-		} else if (installed) {
-			statusText = "Enabled";
-			statusTone = ui::StatusTone::Ok;
-		} else {
-			statusText = "Disabled";
-		}
-		ui::DrawStatusCell(statusText, statusTone, true);
-
-		ui::NextColumn();
-		ImGui::PushID(key.c_str());
-		const std::string pendingReason =
-			"Waiting for the elevated helper to finish. Reopens after SteamVR picks up the change.";
-		const bool isRouterRow = (key == "enable_oscrouter.flag");
-		const bool routerDependentOn = isRouterRow && displayState &&
-			(context.IsFlagPresent("enable_facetracking.flag") ||
-			 context.IsFlagPresent("enable_captions.flag"));
-
-		const char *blockReason = nullptr;
-		bool blocked = isPending;
-		if (isPending) {
-			blockReason = pendingReason.c_str();
-		} else if (routerDependentOn) {
-			blocked = true;
-			blockReason =
-				"Face Tracking and Captions publish through the OSC Router. "
-				"Disable those modules first if you really want to turn the router off.";
-		}
-
-		ui::DisabledSection disabled(blocked, blockReason);
-		bool checkbox = displayState;
-		const std::string tooltip = std::string("Enable or disable ") + plugin->Name() +
-			" for this profile. Takes effect next SteamVR launch.";
-		if (ui::CheckboxWithTooltip("##enabled", &checkbox, tooltip.c_str())) {
-			wanted[key] = checkbox;
-			context.SetFlagPresent(plugin->FlagFileName(), checkbox);
-		}
-		disabled.AttachReasonTooltip();
-		ImGui::PopID();
 	}
+	DrawModuleToggleTable(context, releaseModules, "modules", "No release modules were compiled into this build.");
 }
 
 void DrawThemesTab(ShellContext &)

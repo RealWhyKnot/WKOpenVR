@@ -58,6 +58,7 @@ bool FloorCaptureSession::Observe(
     const bool wasValid = m_candidate.valid;
     double estimate = sorted[percentileIndex];
     if (wasValid && y < m_candidate.floorY) {
+        // Snap down quickly toward a lower contact reading.
         estimate = std::min(estimate, y);
     }
     const double jitterMeters = sorted[highPercentileIndex] - sorted[percentileIndex];
@@ -67,9 +68,14 @@ bool FloorCaptureSession::Observe(
 
     const double previousFloorY = m_candidate.floorY;
     const Eigen::Vector3d previousPos = m_candidate.pose.translation();
-    const double floorY = wasValid
+    // The floor only ever moves down to the lowest point the controller
+    // reached this session. Lifting the controller must not raise it: a
+    // physical floor is the lowest the controller can go, so we latch the
+    // minimum of the previous floor and the freshly smoothed estimate.
+    const double smoothed = wasValid
         ? previousFloorY + (estimate - previousFloorY) * kSmoothing
         : estimate;
+    const double floorY = wasValid ? std::min(previousFloorY, smoothed) : smoothed;
     const double dx = p.x() - previousPos.x();
     const double dz = p.z() - previousPos.z();
     const bool markerMoved = !wasValid || (dx * dx + dz * dz) > (kMarkerMoveMeters * kMarkerMoveMeters);

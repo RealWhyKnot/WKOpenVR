@@ -42,6 +42,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #ifndef OPENVR_PAIR_VERSION_STRING
@@ -63,6 +64,9 @@ std::unique_ptr<FeaturePlugin> CreateCaptionsPlugin();
 #endif
 #if OPENVR_PAIR_HAS_PHANTOM_OVERLAY
 std::unique_ptr<FeaturePlugin> CreatePhantomPlugin();
+#endif
+#if OPENVR_PAIR_HAS_DEV_OVERLAY
+std::unique_ptr<FeaturePlugin> CreateDevPlugin(std::vector<FeaturePlugin *> plugins);
 #endif
 
 } // namespace openvr_pair::overlay
@@ -104,6 +108,14 @@ std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins(
 #endif
 #if OPENVR_PAIR_HAS_PHANTOM_OVERLAY
 	plugins.push_back(CreatePhantomPlugin());
+#endif
+#if OPENVR_PAIR_HAS_DEV_OVERLAY
+	std::vector<FeaturePlugin *> devPluginSources;
+	devPluginSources.reserve(plugins.size());
+	for (auto &plugin : plugins) {
+		devPluginSources.push_back(plugin.get());
+	}
+	plugins.push_back(CreateDevPlugin(std::move(devPluginSources)));
 #endif
 	return plugins;
 }

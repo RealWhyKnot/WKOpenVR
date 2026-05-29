@@ -462,35 +462,6 @@ SteamVrFloorVerification EvaluateSteamVrFloorVerification(
     return result;
 }
 
-BoundaryFloorApplyResolution ResolveBoundaryFloorApply(
-    double measuredFloorYStanding,
-    bool steamVrCommitSucceeded,
-    bool steamVrVerificationAttempted,
-    bool steamVrVerified)
-{
-    BoundaryFloorApplyResolution result;
-    result.boundaryStandingFloorY = std::isfinite(measuredFloorYStanding)
-        ? measuredFloorYStanding
-        : 0.0;
-
-    if (steamVrCommitSucceeded && steamVrVerificationAttempted && steamVrVerified) {
-        result.steamVrNativeFloorActive = true;
-        result.boundaryStandingFloorY = 0.0;
-        return result;
-    }
-
-    if (!steamVrCommitSucceeded) {
-        result.warning = "SteamVR rejected the floor change. Boundary floor was applied locally.";
-        return result;
-    }
-
-    if (steamVrVerificationAttempted && !steamVrVerified) {
-        result.warning =
-            "SteamVR accepted the floor change, but live poses did not move as expected. Boundary floor was applied locally.";
-    }
-    return result;
-}
-
 const char* BoundaryFloorSourceKindName(BoundaryFloorSourceKind kind)
 {
     switch (kind) {
@@ -657,27 +628,9 @@ BoundaryFloorSourceDecision ResolveBoundaryFloorSource(
         decision.boundaryFloorY = boundaryFloorY;
     };
 
-    if (request.controllerContactValid) {
-        selectStandingFloor(
-            BoundaryFloorSourceKind::ControllerContact,
-            request.controllerContactStandingY,
-            "controller_floor_rejected");
-    } else {
-        reject("controller_floor_unavailable");
-    }
-
-    double savedStandingFloorY = 0.0;
-    if (SavedBoundaryStandingFloor(request, savedStandingFloorY)) {
-        if (!decision.valid) {
-            decision.valid = true;
-            decision.source = BoundaryFloorSourceKind::SavedBoundary;
-            decision.boundaryFloorY = request.savedBoundaryFloorY;
-            decision.standingFloorY = savedStandingFloorY;
-        }
-    } else {
-        reject("saved_boundary_floor_unavailable");
-    }
-
+    // SteamVR's standing floor is the source of truth. When room setup is
+    // valid we read the floor straight back from SteamVR; everything else is
+    // only a fallback for when SteamVR cannot report a usable floor.
     bool steamVrReady = true;
     if (!steamVr.chaperoneAvailable) {
         reject("steamvr_chaperone_unavailable");
@@ -705,6 +658,27 @@ BoundaryFloorSourceDecision ResolveBoundaryFloorSource(
             BoundaryFloorSourceKind::SteamVrStanding,
             0.0,
             "steamvr_floor_transform_rejected");
+    }
+
+    double savedStandingFloorY = 0.0;
+    if (SavedBoundaryStandingFloor(request, savedStandingFloorY)) {
+        if (!decision.valid) {
+            decision.valid = true;
+            decision.source = BoundaryFloorSourceKind::SavedBoundary;
+            decision.boundaryFloorY = request.savedBoundaryFloorY;
+            decision.standingFloorY = savedStandingFloorY;
+        }
+    } else {
+        reject("saved_boundary_floor_unavailable");
+    }
+
+    if (request.controllerContactValid) {
+        selectStandingFloor(
+            BoundaryFloorSourceKind::ControllerContact,
+            request.controllerContactStandingY,
+            "controller_floor_rejected");
+    } else {
+        reject("controller_floor_unavailable");
     }
 
     if (request.manualFloorValid) {

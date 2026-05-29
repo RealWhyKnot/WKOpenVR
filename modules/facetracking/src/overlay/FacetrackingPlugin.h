@@ -31,6 +31,10 @@ public:
     const char *Name()         const override { return "Face Tracking"; }
     const char *FlagFileName() const override { return "enable_facetracking.flag"; }
     const char *PipeName()     const override { return OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME; }
+    openvr_pair::overlay::FeaturePluginChannel Channel() const override
+    {
+        return openvr_pair::overlay::FeaturePluginChannel::Development;
+    }
 
     void OnStart(openvr_pair::overlay::ShellContext &ctx) override;
     void OnShutdown(openvr_pair::overlay::ShellContext &ctx) override;

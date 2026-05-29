@@ -615,12 +615,14 @@ $srcExe = Join-Path $artifactsDir "WKOpenVR.exe"
 $srcOpenVR = Join-Path $artifactsDir "openvr_api.dll"
 $srcManifest = Join-Path $artifactsDir "manifest.vrmanifest"
 $srcIcon = Join-Path $artifactsDir "dashboard_icon.png"
+$srcBoundaryIcon = Join-Path $artifactsDir "boundary_icon.png"
 
 $required = @(
 	@("WKOpenVR.exe", $srcExe),
 	@("openvr_api.dll", $srcOpenVR),
 	@("manifest.vrmanifest", $srcManifest),
 	@("dashboard_icon.png", $srcIcon),
+	@("boundary_icon.png", $srcBoundaryIcon),
 	@("overlay resources", $overlayResourcesSource),
 	@("face-module-sync.ps1", (Join-Path $overlayResourcesSource "face-module-sync.ps1")),
 	@("driver tree", $driverSourceDir),
@@ -657,7 +659,8 @@ $plan = [ordered]@{
 		[ordered]@{ Label = "WKOpenVR.exe";       Source = $srcExe;        Destination = (Join-Path $InstallDir "WKOpenVR.exe") },
 		[ordered]@{ Label = "openvr_api.dll";    Source = $srcOpenVR;     Destination = (Join-Path $InstallDir "openvr_api.dll") },
 		[ordered]@{ Label = "manifest.vrmanifest"; Source = $srcManifest; Destination = (Join-Path $InstallDir "manifest.vrmanifest") },
-		[ordered]@{ Label = "dashboard_icon.png"; Source = $srcIcon;      Destination = (Join-Path $InstallDir "dashboard_icon.png") }
+		[ordered]@{ Label = "dashboard_icon.png"; Source = $srcIcon;      Destination = (Join-Path $InstallDir "dashboard_icon.png") },
+		[ordered]@{ Label = "boundary_icon.png"; Source = $srcBoundaryIcon; Destination = (Join-Path $InstallDir "boundary_icon.png") }
 	)
 	Shortcuts = @(
 		[ordered]@{ Name = "WKOpenVR.lnk";                    Arguments = "--launch=umbrella" },

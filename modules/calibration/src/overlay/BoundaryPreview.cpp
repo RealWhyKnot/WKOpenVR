@@ -4,7 +4,6 @@
 #include "DiagnosticsLog.h"
 
 #include <openvr.h>
-#include <GL/gl3w.h>
 
 #include <algorithm>
 #include <array>
@@ -36,7 +35,6 @@ struct PreviewState {
     std::array<vr::VROverlayHandle_t, kMaxFileMarkerOverlays> fileMarkerHandles{};
     std::array<bool, kMaxFileMarkerOverlays> fileMarkerCreated{};
     std::array<bool, kMaxFileMarkerOverlays> fileMarkerTextureReadyBySlot{};
-    GLuint glTextureId = 0;
     bool created = false;
     bool visible = false;
     bool fileMarkersVisible = false;
@@ -109,15 +107,25 @@ const char* OverlayErrorName(vr::EVROverlayError err)
 
 std::string ResolveFileMarkerTexturePath()
 {
-    const std::filesystem::path exeDir = ExeDir();
-    if (!exeDir.empty()) {
-        const std::filesystem::path deployed = exeDir / "dashboard_icon.png";
-        if (std::filesystem::exists(deployed)) return deployed.string();
-    }
+    // Prefer the dedicated boundary marker glyph; fall back to the shared app
+    // icon if it has not been deployed alongside the binary yet.
+    static const char* const kCandidates[] = {
+        "boundary_icon.png",
+        "dashboard_icon.png",
+    };
 
-    const std::filesystem::path source =
-        std::filesystem::current_path() / "core" / "src" / "overlay" / "dashboard_icon.png";
-    if (std::filesystem::exists(source)) return source.string();
+    const std::filesystem::path exeDir = ExeDir();
+    for (const char* name : kCandidates) {
+        if (!exeDir.empty()) {
+            const std::filesystem::path deployed = exeDir / name;
+            if (std::filesystem::exists(deployed)) return deployed.string();
+        }
+    }
+    for (const char* name : kCandidates) {
+        const std::filesystem::path source =
+            std::filesystem::current_path() / "core" / "src" / "overlay" / name;
+        if (std::filesystem::exists(source)) return source.string();
+    }
     return {};
 }
 
@@ -140,6 +148,7 @@ uint64_t HashRenderCommand(uint64_t hash, const SpatialRenderCommand& command)
 {
     hash = HashU64(hash, static_cast<uint64_t>(command.kind));
     hash = HashU64(hash, command.closeLoop ? 1u : 0u);
+    hash = HashU64(hash, command.ageFade ? 1u : 0u);
     hash = HashU64(hash, static_cast<uint64_t>(command.layer));
     hash = HashU64(hash, static_cast<uint64_t>(command.style.r));
     hash = HashU64(hash, static_cast<uint64_t>(command.style.g));
@@ -454,10 +463,6 @@ void Destroy()
     if (vr::VROverlay() && s.handle != vr::k_ulOverlayHandleInvalid) {
         vr::VROverlay()->DestroyOverlay(s.handle);
     }
-    if (s.glTextureId != 0 && glDeleteTextures) {
-        GLuint texture = s.glTextureId;
-        glDeleteTextures(1, &texture);
-    }
     if (vr::VROverlay()) {
         for (size_t i = 0; i < s.fileMarkerHandles.size(); ++i) {
             if (s.fileMarkerCreated[i] &&
@@ -468,7 +473,6 @@ void Destroy()
         }
     }
     s.handle = vr::k_ulOverlayHandleInvalid;
-    s.glTextureId = 0;
     s.fileMarkerHandles.fill(vr::k_ulOverlayHandleInvalid);
     s.fileMarkerCreated.fill(false);
     s.fileMarkerTextureReadyBySlot.fill(false);
@@ -489,96 +493,34 @@ void Destroy()
     openvr_pair::common::DiagnosticLog("boundary-preview", "destroyed");
 }
 
-bool EnsureGlTexture()
-{
-    auto& s = State();
-    if (s.glTextureId != 0) return true;
-    if (!glGenTextures || !glBindTexture || !glTexImage2D || !glTexParameteri) {
-        s.lastError = vr::VROverlayError_InvalidTexture;
-        openvr_pair::common::DiagnosticLog(
-            "boundary_preview_status",
-            "created=%d visible=%d uploads_disabled=%d failures=%d error=%d error_name=%s source=%s mode=opengl_texture gl_unavailable=1",
-            s.created ? 1 : 0,
-            s.visible ? 1 : 0,
-            s.uploadsDisabled ? 1 : 0,
-            s.uploadFailureCount + 1,
-            static_cast<int>(s.lastError),
-            OverlayErrorName(s.lastError),
-            s.lastSource);
-        return false;
-    }
-
-    GLuint texture = 0;
-    glGenTextures(1, &texture);
-    if (texture == 0) {
-        s.lastError = vr::VROverlayError_InvalidTexture;
-        openvr_pair::common::DiagnosticLog(
-            "boundary_preview_status",
-            "created=%d visible=%d uploads_disabled=%d failures=%d error=%d error_name=%s source=%s mode=opengl_texture gl_texture=0",
-            s.created ? 1 : 0,
-            s.visible ? 1 : 0,
-            s.uploadsDisabled ? 1 : 0,
-            s.uploadFailureCount + 1,
-            static_cast<int>(s.lastError),
-            OverlayErrorName(s.lastError),
-            s.lastSource);
-        return false;
-    }
-
-    s.glTextureId = texture;
-    glBindTexture(GL_TEXTURE_2D, s.glTextureId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    return true;
-}
-
 vr::EVROverlayError UploadRasterTexture(const BoundaryPreviewRaster& raster)
 {
     auto& s = State();
-    if (!EnsureGlTexture()) {
+    if (!vr::VROverlay() || s.handle == vr::k_ulOverlayHandleInvalid) {
+        s.lastError = vr::VROverlayError_InvalidHandle;
+        return s.lastError;
+    }
+    if (raster.rgba.size() <
+        static_cast<size_t>(BoundaryPreviewRaster::kTextureSize) *
+            static_cast<size_t>(BoundaryPreviewRaster::kTextureSize) * 4u)
+    {
+        s.lastError = vr::VROverlayError_InvalidParameter;
         return s.lastError;
     }
 
-    constexpr int size = BoundaryPreviewRaster::kTextureSize;
-    glBindTexture(GL_TEXTURE_2D, s.glTextureId);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA8,
+    // Hand SteamVR the CPU RGBA buffer directly. SetOverlayRaw copies the
+    // pixels and needs no GL/DX context, so the upload works from whatever
+    // thread the capture tick runs on -- unlike SetOverlayTexture, which
+    // silently failed when no GL context was current here.
+    constexpr uint32_t size =
+        static_cast<uint32_t>(BoundaryPreviewRaster::kTextureSize);
+    const vr::EVROverlayError err = vr::VROverlay()->SetOverlayRaw(
+        s.handle,
+        const_cast<uint8_t*>(raster.rgba.data()),
         size,
         size,
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        raster.rgba.data());
-
-    const GLenum glErr = glGetError ? glGetError() : GL_NO_ERROR;
-    if (glErr != GL_NO_ERROR) {
-        s.lastError = vr::VROverlayError_InvalidTexture;
-        openvr_pair::common::DiagnosticLog(
-            "boundary-preview",
-            "texture_upload_gl_failed gl_error=0x%x source=%s vertices=%zu hash=%llu",
-            static_cast<unsigned int>(glErr),
-            s.lastSource,
-            s.lastVertexCount,
-            static_cast<unsigned long long>(raster.hash));
-        return s.lastError;
-    }
-
-    vr::Texture_t texture{};
-    texture.handle = reinterpret_cast<void*>(
-        static_cast<uintptr_t>(s.glTextureId));
-    texture.eType = vr::TextureType_OpenGL;
-    texture.eColorSpace = vr::ColorSpace_Auto;
-
-    const vr::EVROverlayError err =
-        vr::VROverlay()->SetOverlayTexture(s.handle, &texture);
-    if (err == vr::VROverlayError_None && glFlush) {
-        glFlush();
-    }
+        4u);
+    s.lastError = err;
     return err;
 }
 
@@ -902,6 +844,13 @@ BoundaryPreviewRaster BuildBoundaryPreviewRaster(
             : 0.0;
 
         for (size_t i = 1; i < vertices.size(); ++i) {
+            SpatialStyle segmentStyle = command.style;
+            if (command.ageFade) {
+                const uint8_t shade = BoundaryAgeShade(i, vertices.size());
+                segmentStyle.r = shade;
+                segmentStyle.g = shade;
+                segmentStyle.b = shade;
+            }
             DrawBoundarySegment(
                 raster.rgba,
                 pixelPoints[i - 1],
@@ -909,7 +858,7 @@ BoundaryPreviewRaster BuildBoundaryPreviewRaster(
                 false,
                 strokeRadius,
                 strokeFeather,
-                command.style);
+                segmentStyle);
         }
         if (command.closeLoop && vertices.size() >= 3) {
             DrawBoundarySegment(
@@ -947,7 +896,7 @@ bool BoundaryPreviewShouldDisableUploadsAfterFailureCount(int failureCount)
 
 bool BoundaryPreviewUsesOpenGlTextureUpload()
 {
-    return true;
+    return false;
 }
 
 int BoundaryPreviewFileMarkerLimit()

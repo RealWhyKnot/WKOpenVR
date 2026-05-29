@@ -16,6 +16,10 @@ public:
     const char* Name() const override         { return "Phantom Trackers"; }
     const char* FlagFileName() const override { return "enable_phantom.flag"; }
     const char* PipeName() const override     { return OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME; }
+    openvr_pair::overlay::FeaturePluginChannel Channel() const override
+    {
+        return openvr_pair::overlay::FeaturePluginChannel::Development;
+    }
 
     void OnStart(openvr_pair::overlay::ShellContext& context) override;
     void Tick(openvr_pair::overlay::ShellContext& context) override;

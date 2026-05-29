@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BuildChannel.h"
 #include "FeaturePlugin.h"
 #include "Protocol.h"
 
@@ -16,6 +17,10 @@ public:
 	void DrawTab(openvr_pair::overlay::ShellContext &context) override;
 	void DrawLogsSection(openvr_pair::overlay::ShellContext &context) override;
 	void OnDebugLoggingChanged(bool enabled) override;
+#if WKOPENVR_BUILD_IS_DEV
+	bool HasDevTools() const override { return true; }
+	void DrawDevTools(openvr_pair::overlay::ShellContext &context) override;
+#endif
 
 private:
 	bool lastDebugLoggingEnabled_ = false;

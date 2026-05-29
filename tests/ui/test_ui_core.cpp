@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "FeaturePlugin.h"
 #include "UiCore.h"
 #include "UiControls.h"
 
@@ -54,6 +55,19 @@ protected:
 };
 
 } // namespace
+
+TEST(FeaturePlugin, ChannelHelpersRouteReleaseAndDevelopmentModules)
+{
+	using openvr_pair::overlay::FeaturePluginChannel;
+
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInModulesTab(FeaturePluginChannel::Release));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInModulesTab(FeaturePluginChannel::Development));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInModulesTab(FeaturePluginChannel::DevTools));
+
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::Release));
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::Development));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::DevTools));
+}
 
 TEST_F(UiCoreTest, PanelAndSettingTableRenderAtSmallAndDashboardSizes)
 {

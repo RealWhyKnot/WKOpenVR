@@ -20,6 +20,10 @@ public:
     void OnStart(openvr_pair::overlay::ShellContext& context) override;
     void DrawTab(openvr_pair::overlay::ShellContext& context) override;
     void DrawLogsSection(openvr_pair::overlay::ShellContext& context) override;
+#if WKOPENVR_BUILD_IS_DEV
+    bool HasDevTools() const override { return true; }
+    void DrawDevTools(openvr_pair::overlay::ShellContext& context) override;
+#endif
 
 private:
     wkopenvr::questapp::QuestAppConfig cfg_;

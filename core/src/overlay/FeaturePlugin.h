@@ -4,6 +4,13 @@ namespace openvr_pair::overlay {
 
 struct ShellContext;
 
+enum class FeaturePluginChannel
+{
+	Release,
+	Development,
+	DevTools,
+};
+
 class FeaturePlugin
 {
 public:
@@ -12,6 +19,7 @@ public:
 	virtual const char *Name() const = 0;
 	virtual const char *FlagFileName() const = 0;
 	virtual const char *PipeName() const = 0;
+	virtual FeaturePluginChannel Channel() const { return FeaturePluginChannel::Release; }
 	virtual void OnStart(ShellContext &) {}
 	virtual void OnShutdown(ShellContext &) {}
 	virtual void Tick(ShellContext &) {}
@@ -30,7 +38,30 @@ public:
 	// DebugLogging gate and keep the default no-op.
 	virtual void OnDebugLoggingChanged(bool) {}
 
+	virtual bool HasDevTools() const { return false; }
+	virtual void DrawDevTools(ShellContext &) {}
+
 	virtual bool IsInstalled(ShellContext &) const;
 };
+
+inline bool ShouldShowInModulesTab(FeaturePluginChannel channel)
+{
+	return channel == FeaturePluginChannel::Release;
+}
+
+inline bool ShouldShowInModulesTab(const FeaturePlugin &plugin)
+{
+	return ShouldShowInModulesTab(plugin.Channel());
+}
+
+inline bool ShouldShowInDevModuleList(FeaturePluginChannel channel)
+{
+	return channel == FeaturePluginChannel::Development;
+}
+
+inline bool ShouldShowInDevModuleList(const FeaturePlugin &plugin)
+{
+	return ShouldShowInDevModuleList(plugin.Channel());
+}
 
 } // namespace openvr_pair::overlay

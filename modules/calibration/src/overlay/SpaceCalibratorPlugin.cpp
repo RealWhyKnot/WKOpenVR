@@ -17,6 +17,9 @@
 // can surface SC's logs panel without pulling the file-scope forward decl
 // out of UserInterface.cpp.
 void CCal_DrawLogsPanel();
+#if WKOPENVR_BUILD_IS_DEV
+void CCal_DrawDevToolsPanel();
+#endif
 
 void SpaceCalibratorPlugin::OnStart(openvr_pair::overlay::ShellContext &)
 {
@@ -64,9 +67,16 @@ void SpaceCalibratorPlugin::DrawTab(openvr_pair::overlay::ShellContext &)
 void SpaceCalibratorPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext &)
 {
 	// Surfaces the existing SC Logs panel (file list, enable toggle, drift
-	// state dump, Explorer button) inside the umbrella's global Logs tab.
+	// health, Explorer button) inside the umbrella's global Logs tab.
 	CCal_DrawLogsPanel();
 }
+
+#if WKOPENVR_BUILD_IS_DEV
+void SpaceCalibratorPlugin::DrawDevTools(openvr_pair::overlay::ShellContext &)
+{
+	CCal_DrawDevToolsPanel();
+}
+#endif
 
 void SpaceCalibratorPlugin::OnDebugLoggingChanged(bool enabled)
 {

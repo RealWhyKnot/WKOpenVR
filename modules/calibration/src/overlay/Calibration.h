@@ -184,7 +184,10 @@ struct BoundaryConfig {
 	std::vector<BoundaryVertex> vertices;
 	double floorY = 0.0;
 	double ceilingY = 2.5;
-	bool standingSpace = false;
+	// Boundary geometry lives in SteamVR standing space, independent of the
+	// space-calibration transform. Legacy profiles may still load false and
+	// are pushed through the transform path until redrawn.
+	bool standingSpace = true;
 	std::vector<uint8_t> priorChaperone;
 	bool priorChaperoneCaptured = false;
 };
