@@ -187,4 +187,137 @@ TEST(PredictionSmoothingTest, ReleasedPredictionFactorMovesTowardPassThrough) {
     EXPECT_NEAR(ReleasedPredictionFactor(0.25, 0.5), 0.625, 1e-12);
 }
 
+// ---------------------------------------------------------------------------
+// One-euro FilterStep -- the shared live + shadow position/rotation filter.
+// ---------------------------------------------------------------------------
+
+TEST(PredictionSmoothingFilterTest, FirstCallSeedsAndPassesThrough) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(80);
+    double pos[3] = {0.1, 0.2, 0.3};
+    double rot[4] = {1, 0, 0, 0};
+    const StepResult r = FilterStep(s, p, pos, rot, 0.0, 0.0, 1.0 / 90.0);
+    EXPECT_TRUE(r.reseeded);
+    EXPECT_DOUBLE_EQ(s.filteredPos[0], 0.1);
+    EXPECT_DOUBLE_EQ(s.filteredPos[1], 0.2);
+    EXPECT_DOUBLE_EQ(s.filteredPos[2], 0.3);
+}
+
+// THE regression pin: at s=100 the old position EWM had alpha=0 and froze
+// forever ("sticks at rest"). The one-euro min cutoff must keep tracking a
+// slow drift instead of sticking at the seed.
+TEST(PredictionSmoothingFilterTest, DoesNotFreezeAtMaxSmoothnessRest) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(100);
+    const double dt = 1.0 / 90.0;
+    double rot[4] = {1, 0, 0, 0};
+    double seed[3] = {0, 0, 0};
+    FilterStep(s, p, seed, rot, 0.0, 0.0, dt);
+    // Drift +9 mm/s for 2 s -- below the still-speed threshold, so the gate
+    // does not release; this exercises pure min-cutoff tracking.
+    const double perFrame = 0.009 * dt;
+    double x = 0.0;
+    for (int i = 0; i < 180; ++i) {
+        x += perFrame;
+        double cur[3] = {x, 0, 0};
+        FilterStep(s, p, cur, rot, 0.009, 0.0, dt);
+    }
+    EXPECT_GT(s.filteredPos[0], 0.008)
+        << "filter froze at rest (output=" << s.filteredPos[0] << " m) -- regression";
+    EXPECT_LT(s.filteredPos[0], x)
+        << "output should lag slightly behind a drifting input, not lead it";
+}
+
+TEST(PredictionSmoothingFilterTest, LargeJumpReseedsWithoutLag) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(90);
+    const double dt = 1.0 / 90.0;
+    double rot[4] = {1, 0, 0, 0};
+    double pos[3] = {0, 0, 0};
+    for (int i = 0; i < 30; ++i) FilterStep(s, p, pos, rot, 0.0, 0.0, dt);
+    double jumped[3] = {0.6, 0, 0};  // > positionJumpM (0.5 m)
+    const StepResult r = FilterStep(s, p, jumped, rot, 0.0, 0.0, dt);
+    EXPECT_TRUE(r.reseeded);
+    EXPECT_DOUBLE_EQ(s.filteredPos[0], 0.6);
+}
+
+TEST(PredictionSmoothingFilterTest, LongGapReseeds) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(80);
+    double rot[4] = {1, 0, 0, 0};
+    double pos[3] = {0, 0, 0};
+    FilterStep(s, p, pos, rot, 0.0, 0.0, 1.0 / 90.0);
+    double moved[3] = {0.05, 0, 0};
+    const StepResult r = FilterStep(s, p, moved, rot, 0.0, 0.0, 0.5);  // > resetGapSeconds
+    EXPECT_TRUE(r.reseeded);
+    EXPECT_DOUBLE_EQ(s.filteredPos[0], 0.05);
+}
+
+TEST(PredictionSmoothingFilterTest, ReducesRestJitter) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(80);
+    const double dt = 1.0 / 90.0;
+    double rot[4] = {1, 0, 0, 0};
+    double seed[3] = {1.0, 0, 0};
+    FilterStep(s, p, seed, rot, 0.0, 0.0, dt);
+    // Realistic sub-mm rest jitter from a stationary tracker (reported velocity
+    // ~0). Large coherent jitter would derive a high speed and the filter would
+    // (correctly) release -- that is motion, not rest -- so it would not, and
+    // should not, be smoothed away.
+    const double amp = 0.0005;  // 0.5 mm alternating jitter
+    // Warm up so the post-seed release envelope settles before measuring.
+    for (int i = 0; i < 60; ++i) {
+        double cur[3] = {1.0 + (i % 2 ? amp : -amp), 0, 0};
+        FilterStep(s, p, cur, rot, 0.0, 0.0, dt);
+    }
+    double sumSqIn = 0.0, sumSqOut = 0.0;
+    for (int i = 0; i < 400; ++i) {
+        double cur[3] = {1.0 + (i % 2 ? amp : -amp), 0, 0};
+        FilterStep(s, p, cur, rot, 0.0, 0.0, dt);
+        sumSqIn += (cur[0] - 1.0) * (cur[0] - 1.0);
+        sumSqOut += (s.filteredPos[0] - 1.0) * (s.filteredPos[0] - 1.0);
+    }
+    EXPECT_LT(sumSqOut, sumSqIn * 0.10)
+        << "one-euro at s=80 should cut sub-mm rest jitter variance by >90%";
+}
+
+TEST(PredictionSmoothingFilterTest, TracksFastMotionWithLowLag) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(80);
+    const double dt = 1.0 / 90.0;
+    double rot[4] = {1, 0, 0, 0};
+    double pos0[3] = {0, 0, 0};
+    FilterStep(s, p, pos0, rot, 0.0, 0.0, dt);
+    const double speed = 1.0;  // 1 m/s releases the gate
+    double x = 0.0;
+    for (int i = 0; i < 90; ++i) {
+        x += speed * dt;
+        double cur[3] = {x, 0, 0};
+        FilterStep(s, p, cur, rot, speed, 0.0, dt);
+    }
+    EXPECT_LT(x - s.filteredPos[0], 0.02)
+        << "fast motion should track within 20 mm (lag=" << (x - s.filteredPos[0]) << " m)";
+}
+
+TEST(PredictionSmoothingFilterTest, RotationConvergesTowardHeldTarget) {
+    using namespace prediction::smart_shadow;
+    FilterState s;
+    const Params p = BuildParams(80);
+    const double dt = 1.0 / 90.0;
+    double pos[3] = {0, 0, 0};
+    double rot0[4] = {1, 0, 0, 0};
+    FilterStep(s, p, pos, rot0, 0.0, 0.0, dt);
+    const double half = 15.0 * 3.14159265358979323846 / 180.0;  // 30 deg about Z
+    double target[4] = {std::cos(half), 0.0, 0.0, std::sin(half)};
+    for (int i = 0; i < 250; ++i) FilterStep(s, p, pos, target, 0.0, 0.0, dt);
+    EXPECT_LT(QuatAngleRad(s.filteredRot, target), 0.05)
+        << "rotation should converge toward a held target";
+}
+
 } // namespace

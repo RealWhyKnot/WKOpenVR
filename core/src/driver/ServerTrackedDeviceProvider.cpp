@@ -63,52 +63,6 @@ std::string InputHealthPathString(const char *path)
 	return std::string(path, path + n);
 }
 
-// Smart-smoothing motion-ramp thresholds. Picked for hand-held VR motion:
-// resting hand tremor sits around 5-10 deg/s and a few cm/s, while a walking
-// head/hands sweep is on the order of 100+ deg/s and 50+ cm/s. Either axis
-// going hot is enough to release suppression (max() not mean()) -- a slow
-// aim adjustment moves the controller rotationally with almost no
-// translation, and we still want to back off there.
-constexpr double kSmartLinearStill   = 0.05;   // m/s
-constexpr double kSmartLinearMoving  = 0.60;   // m/s
-constexpr double kSmartAngularStill  = 0.10;   // rad/s  (~5.7 deg/s)
-constexpr double kSmartAngularMoving = 2.00;   // rad/s  (~115  deg/s)
-// EMA on the motion ramp itself. 0.15 ~= 5-frame lag at 90 Hz; keeps the
-// effective factor from twitching on noisy IMU velocity without making the
-// roll-off feel sticky.
-constexpr double kSmartEmaAlpha      = 0.15;
-
-double ComputeSmartMotionRamp(const vr::DriverPose_t &pose)
-{
-	const double vx = pose.vecVelocity[0];
-	const double vy = pose.vecVelocity[1];
-	const double vz = pose.vecVelocity[2];
-	const double wx = pose.vecAngularVelocity[0];
-	const double wy = pose.vecAngularVelocity[1];
-	const double wz = pose.vecAngularVelocity[2];
-
-	// SteamVR can fill the velocity fields with INF on a tracking
-	// recovery edge (the driver-side IMU integrator briefly produces
-	// non-finite values). sqrt(INF) = INF; clamp((INF - threshold) / span,
-	// 0, 1) = 1; the EMA would saturate the motion ramp permanently and
-	// disable the smart-motion blend suppressor. Treat any non-finite
-	// component as "no motion data" and return the still ramp value.
-	if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)
-		|| !std::isfinite(wx) || !std::isfinite(wy) || !std::isfinite(wz)) {
-		return 0.0;
-	}
-
-	const double linear = std::sqrt(vx * vx + vy * vy + vz * vz);
-	const double angular = std::sqrt(wx * wx + wy * wy + wz * wz);
-
-	const double posRamp = std::clamp(
-		(linear  - kSmartLinearStill)  / (kSmartLinearMoving  - kSmartLinearStill),
-		0.0, 1.0);
-	const double rotRamp = std::clamp(
-		(angular - kSmartAngularStill) / (kSmartAngularMoving - kSmartAngularStill),
-		0.0, 1.0);
-	return std::max(posRamp, rotRamp);
-}
 
 } // namespace
 
@@ -568,18 +522,18 @@ void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDeviceP
 	// scaling. 0 = pose untouched, 100 = predictor fully defeated.
 	tf.predictionSmoothness = cfg.predictionSmoothness;
 	tf.smartEnabled         = newSmart;
-#if WKOPENVR_BUILD_IS_DEV
 	tf.smartShadowParams = prediction::smart_shadow::BuildParams(cfg.predictionSmoothness);
+	if (oldSmoothness != cfg.predictionSmoothness) {
+		// New coefficients: drop the running filter so it reseeds from the next
+		// pose rather than blending across a strength change.
+		tf.smartFilter = prediction::smart_shadow::FilterState{};
+		tf.smartFilterLastSample.QuadPart = 0;
+	}
+#if WKOPENVR_BUILD_IS_DEV
 	if (oldSmoothness != cfg.predictionSmoothness) {
 		tf.smartShadow = SmartSmoothingShadowState{};
 	}
 #endif
-	if (newSmart && !oldSmart) {
-		// Re-enable starts from a known state so the first frame after
-		// toggle doesn't inherit a stale motion estimate from an earlier
-		// enabled stretch.
-		tf.smartMotionEma = 0.0;
-	}
 	if (oldSmoothness != cfg.predictionSmoothness || oldSmart != newSmart) {
 		LOG("[prediction] SetDevicePrediction id=%u smoothness=%u old=%u smart=%s",
 			cfg.openVRID,
@@ -637,6 +591,98 @@ void ServerTrackedDeviceProvider::SetTrackingSystemFallback(const protocol::SetT
 	slot->tf.recalibrateOnMovement = newFallback.recalibrateOnMovement;
 }
 
+void ServerTrackedDeviceProvider::ApplySmartSmoothing(
+	uint32_t openVRID,
+	DeviceTransform& device,
+	const vr::DriverPose_t& rawPose,
+	vr::DriverPose_t& pose,
+	uint8_t smoothness) const
+{
+	(void)openVRID;
+	namespace ss = prediction::smart_shadow;
+
+	// Without a usable performance counter we can't derive a per-frame dt, so
+	// pass the pose through unfiltered rather than guess.
+	if (qpcFreq.QuadPart <= 0) return;
+
+	const double rawPos[3] = {
+		rawPose.vecPosition[0], rawPose.vecPosition[1], rawPose.vecPosition[2] };
+	const double rawRot[4] = {
+		rawPose.qRotation.w, rawPose.qRotation.x,
+		rawPose.qRotation.y, rawPose.qRotation.z };
+
+	// Bad input (NaN/Inf or a degenerate quaternion): leave the pose untouched
+	// and force a reseed on the next good sample. Guarding here keeps FilterStep
+	// off its degenerate path so its output is always safe to apply below.
+	double normRot[4];
+	if (!ss::IsFinite3(rawPos) || !ss::QuatNormalize(rawRot, normRot)) {
+		device.smartFilter.initialized = false;
+		device.smartFilterLastSample.QuadPart = 0;
+		return;
+	}
+
+	LARGE_INTEGER now{};
+	QueryPerformanceCounter(&now);
+	const double dt = device.smartFilterLastSample.QuadPart > 0
+		? (now.QuadPart - device.smartFilterLastSample.QuadPart) /
+		      static_cast<double>(qpcFreq.QuadPart)
+		: -1.0;  // first sample -> FilterStep seeds and passes through
+	device.smartFilterLastSample = now;
+
+	double reportedLinear = 0.0;
+	if (ss::IsFinite3(rawPose.vecVelocity)) {
+		reportedLinear = std::min(ss::Length3(rawPose.vecVelocity), 15.0);
+	}
+	double reportedAngular = 0.0;
+	if (ss::IsFinite3(rawPose.vecAngularVelocity)) {
+		reportedAngular = std::min(ss::Length3(rawPose.vecAngularVelocity), 80.0);
+	}
+
+	const ss::StepResult r = ss::FilterStep(
+		device.smartFilter, device.smartShadowParams,
+		rawPos, rawRot, reportedLinear, reportedAngular, dt);
+
+	// Velocity / acceleration / lookahead suppression, released during motion:
+	// SteamVR keeps extrapolating while the device actually moves (low latency)
+	// but not at rest (where extrapolation only amplifies jitter). The rest
+	// strength is the squared curve (1 - s/100)^2; the release blends it toward
+	// 1 (pass-through) using the same speed signal that drives the filter.
+	const double base = ss::Saturate(prediction::SmoothnessToFactor(smoothness));
+	const double linFactor = base + (1.0 - base) * r.posRelease;
+	const double angFactor = base + (1.0 - base) * r.rotRelease;
+
+	pose.vecVelocity[0] *= linFactor;
+	pose.vecVelocity[1] *= linFactor;
+	pose.vecVelocity[2] *= linFactor;
+	pose.vecAcceleration[0] *= linFactor;
+	pose.vecAcceleration[1] *= linFactor;
+	pose.vecAcceleration[2] *= linFactor;
+	pose.vecAngularVelocity[0] *= angFactor;
+	pose.vecAngularVelocity[1] *= angFactor;
+	pose.vecAngularVelocity[2] *= angFactor;
+	pose.vecAngularAcceleration[0] *= angFactor;
+	pose.vecAngularAcceleration[1] *= angFactor;
+	pose.vecAngularAcceleration[2] *= angFactor;
+	pose.poseTimeOffset *= linFactor;
+
+	// Filtered position is the live output (base smoothing for every user).
+	pose.vecPosition[0] = device.smartFilter.filteredPos[0];
+	pose.vecPosition[1] = device.smartFilter.filteredPos[1];
+	pose.vecPosition[2] = device.smartFilter.filteredPos[2];
+
+#if WKOPENVR_BUILD_IS_DEV
+	// Experimental rotation low-pass -- adds aim lag, so it is dev-only and gated
+	// on the smartEnabled toggle for hands-on evaluation. Release builds keep raw
+	// rotation.
+	if (device.smartEnabled) {
+		pose.qRotation.w = device.smartFilter.filteredRot[0];
+		pose.qRotation.x = device.smartFilter.filteredRot[1];
+		pose.qRotation.y = device.smartFilter.filteredRot[2];
+		pose.qRotation.z = device.smartFilter.filteredRot[3];
+	}
+#endif
+}
+
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose)
 {
 	// Apply debug pose before anything else
@@ -670,15 +716,13 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	auto& tf = transforms[openVRID];
 	const vr::DriverPose_t rawSmoothingInput = pose;
 
-	// Native pose-prediction suppression. Scales the velocity / acceleration /
-	// poseTimeOffset fields by (1 - smoothness/100), where smoothness comes from
-	// either the per-ID slot or the matching tracking-system fallback (per-ID
-	// wins when both are set). The user picks the value from a 0..100 slider in
-	// the overlay's Prediction tab; 100 fully zeros the fields (matching the old
-	// "freeze" behaviour) and effectively defeats SteamVR's pose extrapolation.
-	// The HMD / calibration ref / calibration target are hard-blocked to 0
-	// upstream by the overlay, so by the time we read smoothness here it's
-	// already been vetted as safe to apply.
+	// Resolve the smoothing strength for this device. The user picks a 0..100
+	// value from a slider in the overlay's Smoothing tab; it comes from either
+	// the per-ID slot or the matching tracking-system fallback (per-ID wins when
+	// both are set). The HMD / calibration ref / calibration target are hard-
+	// blocked to 0 upstream by the overlay, so by the time we read smoothness
+	// here it's already been vetted as safe to apply. The filtering itself is
+	// done by ApplySmartSmoothing below.
 	uint8_t smoothness = tf.predictionSmoothness;
 	if (smoothness == 0 && !tf.enabled && !deviceSystem[openVRID].empty()) {
 		const auto& sys = deviceSystem[openVRID];
@@ -692,79 +736,17 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		// shouldn't be able to push a value above 100 here.
 		if (smoothness > 100) smoothness = 100;
 
-		// Squared curve: factor = (1 - s/100)^2.  Widens the perceptual gap
-		// between s=80 (factor=0.04) and s=100 (factor=0) compared to the old
-		// linear map (was 0.20 vs 0.00).
-		double factor = prediction::SmoothnessToFactor(smoothness);
-
-		// Position EWM alpha: separate from velocity factor so the positional
-		// filter can be softer at mid-settings without killing velocity too hard.
-		double posAlpha = prediction::PositionEwmAlpha(smoothness);
-
-		if (tf.smartEnabled) {
-			// Treat the slider as the maximum strength to apply when the
-			// device is stationary, and blend toward "no suppression"
-			// (factor = 1.0 / posAlpha = 1.0) as motion rises. EMA the
-			// motion ramp so the effective factor doesn't twitch on noisy
-			// IMU velocity.
-			const double motion   = ComputeSmartMotionRamp(pose);
-			tf.smartMotionEma     = (1.0 - kSmartEmaAlpha) * tf.smartMotionEma
-			                      + kSmartEmaAlpha * motion;
-			factor   = factor   + (1.0 - factor)   * tf.smartMotionEma;
-			posAlpha = posAlpha + (1.0 - posAlpha)  * tf.smartMotionEma;
-		}
-
-		// Velocity / acceleration / lookahead suppression.
-		pose.vecVelocity[0] *= factor;
-		pose.vecVelocity[1] *= factor;
-		pose.vecVelocity[2] *= factor;
-		pose.vecAcceleration[0] *= factor;
-		pose.vecAcceleration[1] *= factor;
-		pose.vecAcceleration[2] *= factor;
-		pose.vecAngularVelocity[0] *= factor;
-		pose.vecAngularVelocity[1] *= factor;
-		pose.vecAngularVelocity[2] *= factor;
-		pose.vecAngularAcceleration[0] *= factor;
-		pose.vecAngularAcceleration[1] *= factor;
-		pose.vecAngularAcceleration[2] *= factor;
-		// poseTimeOffset is multiplicative on the predictor: zeroing it cancels
-		// extrapolation; halving it halves the lookahead time. Same factor as
-		// velocity for consistency.
-		pose.poseTimeOffset *= factor;
-
-		// Position-space low-pass filter.  Seeds from the first pose seen after
-		// smoothness becomes non-zero; thereafter blends the running average
-		// toward the raw position at rate posAlpha each frame.  This attenuates
-		// physical jitter that velocity suppression cannot touch.
-		//
-		// Large-jump guard: if the raw position is more than 0.5 m from the
-		// current EMA (tracking loss / teleport recovery), reseed immediately
-		// so the filter doesn't lag behind an intentional large displacement.
-		if (tf.posEmaSeeded) {
-			const double dx = pose.vecPosition[0] - tf.posEma[0];
-			const double dy = pose.vecPosition[1] - tf.posEma[1];
-			const double dz = pose.vecPosition[2] - tf.posEma[2];
-			if (dx*dx + dy*dy + dz*dz > 0.25) { // 0.5 m radius
-				tf.posEmaSeeded = false;
-			}
-		}
-		if (!tf.posEmaSeeded) {
-			tf.posEma[0] = pose.vecPosition[0];
-			tf.posEma[1] = pose.vecPosition[1];
-			tf.posEma[2] = pose.vecPosition[2];
-			tf.posEmaSeeded = true;
-		} else {
-			tf.posEma[0] += posAlpha * (pose.vecPosition[0] - tf.posEma[0]);
-			tf.posEma[1] += posAlpha * (pose.vecPosition[1] - tf.posEma[1]);
-			tf.posEma[2] += posAlpha * (pose.vecPosition[2] - tf.posEma[2]);
-		}
-		pose.vecPosition[0] = tf.posEma[0];
-		pose.vecPosition[1] = tf.posEma[1];
-		pose.vecPosition[2] = tf.posEma[2];
+		// One-euro speed-adaptive smoothing: low-pass the reported position
+		// (heavy at rest, light in motion, never frozen) and scale the velocity
+		// / acceleration / lookahead fields by a release-modulated factor so
+		// extrapolation is suppressed at rest but active during motion. Replaces
+		// the old freeze-prone position EWM + motion-ramp gate.
+		ApplySmartSmoothing(openVRID, tf, rawSmoothingInput, pose, smoothness);
 	} else {
-		// Smoothness dropped to 0: reset EMA state so a future re-enable
+		// Smoothness dropped to 0: reset filter state so a future re-enable
 		// seeds from the current raw pose rather than a stale snapshot.
-		tf.posEmaSeeded = false;
+		tf.smartFilter.initialized = false;
+		tf.smartFilterLastSample.QuadPart = 0;
 	}
 
 #if WKOPENVR_BUILD_IS_DEV

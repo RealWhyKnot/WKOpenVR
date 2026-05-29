@@ -213,23 +213,22 @@ private:
 		// has already vetted that suppressing this device is safe.
 		uint8_t predictionSmoothness = 0;
 
-		// Smart smoothing: when true, predictionSmoothness above becomes a
-		// maximum-when-stationary value and the effective factor is rolled
-		// off toward "no suppression" as the device's linear or angular
-		// velocity rises. smartMotionEma tracks a 0..1 motion-ramp signal
-		// (max of normalised linear and angular speed) low-passed across
-		// frames so the factor doesn't twitch on noisy IMU velocity. All
-		// fields below are guarded by stateMutex, same as predictionSmoothness.
-		bool   smartEnabled    = false;
-		double smartMotionEma  = 0.0;
+		// Smart smoothing. When predictionSmoothness > 0 the device's reported
+		// position -- and, in dev builds with smartEnabled on, rotation -- is run
+		// through a one-euro speed-adaptive low-pass (SmartSmoothingShadowMath.h):
+		// heavy smoothing at rest, little lag in motion, and never frozen. This
+		// is the base smoothing for every user; smartEnabled is the dev-only
+		// experimental switch for the (laggier) rotation low-pass and is ignored
+		// in release builds. All fields below are guarded by stateMutex, same as
+		// predictionSmoothness.
+		bool smartEnabled = false;
 
-		// Position-space EWM state for smart smoothing.  Seeded from the first
-		// pose received after smoothness becomes non-zero; reset whenever
-		// smoothness drops to 0 so a re-enable starts from the current pose
-		// rather than a stale one.  Expressed in driver-space (same coordinate
-		// frame as pose.vecPosition).
-		bool   posEmaSeeded   = false;
-		double posEma[3]      = {0.0, 0.0, 0.0};
+		// One-euro filter coefficients (slider-derived via BuildParams) + running
+		// state + the QPC timestamp of the previous sample (for per-frame dt and
+		// the long-gap reseed). Reset whenever smoothness changes or drops to 0.
+		prediction::smart_shadow::Params smartShadowParams;
+		prediction::smart_shadow::FilterState smartFilter;
+		LARGE_INTEGER smartFilterLastSample{};
 
 		// When true, BlendTransform's lerp toward targetTransform only advances
 		// proportional to detected per-frame motion magnitude. A stationary user
@@ -256,7 +255,6 @@ private:
 		LARGE_INTEGER lastSlewLogTime{};
 
 #if WKOPENVR_BUILD_IS_DEV
-		prediction::smart_shadow::Params smartShadowParams;
 		SmartSmoothingShadowState smartShadow;
 #endif
 	};
@@ -443,6 +441,19 @@ private:
 
 	void BlendTransform(DeviceTransform& device, const IsoTransform& deviceWorldPose) const;
 	void ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const;
+
+	// Live one-euro smoothing for a tracked device's reported pose. Applies the
+	// slider-derived position filter (and, in dev builds with smartEnabled on,
+	// the rotation filter) and scales the velocity / acceleration / lookahead
+	// fields by a release-modulated factor so extrapolation is suppressed at
+	// rest but active in motion. Caller guarantees smoothness > 0; rawPose is the
+	// unmodified pose, pose is mutated in place.
+	void ApplySmartSmoothing(
+		uint32_t openVRID,
+		DeviceTransform& device,
+		const vr::DriverPose_t& rawPose,
+		vr::DriverPose_t& pose,
+		uint8_t smoothness) const;
 #if WKOPENVR_BUILD_IS_DEV
 	void UpdateSmartSmoothingShadow(
 		uint32_t openVRID,
