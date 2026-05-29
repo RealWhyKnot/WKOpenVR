@@ -18,6 +18,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **runtime:** Add health summaries (a52ed25)
 - **boundary:** Add spatial drawing framework (848c3c4)
 - **boundary:** Improve floor source and hmd preview (2fcc071)
+- **smoothing:** Speed-adaptive one-euro position filter as base (9e435aa)
+- **calibration:** Permanent DriverSynth, filled boundary, gated floor (2c9629a)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -35,6 +37,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - diag(debug): improve runtime diagnostics (2026.5.27.0-beta) (148a650)
 - diag(calibration): log quality verdicts (5c88595)
 - diag(smoothing): add smart smoothing shadow metrics (c6316ee)
+- **calibration:** Drop conditional floor offset; rework boundary preview (462d480)
+- **calibration:** Make head-mount offset auto-correct log-only (e353bb9)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -83,6 +87,13 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **boundary:** Preview floor from lowest controller (81f0c01)
 - **boundary:** Center chaperone play area (ccdcf20)
 - **boundary:** Stabilize floor and trigger drawing (1f6d53a)
+- **inputhealth:** Migrate existing profiles to rest-recenter on (13c09fd)
+- **boundary:** Push the startup boundary with a converged transform (b3a32f4)
+- **build:** Stabilize overlay build inputs (e9459bc)
+- **boundary:** Use standing-space capture and texture preview (92849bb)
+- **calibration:** Harden hmd preview overlays (d9a271a)
+- **boundary:** Keep local boundary when native push is ineligible (728e5cd)
+- **calibration:** Guard head-mounted tracker source changes (39bb172)
 
 ---
 
