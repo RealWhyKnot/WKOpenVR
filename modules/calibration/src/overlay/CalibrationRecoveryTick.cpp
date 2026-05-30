@@ -868,6 +868,29 @@ namespace {
 			const double hmdDelta = currentHmdDelta;
 			const Eigen::Vector3d dpos = hmdPose.translation() - s.prevHmd.translation();
 
+			// TODO(diag): remove after snap-suppress corroboration confirmed.
+			// Field logs (2026-05-29) show headTrackerDelta=-1 at every relocalization,
+			// so the snap-suppress bypass never engages and all events take destructive
+			// full recovery. Capture the corroboration inputs at the decision point to
+			// pin which precondition fails (mode / tracker pose validity / prior sample).
+			{
+				const auto& hmDbg = CalCtx.headMount;
+				int poseValid = -1, connected = -1, result = -1;
+				if (hmDbg.deviceID >= 0 && (uint32_t)hmDbg.deviceID < vr::k_unMaxTrackedDeviceCount) {
+					const auto& tpDbg = CalCtx.devicePoses[hmDbg.deviceID];
+					poseValid = (int)tpDbg.poseIsValid;
+					connected = (int)tpDbg.deviceIsConnected;
+					result    = (int)tpDbg.result;
+				}
+				char hmbuf[320];
+				snprintf(hmbuf, sizeof hmbuf,
+					"snap_corroboration_inputs: hmMode=%d deviceID=%d poseIsValid=%d connected=%d"
+					" result=%d havePrevTracker=%d headTrackerDelta=%.4f hmdDelta=%.3f",
+					(int)hmDbg.mode, hmDbg.deviceID, poseValid, connected, result,
+					(int)s.havePrevHeadTracker, headTrackerDelta, hmdDelta);
+				Metrics::WriteLogAnnotation(hmbuf);
+			}
+
 			// Head-mount corroboration: when mode >= Corroborate and the tracker
 			// produced a valid displacement reading this tick, check whether the
 			// tracker actually moved. A Quest SLAM snap relocates the HMD's world
