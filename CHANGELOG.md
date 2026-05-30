@@ -20,6 +20,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **boundary:** Improve floor source and hmd preview (2fcc071)
 - **smoothing:** Speed-adaptive one-euro position filter as base (9e435aa)
 - **calibration:** Permanent DriverSynth, filled boundary, gated floor (2c9629a)
+- **boundary:** On/off toggles for floor and boundary; lighter preview draw (efa0605)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
