@@ -39,6 +39,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - diag(smoothing): add smart smoothing shadow metrics (c6316ee)
 - **calibration:** Drop conditional floor offset; rework boundary preview (462d480)
 - **calibration:** Make head-mount offset auto-correct log-only (e353bb9)
+- diag(calibration): log snap-suppress corroboration inputs at relocalization (3e1a7fd)
+- diag(smoothing): make smart-smoothing shadow a selectable A/B testbed (3fb2afb)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
