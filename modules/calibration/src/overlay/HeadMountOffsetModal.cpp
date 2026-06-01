@@ -521,6 +521,7 @@ bool DrawOffsetModal() {
 
 void DrawOffsetInlinePanel() {
     auto& hm = CalCtx.headMount;
+    static bool s_advancedFineTuneOpen = false;
 
     // Decompose headFromTracker into XYZ (cm) + RPY (deg) for display.
     // The sliders write back into the transform each frame.
@@ -561,15 +562,25 @@ void DrawOffsetInlinePanel() {
     }
 
     ImGui::Spacing();
-    ImGui::TextUnformatted("Fine adjustment (XYZ offset, RPY rotation):");
+    ImGui::TextUnformatted("Fine adjustment:");
     ImGui::Spacing();
 
-    changed |= SliderCm("X##hft_x", t(0));
-    changed |= SliderCm("Y##hft_y", t(1));
-    changed |= SliderCm("Z##hft_z", t(2));
-    changed |= SliderDeg("Yaw##hft_yaw",   rpy(0));
-    changed |= SliderDeg("Pitch##hft_pit", rpy(1));
-    changed |= SliderDeg("Roll##hft_rol",  rpy(2));
+    changed |= SliderCm("Forehead height##hft_y", t(1));
+
+    const char* advancedLabel =
+        s_advancedFineTuneOpen ? "Hide advanced offset" : "Show advanced offset";
+    if (ImGui::SmallButton(advancedLabel)) {
+        s_advancedFineTuneOpen = !s_advancedFineTuneOpen;
+    }
+
+    if (s_advancedFineTuneOpen) {
+        ImGui::Spacing();
+        changed |= SliderCm("Side offset##hft_x", t(0));
+        changed |= SliderCm("Depth offset##hft_z", t(2));
+        changed |= SliderDeg("Yaw##hft_yaw",   rpy(0));
+        changed |= SliderDeg("Pitch##hft_pit", rpy(1));
+        changed |= SliderDeg("Roll##hft_rol",  rpy(2));
+    }
 
     if (changed) {
         // Recompose. ZYX order matches eulerAngles(2,1,0) decomposition above.
