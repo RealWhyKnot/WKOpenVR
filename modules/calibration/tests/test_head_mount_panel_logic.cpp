@@ -6,7 +6,6 @@
 
 #include <gtest/gtest.h>
 #include "Calibration.h"  // HeadMountMode, HeadMountConfig
-#include "CalibrationDeviceSelection.h"
 #include "HeadMountOffsetPreflight.h"
 #include "HeadMountTargetBinding.h"
 
@@ -45,22 +44,6 @@ CalibrationContext ReadyOffsetCalibrationContext() {
     wkopenvr::headmount::BindHeadMountToContinuousTarget(ctx);
     ctx.headMount.mode = HeadMountMode::Off;
     return ctx;
-}
-
-VRDevice MakeDevice(
-    int id,
-    vr::TrackedDeviceClass deviceClass,
-    const char* trackingSystem,
-    const char* model,
-    const char* serial)
-{
-    VRDevice device;
-    device.id = id;
-    device.deviceClass = deviceClass;
-    device.trackingSystem = trackingSystem;
-    device.model = model;
-    device.serial = serial;
-    return device;
 }
 
 } // namespace
@@ -290,94 +273,4 @@ TEST(HeadMountPanelLogic, RebindingSameTargetPreservesOffset) {
     EXPECT_NEAR(ctx.headMount.headFromTracker.translation().y(), 0.20, 1e-9);
     EXPECT_NEAR(ctx.headMount.headFromTracker.translation().z(), 0.30, 1e-9);
     EXPECT_EQ(ctx.headMountOffsetVersion, beforeVersion);
-}
-
-TEST(HeadMountPanelLogic, AutoSelectHeadsetPairPicksHmdAndSingleTracker) {
-    VRState state;
-    state.trackingSystems = { "oculus", "lighthouse" };
-    state.devices.push_back(MakeDevice(
-        0, vr::TrackedDeviceClass_HMD, "oculus", "Quest Pro", "VRLINKHMDQUESTPRO"));
-    state.devices.push_back(MakeDevice(
-        1, vr::TrackedDeviceClass_Controller, "oculus", "Quest Touch Left", "QLEFT"));
-    state.devices.push_back(MakeDevice(
-        7, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-HEAD"));
-
-    CalibrationContext ctx;
-    ctx.referenceTrackingSystem = "oculus";
-    ctx.targetTrackingSystem = "lighthouse";
-
-    EXPECT_TRUE(wkopenvr::spacecal::selection::AutoSelectHeadsetTrackerPair(ctx, state));
-    EXPECT_EQ(ctx.referenceID, 0);
-    EXPECT_EQ(ctx.referenceStandby.serial, "VRLINKHMDQUESTPRO");
-    EXPECT_EQ(ctx.targetID, 7);
-    EXPECT_EQ(ctx.targetStandby.serial, "LHR-HEAD");
-}
-
-TEST(HeadMountPanelLogic, AutoSelectHeadsetPairDoesNotOverrideExplicitTarget) {
-    VRState state;
-    state.trackingSystems = { "oculus", "lighthouse" };
-    state.devices.push_back(MakeDevice(
-        0, vr::TrackedDeviceClass_HMD, "oculus", "Quest Pro", "VRLINKHMDQUESTPRO"));
-    state.devices.push_back(MakeDevice(
-        7, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-HEAD"));
-    state.devices.push_back(MakeDevice(
-        8, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-BODY"));
-
-    CalibrationContext ctx;
-    ctx.referenceTrackingSystem = "oculus";
-    ctx.referenceID = 0;
-    ctx.referenceStandby.trackingSystem = "oculus";
-    ctx.referenceStandby.model = "Quest Pro";
-    ctx.referenceStandby.serial = "VRLINKHMDQUESTPRO";
-    ctx.targetTrackingSystem = "lighthouse";
-    ctx.targetID = 8;
-    ctx.targetStandby.trackingSystem = "lighthouse";
-    ctx.targetStandby.model = "VIVE Tracker 3.0";
-    ctx.targetStandby.serial = "LHR-BODY";
-
-    EXPECT_FALSE(wkopenvr::spacecal::selection::AutoSelectHeadsetTrackerPair(ctx, state));
-    EXPECT_EQ(ctx.targetID, 8);
-    EXPECT_EQ(ctx.targetStandby.serial, "LHR-BODY");
-}
-
-TEST(HeadMountPanelLogic, AutoSelectHeadsetPairDoesNotGuessAmongTrackers) {
-    VRState state;
-    state.trackingSystems = { "oculus", "lighthouse" };
-    state.devices.push_back(MakeDevice(
-        0, vr::TrackedDeviceClass_HMD, "oculus", "Quest Pro", "VRLINKHMDQUESTPRO"));
-    state.devices.push_back(MakeDevice(
-        7, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-HEAD"));
-    state.devices.push_back(MakeDevice(
-        8, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-BODY"));
-
-    CalibrationContext ctx;
-    ctx.referenceTrackingSystem = "oculus";
-    ctx.targetTrackingSystem = "lighthouse";
-
-    EXPECT_TRUE(wkopenvr::spacecal::selection::AutoSelectHeadsetTrackerPair(ctx, state));
-    EXPECT_EQ(ctx.referenceID, 0);
-    EXPECT_EQ(ctx.targetID, -1);
-    EXPECT_TRUE(ctx.targetStandby.serial.empty());
-}
-
-TEST(HeadMountPanelLogic, AutoSelectHeadsetPairPrefersConfiguredHeadMountTracker) {
-    VRState state;
-    state.trackingSystems = { "oculus", "lighthouse" };
-    state.devices.push_back(MakeDevice(
-        0, vr::TrackedDeviceClass_HMD, "oculus", "Quest Pro", "VRLINKHMDQUESTPRO"));
-    state.devices.push_back(MakeDevice(
-        7, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-HEAD"));
-    state.devices.push_back(MakeDevice(
-        8, vr::TrackedDeviceClass_GenericTracker, "lighthouse", "VIVE Tracker 3.0", "LHR-BODY"));
-
-    CalibrationContext ctx;
-    ctx.referenceTrackingSystem = "oculus";
-    ctx.targetTrackingSystem = "lighthouse";
-    ctx.headMount.trackerTrackingSystem = "lighthouse";
-    ctx.headMount.trackerSerial = "LHR-HEAD";
-
-    EXPECT_TRUE(wkopenvr::spacecal::selection::AutoSelectHeadsetTrackerPair(ctx, state));
-    EXPECT_EQ(ctx.referenceID, 0);
-    EXPECT_EQ(ctx.targetID, 7);
-    EXPECT_EQ(ctx.targetStandby.serial, "LHR-HEAD");
 }

@@ -12,7 +12,6 @@
 #include "UserInterfaceFooter.h"
 #include "UserInterfaceBanners.h"
 #include "UserInterfaceCalibrationProgress.h"
-#include "CalibrationDeviceSelection.h"
 #include "HeadMountOffsetModal.h"
 #include "UiHelpers.h"
 
@@ -246,16 +245,6 @@ static void BuildMainWindowContents(bool runningInOverlay_)
 
 		ImGui::BeginDisabled(CalCtx.state == CalibrationState::Continuous);
 		BuildSystemSelection(state);
-		if (wkopenvr::spacecal::selection::AutoSelectHeadsetTrackerPair(CalCtx, state)) {
-			char buf[320];
-			snprintf(buf, sizeof buf,
-				"auto_select_headset_pair ref='%s/%s' target='%s/%s'",
-				CalCtx.referenceStandby.trackingSystem.c_str(),
-				CalCtx.referenceStandby.serial.c_str(),
-				CalCtx.targetStandby.trackingSystem.c_str(),
-				CalCtx.targetStandby.serial.c_str());
-			Metrics::WriteLogAnnotation(buf);
-		}
 		BuildDeviceSelections(state);
 		ImGui::EndDisabled();
 		BuildMenu(runningInOverlay);
