@@ -5,6 +5,7 @@
 #include "FeaturePlugin.h"
 #include "ModuleToggleUi.h"
 #include "ShellContext.h"
+#include "ShellUiLogic.h"
 #include "Theme.h"
 #include "UiCore.h"
 
@@ -133,7 +134,7 @@ void DrawThemesTab(ShellContext &)
 
 void DrawShellWindow(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
 {
-	static bool desktopDefaultTabApplied = false;
+	static std::string desktopDefaultTabAppliedFor;
 
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);
@@ -155,14 +156,17 @@ void DrawShellWindow(ShellContext &context, std::vector<std::unique_ptr<FeatureP
 			false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 		ui::TabBarScope tabs("tabs");
 		if (tabs) {
+			const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
 			for (auto &plugin : plugins) {
 				if (!plugin->IsInstalled(context)) continue;
 				ImGuiTabItemFlags tabFlags = ImGuiTabItemFlags_None;
-				if (!desktopDefaultTabApplied &&
-					!context.dashboardVisible &&
-					std::strcmp(plugin->FlagFileName(), "enable_questapp.flag") == 0) {
+				if (ShouldSelectDesktopDefaultTab(
+						context.vrConnected,
+						plugin->FlagFileName(),
+						desktopDefaultFlag,
+						desktopDefaultTabAppliedFor)) {
 					tabFlags |= ImGuiTabItemFlags_SetSelected;
-					desktopDefaultTabApplied = true;
+					desktopDefaultTabAppliedFor = desktopDefaultFlag;
 				}
 				DrawFeatureTab(context, *plugin, tabFlags);
 			}

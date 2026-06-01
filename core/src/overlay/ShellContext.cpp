@@ -1,6 +1,7 @@
 #include "ShellContext.h"
 
 #include "DiagnosticsLog.h"
+#include "ShellSettings.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -8,12 +9,13 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <cctype>
 #include <cstdint>
 #include <fstream>
-#include <utility>
 #include <string>
-#include <vector>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace openvr_pair::overlay {
 namespace {
@@ -26,6 +28,8 @@ struct PendingToggle
 };
 
 std::vector<PendingToggle> g_pendingToggles;
+constexpr const char *kDesktopDefaultModuleSetting = "desktop_default_module";
+constexpr const char *kFallbackDesktopDefaultModule = "enable_questapp.flag";
 
 // Returns the directory containing the running exe, without a trailing slash.
 // Falls back to an empty string on failure.
@@ -200,6 +204,44 @@ std::wstring EncodePowerShellCommand(const std::wstring &script)
 	return out;
 }
 
+std::string TrimAscii(std::string value)
+{
+	size_t begin = 0;
+	while (begin < value.size() &&
+		(value[begin] == ' ' || value[begin] == '\t' || value[begin] == '\r' || value[begin] == '\n')) {
+		++begin;
+	}
+	size_t end = value.size();
+	while (end > begin &&
+		(value[end - 1] == ' ' || value[end - 1] == '\t' ||
+		 value[end - 1] == '\r' || value[end - 1] == '\n')) {
+		--end;
+	}
+	return value.substr(begin, end - begin);
+}
+
+bool IsValidModuleFlagFileName(const std::string &value)
+{
+	if (value.rfind("enable_", 0) != 0) return false;
+	const std::string suffix = ".flag";
+	if (value.size() <= suffix.size() ||
+		value.compare(value.size() - suffix.size(), suffix.size(), suffix) != 0) {
+		return false;
+	}
+	for (const char ch : value) {
+		const unsigned char c = static_cast<unsigned char>(ch);
+		if (std::isalnum(c) || ch == '_' || ch == '-' || ch == '.') continue;
+		return false;
+	}
+	return value.find('\\') == std::string::npos && value.find('/') == std::string::npos;
+}
+
+std::string NormalizeDesktopDefaultModuleFlag(std::string value)
+{
+	value = TrimAscii(std::move(value));
+	return IsValidModuleFlagFileName(value) ? value : kFallbackDesktopDefaultModule;
+}
+
 } // namespace
 
 std::string Narrow(const std::wstring &value)
@@ -219,6 +261,8 @@ ShellContext CreateShellContext()
 
 	ctx.profileRoot = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
 	ctx.logRoot = openvr_pair::common::WkOpenVrLogsPath(true);
+	ctx.desktopDefaultModuleFlagFileName = NormalizeDesktopDefaultModuleFlag(
+		ReadShellSetting(ctx.profileRoot, kDesktopDefaultModuleSetting, kFallbackDesktopDefaultModule));
 
 	// --- Driver resources dir: discover SteamVR via registry + libraryfolders.vdf.
 	// Fall back to the hard-coded path if any step fails so that known-good
@@ -244,6 +288,26 @@ ShellContext CreateShellContext()
 		Narrow(resources).c_str(),
 		steamvrRoot.empty() ? 1 : 0);
 	return ctx;
+}
+
+std::string ShellContext::DesktopDefaultModuleFlagFileName() const
+{
+	return desktopDefaultModuleFlagFileName.empty()
+		? std::string(kFallbackDesktopDefaultModule)
+		: desktopDefaultModuleFlagFileName;
+}
+
+bool ShellContext::SetDesktopDefaultModuleFlagFileName(const char *flagFileName)
+{
+	if (!flagFileName) return false;
+	const std::string normalized = NormalizeDesktopDefaultModuleFlag(flagFileName);
+	if (!WriteShellSetting(profileRoot, kDesktopDefaultModuleSetting, normalized)) {
+		SetStatus("Desktop default module was not saved.");
+		return false;
+	}
+	desktopDefaultModuleFlagFileName = normalized;
+	SetStatus("Desktop default module saved.");
+	return true;
 }
 
 std::wstring ShellContext::FlagPath(const char *flagFileName) const

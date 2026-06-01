@@ -282,15 +282,8 @@ void SmoothingPlugin::TickCalibrationLockClear()
 	lastKnownCalibrationLocks_ = std::move(locks);
 }
 
-void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext &)
+void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
 {
-	if (!connectError_.empty()) {
-		openvr_pair::overlay::ui::DrawErrorBanner(
-			"Smoothing driver connection failed",
-			connectError_.c_str());
-		ImGui::Separator();
-	}
-
 	openvr_pair::overlay::ui::TabBarScope tabs("smoothing_tabs");
 	if (tabs) {
 		openvr_pair::overlay::ui::DrawTabItem("Settings", [&] { DrawSettingsTab(); });
@@ -306,6 +299,7 @@ void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext &)
 
 	openvr_pair::overlay::ShellFooterStatus footer;
 	footer.driverConnected = ipc_.IsConnected();
+	footer.vrConnected = context.vrConnected;
 	footer.driverLabel = "Smoothing driver";
 	openvr_pair::overlay::DrawShellFooter(footer);
 }

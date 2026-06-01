@@ -32,6 +32,8 @@ else()
 endif()
 
 add_library(openvr_pair_overlay_ui STATIC
+	ShellSettings.cpp
+	ShellSettings.h
 	Theme.cpp
 	Theme.h
 	UiControls.cpp

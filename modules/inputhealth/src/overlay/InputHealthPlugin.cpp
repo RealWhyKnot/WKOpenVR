@@ -23,6 +23,22 @@
 
 using Clock = std::chrono::steady_clock;
 
+namespace {
+
+bool StartsWith(const std::string &value, const char *prefix)
+{
+	return prefix && value.rfind(prefix, 0) == 0;
+}
+
+bool IsDriverWaitError(const std::string &error)
+{
+	return StartsWith(error, "InputHealth IPC:")
+		|| StartsWith(error, "Driver connection:")
+		|| StartsWith(error, "Not connected");
+}
+
+} // namespace
+
 InputHealthPlugin::InputHealthPlugin()
 	: engine_(ipc_, profiles_)
 {
@@ -179,13 +195,13 @@ void InputHealthPlugin::SendReset(uint64_t serial_hash, bool reset_passive, bool
 	}
 }
 
-void InputHealthPlugin::DrawStatusBanner(bool dashboardVisible)
+void InputHealthPlugin::DrawStatusBanner(const openvr_pair::overlay::ShellContext &context)
 {
 	// Connection state lives in the shared footer; the live IPC / shmem /
 	// publish_tick triple lives on the Logs tab. The top banner is reserved
 	// for actual errors so a narrow window does not overflow with noise.
 	if (inputhealth::ui::ShouldShowDriverProblemBanner(
-			dashboardVisible, !last_error_.empty())) {
+			!last_error_.empty(), IsDriverWaitError(last_error_))) {
 		openvr_pair::overlay::ui::DrawErrorBanner(
 			"InputHealth driver problem",
 			last_error_.c_str());
@@ -194,7 +210,11 @@ void InputHealthPlugin::DrawStatusBanner(bool dashboardVisible)
 	// on reconnects. Surface it as subtle disabled-grey text rather than a
 	// hard red banner so it does not read as a tracking problem when it is
 	// only a transient handshake state.
-	if (!reader_.IsOpen() && !reader_.LastError().empty()) {
+	if (inputhealth::ui::ShouldShowShmemProblemText(
+			context.vrConnected,
+			reader_.IsOpen(),
+			!reader_.LastError().empty(),
+			reader_.LastErrorIsVersionMismatch())) {
 		ImGui::TextDisabled("Shmem: %s", reader_.LastError().c_str());
 	}
 }
@@ -221,7 +241,7 @@ void InputHealthPlugin::DrawLogsTab()
 
 void InputHealthPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
 {
-	DrawStatusBanner(context.dashboardVisible);
+	DrawStatusBanner(context);
 
 	openvr_pair::overlay::ui::TabBarScope tabs("inputhealth_tabs");
 	if (tabs) {
@@ -234,6 +254,7 @@ void InputHealthPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
 
 	openvr_pair::overlay::ShellFooterStatus footer;
 	footer.driverConnected = ipc_.IsConnected();
+	footer.vrConnected = context.vrConnected;
 	footer.driverLabel = "InputHealth driver";
 	openvr_pair::overlay::DrawShellFooter(footer);
 }

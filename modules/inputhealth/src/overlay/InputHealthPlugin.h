@@ -71,7 +71,7 @@ private:
 	std::chrono::steady_clock::time_point last_connection_check_{};
 
 	void MaintainDriverConnection();
-	void DrawStatusBanner(bool dashboardVisible);
+	void DrawStatusBanner(const openvr_pair::overlay::ShellContext &context);
 	void DrawDiagnosticsTab();
 	void DrawSettingsTab();
 	void DrawAdvancedTab();

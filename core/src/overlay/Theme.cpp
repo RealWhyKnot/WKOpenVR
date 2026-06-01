@@ -1,11 +1,10 @@
 #include "Theme.h"
 
 #include "ShellContext.h"
+#include "ShellSettings.h"
 
 #include <imgui.h>
 
-#include <cstdio>
-#include <cstring>
 #include <string>
 
 namespace openvr_pair::overlay::ui {
@@ -269,12 +268,6 @@ ThemeId g_currentId = ThemeId::Legacy;
 SemanticPalette g_currentPalette = LegacyPalette();
 std::wstring g_profileRoot;
 
-std::wstring ShellFilePath()
-{
-	if (g_profileRoot.empty()) return {};
-	return g_profileRoot + L"\\shell.txt";
-}
-
 bool ParseThemeId(const std::string &value, ThemeId &out)
 {
 	for (const auto &t : kThemes) {
@@ -288,46 +281,12 @@ bool ParseThemeId(const std::string &value, ThemeId &out)
 
 bool ReadThemeFromDisk(ThemeId &out)
 {
-	const std::wstring path = ShellFilePath();
-	if (path.empty()) return false;
-	FILE *f = nullptr;
-	if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f) return false;
-	char buf[256] = {};
-	const size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-	fclose(f);
-	if (n == 0) return false;
-	std::string text(buf, n);
-	// Single-line key=value parser. Looks only for "theme=<name>" so noise
-	// elsewhere in the file does not block startup.
-	size_t start = 0;
-	while (start < text.size()) {
-		size_t eol = text.find('\n', start);
-		if (eol == std::string::npos) eol = text.size();
-		std::string line = text.substr(start, eol - start);
-		// Strip trailing \r and surrounding whitespace.
-		while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
-			line.pop_back();
-		size_t lead = 0;
-		while (lead < line.size() && (line[lead] == ' ' || line[lead] == '\t')) ++lead;
-		line.erase(0, lead);
-		if (line.rfind("theme=", 0) == 0) {
-			std::string value = line.substr(6);
-			if (ParseThemeId(value, out)) return true;
-		}
-		start = eol + 1;
-	}
-	return false;
+	return ParseThemeId(openvr_pair::overlay::ReadShellSetting(g_profileRoot, "theme", ""), out);
 }
 
 void WriteThemeToDisk(ThemeId id)
 {
-	const std::wstring path = ShellFilePath();
-	if (path.empty()) return;
-	FILE *f = nullptr;
-	if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return;
-	const char *name = ThemeName(id);
-	fprintf(f, "theme=%s\n", name);
-	fclose(f);
+	openvr_pair::overlay::WriteShellSetting(g_profileRoot, "theme", ThemeName(id));
 }
 
 const ThemeDef &FindTheme(ThemeId id)

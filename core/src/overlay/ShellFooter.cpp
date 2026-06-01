@@ -37,9 +37,21 @@ void DrawShellFooter(const ShellFooterStatus &status)
 	const char *stamp = status.buildStamp ? status.buildStamp : OPENVR_PAIR_VERSION_STRING;
 
 	const ui::SemanticPalette &pal = ui::GetPalette();
-	const ImU32  dotColor  = status.driverConnected ? pal.dotOk      : pal.dotPending;
-	const ImVec4 textColor = status.driverConnected ? pal.statusOk   : pal.statusPending;
-	const char  *state     = status.driverConnected ? "connected"    : "waiting";
+	const ShellFooterConnectionState connectionState =
+		ResolveShellFooterConnectionState(status.driverConnected, status.vrConnected);
+
+	ImU32 dotColor = pal.dotPending;
+	ImVec4 textColor = pal.statusPending;
+	const char *state = "waiting for SteamVR";
+	if (connectionState == ShellFooterConnectionState::Connected) {
+		dotColor = pal.dotOk;
+		textColor = pal.statusOk;
+		state = "connected";
+	} else if (connectionState == ShellFooterConnectionState::Disconnected) {
+		dotColor = pal.dotError;
+		textColor = pal.statusError;
+		state = "disconnected";
+	}
 
 	ui::DrawStatusDot(dotColor);
 	ImGui::PushStyleColor(ImGuiCol_Text, textColor);

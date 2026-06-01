@@ -1,11 +1,17 @@
 #include <gtest/gtest.h>
 
 #include "FeaturePlugin.h"
+#include "ShellFooter.h"
+#include "ShellSettings.h"
+#include "ShellUiLogic.h"
 #include "UiCore.h"
 #include "UiControls.h"
 
 #include <imgui.h>
 
+#include <chrono>
+#include <filesystem>
+#include <string>
 #include <utility>
 
 namespace {
@@ -67,6 +73,52 @@ TEST(FeaturePlugin, ChannelHelpersRouteReleaseAndDevelopmentModules)
 	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::Release));
 	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::Development));
 	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::DevTools));
+}
+
+TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
+{
+	EXPECT_TRUE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
+		false, "enable_questapp.flag", "enable_questapp.flag", ""));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
+		true, "enable_questapp.flag", "enable_questapp.flag", ""));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
+		false, "enable_smoothing.flag", "enable_questapp.flag", ""));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
+		false, "enable_questapp.flag", "enable_questapp.flag", "enable_questapp.flag"));
+}
+
+TEST(ShellFooter, ResolvesConnectionStateLikeSpaceCalibrator)
+{
+	using openvr_pair::overlay::ResolveShellFooterConnectionState;
+	using openvr_pair::overlay::ShellFooterConnectionState;
+
+	EXPECT_EQ(ShellFooterConnectionState::Connected,
+		ResolveShellFooterConnectionState(true, false));
+	EXPECT_EQ(ShellFooterConnectionState::WaitingForSteamVR,
+		ResolveShellFooterConnectionState(false, false));
+	EXPECT_EQ(ShellFooterConnectionState::Disconnected,
+		ResolveShellFooterConnectionState(false, true));
+}
+
+TEST(ShellSettings, PreservesMultipleShellKeys)
+{
+	const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+	const std::filesystem::path dir =
+		std::filesystem::temp_directory_path() /
+		("wkopenvr-shellsettings-test-" + std::to_string(unique));
+
+	std::filesystem::remove_all(dir);
+	std::filesystem::create_directories(dir);
+
+	EXPECT_TRUE(openvr_pair::overlay::WriteShellSetting(dir.wstring(), "theme", "Dark"));
+	EXPECT_TRUE(openvr_pair::overlay::WriteShellSetting(
+		dir.wstring(), "desktop_default_module", "enable_smoothing.flag"));
+
+	EXPECT_EQ("Dark", openvr_pair::overlay::ReadShellSetting(dir.wstring(), "theme", ""));
+	EXPECT_EQ("enable_smoothing.flag", openvr_pair::overlay::ReadShellSetting(
+		dir.wstring(), "desktop_default_module", ""));
+
+	std::filesystem::remove_all(dir);
 }
 
 TEST_F(UiCoreTest, PanelAndSettingTableRenderAtSmallAndDashboardSizes)

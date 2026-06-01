@@ -32,6 +32,22 @@
 
 using Clock = std::chrono::steady_clock;
 
+namespace {
+
+bool StartsWith(const std::string &value, const char *prefix)
+{
+    return prefix && value.rfind(prefix, 0) == 0;
+}
+
+bool IsDriverWaitError(const std::string &error)
+{
+    return StartsWith(error, "FaceTracking IPC:")
+        || StartsWith(error, "Driver connection:")
+        || StartsWith(error, "Not connected");
+}
+
+} // namespace
+
 FacetrackingPlugin::FacetrackingPlugin()
 {
     observed_ipc_generation_ = ipc_.ConnectionGeneration();
@@ -397,7 +413,7 @@ void FacetrackingPlugin::MaintainDriverConnection()
 
 void FacetrackingPlugin::DrawStatusBanner()
 {
-    if (!last_error_.empty()) {
+    if (!last_error_.empty() && !IsDriverWaitError(last_error_)) {
         openvr_pair::overlay::ui::DrawErrorBanner(
             "Face Tracking driver problem", last_error_.c_str());
     }
@@ -430,6 +446,7 @@ void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext &ctx)
 
     openvr_pair::overlay::ShellFooterStatus footer;
     footer.driverConnected = ipc_.IsConnected();
+    footer.vrConnected     = ctx.vrConnected;
     footer.driverLabel     = "FaceTracking driver";
     footer.buildStamp      = FACETRACKING_BUILD_STAMP;
     openvr_pair::overlay::DrawShellFooter(footer);

@@ -12,9 +12,12 @@ struct ShellContext
 	std::wstring logRoot;
 	std::vector<std::wstring> driverResourceDirs;
 	std::string status;
+	std::string desktopDefaultModuleFlagFileName;
 	bool vrConnected = false;
 	bool dashboardVisible = false;
 
+	std::string DesktopDefaultModuleFlagFileName() const;
+	bool SetDesktopDefaultModuleFlagFileName(const char *flagFileName);
 	std::wstring FlagPath(const char *flagFileName) const;
 	bool IsFlagPresent(const char *flagFileName) const;
 	bool SetFlagPresent(const char *flagFileName, bool present);

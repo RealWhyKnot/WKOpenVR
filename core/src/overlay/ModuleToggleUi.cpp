@@ -26,12 +26,13 @@ void DrawModuleToggleTable(
 		return;
 	}
 
-	ui::TableScope table(tableId, 3,
+	ui::TableScope table(tableId, 4,
 		ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
 	if (!table) return;
 
 	ui::SetupStretchColumn("Module", 1.0f);
-	ui::SetupFixedColumn("Status", 340.0f);
+	ui::SetupFixedColumn("Status", 300.0f);
+	ui::SetupFixedColumn("Default", 90.0f);
 	ui::SetupFixedColumn("Enabled", 100.0f);
 	ui::DrawTableHeader();
 
@@ -101,6 +102,25 @@ void DrawModuleToggleTable(
 
 		ui::NextColumn();
 		ImGui::PushID(key.c_str());
+		const std::string defaultTooltip =
+			std::string("Use ") + plugin->Name() + " as the desktop startup tab.";
+		const bool defaultSelected = (context.DesktopDefaultModuleFlagFileName() == key);
+		const char *defaultBlockReason = nullptr;
+		bool defaultBlocked = isPending || !displayState;
+		if (isPending) {
+			defaultBlockReason = "Wait for the module change to finish before setting it as default.";
+		} else if (!displayState) {
+			defaultBlockReason = "Enable the module before setting it as the desktop default.";
+		}
+		{
+			ui::DisabledSection disabled(defaultBlocked, defaultBlockReason);
+			if (ui::RadioButtonWithTooltip("##desktop_default", defaultSelected, defaultTooltip.c_str())) {
+				context.SetDesktopDefaultModuleFlagFileName(plugin->FlagFileName());
+			}
+			disabled.AttachReasonTooltip();
+		}
+
+		ui::NextColumn();
 		const std::string pendingReason =
 			"Waiting for the elevated helper to finish. Reopens after SteamVR picks up the change.";
 		const bool routerDependentOn = routerRequired && displayState;

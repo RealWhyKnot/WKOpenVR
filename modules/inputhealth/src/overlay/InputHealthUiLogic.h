@@ -2,9 +2,18 @@
 
 namespace inputhealth::ui {
 
-inline bool ShouldShowDriverProblemBanner(bool dashboardVisible, bool hasDriverError)
+inline bool ShouldShowDriverProblemBanner(bool hasDriverError, bool isDriverWaitError)
 {
-	return dashboardVisible && hasDriverError;
+	return hasDriverError && !isDriverWaitError;
+}
+
+inline bool ShouldShowShmemProblemText(
+	bool vrConnected,
+	bool shmemOpen,
+	bool hasShmemError,
+	bool isVersionMismatch)
+{
+	return !shmemOpen && hasShmemError && (vrConnected || isVersionMismatch);
 }
 
 } // namespace inputhealth::ui
