@@ -33,11 +33,20 @@ function Quote-PsSingle([string] $Value) {
 	return "'" + ($Value -replace "'", "''") + "'"
 }
 
-function Invoke-FaceSync([string] $Action, [string] $Kind, [string] $SourceData, [string] $SourceId, [string] $ResultPath) {
+function Invoke-FaceSync([string] $Action, [string] $Kind, [string] $SourceData, [string] $SourceId, [string] $ResultPath, [bool] $ShadowGetFileHash = $false) {
 	$env:WKOPENVR_FACE_SYNC_SOURCE_DATA = $SourceData
 	try {
+		$hashShim = ''
+		if ($ShadowGetFileHash) {
+			$hashShim = @"
+function global:Get-FileHash {
+	throw "Get-FileHash blocked by test"
+}
+"@
+		}
 		$command = @"
 `$ProgressPreference = 'SilentlyContinue'
+$hashShim
 & $(Quote-PsSingle $FaceSyncPs1) -Action $(Quote-PsSingle $Action) -Kind $(Quote-PsSingle $Kind) -SourceData `$env:WKOPENVR_FACE_SYNC_SOURCE_DATA -SourceId $(Quote-PsSingle $SourceId) -ResultPath $(Quote-PsSingle $ResultPath)
 exit `$LASTEXITCODE
 "@
@@ -261,7 +270,7 @@ try {
 		payload_sha256 = $availableModule.payload_sha256
 	} | ConvertTo-Json -Compress
 	$registryInstallResultPath = Join-Path $WorkingRoot 'face-registry-install-result.json'
-	$registryInstallExit = Invoke-FaceSync -Action 'install' -Kind 'registry' -SourceData $installJson -SourceId $registrySourceId -ResultPath $registryInstallResultPath
+	$registryInstallExit = Invoke-FaceSync -Action 'install' -Kind 'registry' -SourceData $installJson -SourceId $registrySourceId -ResultPath $registryInstallResultPath -ShadowGetFileHash $true
 	if ($registryInstallExit -ne 0) { throw "face-module-sync registry install exited $registryInstallExit" }
 	Assert-FileExists $registryInstallResultPath 'registry install result'
 	$registryInstallResult = Get-Content -LiteralPath $registryInstallResultPath -Raw | ConvertFrom-Json

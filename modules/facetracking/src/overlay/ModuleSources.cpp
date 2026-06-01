@@ -271,6 +271,13 @@ std::vector<InstalledModule> ScanInstalledModules()
             result.push_back(std::move(mod));
         }
     }
+    std::sort(result.begin(), result.end(), [](const InstalledModule &a, const InstalledModule &b) {
+        const int byName = _stricmp(a.name.c_str(), b.name.c_str());
+        if (byName != 0) return byName < 0;
+        const int byVersion = _stricmp(a.version.c_str(), b.version.c_str());
+        if (byVersion != 0) return byVersion < 0;
+        return a.uuid < b.uuid;
+    });
     return result;
 }
 

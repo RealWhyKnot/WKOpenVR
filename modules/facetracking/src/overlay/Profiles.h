@@ -32,10 +32,10 @@ struct FacetrackingProfile
     int     openness_smoothing         = 20;   // 0..100
 
     // Which installed modules the user has toggled on in the Modules tab.
-    // Empty list = host picks the first available module on its own; a
-    // populated list is the user's explicit selection (multi-select-capable
-    // UI; the backend currently activates the first entry until the host
-    // is upgraded to run multiple simultaneously). Serialised order is
+    // Empty list = a fresh profile; the overlay selects the first installed
+    // module when pushing config. A populated list is the user's explicit
+    // selection. The backend currently activates the first entry until the
+    // host is upgraded to run multiple simultaneously. Serialised order is
     // load order -- preserve the user's row order so an upgrade to true
     // multi-run has a stable priority.
     std::vector<std::string> enabled_module_uuids;

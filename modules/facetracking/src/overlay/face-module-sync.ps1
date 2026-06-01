@@ -162,9 +162,42 @@ function Remove-SourceModules([string]$srcId) {
     }
 }
 
+function Get-FileDigest([string]$filePath, [string]$algorithm) {
+    $cmd = Get-Command -Name Get-FileHash -ErrorAction SilentlyContinue
+    if ($null -ne $cmd) {
+        try {
+            $hash = Get-FileHash -LiteralPath $filePath -Algorithm $algorithm -ErrorAction Stop
+            if ($null -ne $hash -and $null -ne $hash.Hash) {
+                return $hash.Hash.ToLowerInvariant()
+            }
+        } catch {
+            # Fall back below. Some locked-down PowerShell hosts do not expose
+            # Get-FileHash even when the rest of the script can run.
+        }
+    }
+
+    $stream = [System.IO.File]::OpenRead($filePath)
+    $hasher = $null
+    try {
+        switch ($algorithm.ToUpperInvariant()) {
+            'SHA256' { $hasher = [System.Security.Cryptography.SHA256]::Create(); break }
+            'MD5'    { $hasher = [System.Security.Cryptography.MD5]::Create(); break }
+            default  { throw "Unsupported hash algorithm: $algorithm" }
+        }
+        $bytes = $hasher.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($bytes).Replace('-', '')).ToLowerInvariant()
+    } finally {
+        if ($null -ne $hasher) { $hasher.Dispose() }
+        $stream.Dispose()
+    }
+}
+
 function Get-Sha256([string]$filePath) {
-    $hash = Get-FileHash -Path $filePath -Algorithm SHA256
-    return $hash.Hash.ToLower()
+    return Get-FileDigest -filePath $filePath -algorithm 'SHA256'
+}
+
+function Get-Md5([string]$filePath) {
+    return Get-FileDigest -filePath $filePath -algorithm 'MD5'
 }
 
 function Find-Sha256InText([string]$text) {
@@ -591,7 +624,7 @@ if ($srcKind -eq 'registry') {
                 throw "SHA-256 mismatch for ${uuid} ${ver}: expected $expectedSha got $actualSha"
             }
             if (-not [string]::IsNullOrEmpty($expectedMd5)) {
-                $actualMd5 = (Get-FileHash -Path $tmpPayload -Algorithm MD5).Hash.ToLower()
+                $actualMd5 = Get-Md5 -filePath $tmpPayload
                 if ($actualMd5 -ne $expectedMd5) {
                     throw "MD5 mismatch for ${uuid} ${ver}: expected $expectedMd5 got $actualMd5"
                 }

@@ -161,7 +161,7 @@ void FacetrackingPlugin::PushConfigToDriver()
     try {
         protocol::Request req(protocol::RequestSetFaceTrackingConfig);
         auto &cfg = req.setFaceTrackingConfig;
-        const auto &p = profile_.current;
+        auto &p = profile_.current;
 
         cfg.master_enabled             = 1;
         cfg.eyelid_sync_enabled        = p.eyelid_sync_enabled        ? 1 : 0;
@@ -182,13 +182,22 @@ void FacetrackingPlugin::PushConfigToDriver()
         cfg._reserved2 = 0;
         cfg.osc_host[0] = '\0';
 
-        // Active module = first enabled entry (backend is single-active for
-        // now; once the host learns to run multiple, this entry should grow
-        // to carry the full list via a protocol bump). Empty list = empty
-        // string = host picks automatically.
-        const std::string &primary = p.enabled_module_uuids.empty()
+        // Active module = first enabled entry. On a fresh profile, select the
+        // first installed module so legacy VRCFT modules work after install
+        // without requiring a second manual toggle.
+        std::string primary = p.enabled_module_uuids.empty()
             ? std::string{}
             : p.enabled_module_uuids.front();
+        if (primary.empty()) {
+            const auto installed = facetracking::ScanInstalledModules();
+            if (!installed.empty() && !installed.front().uuid.empty()) {
+                primary = installed.front().uuid;
+                p.enabled_module_uuids.push_back(primary);
+                profile_.Save();
+                FT_LOG_OVL("[modules] default-enabled installed module: uuid='%s'",
+                    primary.c_str());
+            }
+        }
         std::snprintf(cfg.active_module_uuid, sizeof(cfg.active_module_uuid), "%s", primary.c_str());
 
         auto resp = ipc_.SendBlocking(req);
