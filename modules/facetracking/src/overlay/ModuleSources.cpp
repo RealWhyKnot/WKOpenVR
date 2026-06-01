@@ -13,9 +13,11 @@
 
 #pragma comment(lib, "bcrypt.lib")
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -106,6 +108,7 @@ SourcesCatalogue LoadSourcesCatalogue()
             src.added_at         = openvr_pair::common::json::StringAt(el, "added_at");
             src.last_checked_at  = openvr_pair::common::json::StringAt(el, "last_checked_at");
             src.last_release_tag = openvr_pair::common::json::StringAt(el, "last_release_tag");
+            src.last_sync_error  = openvr_pair::common::json::StringAt(el, "last_sync_error");
             if (!src.id.empty())
                 cat.sources.push_back(std::move(src));
         }
@@ -133,6 +136,8 @@ bool SaveSourcesCatalogue(const SourcesCatalogue &cat)
             o["last_checked_at"] = picojson::value(src.last_checked_at);
         if (!src.last_release_tag.empty())
             o["last_release_tag"] = picojson::value(src.last_release_tag);
+        if (!src.last_sync_error.empty())
+            o["last_sync_error"] = picojson::value(src.last_sync_error);
         arr.push_back(picojson::value(o));
     }
     picojson::object root;
@@ -169,7 +174,7 @@ bool SaveSourcesCatalogue(const SourcesCatalogue &cat)
 
 // Built-in registry source ID (stable across installs).
 static const char kRegistrySourceId[] = "00000000000000000000000000000001";
-static const char kRegistryUrl[]      = "https://legacy-registry.whyknot.dev";
+static const char kRegistryUrl[]      = "https://registry.vrcft.io";
 
 SourcesCatalogue EnsureSourcesCatalogue()
 {
@@ -184,8 +189,8 @@ SourcesCatalogue EnsureSourcesCatalogue()
     reg.id          = kRegistrySourceId;
     reg.kind        = SourceKind::Registry;
     reg.url         = kRegistryUrl;
-    reg.label       = "Legacy registry (curated)";
-    reg.auto_update = true;
+    reg.label       = "VRCFT registry";
+    reg.auto_update = false;
     cat.sources.insert(cat.sources.begin(), std::move(reg));
     cat.schema_version = 1;
     SaveSourcesCatalogue(cat);
@@ -269,6 +274,75 @@ std::vector<InstalledModule> ScanInstalledModules()
     return result;
 }
 
+std::vector<AvailableModule> LoadAvailableModules(const std::string &source_id)
+{
+    std::wstring base = FtDataDir();
+    if (base.empty()) return {};
+
+    fs::path availableDir = fs::path(base) / L"available";
+    std::error_code ec;
+    fs::create_directories(availableDir, ec);
+
+    std::vector<fs::path> files;
+    if (!source_id.empty()) {
+        files.push_back(availableDir / (openvr_pair::common::Utf8ToWide(source_id) + L".json"));
+    } else {
+        for (const auto &entry : fs::directory_iterator(availableDir, ec)) {
+            if (entry.is_regular_file() && entry.path().extension() == L".json")
+                files.push_back(entry.path());
+        }
+    }
+
+    std::vector<AvailableModule> result;
+    for (const auto &path : files) {
+        if (!fs::exists(path, ec)) continue;
+
+        std::ifstream in(path.wstring());
+        if (!in.is_open()) continue;
+        std::stringstream ss;
+        ss << in.rdbuf();
+
+        picojson::value root;
+        if (!openvr_pair::common::json::ParseObject(root, ss.str())) continue;
+
+        const std::string sourceId = openvr_pair::common::json::StringAt(root, "source_id");
+        if (!source_id.empty() && sourceId != source_id) continue;
+        const std::string sourceLabel = openvr_pair::common::json::StringAt(root, "source_label");
+        const std::string registryUrl = openvr_pair::common::json::StringAt(root, "registry_url");
+
+        const auto *arr = openvr_pair::common::json::ArrayAt(root, "modules");
+        if (!arr) continue;
+
+        for (const auto &el : *arr) {
+            AvailableModule mod;
+            mod.uuid           = openvr_pair::common::json::StringAt(el, "uuid");
+            mod.version        = openvr_pair::common::json::StringAt(el, "version");
+            mod.name           = openvr_pair::common::json::StringAt(el, "name", mod.uuid);
+            mod.vendor         = openvr_pair::common::json::StringAt(el, "vendor", "Unknown");
+            mod.description    = openvr_pair::common::json::StringAt(el, "description");
+            mod.source_id      = openvr_pair::common::json::StringAt(el, "source_id", sourceId);
+            mod.source_label   = openvr_pair::common::json::StringAt(el, "source_label", sourceLabel);
+            mod.registry_url   = openvr_pair::common::json::StringAt(el, "registry_url", registryUrl);
+            mod.payload_url    = openvr_pair::common::json::StringAt(el, "payload_url");
+            mod.payload_sha256 = openvr_pair::common::json::StringAt(el, "payload_sha256");
+            mod.download_url   = openvr_pair::common::json::StringAt(el, "download_url");
+            mod.file_hash      = openvr_pair::common::json::StringAt(el, "file_hash");
+            mod.dll_file_name  = openvr_pair::common::json::StringAt(el, "dll_file_name");
+            mod.module_page_url = openvr_pair::common::json::StringAt(el, "module_page_url");
+            if (mod.uuid.empty()) continue;
+            if (mod.name.empty()) mod.name = mod.uuid;
+            result.push_back(std::move(mod));
+        }
+    }
+
+    std::sort(result.begin(), result.end(), [](const AvailableModule &a, const AvailableModule &b) {
+        const int byName = _stricmp(a.name.c_str(), b.name.c_str());
+        if (byName != 0) return byName < 0;
+        return a.uuid < b.uuid;
+    });
+    return result;
+}
+
 // ---- sync runner --------------------------------------------------------
 
 ModuleSyncRunner::ModuleSyncRunner() = default;
@@ -315,6 +389,19 @@ void ModuleSyncRunner::StartUpdate(const std::string &source_id,
     if (!IsRunning()) LaunchNext();
 }
 
+void ModuleSyncRunner::StartInstall(const std::string &source_id,
+                                    const std::string &source_data_json)
+{
+    if (queue_.size() >= 8) return;
+    PendingOp op;
+    op.action      = "install";
+    op.kind        = "registry";
+    op.source_data = source_data_json;
+    op.source_id   = source_id;
+    queue_.push_back(std::move(op));
+    if (!IsRunning()) LaunchNext();
+}
+
 void ModuleSyncRunner::StartRemove(const std::string &source_id)
 {
     if (queue_.size() >= 8) return;
@@ -332,6 +419,13 @@ bool ModuleSyncRunner::IsRunning() const
 
 std::optional<SyncResult> ModuleSyncRunner::Poll()
 {
+    if (immediate_result_.has_value()) {
+        SyncResult r = *immediate_result_;
+        immediate_result_.reset();
+        if (!IsRunning() && !queue_.empty()) LaunchNext();
+        return r;
+    }
+
     if (!IsRunning()) {
         if (!queue_.empty()) LaunchNext();
         return std::nullopt;
@@ -350,6 +444,8 @@ std::optional<SyncResult> ModuleSyncRunner::Poll()
             SyncResult r;
             r.ok      = false;
             r.message = "Sync timed out after 90 s.";
+            r.source_id = active_op_.source_id;
+            r.action    = active_op_.action;
             if (!queue_.empty()) LaunchNext();
             return r;
         }
@@ -373,15 +469,22 @@ std::optional<SyncResult> ModuleSyncRunner::Poll()
                 result.message           = openvr_pair::common::json::StringAt(root, "message");
                 result.installed_uuid    = openvr_pair::common::json::StringAt(root, "installed_uuid");
                 result.installed_version = openvr_pair::common::json::StringAt(root, "installed_version");
+                result.source_id         = openvr_pair::common::json::StringAt(root, "source_id", active_op_.source_id);
+                result.action            = openvr_pair::common::json::StringAt(root, "action", active_op_.action);
+                result.available_count   = openvr_pair::common::json::IntAt(root, "available_count", -1);
             } else {
                 result.ok      = false;
                 result.message = "Result JSON parse error.";
+                result.source_id = active_op_.source_id;
+                result.action    = active_op_.action;
             }
             rf.close();
             DeleteFileW(result_path_.c_str());
         } else {
             result.ok      = exitCode == 0;
             result.message = exitCode == 0 ? "Done." : "Sync failed -- check log.";
+            result.source_id = active_op_.source_id;
+            result.action    = active_op_.action;
         }
         result_path_.clear();
     }
@@ -418,6 +521,7 @@ void ModuleSyncRunner::LaunchNext()
     if (queue_.empty()) return;
     PendingOp op = queue_.front();
     queue_.erase(queue_.begin());
+    active_op_ = op;
 
     // Build a temp result path.
     wchar_t tmp[MAX_PATH], dir[MAX_PATH];
@@ -486,8 +590,9 @@ void ModuleSyncRunner::LaunchNext()
         SyncResult r;
         r.ok      = false;
         r.message = "Failed to launch sync script.";
-        // We won't return this from Poll() directly, but the next Poll() will
-        // read result_path_ empty and return an error.
+        r.source_id = op.source_id;
+        r.action    = op.action;
+        immediate_result_ = std::move(r);
         return;
     }
 

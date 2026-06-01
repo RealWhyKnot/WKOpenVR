@@ -61,6 +61,24 @@ struct InstalledModule
     std::string release_tag;    // github only
 };
 
+struct AvailableModule
+{
+    std::string uuid;
+    std::string version;
+    std::string name;
+    std::string vendor;
+    std::string description;
+    std::string source_id;
+    std::string source_label;
+    std::string registry_url;
+    std::string payload_url;
+    std::string payload_sha256;
+    std::string download_url;
+    std::string file_hash;
+    std::string dll_file_name;
+    std::string module_page_url;
+};
+
 // ---- async sync result --------------------------------------------------
 
 struct SyncResult
@@ -69,6 +87,9 @@ struct SyncResult
     std::string message;
     std::string installed_uuid;
     std::string installed_version;
+    std::string source_id;
+    std::string action;
+    int         available_count = -1;
 };
 
 // ---- sources.json helpers -----------------------------------------------
@@ -101,6 +122,9 @@ std::string SourceLabel(const SourcesCatalogue &cat, const std::string &source_i
 // the host to be running; reads manifest.json + optional source.json.
 std::vector<InstalledModule> ScanInstalledModules();
 
+// Read cached registry module lists written by face-module-sync.ps1.
+std::vector<AvailableModule> LoadAvailableModules(const std::string &source_id = {});
+
 // ---- async sync runner --------------------------------------------------
 
 class ModuleSyncRunner
@@ -115,6 +139,8 @@ public:
                   const std::string &source_id);
     void StartUpdate(const std::string &source_id,
                      const std::string &source_data_json);
+    void StartInstall(const std::string &source_id,
+                      const std::string &source_data_json);
     void StartRemove(const std::string &source_id);
 
     // Call each overlay frame.  Returns a finished SyncResult when one
@@ -129,8 +155,8 @@ public:
 private:
     struct PendingOp
     {
-        std::string action;       // "add" | "update" | "remove"
-        std::string kind;         // "folder" | "github" | ""
+        std::string action;       // "add" | "update" | "install" | "remove"
+        std::string kind;         // "registry" | "folder" | "github" | ""
         std::string source_data;
         std::string source_id;
     };
@@ -138,6 +164,8 @@ private:
     void LaunchNext();
 
     std::vector<PendingOp>                  queue_;
+    PendingOp                               active_op_;
+    std::optional<SyncResult>               immediate_result_;
     HANDLE                                  proc_     = INVALID_HANDLE_VALUE;
     std::wstring                            result_path_;
     std::chrono::steady_clock::time_point   launch_time_{};

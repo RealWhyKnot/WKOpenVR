@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,7 @@ public:
     FacetrackingProfileStore            &Profile()             { return profile_; }
     const FacetrackingProfileStore      &Profile() const       { return profile_; }
     facetracking::ModuleSyncRunner      &SyncRunner()          { return sync_runner_; }
+    std::optional<facetracking::SyncResult> ConsumeSyncResult();
     void ReconcileEnabledModulesWithInstalled(const std::string &preferred_uuid);
 
 private:
@@ -83,6 +85,7 @@ private:
     facetracking::DriverTelemetryPoller  driver_telemetry_;
     facetracking::ModuleSyncRunner       sync_runner_;
     facetracking::SourcesCatalogue       sources_catalogue_;
+    std::vector<facetracking::SyncResult> completed_sync_results_;
 
     std::string last_error_;
     uint64_t    observed_ipc_generation_ = 0;
@@ -91,4 +94,5 @@ private:
     std::chrono::steady_clock::time_point last_save_{};
 
     void DrawStatusBanner();
+    void HandleSyncResult(const facetracking::SyncResult &result);
 };

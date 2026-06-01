@@ -29,6 +29,7 @@ struct ModulesTabState
     // Installed-modules list (refreshed each frame from disk scan,
     // throttled so we don't hammer the FS every 60 Hz frame).
     std::vector<InstalledModule>  installed;
+    std::vector<AvailableModule>  available;
     SourcesCatalogue              catalogue;
     int64_t                       last_scan_tick = 0;   // ::GetTickCount64()
 
@@ -55,6 +56,7 @@ static void RefreshIfStale()
     g_state.last_scan_tick = static_cast<int64_t>(now);
     g_state.installed      = ScanInstalledModules();
     g_state.catalogue      = EnsureSourcesCatalogue();
+    g_state.available      = LoadAvailableModules();
     g_state.initialised    = true;
 }
 
@@ -120,6 +122,26 @@ static std::string BuildSourceDataJson(const ModuleSource &src)
     return picojson::value(o).serialize();
 }
 
+static std::string BuildRegistryInstallDataJson(const ModuleSource &src,
+                                                const AvailableModule &mod)
+{
+    picojson::object o;
+    o["id"]            = picojson::value(src.id);
+    o["kind"]          = picojson::value(std::string("registry"));
+    o["label"]         = picojson::value(src.label);
+    o["url"]           = picojson::value(src.url.empty() ? mod.registry_url : src.url);
+    o["uuid"]          = picojson::value(mod.uuid);
+    o["version"]       = picojson::value(mod.version);
+    o["name"]          = picojson::value(mod.name);
+    o["vendor"]        = picojson::value(mod.vendor);
+    if (!mod.payload_url.empty())    o["payload_url"]    = picojson::value(mod.payload_url);
+    if (!mod.payload_sha256.empty()) o["payload_sha256"] = picojson::value(mod.payload_sha256);
+    if (!mod.download_url.empty())   o["download_url"]   = picojson::value(mod.download_url);
+    if (!mod.file_hash.empty())      o["file_hash"]      = picojson::value(mod.file_hash);
+    if (!mod.dll_file_name.empty())  o["dll_file_name"]  = picojson::value(mod.dll_file_name);
+    return picojson::value(o).serialize();
+}
+
 // ---- section helpers ----------------------------------------------------
 
 // Resolve a display label for an installed module's source. Falls back to
@@ -172,12 +194,26 @@ static void DisableModulesFromSource(FacetrackingPlugin &plugin,
     }
 }
 
+static const ModuleSource *FindSourceById(const std::string &sourceId)
+{
+    for (const auto &src : g_state.catalogue.sources)
+        if (src.id == sourceId) return &src;
+    return nullptr;
+}
+
+static const InstalledModule *FindInstalledByUuid(const std::string &uuid)
+{
+    for (const auto &mod : g_state.installed)
+        if (mod.uuid == uuid) return &mod;
+    return nullptr;
+}
+
 static void DrawInstalledModulesSection(FacetrackingPlugin &plugin)
 {
     DrawSectionHeading("Modules");
 
     if (g_state.installed.empty()) {
-        DrawWaitingBanner("No modules installed. Add a source below to fetch modules.");
+        DrawWaitingBanner("No modules installed. Sync a registry source, then install a module from the list.");
         return;
     }
 
@@ -282,21 +318,87 @@ static void DrawInstalledModulesSection(FacetrackingPlugin &plugin)
     }
 }
 
+static void DrawAvailableModulesSection(FacetrackingPlugin &plugin)
+{
+    if (g_state.available.empty()) return;
+
+    DrawSectionHeading("Available modules");
+
+    ImGuiTableFlags tf = ImGuiTableFlags_Borders
+                       | ImGuiTableFlags_RowBg
+                       | ImGuiTableFlags_Resizable
+                       | ImGuiTableFlags_SizingStretchProp;
+
+    if (!ImGui::BeginTable("ft_available_modules", 5, tf)) return;
+    ImGui::TableSetupColumn("Name");
+    ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+    ImGui::TableSetupColumn("Vendor",  ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Source",  ImGuiTableColumnFlags_WidthFixed, 160.0f);
+    ImGui::TableSetupColumn("Action",  ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableHeadersRow();
+
+    std::string installSourceId;
+    std::string installSourceData;
+
+    for (const auto &mod : g_state.available) {
+        const ModuleSource *source = FindSourceById(mod.source_id);
+        const InstalledModule *installed = FindInstalledByUuid(mod.uuid);
+        const bool sameVersionInstalled =
+            installed && installed->version == mod.version;
+        const bool sourceMissing = source == nullptr;
+
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(mod.name.c_str());
+        if (!mod.description.empty())
+            TooltipForLastItem(mod.description.c_str());
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(mod.version.c_str());
+
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextUnformatted(mod.vendor.c_str());
+
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextDisabled("%s", mod.source_label.c_str());
+
+        ImGui::TableSetColumnIndex(4);
+        const bool busy = plugin.SyncRunner().IsRunning();
+        const bool disabled = busy || sameVersionInstalled || sourceMissing;
+        const char *label =
+            sameVersionInstalled ? "Installed" :
+            installed            ? "Update" :
+                                   "Install";
+        ImGui::BeginDisabled(disabled);
+        if (ImGui::SmallButton((std::string(label) + "##install_" + mod.uuid).c_str())) {
+            installSourceId = mod.source_id;
+            installSourceData = BuildRegistryInstallDataJson(*source, mod);
+        }
+        ImGui::EndDisabled();
+        if (sameVersionInstalled) {
+            TooltipForLastItem("This version is already installed.");
+        } else if (sourceMissing) {
+            TooltipForLastItem("The source for this cached module is no longer configured.");
+        } else {
+            TooltipForLastItem("Download and install this module.");
+        }
+    }
+    ImGui::EndTable();
+
+    if (!installSourceId.empty() && !plugin.SyncRunner().IsRunning())
+        plugin.SyncRunner().StartInstall(installSourceId, installSourceData);
+}
+
 static void DrawSourcesSection(FacetrackingPlugin &plugin)
 {
     DrawSectionHeading("Module sources");
 
-    // ---- poll sync runner (shared with plugin startup auto-updates) ----
-    auto result = plugin.SyncRunner().Poll();
-    if (result.has_value()) {
+    while (auto result = plugin.ConsumeSyncResult()) {
         g_state.sync_status    = result->message;
         g_state.sync_status_ok = result->ok;
-        if (result->ok) {
-            // Refresh installed list and catalogue immediately.
-            g_state.last_scan_tick = 0;
-            g_state.catalogue = EnsureSourcesCatalogue();
-            plugin.ReconcileEnabledModulesWithInstalled(result->installed_uuid);
-        }
+        g_state.last_scan_tick = 0;
+        RefreshIfStale();
     }
 
     // ---- status line ----
@@ -317,15 +419,13 @@ static void DrawSourcesSection(FacetrackingPlugin &plugin)
                        | ImGuiTableFlags_RowBg
                        | ImGuiTableFlags_SizingStretchProp;
 
-    if (ImGui::BeginTable("ft_sources", 5, tf)) {
+    if (ImGui::BeginTable("ft_sources", 4, tf)) {
         ImGui::TableSetupColumn("Label");
         ImGui::TableSetupColumn("Kind",      ImGuiTableColumnFlags_WidthFixed,  70.0f);
-        ImGui::TableSetupColumn("Auto-upd",  ImGuiTableColumnFlags_WidthFixed,  65.0f);
         ImGui::TableSetupColumn("Status",    ImGuiTableColumnFlags_WidthFixed, 140.0f);
         ImGui::TableSetupColumn("Actions",   ImGuiTableColumnFlags_WidthFixed, 180.0f);
         ImGui::TableHeadersRow();
 
-        bool needSave = false;
         int  removeIdx = -1;
         std::string syncSourceId;
         std::string syncSourceData;
@@ -345,24 +445,6 @@ static void DrawSourcesSection(FacetrackingPlugin &plugin)
             ImGui::TextDisabled("%s", kindStr);
 
             ImGui::TableSetColumnIndex(2);
-            if (isRegistry) {
-                // Registry auto-update is always on but user can't toggle it.
-                bool dummy = true;
-                ImGui::BeginDisabled(true);
-                ImGui::Checkbox(("##au_" + src.id).c_str(), &dummy);
-                ImGui::EndDisabled();
-            } else if (src.kind == SourceKind::GitHub) {
-                if (ImGui::Checkbox(("##au_" + src.id).c_str(), &src.auto_update))
-                    needSave = true;
-            } else {
-                // Folder: greyed out
-                bool dummy = false;
-                ImGui::BeginDisabled(true);
-                ImGui::Checkbox(("##au_" + src.id).c_str(), &dummy);
-                ImGui::EndDisabled();
-            }
-
-            ImGui::TableSetColumnIndex(3);
             if (!src.last_sync_error.empty())
                 ImGui::TextColored(GetPalette().statusError,
                                    "%s", src.last_sync_error.c_str());
@@ -371,15 +453,18 @@ static void DrawSourcesSection(FacetrackingPlugin &plugin)
             else
                 ImGui::TextDisabled("Never synced");
 
-            ImGui::TableSetColumnIndex(4);
+            ImGui::TableSetColumnIndex(3);
             bool syncing = plugin.SyncRunner().IsRunning();
 
             ImGui::BeginDisabled(syncing);
-            if (ImGui::SmallButton(("Sync##" + src.id).c_str())) {
+            const char *buttonText = isRegistry ? "Sync" : "Install";
+            if (ImGui::SmallButton((std::string(buttonText) + "##" + src.id).c_str())) {
                 syncSourceId   = src.id;
                 syncSourceData = BuildSourceDataJson(src);
             }
-            TooltipForLastItem("Check for updates and re-install if newer.");
+            TooltipForLastItem(isRegistry
+                ? "Refresh the available module list. Downloads start only from a module row below."
+                : "Install or re-install this source.");
 
             if (!isRegistry) {
                 ImGui::SameLine();
@@ -389,8 +474,6 @@ static void DrawSourcesSection(FacetrackingPlugin &plugin)
             }
             ImGui::EndDisabled();
         }
-
-        if (needSave) SaveSourcesCatalogue(g_state.catalogue);
 
         // Trigger sync outside the table loop to avoid iterator invalidation.
         if (!syncSourceId.empty() && !plugin.SyncRunner().IsRunning())
@@ -408,6 +491,8 @@ static void DrawSourcesSection(FacetrackingPlugin &plugin)
 
         ImGui::EndTable();
     }
+
+    DrawAvailableModulesSection(plugin);
 
     // ---- add buttons ----
     ImGui::Spacing();
@@ -456,7 +541,7 @@ static void DrawSourcesSection(FacetrackingPlugin &plugin)
                 src.kind        = SourceKind::GitHub;
                 src.owner_repo  = ownerRepo;
                 src.label       = ownerRepo;
-                src.auto_update = true;
+                src.auto_update = false;
                 src.added_at    = NowIso8601();
                 std::string data = BuildSourceDataJson(src);
                 g_state.catalogue.sources.push_back(src);

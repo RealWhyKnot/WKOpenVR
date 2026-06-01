@@ -1,12 +1,12 @@
 #Requires -Version 5.1
-# face-module-sync.ps1 -- install / update / remove face-tracking modules
-# from folder or GitHub sources.  Runs without elevation; all target
+# face-module-sync.ps1 -- list / install / update / remove face-tracking modules
+# from registry, folder, or GitHub sources.  Runs without elevation; all target
 # directories are under %LocalAppDataLow%.
 #
 # Parameters:
-#   -Action     add | update | remove
-#   -Kind       folder | github          (required for add/update)
-#   -SourceData '<JSON string>'          (required for add/update; source descriptor)
+#   -Action     add | update | install | remove
+#   -Kind       registry | folder | github (required for add/update/install)
+#   -SourceData '<JSON string>'          (required for add/update/install; source descriptor)
 #   -SourceId   '<hex id>'               (required for remove and update)
 #   -ResultPath '<file path>'            (required; result JSON is written here)
 #
@@ -34,12 +34,19 @@ $ErrorActionPreference = 'Stop'
 
 # ---- helpers ---------------------------------------------------------------
 
-function Write-Result([bool]$ok, [string]$msg, [string]$uuid = '', [string]$ver = '') {
+$script:ResultSourceId = $SourceId
+
+function Write-Result([bool]$ok, [string]$msg, [string]$uuid = '', [string]$ver = '', [int]$availableCount = -1) {
     $obj = [ordered]@{
         ok                = $ok
         message           = $msg
         installed_uuid    = $uuid
         installed_version = $ver
+        source_id         = $script:ResultSourceId
+        action            = $Action
+    }
+    if ($availableCount -ge 0) {
+        $obj.available_count = $availableCount
     }
     $json = $obj | ConvertTo-Json -Compress
     # UTF-8 without BOM. The static [System.Text.Encoding]::UTF8 has
@@ -51,6 +58,12 @@ function Write-Result([bool]$ok, [string]$msg, [string]$uuid = '', [string]$ver 
 }
 
 function Get-FtModulesDir {
+    $dir = Join-Path (Get-FtDataDir) 'modules'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    return $dir
+}
+
+function Get-FtDataDir {
     if ($env:WKOPENVR_LOCALAPPDATA_OVERRIDE) {
         # Test harness redirect: route every module install under a sandbox
         # directory so the real %LocalAppDataLow%\WKOpenVR tree is never
@@ -62,9 +75,33 @@ function Get-FtModulesDir {
         # the registry key to get the real LocalAppDataLow path.
         $low = [System.Environment]::GetFolderPath('ApplicationData') -replace 'Roaming$','LocalLow'
     }
-    $dir = Join-Path $low 'WKOpenVR\facetracking\modules'
+    $dir = Join-Path $low 'WKOpenVR\facetracking'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     return $dir
+}
+
+function Get-FtAvailableDir {
+    $dir = Join-Path (Get-FtDataDir) 'available'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    return $dir
+}
+
+function Write-JsonNoBom([string]$path, $data, [int]$depth = 12) {
+    $json = $data | ConvertTo-Json -Depth $depth
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($path, $json, $utf8NoBom)
+}
+
+function Get-Prop($obj, [string[]]$names, [string]$fallback = '') {
+    if ($null -eq $obj) { return $fallback }
+    foreach ($name in $names) {
+        $prop = $obj.PSObject.Properties[$name]
+        if ($null -ne $prop -and $null -ne $prop.Value) {
+            $value = [string]$prop.Value
+            if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+        }
+    }
+    return $fallback
 }
 
 function Read-Manifest([string]$folder) {
@@ -164,6 +201,7 @@ try {
 
 $srcId   = if ($src.PSObject.Properties['id'])         { $src.id }         else { $SourceId }
 $srcKind = if ($src.PSObject.Properties['kind'])       { $src.kind }       else { $Kind }
+$script:ResultSourceId = $srcId
 
 # ---- action: add/update (folder) -------------------------------------------
 
@@ -300,19 +338,11 @@ if ($srcKind -eq 'github') {
     exit 0
 }
 
-# ---- action: add/update (registry) -----------------------------------------
+# ---- action: update/install (registry) -------------------------------------
 #
-# A registry source points at a curated index (the legacy registry lives at
-# https://legacy-registry.whyknot.dev). Endpoints:
-#   GET <url>/v1/index                                   -> { modules: [{uuid, version, ...}] }
-#   GET <url>/v1/modules/<uuid>/manifest                 -> full manifest incl. payload_sha256
-#   GET <url>/v1/modules/<uuid>/versions/<ver>/payload   -> module zip
-#
-# Sync semantics: install every module in the index; skip when the same uuid+
-# version is already on disk; replace when the version changed. Orphans (uuids
-# on disk that no longer appear in the index) are left in place for now --
-# removal is a separate decision we don't want to make implicitly during a
-# generic Sync click.
+# Registry sync is metadata-only. It writes an "available modules" cache that
+# the overlay displays as explicit Install/Update rows. Downloads happen only
+# through Action=install for one selected module.
 
 if ($srcKind -eq 'registry') {
     $base = if ($src.PSObject.Properties['url']) { $src.url } else { '' }
@@ -324,148 +354,377 @@ if ($srcKind -eq 'registry') {
 
     $headers = @{ 'User-Agent' = 'WKOpenVR/1.0' }
 
-    try {
-        $index = Invoke-RestMethod -Uri "$base/v1/index" -UseBasicParsing -Headers $headers
-    } catch {
-        Write-Result $false "Registry index fetch failed: $_"
-        exit 1
-    }
-
-    if ($null -eq $index.modules) {
-        Write-Result $false 'Registry index has no "modules" array.'
-        exit 1
-    }
-
-    $modsDir = Get-FtModulesDir
-    $installed = 0
-    $updated   = 0
-    $skipped   = 0
-    $failed    = 0
-    $errors    = @()
-
-    foreach ($entry in $index.modules) {
-        $uuid = $entry.uuid
-        $ver  = $entry.version
-        if ([string]::IsNullOrEmpty($uuid) -or [string]::IsNullOrEmpty($ver)) {
-            $failed++
-            $errors += "index entry missing uuid or version: $($entry | ConvertTo-Json -Compress)"
-            continue
-        }
-
-        $destDir = Join-Path $modsDir "$uuid\$ver"
-        if (Test-Path (Join-Path $destDir 'manifest.json')) {
-            $skipped++
-            continue
-        }
-
-        # Fetch the manifest (gives us payload_sha256).
-        try {
-            $manifest = Invoke-RestMethod -Uri "$base/v1/modules/$uuid/manifest" -UseBasicParsing -Headers $headers
-        } catch {
-            $failed++
-            $errors += "manifest fetch failed for ${uuid}: $_"
-            continue
-        }
-        # Trust the manifest's own version over the index entry's, in case the
-        # index is mid-update (it's a generated artifact, not a live join).
-        $manifestVer = if ($manifest.PSObject.Properties['version']) { $manifest.version } else { $ver }
-        if ($manifestVer -ne $ver) {
-            $destDir = Join-Path $modsDir "$uuid\$manifestVer"
-            if (Test-Path (Join-Path $destDir 'manifest.json')) {
-                $skipped++
-                continue
+    function Invoke-RegistryJson([string[]]$uris) {
+        $errors = @()
+        foreach ($uri in $uris) {
+            try {
+                $data = Invoke-RestMethod -Uri $uri -UseBasicParsing -Headers $headers
+                return [pscustomobject]@{ Data = $data; Uri = $uri }
+            } catch {
+                $errors += "${uri}: $($_.Exception.Message)"
             }
-            $ver = $manifestVer
         }
+        throw ($errors -join '; ')
+    }
 
-        $expectedSha = if ($manifest.PSObject.Properties['payload_sha256']) {
-            ([string]$manifest.payload_sha256).ToLower()
-        } else { '' }
-
-        # Download the payload.
-        $tmpZip = [System.IO.Path]::GetTempFileName() + '.zip'
-        try {
-            Invoke-WebRequest -Uri "$base/v1/modules/$uuid/versions/$ver/payload" `
-                              -OutFile $tmpZip -UseBasicParsing -Headers $headers
-        } catch {
-            Remove-Item -Force -Path $tmpZip -ErrorAction SilentlyContinue
-            $failed++
-            $errors += "payload download failed for ${uuid} ${ver}: $_"
-            continue
+    function Get-RegistryIndex {
+        $candidateUris = @(
+            "$base/v1/index",
+            "$base/modules",
+            "$base/index",
+            "$base/index.json"
+        )
+        $resp = Invoke-RegistryJson -uris $candidateUris
+        $data = $resp.Data
+        $entries = @()
+        $shape = 'unknown'
+        if ($data -is [array]) {
+            $entries = @($data)
+            $shape = 'vrcft-modules'
+        } elseif ($null -ne $data.PSObject.Properties['modules']) {
+            $entries = @($data.modules)
+            $shape = 'wk-index'
+        } elseif ($null -ne $data.PSObject.Properties['Modules']) {
+            $entries = @($data.Modules)
+            $shape = 'vrcft-modules'
         }
-
-        $actualSha = Get-Sha256 -filePath $tmpZip
-        if (-not [string]::IsNullOrEmpty($expectedSha) -and $actualSha -ne $expectedSha) {
-            Remove-Item -Force -Path $tmpZip -ErrorAction SilentlyContinue
-            $failed++
-            $errors += "SHA-256 mismatch for ${uuid} ${ver}: expected $expectedSha got $actualSha"
-            continue
+        return [pscustomobject]@{
+            Entries = $entries
+            Shape   = $shape
+            Uri     = $resp.Uri
         }
+    }
 
-        # Extract to a staging dir, then atomically swap into place. Going
-        # straight to the dest dir would leave a partial install behind on
-        # any failure mid-extract.
-        $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
-                                             [System.IO.Path]::GetRandomFileName())
-        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-        try {
-            Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
-        } catch {
-            Remove-Item -Force -Path $tmpZip -ErrorAction SilentlyContinue
-            Remove-Item -Recurse -Force -Path $tmpDir -ErrorAction SilentlyContinue
-            $failed++
-            $errors += "zip extract failed for ${uuid} ${ver}: $_"
-            continue
-        }
-        Remove-Item -Force -Path $tmpZip -ErrorAction SilentlyContinue
+    function Select-VersionMetadata($entry, [string]$wantedVersion) {
+        $latest = Get-Prop $entry @('latest','version','Version') ''
+        if ([string]::IsNullOrEmpty($wantedVersion)) { $wantedVersion = $latest }
 
-        $alreadyHaveVersion = Test-Path $destDir
-        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        try {
-            Get-ChildItem -Path $tmpDir -Recurse | ForEach-Object {
-                $rel    = $_.FullName.Substring($tmpDir.Length).TrimStart('\','/')
-                $target = Join-Path $destDir $rel
-                if ($_.PSIsContainer) {
-                    if (-not (Test-Path $target)) {
-                        New-Item -ItemType Directory -Path $target -Force | Out-Null
-                    }
-                } else {
-                    Copy-Item -Path $_.FullName -Destination $target -Force
+        $selected = $null
+        $versionsProp = $entry.PSObject.Properties['versions']
+        if ($null -ne $versionsProp -and $null -ne $versionsProp.Value) {
+            $versions = @($versionsProp.Value)
+            foreach ($v in $versions) {
+                $vv = Get-Prop $v @('version','Version') ''
+                if (-not [string]::IsNullOrEmpty($wantedVersion) -and $vv -eq $wantedVersion) {
+                    $selected = $v
+                    break
                 }
             }
-        } catch {
-            Remove-Item -Recurse -Force -Path $tmpDir -ErrorAction SilentlyContinue
-            $failed++
-            $errors += "copy-into-dest failed for ${uuid} ${ver}: $_"
-            continue
+            if ($null -eq $selected -and $versions.Count -gt 0) {
+                $selected = $versions[0]
+            }
         }
-        Remove-Item -Recurse -Force -Path $tmpDir -ErrorAction SilentlyContinue
 
-        # Persist the manifest next to the extracted files so the host can
-        # read it without going back to the network, and stamp source.json
-        # so a future Sync knows where this module came from.
-        $manifestJson = $manifest | ConvertTo-Json -Depth 10 -Compress
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-        [System.IO.File]::WriteAllText((Join-Path $destDir 'manifest.json'),
-                                       $manifestJson, $utf8NoBom)
-        $info = @{
-            source_id    = $srcId
-            source_kind  = 'registry'
-            registry_url = $base
-            installed_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        if ($null -ne $selected) {
+            $latest = Get-Prop $selected @('version','Version') $latest
+            return [ordered]@{
+                version        = $latest
+                payload_url    = Get-Prop $selected @('payload_url','DownloadUrl','download_url') ''
+                payload_sha256 = Get-Prop $selected @('payload_sha256','sha256','SHA256') ''
+                file_hash      = Get-Prop $selected @('FileHash','file_hash','md5') ''
+                dll_file_name  = Get-Prop $selected @('DllFileName','dll_file_name') ''
+            }
         }
-        Write-SourceJson -destDir $destDir -data $info
 
-        if ($alreadyHaveVersion) { $updated++ } else { $installed++ }
+        return [ordered]@{
+            version        = $latest
+            payload_url    = Get-Prop $entry @('payload_url','DownloadUrl','download_url') ''
+            payload_sha256 = Get-Prop $entry @('payload_sha256','sha256','SHA256') ''
+            file_hash      = Get-Prop $entry @('FileHash','file_hash','md5') ''
+            dll_file_name  = Get-Prop $entry @('DllFileName','dll_file_name') ''
+        }
     }
 
-    $summary = "Registry sync: installed=$installed updated=$updated skipped=$skipped failed=$failed (total=$($index.modules.Count))"
-    if ($failed -gt 0) {
-        $summary += " | errors: " + ($errors -join '; ')
-        Write-Result $false $summary
+    function Convert-RegistryEntryToAvailable($entry) {
+        $uuid = Get-Prop $entry @('uuid','ModuleId','module_id','id') ''
+        if ([string]::IsNullOrEmpty($uuid)) { return $null }
+
+        $verMeta = Select-VersionMetadata $entry ''
+        $version = [string]$verMeta.version
+        $name = Get-Prop $entry @('name','ModuleName','module_name','label') $uuid
+        $vendor = Get-Prop $entry @('vendor','AuthorName','author_name') 'Unknown'
+        $description = Get-Prop $entry @('description','ModuleDescription','module_description') ''
+
+        $manifest = $null
+        try {
+            $manifest = Invoke-RestMethod -Uri "$base/v1/modules/$uuid/manifest" `
+                -UseBasicParsing -Headers $headers
+        } catch { }
+        if ($null -ne $manifest) {
+            $name = Get-Prop $manifest @('name','ModuleName') $name
+            $vendor = Get-Prop $manifest @('vendor','AuthorName') $vendor
+            $version = Get-Prop $manifest @('version','Version') $version
+            if ([string]::IsNullOrEmpty([string]$verMeta.payload_sha256)) {
+                $verMeta.payload_sha256 = Get-Prop $manifest @('payload_sha256') ''
+            }
+        }
+
+        return [ordered]@{
+            uuid           = $uuid
+            version        = $version
+            name           = $name
+            vendor         = $vendor
+            description    = $description
+            source_id      = $srcId
+            source_label   = Get-Prop $src @('label') 'Registry'
+            registry_url   = $base
+            payload_url    = [string]$verMeta.payload_url
+            payload_sha256 = [string]$verMeta.payload_sha256
+            download_url   = Get-Prop $entry @('DownloadUrl','download_url') ''
+            file_hash      = [string]$verMeta.file_hash
+            dll_file_name  = [string]$verMeta.dll_file_name
+            module_page_url = Get-Prop $entry @('ModulePageUrl','module_page_url') ''
+        }
+    }
+
+    function Copy-DirectoryContents([string]$sourceDir, [string]$destDir) {
+        if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+        Get-ChildItem -Path $sourceDir -Recurse | ForEach-Object {
+            $rel = $_.FullName.Substring($sourceDir.Length).TrimStart('\','/')
+            $target = Join-Path $destDir $rel
+            if ($_.PSIsContainer) {
+                if (-not (Test-Path $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }
+            } else {
+                $parent = Split-Path -Parent $target
+                if ($parent -and -not (Test-Path $parent)) {
+                    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+                }
+                Copy-Item -Path $_.FullName -Destination $target -Force
+            }
+        }
+    }
+
+    function Find-DllFile([string]$root, [string]$preferredName) {
+        if (-not [string]::IsNullOrEmpty($preferredName)) {
+            $match = Get-ChildItem -Path $root -Filter $preferredName -Recurse -File |
+                     Select-Object -First 1
+            if ($null -ne $match) { return $match }
+        }
+        return Get-ChildItem -Path $root -Filter '*.dll' -Recurse -File |
+               Sort-Object FullName |
+               Select-Object -First 1
+    }
+
+    function Install-RegistryStage([string]$stageDir, [string]$uuid, [string]$version,
+                                   [hashtable]$sourceInfo) {
+        if ([string]::IsNullOrEmpty($uuid) -or [string]::IsNullOrEmpty($version)) {
+            throw 'registry install is missing uuid or version.'
+        }
+        $modsDir = Get-FtModulesDir
+        $destDir = Join-Path $modsDir "$uuid\$version"
+        if (Test-Path $destDir) {
+            Remove-Item -Recurse -Force -Path $destDir
+        }
+        Copy-ModuleFolder -srcDir $stageDir -uuid $uuid -version $version -sourceInfo $sourceInfo
+    }
+
+    function New-CompatManifest($uuid, $version, $name, $vendor, $payloadSha, $payloadSize) {
+        return [ordered]@{
+            schema            = 1
+            uuid              = $uuid
+            name              = $name
+            vendor            = $vendor
+            homepage          = ''
+            license           = ''
+            version           = $version
+            sdk_version       = 'VRCFT'
+            min_host_version  = '0.0.0'
+            supported_hmds    = @()
+            capabilities      = @('eye', 'expression')
+            platforms         = @('windows-x64')
+            entry_assembly    = 'WKOpenVR.FaceTracking.VrcftCompat.dll'
+            entry_type        = 'WKOpenVR.FaceTracking.VrcftCompat.ReflectingExtTrackingModuleAdapter'
+            dependencies      = @()
+            payload_sha256    = $payloadSha
+            payload_size      = $payloadSize
+        }
+    }
+
+    function Install-RegistryModule {
+        $uuid = Get-Prop $src @('uuid','ModuleId','module_id') ''
+        $ver = Get-Prop $src @('version','Version') ''
+        if ([string]::IsNullOrEmpty($uuid)) {
+            Write-Result $false 'Registry install requires a selected module uuid.'
+            exit 1
+        }
+
+        $name = Get-Prop $src @('name','ModuleName','module_name') $uuid
+        $vendor = Get-Prop $src @('vendor','AuthorName','author_name') 'Unknown'
+        $dllFileName = Get-Prop $src @('dll_file_name','DllFileName') ''
+        $downloadUrl = Get-Prop $src @('payload_url','download_url','DownloadUrl') ''
+        $expectedSha = (Get-Prop $src @('payload_sha256','sha256','SHA256') '').ToLower()
+        $expectedMd5 = (Get-Prop $src @('file_hash','FileHash','md5') '').ToLower()
+        $registryManifest = $null
+
+        try {
+            $registryManifest = Invoke-RestMethod -Uri "$base/v1/modules/$uuid/manifest" `
+                -UseBasicParsing -Headers $headers
+        } catch { }
+        if ($null -ne $registryManifest) {
+            $ver = Get-Prop $registryManifest @('version','Version') $ver
+            $name = Get-Prop $registryManifest @('name','ModuleName') $name
+            $vendor = Get-Prop $registryManifest @('vendor','AuthorName') $vendor
+            if ([string]::IsNullOrEmpty($expectedSha)) {
+                $expectedSha = (Get-Prop $registryManifest @('payload_sha256') '').ToLower()
+            }
+        }
+
+        if ([string]::IsNullOrEmpty($ver)) {
+            Write-Result $false "Registry module $uuid has no version."
+            exit 1
+        }
+        if ([string]::IsNullOrEmpty($downloadUrl)) {
+            $downloadUrl = "$base/v1/modules/$uuid/versions/$ver/payload"
+        }
+
+        $downloadLower = $downloadUrl.ToLowerInvariant()
+        $isDllPayload = $downloadLower -match '\.dll($|\?)'
+        $tmpPayload = [System.IO.Path]::GetTempFileName() + ($(if ($isDllPayload) { '.dll' } else { '.zip' }))
+        $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
+                                             [System.IO.Path]::GetRandomFileName())
+        $wrapperDir = ''
+        try {
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $tmpPayload -UseBasicParsing -Headers $headers
+
+            $actualSha = Get-Sha256 -filePath $tmpPayload
+            if (-not [string]::IsNullOrEmpty($expectedSha) -and $actualSha -ne $expectedSha) {
+                throw "SHA-256 mismatch for ${uuid} ${ver}: expected $expectedSha got $actualSha"
+            }
+            if (-not [string]::IsNullOrEmpty($expectedMd5)) {
+                $actualMd5 = (Get-FileHash -Path $tmpPayload -Algorithm MD5).Hash.ToLower()
+                if ($actualMd5 -ne $expectedMd5) {
+                    throw "MD5 mismatch for ${uuid} ${ver}: expected $expectedMd5 got $actualMd5"
+                }
+            }
+
+            New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+            if ($isDllPayload) {
+                if ([string]::IsNullOrEmpty($dllFileName)) {
+                    $dllFileName = [System.IO.Path]::GetFileName(([Uri]$downloadUrl).AbsolutePath)
+                }
+                if ([string]::IsNullOrEmpty($dllFileName)) { $dllFileName = "$uuid.dll" }
+                Copy-Item -LiteralPath $tmpPayload -Destination (Join-Path $tmpDir $dllFileName) -Force
+            } else {
+                Expand-Archive -Path $tmpPayload -DestinationPath $tmpDir -Force
+            }
+
+            $manifestFile = Get-ChildItem -Path $tmpDir -Filter 'manifest.json' -Recurse -File |
+                            Select-Object -First 1
+            $payloadManifest = $null
+            if ($null -ne $manifestFile) {
+                try {
+                    $payloadManifest = Get-Content $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                } catch { $payloadManifest = $null }
+            }
+            if ($null -eq $manifestFile -and $null -ne $registryManifest) {
+                Write-JsonNoBom -Path (Join-Path $tmpDir 'manifest.json') -Data $registryManifest -Depth 12
+                $manifestFile = Get-Item -LiteralPath (Join-Path $tmpDir 'manifest.json')
+                $payloadManifest = $registryManifest
+            }
+
+            $hasHostManifest = $false
+            if ($null -ne $payloadManifest -and
+                $null -ne $payloadManifest.PSObject.Properties['entry_assembly'] -and
+                $null -ne $payloadManifest.PSObject.Properties['entry_type']) {
+                $hasHostManifest = $true
+            }
+
+            $stageRoot = $tmpDir
+            if ($hasHostManifest) {
+                $uuid = Get-Prop $payloadManifest @('uuid') $uuid
+                $ver = Get-Prop $payloadManifest @('version') $ver
+                $stageRoot = $manifestFile.DirectoryName
+            } else {
+                $dllFile = Find-DllFile -root $tmpDir -preferredName $dllFileName
+                if ($null -eq $dllFile) {
+                    throw "No module DLL found in registry payload for $uuid."
+                }
+                if ([string]::IsNullOrEmpty($dllFileName)) {
+                    $dllFileName = $dllFile.Name
+                }
+
+                $relDll = $dllFile.FullName.Substring($tmpDir.Length).TrimStart('\','/')
+                $wrapperDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),
+                                                         [System.IO.Path]::GetRandomFileName())
+                New-Item -ItemType Directory -Path $wrapperDir -Force | Out-Null
+                $assembliesDir = Join-Path $wrapperDir 'assemblies'
+                Copy-DirectoryContents -sourceDir $tmpDir -destDir $assembliesDir
+                Write-JsonNoBom -Path (Join-Path $assembliesDir 'bridge.json') `
+                    -Data ([ordered]@{ upstream_assembly = $relDll }) -Depth 4
+                Write-JsonNoBom -Path (Join-Path $wrapperDir 'manifest.json') `
+                    -Data (New-CompatManifest $uuid $ver $name $vendor $actualSha ((Get-Item -LiteralPath $tmpPayload).Length)) `
+                    -Depth 12
+                $stageRoot = $wrapperDir
+            }
+
+            $info = @{
+                source_id    = $srcId
+                source_kind  = 'registry'
+                registry_url = $base
+                download_url = $downloadUrl
+                installed_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+                payload_sha256 = $actualSha
+            }
+            Install-RegistryStage -stageDir $stageRoot -uuid $uuid -version $ver -sourceInfo $info
+            Write-Result $true "Installed $name $ver." $uuid $ver
+            exit 0
+        } catch {
+            Write-Result $false "Registry install failed for ${uuid}: $_"
+            exit 1
+        } finally {
+            Remove-Item -Force -Path $tmpPayload -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force -Path $tmpDir -ErrorAction SilentlyContinue
+            if (-not [string]::IsNullOrEmpty($wrapperDir)) {
+                Remove-Item -Recurse -Force -Path $wrapperDir -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    if ($Action -eq 'install') {
+        Install-RegistryModule
+    }
+
+    try {
+        $index = Get-RegistryIndex
+    } catch {
+        Write-Result $false "Registry module list fetch failed: $_"
         exit 1
     }
-    Write-Result $true $summary
+
+    if ($index.Entries.Count -eq 0) {
+        Write-Result $false 'Registry returned no modules.'
+        exit 1
+    }
+
+    $available = @()
+    $failed = 0
+    foreach ($entry in $index.Entries) {
+        $module = Convert-RegistryEntryToAvailable $entry
+        if ($null -eq $module) {
+            $failed++
+            continue
+        }
+        $available += $module
+    }
+
+    $cache = [ordered]@{
+        schema_version = 1
+        source_id      = $srcId
+        source_label   = Get-Prop $src @('label') 'Registry'
+        registry_url   = $base
+        checked_at     = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        index_url      = $index.Uri
+        modules        = $available
+    }
+    $cachePath = Join-Path (Get-FtAvailableDir) "$srcId.json"
+    Write-JsonNoBom -Path $cachePath -Data $cache -Depth 16
+
+    $summary = "Registry sync: found=$($available.Count) failed=$failed. Select a module from the list to install."
+    if ($failed -gt 0 -and $available.Count -eq 0) {
+        Write-Result $false $summary '' '' $available.Count
+        exit 1
+    }
+    Write-Result $true $summary '' '' $available.Count
     exit 0
 }
 

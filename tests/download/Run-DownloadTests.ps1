@@ -33,12 +33,12 @@ function Quote-PsSingle([string] $Value) {
 	return "'" + ($Value -replace "'", "''") + "'"
 }
 
-function Invoke-FaceSyncFolder([string] $SourceData, [string] $SourceId, [string] $ResultPath) {
+function Invoke-FaceSync([string] $Action, [string] $Kind, [string] $SourceData, [string] $SourceId, [string] $ResultPath) {
 	$env:WKOPENVR_FACE_SYNC_SOURCE_DATA = $SourceData
 	try {
 		$command = @"
 `$ProgressPreference = 'SilentlyContinue'
-& $(Quote-PsSingle $FaceSyncPs1) -Action 'add' -Kind 'folder' -SourceData `$env:WKOPENVR_FACE_SYNC_SOURCE_DATA -SourceId $(Quote-PsSingle $SourceId) -ResultPath $(Quote-PsSingle $ResultPath)
+& $(Quote-PsSingle $FaceSyncPs1) -Action $(Quote-PsSingle $Action) -Kind $(Quote-PsSingle $Kind) -SourceData `$env:WKOPENVR_FACE_SYNC_SOURCE_DATA -SourceId $(Quote-PsSingle $SourceId) -ResultPath $(Quote-PsSingle $ResultPath)
 exit `$LASTEXITCODE
 "@
 		$encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($command))
@@ -48,6 +48,10 @@ exit `$LASTEXITCODE
 	finally {
 		Remove-Item Env:WKOPENVR_FACE_SYNC_SOURCE_DATA -ErrorAction SilentlyContinue
 	}
+}
+
+function Invoke-FaceSyncFolder([string] $SourceData, [string] $SourceId, [string] $ResultPath) {
+	return Invoke-FaceSync -Action 'add' -Kind 'folder' -SourceData $SourceData -SourceId $SourceId -ResultPath $ResultPath
 }
 
 function Quote-NativeArg([string] $Value) {
@@ -134,6 +138,7 @@ try {
 	$content = Get-Content -LiteralPath $registryIndexSrc -Raw
 	$content = $content -replace '%FIXTURE_BASE%', $FixtureBaseUrl
 	[System.IO.File]::WriteAllText($registryIndexDst, $content, (New-Object System.Text.UTF8Encoding($false)))
+	[System.IO.File]::WriteAllText($registryIndexSrc, $content, (New-Object System.Text.UTF8Encoding($false)))
 
 	# Redirect captions + face-module-sync to write under our isolated tree.
 	$env:WKOPENVR_LOCALAPPDATA_OVERRIDE = $LocalAppDataLow
@@ -210,8 +215,64 @@ try {
 	Write-CasePass "facetracking-folder-install"
 
 	# --------------------------------------------------------------------
-	# Case 5: facetracking 404 (HTTP 404 simulation -- folder branch does not
-	# hit the network, so we use the registry branch with a forced 404).
+	# Case 5: facetracking registry sync is list-only
+	# --------------------------------------------------------------------
+	Write-CaseStart "facetracking-registry-sync-list-only"
+	Remove-Item -LiteralPath (Join-Path $LocalAppDataLow 'WKOpenVR\facetracking\modules') -Recurse -Force -ErrorAction SilentlyContinue
+	$registrySourceId = 'harness-registry-1'
+	$registryUrl = ($FixtureBaseUrl.TrimEnd('/') + '/registry')
+	$registryJson = [ordered]@{
+		id = $registrySourceId
+		kind = 'registry'
+		url = $registryUrl
+		label = 'Harness registry'
+	} | ConvertTo-Json -Compress
+	$registryListResultPath = Join-Path $WorkingRoot 'face-registry-list-result.json'
+	$registryListExit = Invoke-FaceSync -Action 'update' -Kind 'registry' -SourceData $registryJson -SourceId $registrySourceId -ResultPath $registryListResultPath
+	if ($registryListExit -ne 0) { throw "face-module-sync registry list exited $registryListExit" }
+	Assert-FileExists $registryListResultPath 'registry list result'
+	$registryListResult = Get-Content -LiteralPath $registryListResultPath -Raw | ConvertFrom-Json
+	Assert-True $registryListResult.ok "registry list result must report ok=true (msg='$($registryListResult.message)')"
+	Assert-True ($registryListResult.available_count -eq 1) "registry list should find exactly one module"
+	$availablePath = Join-Path $LocalAppDataLow "WKOpenVR\facetracking\available\$registrySourceId.json"
+	Assert-FileExists $availablePath 'available modules cache'
+	$available = Get-Content -LiteralPath $availablePath -Raw | ConvertFrom-Json
+	Assert-True (@($available.modules).Count -eq 1) "available cache should contain one module"
+	Assert-True ($available.modules[0].uuid -eq $Summary.vrcft_module_uuid) "available module uuid should match fixture"
+	$registryInstallDir = Join-Path $LocalAppDataLow ("WKOpenVR\facetracking\modules\" + $Summary.vrcft_module_uuid + "\" + $Summary.vrcft_module_version)
+	Assert-FileMissing (Join-Path $registryInstallDir 'manifest.json') 'registry sync must not install manifest'
+	Write-CasePass "facetracking-registry-sync-list-only"
+
+	# --------------------------------------------------------------------
+	# Case 6: facetracking registry installs only the selected module
+	# --------------------------------------------------------------------
+	Write-CaseStart "facetracking-registry-install-selected"
+	$availableModule = $available.modules[0]
+	$installJson = [ordered]@{
+		id = $registrySourceId
+		kind = 'registry'
+		url = $registryUrl
+		label = 'Harness registry'
+		uuid = $availableModule.uuid
+		version = $availableModule.version
+		name = $availableModule.name
+		vendor = $availableModule.vendor
+		payload_url = $availableModule.payload_url
+		payload_sha256 = $availableModule.payload_sha256
+	} | ConvertTo-Json -Compress
+	$registryInstallResultPath = Join-Path $WorkingRoot 'face-registry-install-result.json'
+	$registryInstallExit = Invoke-FaceSync -Action 'install' -Kind 'registry' -SourceData $installJson -SourceId $registrySourceId -ResultPath $registryInstallResultPath
+	if ($registryInstallExit -ne 0) { throw "face-module-sync registry install exited $registryInstallExit" }
+	Assert-FileExists $registryInstallResultPath 'registry install result'
+	$registryInstallResult = Get-Content -LiteralPath $registryInstallResultPath -Raw | ConvertFrom-Json
+	Assert-True $registryInstallResult.ok "registry install result must report ok=true (msg='$($registryInstallResult.message)')"
+	Assert-FileExists (Join-Path $registryInstallDir 'manifest.json') 'registry installed manifest'
+	Assert-FileExists (Join-Path $registryInstallDir 'assemblies\WKOpenVR.FaceTracking.Stub.dll') 'registry installed module dll'
+	Assert-Sha256Matches (Join-Path $registryInstallDir 'assemblies\WKOpenVR.FaceTracking.Stub.dll') $Summary.vrcft_module_dll_sha
+	Write-CasePass "facetracking-registry-install-selected"
+
+	# --------------------------------------------------------------------
+	# Case 7: facetracking missing folder reports a structured failure.
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-missing-source"
 	$bogusFolder = Join-Path $WorkingRoot ('no-such-folder-' + ([Guid]::NewGuid().ToString('N')))
