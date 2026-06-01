@@ -1135,7 +1135,8 @@ void TickBoundaryPreviewForCapture(
         true,
         commands,
         commands.front().floorY,
-        "capture");
+        "capture",
+        /*showFileMarkers=*/false);
 
     if (s_steamVrWorkingPreviewVisible) {
         wkopenvr::boundary::HideWorkingChaperonePreview();
@@ -1182,6 +1183,7 @@ bool ApplyFloorFromStandingContactPose(
     }
     // Track the cumulative shift applied to the standing-zero so Reset undoes it.
     CalCtx.floorOffsetMetersY = previousOffset + measuredStandingY;
+    CalCtx.floorEnabled = true;
     ApplyBoundaryFloorY(0.0);
     s_boundaryError.clear();
     SaveProfile(CalCtx);
@@ -1652,10 +1654,26 @@ void DrawBoundarySection(ImVec2 panelSize) {
             }
             ImGui::SameLine();
             const bool hasFloorOffset = std::fabs(CalCtx.floorOffsetMetersY) > 1e-6;
+            if (hasFloorOffset) {
+                bool floorOn = CalCtx.floorEnabled;
+                if (ImGui::Checkbox("Floor height applied", &floorOn)) {
+                    AdjustStandingZeroFloorY(floorOn
+                        ? CalCtx.floorOffsetMetersY
+                        : -CalCtx.floorOffsetMetersY);
+                    CalCtx.floorEnabled = floorOn;
+                    SaveProfile(CalCtx);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Lower the rig to the headset floor, or turn it off to lift "
+                        "back without losing the saved height. Reset clears it.");
+                }
+            }
             if (!hasFloorOffset) ImGui::BeginDisabled();
             if (ImGui::Button("Reset floor")) {
                 AdjustStandingZeroFloorY(-CalCtx.floorOffsetMetersY);
                 CalCtx.floorOffsetMetersY = 0.0;
+                CalCtx.floorEnabled = false;
                 ApplyBoundaryFloorY(0.0);
                 SaveProfile(CalCtx);
                 s_cachedFloorSourceInitialized = false;
@@ -1735,6 +1753,25 @@ void DrawBoundarySection(ImVec2 panelSize) {
             ImGui::TextColored(
                 CalCtx.boundary.enabled ? ImVec4(0.0f, 0.85f, 0.45f, 1.0f) : pal.statusWarn,
                 CalCtx.boundary.enabled ? "applied" : "not applied");
+
+            bool boundaryOn = CalCtx.boundary.enabled;
+            if (ImGui::Checkbox("Boundary enabled", &boundaryOn)) {
+                CalCtx.boundary.enabled = boundaryOn;
+                if (boundaryOn) {
+                    ScheduleBoundaryStartupPush();
+                    std::string pushError;
+                    PushTargetBoundaryToChaperone(pushError);
+                } else if (CalCtx.boundary.priorChaperoneCaptured) {
+                    wkopenvr::boundary::RestoreChaperoneFromSnapshot(
+                        CalCtx.boundary.priorChaperone);
+                }
+                SaveProfile(CalCtx);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Turn the drawn safety boundary off or back on without "
+                    "redrawing it. Off restores your previous room boundary.");
+            }
 
             DrawPolygonPreview(CalCtx.boundary.vertices);
             DrawNativePreflightStatus(
@@ -1980,6 +2017,28 @@ void TickPersistentBoundaryOverlay() {
     } else {
         HideBoundaryPreviewOverlay();
         return;
+    }
+
+    // Skip the per-tick raster rebuild when the applied boundary hasn't moved.
+    // SteamVR keeps showing the last uploaded texture until we hide it, so
+    // re-rasterizing + re-uploading 512x512 every tick is pure waste once the
+    // overlay is on screen. Rebuild only when the geometry/floor changes, or
+    // when the overlay is not actually shown yet (first show, or retrying after
+    // an upload failure -- status.visible is false until a clean upload).
+    {
+        static uint64_t s_shownSig = ~0ull;
+        uint64_t sig = 1469598103934665603ull;
+        auto mix = [&sig](double d) {
+            sig ^= static_cast<uint64_t>(std::llround(d * 1000.0));
+            sig *= 1099511628211ull;
+        };
+        for (const auto& v : standingVerts) { mix(v.x); mix(v.y); mix(v.z); }
+        mix(standingFloor);
+        const auto st = wkopenvr::boundary::GetBoundaryPreviewStatus();
+        if (sig == s_shownSig && st.visible && st.textureReady) {
+            return;
+        }
+        s_shownSig = sig;
     }
 
     const auto commands = wkopenvr::boundary::BuildPersistentBoundaryCommands(

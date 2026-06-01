@@ -18,6 +18,7 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **boundary:** Improve floor source and hmd preview (2fcc071)
 - **smoothing:** Speed-adaptive one-euro position filter as base (9e435aa)
 - **calibration:** Permanent DriverSynth, filled boundary, gated floor (2c9629a)
+- **boundary:** On/off toggles for floor and boundary; lighter preview draw (efa0605)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -37,6 +38,8 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - diag(smoothing): add smart smoothing shadow metrics (c6316ee)
 - **calibration:** Drop conditional floor offset; rework boundary preview (462d480)
 - **calibration:** Make head-mount offset auto-correct log-only (e353bb9)
+- diag(calibration): log snap-suppress corroboration inputs at relocalization (3e1a7fd)
+- diag(smoothing): make smart-smoothing shadow a selectable A/B testbed (3fb2afb)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)

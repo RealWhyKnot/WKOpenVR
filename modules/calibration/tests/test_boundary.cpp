@@ -1959,3 +1959,35 @@ TEST(BoundaryRePushStartupTest, ZeroPendingNeverFires) {
     EXPECT_FALSE(sc.fire);
     EXPECT_EQ(sc.pending, 0);
 }
+
+// The persistent boundary overlay skips its 512x512 raster rebuild when the
+// content hash is unchanged, so the hash must be deterministic for identical
+// geometry and must change when the geometry moves.
+TEST(BoundaryPreviewRasterTest, HashIsStableAndContentSensitive) {
+    std::vector<BoundaryVertex> verts = {
+        {0.0, 0.0, 0.0}, {1.5, 0.0, 0.0}, {1.5, 0.0, 1.2}, {0.0, 0.0, 1.2},
+    };
+    const BoundaryPreviewRaster a = BuildBoundaryPreviewRaster(verts, true);
+    const BoundaryPreviewRaster b = BuildBoundaryPreviewRaster(verts, true);
+    EXPECT_EQ(a.hash, b.hash);
+
+    std::vector<BoundaryVertex> moved = verts;
+    moved[2].x += 0.30;
+    const BoundaryPreviewRaster c = BuildBoundaryPreviewRaster(moved, true);
+    EXPECT_NE(a.hash, c.hash);
+}
+
+// Floor on/off applies +offset then -offset to the standing-zero pose. Toggling
+// off must return exactly to the pre-floor pose so the saved offset can be
+// re-applied later without drift.
+TEST(FloorToggleTest, StandingZeroOffsetRoundTrips) {
+    vr::HmdMatrix34_t base = MakeIdentityMatrix34();
+    const double offset = 0.42;
+    const vr::HmdMatrix34_t lowered = OffsetStandingZeroPoseForFloor(base, offset);
+    const vr::HmdMatrix34_t restored = OffsetStandingZeroPoseForFloor(lowered, -offset);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            EXPECT_NEAR(restored.m[r][c], base.m[r][c], 1e-6);
+        }
+    }
+}

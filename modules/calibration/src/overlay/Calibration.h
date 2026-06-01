@@ -227,6 +227,12 @@ struct CalibrationContext
 	// not by shifting device poses. Tracked only so "Reset floor" can undo exactly
 	// what we applied; persisted to know our own contribution across restarts.
 	double floorOffsetMetersY = 0.0;
+	// True when floorOffsetMetersY is currently applied to the SteamVR
+	// standing-zero. Toggling this off lifts the rig back to the headset
+	// floor without forgetting the offset, so it can be re-applied later;
+	// "Reset floor" clears the offset entirely. Defaults true on load when an
+	// offset is present so existing profiles keep their applied floor.
+	bool floorEnabled = false;
 
 	std::string referenceTrackingSystem;
 	std::string targetTrackingSystem;

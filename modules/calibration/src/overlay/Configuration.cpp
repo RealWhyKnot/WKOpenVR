@@ -606,6 +606,9 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 
 	if (obj["floor_offset_meters_y"].is<double>()) {
 		ctx.floorOffsetMetersY = obj["floor_offset_meters_y"].get<double>();
+		ctx.floorEnabled = obj["floor_enabled"].is<bool>()
+			? obj["floor_enabled"].get<bool>()
+			: (std::fabs(ctx.floorOffsetMetersY) > 1e-9);
 	} else {
 		ctx.floorOffsetMetersY = 0.0;
 	}
@@ -856,6 +859,7 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	if (ctx.floorOffsetMetersY != 0.0) {
 		double floorOffset = ctx.floorOffsetMetersY;
 		profile["floor_offset_meters_y"].set<double>(floorOffset);
+		profile["floor_enabled"].set<bool>(ctx.floorEnabled);
 	}
 	WriteStandby(ctx.referenceStandby, profile["reference_device"]);
 	WriteStandby(ctx.targetStandby, profile["target_device"]);
