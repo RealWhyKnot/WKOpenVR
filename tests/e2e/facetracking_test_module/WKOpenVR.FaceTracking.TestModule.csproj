@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WKOpenVR.FaceTracking.TestModule</AssemblyName>
+    <RootNamespace>WKOpenVR.FaceTracking.TestModule</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\modules\facetracking\src\host\WKOpenVR.FaceTracking.UpstreamRuntime\WKOpenVR.FaceTracking.UpstreamRuntime.csproj" />
+  </ItemGroup>
+</Project>

@@ -72,6 +72,16 @@ std::filesystem::path FaceHostPath()
         L"host" / L"WKOpenVR.FaceModuleHost.exe";
 }
 
+std::filesystem::path FaceTestModuleArtifactDir()
+{
+    return BuildRoot() / L"artifacts" / L"FaceTestModule";
+}
+
+std::filesystem::path FaceTestModuleDllPath()
+{
+    return FaceTestModuleArtifactDir() / L"WKOpenVR.FaceTracking.TestModule.dll";
+}
+
 std::filesystem::path CaptionsHostPath()
 {
     return BuildRoot() / L"driver_wkopenvr" / L"resources" / L"captions" /
@@ -101,6 +111,26 @@ void WriteFileUtf8(const std::filesystem::path &path, const std::string &content
     std::filesystem::create_directories(path.parent_path());
     std::ofstream f(path, std::ios::binary);
     f << content;
+}
+
+void CopyDirectoryContents(
+    const std::filesystem::path &source,
+    const std::filesystem::path &target)
+{
+    std::filesystem::create_directories(target);
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(source)) {
+        const auto relative = std::filesystem::relative(entry.path(), source);
+        const auto dst = target / relative;
+        if (entry.is_directory()) {
+            std::filesystem::create_directories(dst);
+        } else if (entry.is_regular_file()) {
+            std::filesystem::create_directories(dst.parent_path());
+            std::filesystem::copy_file(
+                entry.path(),
+                dst,
+                std::filesystem::copy_options::overwrite_existing);
+        }
+    }
 }
 
 struct ProcessResult
@@ -508,6 +538,33 @@ void CreateLegacyVrcftCompatFaceModule(
     WriteFileUtf8(moduleDir / L"assemblies" / L"VirtualDesktop.FaceTracking.dll", "");
 }
 
+void CreateLoadableTestFaceModule(
+    const std::filesystem::path &modulesDir,
+    const std::string &uuid,
+    const std::string &version)
+{
+    auto moduleDir = modulesDir / Utf8ToWide(uuid) / Utf8ToWide(version);
+    WriteFileUtf8(moduleDir / L"manifest.json",
+        "{\n"
+        "  \"schema\": 1,\n"
+        "  \"uuid\": \"" + uuid + "\",\n"
+        "  \"name\": \"E2E Loadable Face Module\",\n"
+        "  \"vendor\": \"WKOpenVR Tests\",\n"
+        "  \"version\": \"" + version + "\",\n"
+        "  \"sdk_version\": \"1.0.0\",\n"
+        "  \"min_host_version\": \"1.0.0\",\n"
+        "  \"supported_hmds\": [\"any\"],\n"
+        "  \"capabilities\": [\"eye\", \"expression\"],\n"
+        "  \"platforms\": [\"win-x64\"],\n"
+        "  \"entry_assembly\": \"WKOpenVR.FaceTracking.TestModule.dll\",\n"
+        "  \"entry_type\": \"WKOpenVR.FaceTracking.TestModule.DeterministicFaceModule\",\n"
+        "  \"dependencies\": [],\n"
+        "  \"payload_sha256\": \"\",\n"
+        "  \"payload_size\": 0\n"
+        "}\n");
+    CopyDirectoryContents(FaceTestModuleArtifactDir(), moduleDir / L"assemblies");
+}
+
 } // namespace
 
 TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
@@ -605,6 +662,107 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     EXPECT_NEAR(smileV2,      0.25f, 0.001f);
     EXPECT_NEAR(cornerLegacy, 0.25f, 0.001f);
     EXPECT_NEAR(cornerV2,     0.25f, 0.001f);
+
+    harness.Stop();
+}
+
+TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
+{
+    ASSERT_TRUE(std::filesystem::exists(FaceHostPath()))
+        << "Face host missing at " << FaceHostPath().string();
+    ASSERT_TRUE(std::filesystem::exists(FaceTestModuleDllPath()))
+        << "Face test module missing at " << FaceTestModuleDllPath().string();
+
+    RouterHarness harness;
+    ASSERT_TRUE(harness.Start());
+
+    auto temp = MakeTempDir(L"face_loadable_module");
+    auto modulesDir = temp / L"modules";
+    auto statusPath = temp / L"face_status.json";
+    auto logPath = temp / L"face_host.log";
+    std::filesystem::create_directories(modulesDir);
+
+    const std::string uuid = "33333333-4444-5555-6666-777777777777";
+    CreateLoadableTestFaceModule(modulesDir, uuid, "1.0.0");
+
+    const std::string shmemName = "WKOpenVR_E2E_FaceLoadable_" +
+        std::to_string(GetCurrentProcessId()) + "_" +
+        std::to_string(GetTickCount64());
+    protocol::FaceTrackingFrameShmem shmem;
+    ASSERT_TRUE(shmem.Create(shmemName.c_str()));
+
+    const std::wstring pipeName = L"\\\\.\\pipe\\WKOpenVR-E2E-FaceHost-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+
+    RunningProcess host;
+    ASSERT_TRUE(host.Start(FaceHostPath(), {
+        L"--driver-handshake-pipe", pipeName,
+        L"--shmem-name", Utf8ToWide(shmemName),
+        L"--modules-dir", modulesDir.wstring(),
+        L"--status-file", statusPath.wstring(),
+        L"--log-file", logPath.wstring(),
+        L"--debug-logging", L"1",
+    })) << "CreateProcess failed: " << host.ExitCode();
+
+    ASSERT_TRUE(WaitUntil([&] {
+        std::string status = ReadFileUtf8(statusPath);
+        return status.find("\"module_count\": 1") != std::string::npos;
+    }, 30000ms)) << "host did not discover loadable test module. status: "
+                 << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
+
+    ASSERT_TRUE(SendFaceHostMessage(
+        pipeName,
+        EncodeFaceHostMessage("SelectModule", uuid)));
+
+    facetracking::FaceFrameReader reader;
+    reader.Open(shmemName.c_str());
+    protocol::FaceTrackingFrameBody frame{};
+
+    ASSERT_TRUE(WaitUntil([&] {
+        if (!reader.TryRead(frame)) return false;
+        return (frame.flags & 0x1u) != 0u &&
+               (frame.flags & 0x2u) != 0u &&
+               frame.eye_openness_l > 0.6f &&
+               frame.expressions[26] > 0.7f &&
+               frame.expressions[45] > 0.2f;
+    }, 30000ms)) << "loadable test module did not publish expected frame. status: "
+                 << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
+
+    EXPECT_NEAR(frame.eye_openness_l, 0.62f, 0.001f);
+    EXPECT_NEAR(frame.eye_openness_r, 0.58f, 0.001f);
+    EXPECT_NEAR(frame.expressions[26], 0.75f, 0.001f);
+    EXPECT_NEAR(frame.expressions[45], 0.25f, 0.001f);
+
+    const std::string log = ReadFileUtf8(logPath);
+    EXPECT_NE(log.find("RECV ReplyInit"), std::string::npos);
+    EXPECT_NE(log.find("WKOpenVR E2E Face Module"), std::string::npos);
+    EXPECT_NE(log.find("first non-zero shapes"), std::string::npos);
+
+    facetracking::FaceOscPublishCounts counts =
+        facetracking::PublishFaceFrameOsc(frame);
+    EXPECT_GT(counts.sent, 0u);
+    EXPECT_EQ(counts.dropped, 0u);
+
+    float jawV2 = 0.0f;
+    float lidV2 = 0.0f;
+    float smileV2 = 0.0f;
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/v2/JawOpen", jawV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/v2/EyeOpenLeft", lidV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/v2/MouthSmileLeft", smileV2, 5000ms));
+    EXPECT_NEAR(jawV2, 0.75f, 0.001f);
+    EXPECT_NEAR(lidV2, 0.62f, 0.001f);
+    EXPECT_NEAR(smileV2, 0.25f, 0.001f);
+
+    ASSERT_TRUE(SendFaceHostMessage(
+        pipeName,
+        EncodeFaceHostMessage("Shutdown")));
+    ASSERT_TRUE(host.Wait(10000)) << "face host did not shut down. log: "
+                                  << ReadFileUtf8(logPath);
+    EXPECT_EQ(host.ExitCode(), 0u);
 
     harness.Stop();
 }

@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <FaceTestModuleBuildRoot Condition="'$(FaceTestModuleBuildRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\build\dotnet\e2e-face-test-module\</FaceTestModuleBuildRoot>
+    <BaseOutputPath>$(FaceTestModuleBuildRoot)bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(FaceTestModuleBuildRoot)obj\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(FaceTestModuleBuildRoot)obj\</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>
