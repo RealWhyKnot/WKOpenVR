@@ -23,6 +23,14 @@ void DrawTransientStatus(ShellContext &context)
 {
 	if (context.status.empty()) return;
 	ImGui::Separator();
+	if (ImGui::SmallButton("x##dismiss_shell_status")) {
+		context.ClearStatus();
+		return;
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Dismiss status");
+	}
+	ImGui::SameLine();
 	ui::DrawTextWrapped(context.status.c_str());
 }
 
@@ -135,6 +143,7 @@ void DrawThemesTab(ShellContext &)
 void DrawShellWindow(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
 {
 	static std::string desktopDefaultTabAppliedFor;
+	context.TickStatus();
 
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);

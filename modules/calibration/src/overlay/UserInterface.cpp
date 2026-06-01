@@ -12,6 +12,7 @@
 #include "UserInterfaceFooter.h"
 #include "UserInterfaceBanners.h"
 #include "UserInterfaceCalibrationProgress.h"
+#include "CalibrationDeviceSelection.h"
 #include "HeadMountOffsetModal.h"
 #include "UiHelpers.h"
 
@@ -245,6 +246,16 @@ static void BuildMainWindowContents(bool runningInOverlay_)
 
 		ImGui::BeginDisabled(CalCtx.state == CalibrationState::Continuous);
 		BuildSystemSelection(state);
+		if (wkopenvr::spacecal::selection::AutoSelectHeadsetTrackerPair(CalCtx, state)) {
+			char buf[320];
+			snprintf(buf, sizeof buf,
+				"auto_select_headset_pair ref='%s/%s' target='%s/%s'",
+				CalCtx.referenceStandby.trackingSystem.c_str(),
+				CalCtx.referenceStandby.serial.c_str(),
+				CalCtx.targetStandby.trackingSystem.c_str(),
+				CalCtx.targetStandby.serial.c_str());
+			Metrics::WriteLogAnnotation(buf);
+		}
 		BuildDeviceSelections(state);
 		ImGui::EndDisabled();
 		BuildMenu(runningInOverlay);
@@ -610,6 +621,22 @@ static void OneShot_DrawSettings() {
 }
 
 
+static std::string CalibrationBlockedMessage()
+{
+	if (IsVRReady()) return {};
+	const std::string& vrError = LastVRConnectError();
+	if (vrError.find("Space Calibrator driver unavailable") != std::string::npos
+		|| vrError.find("WKOpenVR-Calibration") != std::string::npos
+		|| vrError.find("Calibration") != std::string::npos) {
+		return "Waiting for SteamVR to reload Space Calibrator. If you just enabled the module, restart SteamVR.";
+	}
+	if (vrError.find("interface version") != std::string::npos
+		|| vrError.find("VR_INTERFACE_VERSION") != std::string::npos) {
+		return "OpenVR interface version mismatch. Update SteamVR or reinstall WKOpenVR.";
+	}
+	return "Waiting for SteamVR. Calibration controls enable when tracking is live.";
+}
+
 void BuildMenu(bool runningInOverlay)
 {
 	auto &io = ImGui::GetIO();
@@ -633,6 +660,7 @@ void BuildMenu(bool runningInOverlay)
 		// Start / Continuous Calibration both need a live VR stack to enumerate
 		// devices and collect samples. Edit / Clear are pure-memory operations
 		// on the saved profile and stay enabled even without SteamVR running.
+		const std::string blockedMessage = CalibrationBlockedMessage();
 		ImGui::BeginDisabled(!IsVRReady());
 		if (ImGui::Button("Start Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2)))
 		{
@@ -641,7 +669,7 @@ void BuildMenu(bool runningInOverlay)
 		}
 		ImGui::EndDisabled();
 		if (!IsVRReady() && ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Waiting for SteamVR. Start it and the button will enable automatically.");
+			ImGui::SetTooltip("%s", blockedMessage.c_str());
 		}
 
 		ImGui::SameLine();
@@ -651,7 +679,7 @@ void BuildMenu(bool runningInOverlay)
 		}
 		ImGui::EndDisabled();
 		if (!IsVRReady() && ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Waiting for SteamVR. Start it and the button will enable automatically.");
+			ImGui::SetTooltip("%s", blockedMessage.c_str());
 		}
 
 		if (CalCtx.validProfile)
@@ -668,6 +696,10 @@ void BuildMenu(bool runningInOverlay)
 				CalCtx.Clear();
 				SaveProfile(CalCtx);
 			}
+		}
+		if (!blockedMessage.empty()) {
+			ImGui::Spacing();
+			ImGui::TextDisabled("%s", blockedMessage.c_str());
 		}
 
 		// Profile-mismatch banner (relocated): renders only when the saved
@@ -714,7 +746,7 @@ void BuildMenu(bool runningInOverlay)
 			}
 			ImGui::EndDisabled();
 			if (!IsVRReady() && ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Waiting for SteamVR.");
+				ImGui::SetTooltip("%s", blockedMessage.c_str());
 			}
 		}
 

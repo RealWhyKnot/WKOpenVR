@@ -12,6 +12,7 @@ struct ShellContext
 	std::wstring logRoot;
 	std::vector<std::wstring> driverResourceDirs;
 	std::string status;
+	double statusClearAtSeconds = 0.0;
 	std::string desktopDefaultModuleFlagFileName;
 	bool vrConnected = false;
 	bool dashboardVisible = false;
@@ -23,7 +24,9 @@ struct ShellContext
 	bool SetFlagPresent(const char *flagFileName, bool present);
 	bool IsTogglePending(const char *flagFileName) const;
 	void TickToggles();
-	void SetStatus(std::string message);
+	void TickStatus();
+	void ClearStatus();
+	void SetStatus(std::string message, double ttlSeconds = -1.0);
 };
 
 ShellContext CreateShellContext();

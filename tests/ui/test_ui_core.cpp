@@ -94,6 +94,14 @@ TEST(ShellUiLogic, CalibrationPluginOwnsUnifiedLogsPanel)
 	EXPECT_FALSE(openvr_pair::overlay::IsDefaultLogsPanelPlugin(nullptr));
 }
 
+TEST(ShellUiLogic, TransientStatusExpiresOnlyAfterDeadline)
+{
+	EXPECT_FALSE(openvr_pair::overlay::ShouldClearTransientStatus(10.0, 0.0));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldClearTransientStatus(10.0, 10.1));
+	EXPECT_TRUE(openvr_pair::overlay::ShouldClearTransientStatus(10.0, 10.0));
+	EXPECT_TRUE(openvr_pair::overlay::ShouldClearTransientStatus(10.2, 10.0));
+}
+
 TEST(ShellFooter, ResolvesConnectionStateLikeSpaceCalibrator)
 {
 	using openvr_pair::overlay::ResolveShellFooterConnectionState;

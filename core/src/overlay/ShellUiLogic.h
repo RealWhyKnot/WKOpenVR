@@ -6,6 +6,7 @@
 namespace openvr_pair::overlay {
 
 constexpr std::string_view kDefaultLogsPanelPluginFlag = "enable_calibration.flag";
+constexpr double kShellStatusDefaultSeconds = 8.0;
 
 inline bool ShouldSelectDesktopDefaultTab(
 	bool vrConnected,
@@ -21,6 +22,11 @@ inline bool ShouldSelectDesktopDefaultTab(
 inline bool IsDefaultLogsPanelPlugin(const char *pluginFlagFileName)
 {
 	return pluginFlagFileName && std::string_view(pluginFlagFileName) == kDefaultLogsPanelPluginFlag;
+}
+
+inline bool ShouldClearTransientStatus(double nowSeconds, double clearAtSeconds)
+{
+	return clearAtSeconds > 0.0 && nowSeconds >= clearAtSeconds;
 }
 
 } // namespace openvr_pair::overlay

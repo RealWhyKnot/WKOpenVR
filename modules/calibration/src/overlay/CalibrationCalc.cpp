@@ -166,6 +166,34 @@ namespace {
 		}
 		return std::max(0.0, std::min(1.0, numerator / denominator));
 	}
+
+	template<typename PositionSelector>
+	double PositionJitterFor(const std::deque<Sample>& samples, PositionSelector selectPosition)
+	{
+		Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+		Eigen::Vector3d sumSquares = Eigen::Vector3d::Zero();
+		int sampleCount = 0;
+
+		for (const auto& sample : samples) {
+			if (!sample.valid) continue;
+			const Eigen::Vector3d position = selectPosition(sample);
+			++sampleCount;
+			if (sampleCount == 1) {
+				mean = position;
+				continue;
+			}
+
+			const Eigen::Vector3d delta = position - mean;
+			mean += delta / static_cast<double>(sampleCount);
+			const Eigen::Vector3d delta2 = position - mean;
+			sumSquares += delta.cwiseProduct(delta2);
+		}
+
+		if (sampleCount < 2) return 0.0;
+		const Eigen::Vector3d variance =
+			(sumSquares / static_cast<double>(sampleCount - 1)).cwiseMax(0.0);
+		return variance.cwiseSqrt().norm();
+	}
 }
 
 const double CalibrationCalc::AxisVarianceThreshold = 0.001;
@@ -489,60 +517,15 @@ double CalibrationCalc::RetargetingErrorRMS(
 }
 
 double CalibrationCalc::ReferenceJitter() const {
-	Eigen::Vector3d m_oldM, m_newM, m_oldS, m_newS;
-	int sampleCount = 0;
-
-	for (auto& sample : m_samples) {
-		if (!sample.valid) continue;
-
-		if (sampleCount == 0) {
-			m_oldM = m_newM = sample.ref.trans;
-			m_oldS = Eigen::Vector3d();
-		} else {
-			m_newM = m_oldM + (sample.ref.trans - m_oldM) / sampleCount;
-			m_newS = m_oldS + (sample.ref.trans - m_oldM).cwiseProduct(sample.ref.trans - m_newM);
-
-			m_oldM = m_newM;
-			m_oldS = m_newS;
-		}
-
-		sampleCount++;
-	}
-
-	double var_x = sqrt(((sampleCount > 1) ? m_newS.x() / (sampleCount - 1) : 0.0));
-	double var_y = sqrt(((sampleCount > 1) ? m_newS.y() / (sampleCount - 1) : 0.0));
-	double var_z = sqrt(((sampleCount > 1) ? m_newS.z() / (sampleCount - 1) : 0.0));
-
-	return sqrt(var_x * var_x + var_y * var_y + var_z * var_z);
+	return PositionJitterFor(m_samples, [](const Sample& sample) {
+		return sample.ref.trans;
+	});
 }
 
 double CalibrationCalc::TargetJitter() const {
-	Eigen::Vector3d m_oldM, m_newM, m_oldS, m_newS;
-	int sampleCount = 0;
-
-	for (auto& sample : m_samples) {
-		if (!sample.valid) continue;
-
-		if (sampleCount == 0) {
-			m_oldM = m_newM = sample.target.trans;
-			m_oldS = Eigen::Vector3d();
-		}
-		else {
-			m_newM = m_oldM + (sample.target.trans - m_oldM) / sampleCount;
-			m_newS = m_oldS + (sample.target.trans - m_oldM).cwiseProduct(sample.target.trans - m_newM);
-
-			m_oldM = m_newM;
-			m_oldS = m_newS;
-		}
-
-		sampleCount++;
-	}
-
-	double var_x = sqrt(((sampleCount > 1) ? std::abs(m_newS.x() / (sampleCount - 1)) : 0.0));
-	double var_y = sqrt(((sampleCount > 1) ? std::abs(m_newS.y() / (sampleCount - 1)) : 0.0));
-	double var_z = sqrt(((sampleCount > 1) ? std::abs(m_newS.z() / (sampleCount - 1)) : 0.0));
-
-	return sqrt(var_x * var_x + var_y * var_y + var_z * var_z);
+	return PositionJitterFor(m_samples, [](const Sample& sample) {
+		return sample.target.trans;
+	});
 }
 
 double CalibrationCalc::TranslationDiversity() const {

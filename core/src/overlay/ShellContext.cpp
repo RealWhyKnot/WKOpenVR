@@ -2,6 +2,7 @@
 
 #include "DiagnosticsLog.h"
 #include "ShellSettings.h"
+#include "ShellUiLogic.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -30,6 +31,11 @@ struct PendingToggle
 std::vector<PendingToggle> g_pendingToggles;
 constexpr const char *kDesktopDefaultModuleSetting = "desktop_default_module";
 constexpr const char *kFallbackDesktopDefaultModule = "enable_questapp.flag";
+
+double ShellNowSeconds()
+{
+	return static_cast<double>(GetTickCount64()) / 1000.0;
+}
 
 // Returns the directory containing the running exe, without a trailing slash.
 // Falls back to an empty string on failure.
@@ -561,9 +567,32 @@ void ShellContext::TickToggles()
 	}
 }
 
-void ShellContext::SetStatus(std::string message)
+void ShellContext::TickStatus()
+{
+	if (ShouldClearTransientStatus(ShellNowSeconds(), statusClearAtSeconds)) {
+		ClearStatus();
+	}
+}
+
+void ShellContext::ClearStatus()
+{
+	status.clear();
+	statusClearAtSeconds = 0.0;
+}
+
+void ShellContext::SetStatus(std::string message, double ttlSeconds)
 {
 	status = std::move(message);
+	if (status.empty()) {
+		statusClearAtSeconds = 0.0;
+		return;
+	}
+	if (ttlSeconds < 0.0) {
+		ttlSeconds = kShellStatusDefaultSeconds;
+	}
+	statusClearAtSeconds = ttlSeconds > 0.0
+		? ShellNowSeconds() + ttlSeconds
+		: 0.0;
 }
 
 } // namespace openvr_pair::overlay
