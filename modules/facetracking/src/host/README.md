@@ -6,15 +6,12 @@ ring `WKOpenVRFaceTrackingFrameRingV2`. The SteamVR driver reads that ring on it
 path and applies continuous calibration, eyelid sync, and vergence lock before pushing data to
 SteamVR inputs and the OSC sender.
 
-To add a hardware module, implement `FaceTrackingModule` (from `WKOpenVR.FaceTracking.ModuleSdk`),
-package it as a `.zip` with a `manifest.json` matching the v1 schema served at
-`legacy-registry.whyknot.dev`, and install it under
-`%LocalAppDataLow%\WKOpenVR\facetracking\modules\<uuid>\<version>\`. The host discovers and
-loads new modules on startup and responds to `SelectModule` messages over the driver control pipe.
-Modules are integrity-checked at install time via the manifest's `payload_sha256`; there is no
-cryptographic signature, because both the curated legacy mirror and the future native registry are
-maintainer-controlled.
+Install upstream VRCFaceTracking modules under
+`%LocalAppDataLow%\WKOpenVR\facetracking\modules\<uuid>\<version>\` with a `manifest.json`
+matching the v1 schema served at `legacy-registry.whyknot.dev`. The host discovers modules on
+startup and responds to `SelectModule` messages over the driver control pipe.
 
-Existing upstream VRCFaceTracking `ExtTrackingModule` implementations are wrapped at runtime by
-`WKOpenVR.FaceTracking.VrcftCompat.ReflectingExtTrackingModuleAdapter` -- no per-module C# is
-required.
+The runtime path loads upstream `ExtTrackingModule` assemblies directly in
+`WKOpenVR.FaceModuleProcess.exe`. A legacy bridge-style manifest is still accepted: if
+`entry_type` names the old compat adapter, the host reads `assemblies\bridge.json` and launches
+the `upstream_assembly` DLL directly. The adapter DLL is not loaded.

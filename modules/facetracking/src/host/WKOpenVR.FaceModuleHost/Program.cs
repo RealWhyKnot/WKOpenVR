@@ -1,7 +1,6 @@
 using WKOpenVR.FaceModuleHost;
 using WKOpenVR.FaceModuleHost.Logging;
 using WKOpenVR.FaceModuleHost.Workers;
-using WKOpenVR.FaceTracking.ModuleSdk;
 using WKOpenVR.FaceTracking.Registry;
 using System.Numerics;
 

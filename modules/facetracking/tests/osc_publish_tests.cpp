@@ -5,7 +5,7 @@
 //     matches the reference encoding in OscSender.BuildOscFloatPacket (C#).
 //   - kExprParamNames table has exactly FACETRACKING_EXPRESSION_COUNT entries
 //     and the first, middle, and last names match the canonical list from the
-//     PR comment (sourced from the C# OscSender / UnifiedExpression enum).
+//     protocol expression list.
 //
 // The test builds OSC packets directly from the encode logic in
 // FacetrackingDriverModule.cpp rather than invoking the full WorkerLoop

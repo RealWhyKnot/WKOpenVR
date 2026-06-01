@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using WKOpenVR.FaceModuleHost.Logging;
-using WKOpenVR.FaceTracking.ModuleSdk;
 using WKOpenVR.FaceTracking.Registry;
 using VRCFaceTracking.Core.Library;
 using VRCFaceTracking.Core.Sandboxing;
@@ -314,10 +313,9 @@ public sealed class SubprocessManager : IDisposable
             return;
         }
 
-        // Resolve the upstream module DLL path.
-        // Legacy registry payloads may still carry the pre-rename OpenVRPair
-        // adapter type. Both adapter names use bridge.json to point at the
-        // real upstream module DLL.
+        // Resolve the upstream module DLL path. Legacy registry payloads may
+        // still carry the old compat adapter type, but the adapter is not
+        // loaded; bridge.json only points us at the real upstream module DLL.
         string moduleDllPath;
         if (IsVrcftCompatAdapter(manifest.EntryType))
         {

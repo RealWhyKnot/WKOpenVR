@@ -242,7 +242,7 @@ public class ModuleProcessMain
                         }
                         catch ( MissingMethodException )
                         {
-                            Logger.LogError("{moduleName} does not properly implement ExtTrackingModule. Skipping.", DefModuleAssembly.GetType().Name);
+                            Logger.LogError("{moduleName} is missing an ExtTrackingModule method. Skipping.", DefModuleAssembly.GetType().Name);
                             return;
                         } catch ( Exception e )
                         {

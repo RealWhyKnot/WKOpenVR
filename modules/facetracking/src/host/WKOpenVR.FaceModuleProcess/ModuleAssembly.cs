@@ -123,14 +123,14 @@ public class ModuleAssembly
 
             foreach ( var type in Assembly.GetExportedTypes() )
             {
-                if ( type.BaseType != typeof(ExtTrackingModule) )
+                if ( !type.IsSubclassOf(typeof(ExtTrackingModule)) )
                 {
                     continue;
                 }
 
-                _logger.LogDebug("{module} properly implements ExtTrackingModule.", type.Name);
+                _logger.LogDebug("{module} implements ExtTrackingModule.", type.Name);
                 Loaded          = true;
-                TrackingModule  = LoadExternalModule();
+                TrackingModule  = LoadExternalModule(type);
                 break;
             }
         } catch ( Exception e )
@@ -139,7 +139,7 @@ public class ModuleAssembly
         }
     }
 
-    private ExtTrackingModule LoadExternalModule()
+    private ExtTrackingModule LoadExternalModule(Type moduleType)
     {
         if ( Assembly == null )
         {
@@ -150,13 +150,7 @@ public class ModuleAssembly
 
         try
         {
-            // Get the first class that implements ExtTrackingModule
-            var module = Assembly.GetTypes().FirstOrDefault(t => t.IsSubclassOf(typeof(ExtTrackingModule)));
-            if ( module == null )
-            {
-                throw new Exception("Failed to get module's ExtTrackingModule impl");
-            }
-            var moduleObj = (ExtTrackingModule)Activator.CreateInstance(module);
+            var moduleObj = (ExtTrackingModule)Activator.CreateInstance(moduleType);
             var logger = _loggerFactory.CreateLogger(moduleObj.GetType().Name);
             moduleObj.Logger = logger;
 

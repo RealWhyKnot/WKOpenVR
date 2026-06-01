@@ -25,9 +25,8 @@ inline constexpr int kUpstreamShapeCount = 88;
 //             modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamRuntime/
 //             Params/Expressions/UnifiedExpressions.cs
 //             (mirrors upstream v5.1.1.0 order including NoseSneer at 48-49).
-//   ours:     WKOpenVR.FaceTracking.ModuleSdk.UnifiedExpression
-//             modules/facetracking/src/host/WKOpenVR.FaceTracking.ModuleSdk/
-//             UnifiedExpression.cs
+//   ours:     protocol::FACETRACKING_EXPRESSION_COUNT order, published by
+//             modules/facetracking/src/driver/FaceOscPublisher.cpp
 //
 // Most entries are direct case-insensitive name matches. Five entries are
 // semantic aliases bridging upstream's later-renamed shapes to our

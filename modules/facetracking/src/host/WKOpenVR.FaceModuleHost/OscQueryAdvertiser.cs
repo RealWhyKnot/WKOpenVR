@@ -42,10 +42,8 @@ public sealed class OscQueryAdvertiser : IDisposable
     ];
 
     // Unified Expression parameter names emitted at both
-    // /avatar/parameters/<name> AND /avatar/parameters/v2/<name>. Order
-    // mirrors WKOpenVR.FaceTracking.ModuleSdk.UnifiedExpression enum
-    // (indices 0-62, Count=63). FaceOscPublisher.cpp's kExprParamNames
-    // is the lockstep counterpart; both lists are identical by intent.
+    // /avatar/parameters/<name> AND /avatar/parameters/v2/<name>.
+    // Indices 0-62 mirror FaceOscPublisher.cpp's kExprParamNames.
     private static readonly string[] ExprParamNames =
     [
         "EyeLookOutLeft",     // 0

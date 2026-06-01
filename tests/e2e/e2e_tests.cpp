@@ -534,7 +534,6 @@ void CreateLegacyVrcftCompatFaceModule(
         "}\n");
     WriteFileUtf8(moduleDir / L"assemblies" / L"bridge.json",
         "{ \"upstream_assembly\": \"VirtualDesktop.FaceTracking.dll\" }\n");
-    WriteFileUtf8(moduleDir / L"assemblies" / L"OpenVRPair.FaceTracking.VrcftCompat.dll", "");
     WriteFileUtf8(moduleDir / L"assemblies" / L"VirtualDesktop.FaceTracking.dll", "");
 }
 
@@ -839,7 +838,7 @@ TEST(E2E, FaceHostReloadsInstalledModulesAndDisablesSelection)
     EXPECT_EQ(host.ExitCode(), 0u);
 }
 
-TEST(E2E, FaceHostResolvesLegacyVrcftCompatBridge)
+TEST(E2E, FaceHostResolvesLegacyBridgeManifestWithoutAdapterAssembly)
 {
     ASSERT_TRUE(std::filesystem::exists(FaceHostPath()))
         << "Face host missing at " << FaceHostPath().string();
@@ -852,6 +851,9 @@ TEST(E2E, FaceHostResolvesLegacyVrcftCompatBridge)
 
     const std::string uuid = "22222222-3333-4444-5555-666666666666";
     CreateLegacyVrcftCompatFaceModule(modulesDir, uuid, "1.0.0");
+    EXPECT_FALSE(std::filesystem::exists(
+        modulesDir / Utf8ToWide(uuid) / L"1.0.0" / L"assemblies" /
+        L"OpenVRPair.FaceTracking.VrcftCompat.dll"));
 
     const std::string shmemName = "WKOpenVR_E2E_FaceLegacy_" +
         std::to_string(GetCurrentProcessId()) + "_" +

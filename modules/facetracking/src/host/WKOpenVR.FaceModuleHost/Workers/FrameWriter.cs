@@ -3,7 +3,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using WKOpenVR.FaceModuleHost.Logging;
-using WKOpenVR.FaceTracking.ModuleSdk;
 using UnsafeHelper = System.Runtime.CompilerServices.Unsafe;
 
 namespace WKOpenVR.FaceModuleHost.Workers;

@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <AssemblyName>WKOpenVR.FaceTracking.ModuleSdk</AssemblyName>
-    <RootNamespace>WKOpenVR.FaceTracking.ModuleSdk</RootNamespace>
-    <OutputType>Library</OutputType>
-  </PropertyGroup>
-</Project>

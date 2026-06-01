@@ -63,6 +63,8 @@ if(TARGET openvr_pair_feature_facetracking_host)
             "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_test_module/*.csproj"
             "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_test_module/*.cs"
             "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_test_module/*.props"
+            "${CMAKE_SOURCE_DIR}/modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamSdk/*.csproj"
+            "${CMAKE_SOURCE_DIR}/modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamSdk/*.cs"
             "${CMAKE_SOURCE_DIR}/modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamRuntime/*.csproj"
             "${CMAKE_SOURCE_DIR}/modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamRuntime/*.cs")
         list(FILTER FACE_TEST_MODULE_INPUTS EXCLUDE REGEX "/(bin|obj)/")

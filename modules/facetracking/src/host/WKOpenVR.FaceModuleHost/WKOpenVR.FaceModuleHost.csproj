@@ -12,8 +12,6 @@
     <TargetFramework>net10.0-windows</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\WKOpenVR.FaceTracking.ModuleSdk\WKOpenVR.FaceTracking.ModuleSdk.csproj" />
-    <ProjectReference Include="..\WKOpenVR.FaceTracking.VrcftCompat\WKOpenVR.FaceTracking.VrcftCompat.csproj" />
     <ProjectReference Include="..\WKOpenVR.FaceTracking.Registry\WKOpenVR.FaceTracking.Registry.csproj" />
     <ProjectReference Include="..\WKOpenVR.FaceTracking.UpstreamSdk\WKOpenVR.FaceTracking.UpstreamSdk.csproj" />
     <ProjectReference Include="..\WKOpenVR.FaceTracking.UpstreamRuntime\WKOpenVR.FaceTracking.UpstreamRuntime.csproj" />

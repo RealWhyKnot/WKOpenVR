@@ -1,14 +1,16 @@
 // Verify the hand-coded upstream -> ours expression remap table.
 //
 // The table lives in core/src/common/facetracking/UpstreamShapeMap.h and
-// is maintained in lockstep with two C# enums:
+// is maintained in lockstep with the upstream C# enum and our protocol
+// expression order:
 //   - VRCFaceTracking.Core.Params.Expressions.UnifiedExpressions (upstream
 //     v5.1.1.0 order, vendored at
 //     modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamRuntime/
 //     Params/Expressions/UnifiedExpressions.cs)
-//   - WKOpenVR.FaceTracking.ModuleSdk.UnifiedExpression (ours)
+//   - protocol::FACETRACKING_EXPRESSION_COUNT order, published by
+//     modules/facetracking/src/driver/FaceOscPublisher.cpp
 //
-// If either enum gains entries upstream-side or ours-side, the table
+// If either expression list gains entries, the table
 // needs a matching pass. These tests anchor a handful of well-known
 // shapes (the names a code reviewer would recognise from VRCFaceTracking
 // docs) plus the five semantic aliases that bridge upstream's later
@@ -35,7 +37,7 @@ TEST(UpstreamShapeMap, TableSizeIs88)
 TEST(UpstreamShapeMap, JawOpenMapsThroughCorrectly)
 {
     // Upstream UnifiedExpressions.JawOpen lives at index 22.
-    // Our UnifiedExpression.JawOpen lives at index 26.
+    // Our protocol JawOpen slot lives at index 26.
     EXPECT_EQ(kUpstreamToOurs[22], 26);
 
     float src[kUpstreamShapeCount] = {};

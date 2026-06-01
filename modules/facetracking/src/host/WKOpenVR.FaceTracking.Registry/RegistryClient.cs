@@ -4,9 +4,8 @@ using System.Text.Json;
 namespace WKOpenVR.FaceTracking.Registry;
 
 /// <summary>
-/// HTTP client for the legacy-registry.whyknot.dev v1 module registry --
-/// the curated mirror of upstream VRCFaceTracking modules. A future native
-/// registry will live at a different subdomain and share the same v1 schema.
+/// HTTP client for the legacy-registry.whyknot.dev v1 module registry,
+/// the curated mirror of upstream VRCFaceTracking modules.
 /// All methods throw <see cref="HttpRequestException"/> on non-2xx responses.
 /// </summary>
 public sealed class RegistryClient(HttpClient http)
