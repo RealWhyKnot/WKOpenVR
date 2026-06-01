@@ -223,7 +223,9 @@ public:
         // before Start() so connect-first attach does not lock onto a dead
         // peer.
         supervisor_->CleanupStaleHostIfWedged();
-        supervisor_->Start();
+        if (!supervisor_->Start()) {
+            FT_LOG_DRV("[module] host initial spawn failed; supervisor monitor will retry", 0);
+        }
 
         // Start the frame worker thread.
         worker_stop_.store(false, std::memory_order_release);

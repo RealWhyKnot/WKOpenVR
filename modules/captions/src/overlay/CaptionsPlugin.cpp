@@ -141,13 +141,6 @@ void CaptionsPlugin::Tick(openvr_pair::overlay::ShellContext &)
 void CaptionsPlugin::DrawTab(openvr_pair::overlay::ShellContext &ctx)
 {
     RefreshPackResourcePaths(ctx);
-
-    if (!ctx.IsFlagPresent("enable_oscrouter.flag")) {
-        openvr_pair::overlay::ui::DrawErrorBanner(
-            "OSC Router required",
-            "This feature sends OSC to VRChat through the OSC Router. "
-            "Enable OSC Router on the Modules tab so chatbox text reaches VRChat.");
-    }
     DrawStatusBanner();
     captions::ui::DrawCaptionsTab(*this);
 }

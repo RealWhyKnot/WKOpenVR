@@ -405,13 +405,6 @@ void FacetrackingPlugin::DrawStatusBanner()
 
 void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext &ctx)
 {
-    if (!ctx.IsFlagPresent("enable_oscrouter.flag")) {
-        openvr_pair::overlay::ui::DrawErrorBanner(
-            "OSC Router required",
-            "Face Tracking publishes avatar parameters through the OSC Router. "
-            "Enable OSC Router on the Modules tab or VRChat will not see your "
-            "face data.");
-    }
     DrawStatusBanner();
 
     if (ImGui::BeginTabBar("ft_tabs")) {

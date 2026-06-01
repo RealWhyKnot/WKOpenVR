@@ -109,7 +109,9 @@ public:
         // before Start() so connect-first attach does not lock onto a dead
         // peer.
         supervisor_->CleanupStaleHostIfWedged();
-        supervisor_->Start();
+        if (!supervisor_->Start()) {
+            TR_LOG_DRV("[module] host initial spawn failed; supervisor monitor will retry");
+        }
 
         TR_LOG_DRV("[module] Init complete");
         return true;

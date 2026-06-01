@@ -60,7 +60,6 @@ uint32_t DetectFeatureFlags()
 		return 0;
 	}
 
-	uint32_t flags = 0;
 	const bool calOn = FlagFileExists(dir, L"enable_calibration.flag");
 	const bool smoOn = FlagFileExists(dir, L"enable_smoothing.flag");
 	const bool ihOn  = FlagFileExists(dir, L"enable_inputhealth.flag");
@@ -73,18 +72,16 @@ uint32_t DetectFeatureFlags()
 	const bool capOn = FlagFileExists(dir, L"enable_captions.flag")
 		|| FlagFileExists(dir, L"enable_translator.flag");
 	const bool phOn  = FlagFileExists(dir, L"enable_phantom.flag");
-	if (calOn) flags |= kFeatureCalibration;
-	if (smoOn) flags |= kFeatureSmoothing;
-	if (ihOn)  flags |= kFeatureInputHealth;
-	if (ftOn)  flags |= kFeatureFaceTracking;
-	if (orOn)  flags |= kFeatureOscRouter;
-	if (capOn) flags |= kFeatureCaptions;
-	if (phOn)  flags |= kFeaturePhantom;
+	uint32_t flags = ComposeFeatureFlags(calOn, smoOn, ihOn, ftOn, orOn, capOn, phOn);
+	const bool orEffective = (flags & kFeatureOscRouter) != 0;
+	if (orEffective && !orOn) {
+		LOG("DetectFeatureFlags: enabling oscrouter because a module requires centralized OSC routing");
+	}
 
 	// %ls expects wide string on MSVC's CRT. Cap the printed length so a
 	// pathological install path doesn't blow the log line.
-	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d smoothing=%d inputhealth=%d facetracking=%d oscrouter=%d captions=%d phantom=%d (mask=0x%x)",
-		dir.c_str(), (int)calOn, (int)smoOn, (int)ihOn, (int)ftOn, (int)orOn, (int)capOn, (int)phOn, (unsigned)flags);
+	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d smoothing=%d inputhealth=%d facetracking=%d oscrouter_flag=%d oscrouter_effective=%d captions=%d phantom=%d (mask=0x%x)",
+		dir.c_str(), (int)calOn, (int)smoOn, (int)ihOn, (int)ftOn, (int)orOn, (int)orEffective, (int)capOn, (int)phOn, (unsigned)flags);
 	return flags;
 }
 

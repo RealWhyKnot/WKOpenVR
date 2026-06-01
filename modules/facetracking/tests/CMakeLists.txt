@@ -18,6 +18,7 @@ add_executable(facetracking_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/calibration_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vergence_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/eyelid_sync_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/feature_flags_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/osc_publish_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/upstream_shape_map_tests.cpp
     ${FT_DRIVER_SRC}/CalibrationEngine.cpp
@@ -29,6 +30,7 @@ target_include_directories(facetracking_tests
     PRIVATE ${CMAKE_SOURCE_DIR}
     PRIVATE ${FT_DRIVER_SRC}
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
+    PRIVATE ${CMAKE_SOURCE_DIR}/core/src/driver
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers
 )

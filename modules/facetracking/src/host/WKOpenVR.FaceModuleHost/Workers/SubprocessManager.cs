@@ -43,9 +43,39 @@ public sealed class SubprocessManager : IDisposable
 
         public void MarkExited() => Exited = true;
 
+        public bool TerminateProcessTree()
+        {
+            try
+            {
+                if (!Process.HasExited)
+                {
+                    Process.Kill(entireProcessTree: true);
+                    if (!Process.WaitForExit(2000))
+                    {
+                        using var killer = Process.Start(new ProcessStartInfo
+                        {
+                            FileName = "taskkill",
+                            Arguments = $"/F /T /PID {Process.Id}",
+                            CreateNoWindow = true,
+                            UseShellExecute = false,
+                        });
+                        killer?.WaitForExit(2000);
+                    }
+                }
+
+                if (Process.HasExited)
+                    MarkExited();
+                return Process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public void Dispose()
         {
-            try { if (!Process.HasExited) Process.Kill(entireProcessTree: false); } catch { }
+            TerminateProcessTree();
             Process.Dispose();
         }
     }
@@ -280,7 +310,14 @@ public sealed class SubprocessManager : IDisposable
 
     public void Dispose()
     {
-        _activeProcess?.Dispose();
+        if (_activeProcess is not null)
+        {
+            if (!_activeProcess.Exited && !_activeProcess.Process.HasExited)
+                _logger.Warn($"[ftp/teardown] disposing active subprocess PID={_activeProcess.Process.Id}; forcing process tree kill");
+            if (!_activeProcess.TerminateProcessTree())
+                _logger.Error($"[ftp/teardown] process tree kill did not confirm exit for PID={_activeProcess.Process.Id}");
+            _activeProcess.Process.Dispose();
+        }
         _activeProcess = null;
         _server.Dispose();
         _selectLock.Dispose();
@@ -801,12 +838,30 @@ public sealed class SubprocessManager : IDisposable
             _logger.Info($"[ftp/teardown] subprocess PID={proc.Process.Id} already exited; skipping EventTeardown");
         }
 
-        try
+        if (!proc.Exited && !proc.Process.HasExited)
         {
-            await proc.Process.WaitForExitAsync(CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(3));
+            try
+            {
+                await proc.Process.WaitForExitAsync(CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(3));
+                proc.MarkExited();
+            }
+            catch (TimeoutException)
+            {
+                _logger.Warn($"[ftp/teardown] PID={proc.Process.Id} did not exit within 3s after teardown");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"[ftp/teardown] wait for PID={proc.Process.Id} failed: {ex.GetType().Name} {ex.Message}");
+            }
         }
-        catch { }
+
+        if (!proc.Exited && !proc.Process.HasExited)
+        {
+            _logger.Warn($"[ftp/teardown] forcing process tree kill for PID={proc.Process.Id}");
+            if (!proc.TerminateProcessTree())
+                _logger.Error($"[ftp/teardown] process tree kill did not confirm exit for PID={proc.Process.Id}");
+        }
 
         int code = TryGetExitCode(proc.Process);
         RecordExit(code);

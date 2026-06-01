@@ -95,9 +95,12 @@ bool HostSupervisorBase::Start()
         consecutive_fast_exits_ = 0;
         attached_to_existing_   = false;
     }
-    if (!Spawn()) return false;
+    bool initial_spawned = Spawn();
+    if (!initial_spawned) {
+        Log("[host-supervisor] initial spawn failed; monitor will retry");
+    }
     monitor_thread_ = std::thread([this]{ MonitorLoop(); });
-    return true;
+    return initial_spawned;
 }
 
 void HostSupervisorBase::Stop()
@@ -399,6 +402,16 @@ void HostSupervisorBase::Kill()
 void HostSupervisorBase::MonitorLoop()
 {
     int backoff_ms = kBackoffStartMs;
+    auto sleep_or_stop = [this](int delay_ms) {
+        int remaining_ms = delay_ms;
+        while (remaining_ms > 0 &&
+               !stop_requested_.load(std::memory_order_acquire)) {
+            int chunk_ms = std::min(remaining_ms, 100);
+            std::this_thread::sleep_for(std::chrono::milliseconds(chunk_ms));
+            remaining_ms -= chunk_ms;
+        }
+        return stop_requested_.load(std::memory_order_acquire);
+    };
 
     while (!stop_requested_.load(std::memory_order_acquire)) {
         HANDLE cur_handle = INVALID_HANDLE_VALUE;
@@ -410,7 +423,7 @@ void HostSupervisorBase::MonitorLoop()
         }
 
         if (is_halted) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            if (sleep_or_stop(1000)) break;
             continue;
         }
 
@@ -430,17 +443,23 @@ void HostSupervisorBase::MonitorLoop()
                         attached_to_existing_ = false;
                     }
                     OnHostExited();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+                    if (sleep_or_stop(backoff_ms)) break;
                     if (!stop_requested_.load(std::memory_order_acquire)) {
                         if (Spawn()) backoff_ms = kBackoffStartMs;
                         else         backoff_ms = std::min(backoff_ms * 2, kBackoffMaxMs);
                     }
                 } else {
                     OnHostReady();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                    if (sleep_or_stop(500)) break;
                 }
             } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                Log("[host-supervisor] no host process tracked; retrying spawn in %d ms",
+                    backoff_ms);
+                if (sleep_or_stop(backoff_ms)) break;
+                if (!stop_requested_.load(std::memory_order_acquire)) {
+                    if (Spawn()) backoff_ms = kBackoffStartMs;
+                    else         backoff_ms = std::min(backoff_ms * 2, kBackoffMaxMs);
+                }
             }
             continue;
         }
@@ -536,7 +555,7 @@ void HostSupervisorBase::MonitorLoop()
                 Log("[host-supervisor] process exited (code=%lu); "
                     "restarting in %d ms",
                     static_cast<unsigned long>(code), delay_ms);
-                std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+                if (sleep_or_stop(delay_ms)) break;
             }
 
             if (stop_requested_.load(std::memory_order_acquire)) break;

@@ -6,8 +6,8 @@
 #include <memory>
 
 // FeaturePlugin for the OSC Router substrate. Always registered so the
-// Modules tab has a router entry even when oscrouter is not enabled; a
-// clear banner is shown when the driver feature is absent.
+// Modules tab has a router entry even when standalone OSC routing is not
+// enabled.
 
 class OscRouterPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
@@ -22,6 +22,7 @@ public:
         return openvr_pair::overlay::FeaturePluginChannel::Development;
     }
 
+    bool IsInstalled(openvr_pair::overlay::ShellContext &ctx) const override;
     void Tick(openvr_pair::overlay::ShellContext &ctx) override;
     void DrawTab(openvr_pair::overlay::ShellContext &ctx) override;
 

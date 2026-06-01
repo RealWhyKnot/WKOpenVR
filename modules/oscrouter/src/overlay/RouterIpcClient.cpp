@@ -10,8 +10,7 @@ openvr_pair::overlay::IpcClientConnectOptions Options()
     opts.pipeUnavailable = [](DWORD, const std::string &) {
         return "OSC Router driver unavailable. SteamVR is not running, "
                "the WKOpenVR shared driver is not installed, or "
-               "the OSC Router feature is not enabled "
-               "(enable_oscrouter.flag missing from the driver's resources folder).";
+               "no enabled module requested OSC routing.";
     };
     opts.pipeModeFailed = [](DWORD error, const std::string &details) {
         return "Could not set OSC Router pipe mode. Error "

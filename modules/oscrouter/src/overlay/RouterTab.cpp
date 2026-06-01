@@ -99,9 +99,7 @@ void RouterTab::Draw(openvr_pair::overlay::ShellContext &ctx)
     if (!statsReader_.IsOpen()) {
         openvr_pair::overlay::ui::DrawErrorBanner(
             "OSC Router not active",
-            "The OSC Router feature is not enabled. "
-            "Add enable_oscrouter.flag to the driver's resources folder "
-            "and restart SteamVR.");
+            "Enable OSC Router or a module that publishes OSC, then restart SteamVR.");
         return;
     }
 

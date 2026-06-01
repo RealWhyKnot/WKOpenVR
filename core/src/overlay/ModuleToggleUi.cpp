@@ -77,6 +77,10 @@ void DrawModuleToggleTable(
 
 		ui::NextColumn();
 		ImGui::AlignTextToFramePadding();
+		const bool isRouterRow = (key == "enable_oscrouter.flag");
+		const bool routerRequired = isRouterRow &&
+			(context.IsFlagPresent("enable_facetracking.flag") ||
+			 context.IsFlagPresent("enable_captions.flag"));
 		const char *statusText = nullptr;
 		ui::StatusTone statusTone = ui::StatusTone::Idle;
 		if (isPending) {
@@ -84,6 +88,9 @@ void DrawModuleToggleTable(
 				? "Enabling -- takes effect on next SteamVR launch"
 				: "Disabling -- takes effect on next SteamVR launch";
 			statusTone = ui::StatusTone::Pending;
+		} else if (routerRequired && !context.IsFlagPresent("enable_oscrouter.flag")) {
+			statusText = "Enabled by OSC module";
+			statusTone = ui::StatusTone::Ok;
 		} else if (installed) {
 			statusText = "Enabled";
 			statusTone = ui::StatusTone::Ok;
@@ -96,10 +103,7 @@ void DrawModuleToggleTable(
 		ImGui::PushID(key.c_str());
 		const std::string pendingReason =
 			"Waiting for the elevated helper to finish. Reopens after SteamVR picks up the change.";
-		const bool isRouterRow = (key == "enable_oscrouter.flag");
-		const bool routerDependentOn = isRouterRow && displayState &&
-			(context.IsFlagPresent("enable_facetracking.flag") ||
-			 context.IsFlagPresent("enable_captions.flag"));
+		const bool routerDependentOn = routerRequired && displayState;
 
 		const char *blockReason = nullptr;
 		bool blocked = isPending;
@@ -108,8 +112,8 @@ void DrawModuleToggleTable(
 		} else if (routerDependentOn) {
 			blocked = true;
 			blockReason =
-				"Face Tracking and Captions publish through the OSC Router. "
-				"Disable those modules first if you really want to turn the router off.";
+				"An enabled module publishes through the OSC Router. "
+				"Disable that module first if you want to turn the router off.";
 		}
 
 		ui::DisabledSection disabled(blocked, blockReason);
