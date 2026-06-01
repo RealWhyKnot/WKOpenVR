@@ -1,8 +1,11 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 namespace openvr_pair::overlay {
+
+constexpr std::string_view kDefaultLogsPanelPluginFlag = "enable_calibration.flag";
 
 inline bool ShouldSelectDesktopDefaultTab(
 	bool vrConnected,
@@ -13,6 +16,11 @@ inline bool ShouldSelectDesktopDefaultTab(
 	if (vrConnected || !pluginFlagFileName || desktopDefaultFlagFileName.empty()) return false;
 	return appliedFlagFileName != desktopDefaultFlagFileName
 		&& desktopDefaultFlagFileName == pluginFlagFileName;
+}
+
+inline bool IsDefaultLogsPanelPlugin(const char *pluginFlagFileName)
+{
+	return pluginFlagFileName && std::string_view(pluginFlagFileName) == kDefaultLogsPanelPluginFlag;
 }
 
 } // namespace openvr_pair::overlay

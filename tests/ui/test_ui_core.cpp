@@ -87,6 +87,13 @@ TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
 		false, "enable_questapp.flag", "enable_questapp.flag", "enable_questapp.flag"));
 }
 
+TEST(ShellUiLogic, CalibrationPluginOwnsUnifiedLogsPanel)
+{
+	EXPECT_TRUE(openvr_pair::overlay::IsDefaultLogsPanelPlugin("enable_calibration.flag"));
+	EXPECT_FALSE(openvr_pair::overlay::IsDefaultLogsPanelPlugin("enable_smoothing.flag"));
+	EXPECT_FALSE(openvr_pair::overlay::IsDefaultLogsPanelPlugin(nullptr));
+}
+
 TEST(ShellFooter, ResolvesConnectionStateLikeSpaceCalibrator)
 {
 	using openvr_pair::overlay::ResolveShellFooterConnectionState;

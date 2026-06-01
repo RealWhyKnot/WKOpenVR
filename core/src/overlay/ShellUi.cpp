@@ -26,6 +26,49 @@ void DrawTransientStatus(ShellContext &context)
 	ui::DrawTextWrapped(context.status.c_str());
 }
 
+FeaturePlugin *FindDefaultLogsPanelPlugin(std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+{
+	for (auto &plugin : plugins) {
+		if (plugin && IsDefaultLogsPanelPlugin(plugin->FlagFileName())) {
+			return plugin.get();
+		}
+	}
+	return nullptr;
+}
+
+void DrawFallbackLogsPanel(ShellContext &context)
+{
+	ui::DrawSectionHeading("Debug logging");
+	const bool forced = common::IsDebugLoggingForcedOn();
+	bool debugLogging = common::IsDebugLoggingEnabled();
+	if (forced) debugLogging = true;
+	{
+		ui::DisabledSection locked(forced, "Dev builds keep debug logging enabled.");
+		if (ui::CheckboxWithTooltip(
+				"Enable debug logging", &debugLogging,
+				"Write WKOpenVR diagnostics to %LocalAppDataLow%\\WKOpenVR\\Logs\\.")) {
+			common::SetDebugLoggingEnabled(debugLogging);
+		}
+		locked.AttachReasonTooltip();
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled(forced ? "(dev build: always on)" : (debugLogging ? "(on)" : "(off)"));
+
+	ImGui::Spacing();
+	ui::DrawSectionHeading("Bug reports");
+	DrawBugReportButton(context);
+}
+
+void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+{
+	const bool effectiveDebugLogging = common::IsDebugLoggingEnabled();
+	for (auto &plugin : plugins) {
+		if (plugin) {
+			plugin->OnDebugLoggingChanged(effectiveDebugLogging);
+		}
+	}
+}
+
 } // namespace
 
 void DrawFeatureTab(ShellContext &context, FeaturePlugin &plugin, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
@@ -37,60 +80,17 @@ void DrawFeatureTab(ShellContext &context, FeaturePlugin &plugin, ImGuiTabItemFl
 
 void DrawLogsTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
 {
-	ui::DrawTextWrapped(
-		"Per-module logs. All overlay-side logs land in "
-		"%LocalAppDataLow%\\WKOpenVR\\Logs\\; driver-side logs land in "
-		"%LocalAppDataLow%\\WKOpenVR\\Logs\\.");
-	ImGui::Spacing();
-
-	ui::DrawSectionHeading("Debug logging");
-	const bool forced = common::IsDebugLoggingForcedOn();
-	bool debugLogging = common::IsDebugLoggingEnabled();
-	if (forced) debugLogging = true;
-	{
-		ui::DisabledSection locked(forced, "Dev builds keep debug logging enabled.");
-		if (ui::CheckboxWithTooltip(
-				"Enable debug logging", &debugLogging,
-				"Release builds stay quiet until this is enabled.\n"
-				"Dev builds keep it on so repro sessions leave a diagnostic trail.\n"
-				"State is shared by the overlay, driver, and host sidecars.")) {
-			common::SetDebugLoggingEnabled(debugLogging);
-		}
-		locked.AttachReasonTooltip();
+	if (FeaturePlugin *logsPlugin = FindDefaultLogsPanelPlugin(plugins)) {
+		logsPlugin->DrawLogsSection(context);
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+		ui::DrawSectionHeading("Bug reports");
+		DrawBugReportButton(context);
+	} else {
+		DrawFallbackLogsPanel(context);
 	}
-	ImGui::SameLine();
-	ImGui::TextDisabled(forced ? "(dev build: always on)" : (debugLogging ? "(on)" : "(off)"));
-
-	ImGui::Spacing();
-	ui::DrawSectionHeading("Bug reports");
-	DrawBugReportButton(context);
-
-	const bool effectiveDebugLogging = common::IsDebugLoggingEnabled();
-	for (auto &plugin : plugins) {
-		plugin->OnDebugLoggingChanged(effectiveDebugLogging);
-	}
-
-	ImGui::Spacing();
-	ImGui::Separator();
-	ImGui::Spacing();
-
-	bool anyDrawn = false;
-	for (auto &plugin : plugins) {
-		if (plugin->Channel() == FeaturePluginChannel::DevTools) continue;
-		if (!plugin->IsInstalled(context)) continue;
-		ImGui::PushID(plugin->Name());
-		ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
-		if (ImGui::CollapsingHeader(plugin->Name())) {
-			ImGui::Indent();
-			plugin->DrawLogsSection(context);
-			ImGui::Unindent();
-		}
-		ImGui::PopID();
-		anyDrawn = true;
-	}
-	if (!anyDrawn) {
-		ui::DrawEmptyState("No installed feature plugins.");
-	}
+	NotifyDebugLoggingChanged(plugins);
 }
 
 void DrawModulesTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)

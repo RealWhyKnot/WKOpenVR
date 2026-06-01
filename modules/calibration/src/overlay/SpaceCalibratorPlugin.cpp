@@ -66,8 +66,9 @@ void SpaceCalibratorPlugin::DrawTab(openvr_pair::overlay::ShellContext &)
 
 void SpaceCalibratorPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext &)
 {
-	// Surfaces the existing SC Logs panel (file list, enable toggle, drift
-	// health, Explorer button) inside the umbrella's global Logs tab.
+	// The umbrella's global Logs tab uses the calibration log panel as the
+	// single debug-log surface because calibration owns the structured session
+	// log and shared log-file browser.
 	CCal_DrawLogsPanel();
 }
 

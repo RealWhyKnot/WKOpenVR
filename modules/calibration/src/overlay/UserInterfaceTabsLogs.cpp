@@ -14,15 +14,25 @@
 #include <shellapi.h>
 #include <imgui/imgui.h>
 
+extern bool s_inUmbrella;
+
 // Release builds ship user-controlled debug logs and bug-report support.
 // Replay CSV capture and simulated devices are dev-build-only surfaces.
 void CCal_DrawLogsPanel() {
 	auto& state = spacecal::ui_logs::LogsState();
+	const bool umbrella = s_inUmbrella;
 
-	ImGui::TextWrapped(
-		"Debug logging writes WKOpenVR diagnostics and SpaceCal annotations to "
-		"%%LocalAppDataLow%%\\WKOpenVR\\Logs. Turn it on before reproducing an issue, "
-		"then use Report bug.");
+	if (umbrella) {
+		ImGui::TextWrapped(
+			"Debug logging writes WKOpenVR diagnostics to "
+			"%%LocalAppDataLow%%\\WKOpenVR\\Logs. Turn it on before reproducing an issue, "
+			"then use Report bug.");
+	} else {
+		ImGui::TextWrapped(
+			"Debug logging writes WKOpenVR diagnostics and SpaceCal annotations to "
+			"%%LocalAppDataLow%%\\WKOpenVR\\Logs. Turn it on before reproducing an issue, "
+			"then use Report bug.");
+	}
 	ImGui::Spacing();
 
 	const bool isDevBuild = openvr_pair::common::IsDebugLoggingForcedOn();
@@ -45,9 +55,12 @@ void CCal_DrawLogsPanel() {
 		}
 	}
 	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip(
-			"Write diagnostics and SpaceCal annotations to %%LocalAppDataLow%%\\WKOpenVR\\Logs\\.\n"
-			"Turn this on before reproducing an issue for a useful bug report.");
+		ImGui::SetTooltip("%s",
+			umbrella
+				? "Write diagnostics to %%LocalAppDataLow%%\\WKOpenVR\\Logs\\.\n"
+				  "Turn this on before reproducing an issue for a useful bug report."
+				: "Write diagnostics and SpaceCal annotations to %%LocalAppDataLow%%\\WKOpenVR\\Logs\\.\n"
+				  "Turn this on before reproducing an issue for a useful bug report.");
 	}
 	if (isDevBuild) {
 		ImGui::EndDisabled();
@@ -65,12 +78,13 @@ void CCal_DrawLogsPanel() {
 
 	ImGui::Spacing();
 	ImGui::Separator();
-	ImGui::TextDisabled("SpaceCal debug log");
+	ImGui::TextDisabled(umbrella ? "Current debug log" : "SpaceCal debug log");
 	const Metrics::LogHealth health = Metrics::GetLogHealth();
 	if (!Metrics::enableLogs) {
-		ImGui::TextWrapped(
-			"Debug logging is off. Diagnostics, SpaceCal annotations, and bug-report "
-			"log context are not written until it is enabled.");
+		ImGui::TextWrapped("%s",
+			umbrella
+				? "Debug logging is off. Diagnostics and bug-report log context are not written until it is enabled."
+				: "Debug logging is off. Diagnostics, SpaceCal annotations, and bug-report log context are not written until it is enabled.");
 	} else if (health.open) {
 		ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "Writing to disk");
 		ImGui::TextWrapped("%s", openvr_pair::common::WideToUtf8(health.path).c_str());
@@ -89,7 +103,7 @@ void CCal_DrawLogsPanel() {
 #endif
 	} else {
 		ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
-			"SpaceCal debug log is not open");
+			umbrella ? "Current debug log is not open" : "SpaceCal debug log is not open");
 		if (health.lastErrorCode) {
 			ImGui::TextWrapped("Status: %s  Error: %lu",
 				health.status.empty() ? "unknown" : health.status.c_str(),
@@ -103,9 +117,9 @@ void CCal_DrawLogsPanel() {
 	ImGui::BeginDisabled(!health.open);
 	if (ImGui::SmallButton("Flush now##spacecal_log")) {
 		if (Metrics::FlushLogFile()) {
-			state.copyHint = "SpaceCal log flushed to disk";
+			state.copyHint = umbrella ? "Debug log flushed to disk" : "SpaceCal log flushed to disk";
 		} else {
-			state.copyHint = "SpaceCal log flush failed";
+			state.copyHint = umbrella ? "Debug log flush failed" : "SpaceCal log flush failed";
 		}
 		state.copyHintExpireTime = ImGui::GetTime() + 2.5;
 	}
