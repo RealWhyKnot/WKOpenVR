@@ -534,7 +534,7 @@ function Restart-SteamVR {
 	}
 
 	if (-not $ShouldRestart) {
-		Write-Host "SteamVR was not running with Steam at script start; restart skipped."
+		Write-Host "SteamVR was not running with Steam at script start; SteamVR restart skipped."
 		return
 	}
 
@@ -549,28 +549,26 @@ function Restart-SteamVR {
 	Start-Process "steam://rungameid/250820" | Out-Null
 }
 
-function Restart-Steam {
+function Ensure-SteamRunning {
 	param(
 		[string]$ResolvedSteamExe,
-		[bool]$ShouldRestart
+		[string[]]$ProcessNames
 	)
 
-	if ($NoRestart) {
+	if (Test-NamedProcess -Names $ProcessNames) {
+		Write-Host "Steam is running."
 		return
 	}
 
-	if (-not $ShouldRestart) {
-		return
-	}
-
-	Write-Step "Restarting Steam"
+	Write-Step "Starting Steam"
 	if ($ResolvedSteamExe -and (Test-Path -LiteralPath $ResolvedSteamExe)) {
 		Write-Host "Starting Steam..."
 		Start-Process -FilePath $ResolvedSteamExe | Out-Null
 		return
 	}
 
-	Write-Host "steam.exe was not found; cannot restart Steam."
+	Write-Host "steam.exe was not found. Starting Steam through the registered steam:// URL."
+	Start-Process "steam://open/main" | Out-Null
 }
 
 $steamExeResolved = Resolve-SteamExe -Override $SteamExe
@@ -758,13 +756,7 @@ Write-Host ("Verified {0} deployed files." -f $entries.Count)
 
 Restart-SteamVR -ResolvedSteamExe $steamExeResolved -ShouldRestart $restartSteamVrAfterDeploy
 
-# Steam-only relaunch: when Steam was running at script start but SteamVR was
-# not, the SteamVR restart path above is a no-op, and the Stopping-Steam step
-# (driver DLL was held by Steam) left Steam dead. Without this the user keeps
-# coming back to find Steam closed after a deploy. SteamVR-restart already
-# launches Steam as a side effect, so only fire when that path didn't run.
-$shouldRestartSteamPlain = $steamWasStopped -and -not $restartSteamVrAfterDeploy
-Restart-Steam -ResolvedSteamExe $steamExeResolved -ShouldRestart $shouldRestartSteamPlain
+Ensure-SteamRunning -ResolvedSteamExe $steamExeResolved -ProcessNames $steamProcessNames
 
 Write-Step "Done"
 Write-Host "Deploy verified. Installed build: $(Resolve-Version (Join-Path $InstallDir "WKOpenVR.exe"))"
