@@ -478,6 +478,36 @@ void CreateFakeFaceModule(
     WriteFileUtf8(moduleDir / L"assemblies" / L"FakeFaceModule.dll", "");
 }
 
+void CreateLegacyVrcftCompatFaceModule(
+    const std::filesystem::path &modulesDir,
+    const std::string &uuid,
+    const std::string &version)
+{
+    auto moduleDir = modulesDir / Utf8ToWide(uuid) / Utf8ToWide(version);
+    WriteFileUtf8(moduleDir / L"manifest.json",
+        "{\n"
+        "  \"schema\": 1,\n"
+        "  \"uuid\": \"" + uuid + "\",\n"
+        "  \"name\": \"E2E Legacy VRCFT Compat Module\",\n"
+        "  \"vendor\": \"WKOpenVR Tests\",\n"
+        "  \"version\": \"" + version + "\",\n"
+        "  \"sdk_version\": \"1.0.0\",\n"
+        "  \"min_host_version\": \"1.0.0\",\n"
+        "  \"supported_hmds\": [\"any\"],\n"
+        "  \"capabilities\": [\"eye\", \"expression\"],\n"
+        "  \"platforms\": [\"win-x64\"],\n"
+        "  \"entry_assembly\": \"OpenVRPair.FaceTracking.VrcftCompat.dll\",\n"
+        "  \"entry_type\": \"OpenVRPair.FaceTracking.VrcftCompat.ReflectingExtTrackingModuleAdapter\",\n"
+        "  \"dependencies\": [],\n"
+        "  \"payload_sha256\": \"\",\n"
+        "  \"payload_size\": 0\n"
+        "}\n");
+    WriteFileUtf8(moduleDir / L"assemblies" / L"bridge.json",
+        "{ \"upstream_assembly\": \"VirtualDesktop.FaceTracking.dll\" }\n");
+    WriteFileUtf8(moduleDir / L"assemblies" / L"OpenVRPair.FaceTracking.VrcftCompat.dll", "");
+    WriteFileUtf8(moduleDir / L"assemblies" / L"VirtualDesktop.FaceTracking.dll", "");
+}
+
 } // namespace
 
 TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
@@ -642,6 +672,57 @@ TEST(E2E, FaceHostReloadsInstalledModulesAndDisablesSelection)
         return status.find("\"active_module_uuid\": \"\"") != std::string::npos;
     }, 8000ms)) << "host did not disable active module. status: "
                 << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
+
+    ASSERT_TRUE(SendFaceHostMessage(
+        pipeName,
+        EncodeFaceHostMessage("Shutdown")));
+    ASSERT_TRUE(host.Wait(10000)) << "face host did not shut down. log: "
+                                  << ReadFileUtf8(logPath);
+    EXPECT_EQ(host.ExitCode(), 0u);
+}
+
+TEST(E2E, FaceHostResolvesLegacyVrcftCompatBridge)
+{
+    ASSERT_TRUE(std::filesystem::exists(FaceHostPath()))
+        << "Face host missing at " << FaceHostPath().string();
+
+    auto temp = MakeTempDir(L"face_legacy_vrcft");
+    auto modulesDir = temp / L"modules";
+    auto statusPath = temp / L"face_status.json";
+    auto logPath = temp / L"face_host.log";
+    std::filesystem::create_directories(modulesDir);
+
+    const std::string uuid = "22222222-3333-4444-5555-666666666666";
+    CreateLegacyVrcftCompatFaceModule(modulesDir, uuid, "1.0.0");
+
+    const std::string shmemName = "WKOpenVR_E2E_FaceLegacy_" +
+        std::to_string(GetCurrentProcessId()) + "_" +
+        std::to_string(GetTickCount64());
+    protocol::FaceTrackingFrameShmem shmem;
+    ASSERT_TRUE(shmem.Create(shmemName.c_str()));
+
+    const std::wstring pipeName = L"\\\\.\\pipe\\WKOpenVR-E2E-FaceHost-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+
+    RunningProcess host;
+    ASSERT_TRUE(host.Start(FaceHostPath(), {
+        L"--driver-handshake-pipe", pipeName,
+        L"--shmem-name", Utf8ToWide(shmemName),
+        L"--modules-dir", modulesDir.wstring(),
+        L"--status-file", statusPath.wstring(),
+        L"--log-file", logPath.wstring(),
+        L"--debug-logging", L"1",
+    })) << "CreateProcess failed: " << host.ExitCode();
+
+    ASSERT_TRUE(WaitUntil([&] {
+        std::string status = ReadFileUtf8(statusPath);
+        std::string log = ReadFileUtf8(logPath);
+        return status.find("\"module_count\": 1") != std::string::npos &&
+               log.find("bridge.json -> upstream_assembly=VirtualDesktop.FaceTracking.dll")
+                   != std::string::npos;
+    }, 30000ms)) << "host did not resolve legacy bridge manifest. status: "
+                 << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
 
     ASSERT_TRUE(SendFaceHostMessage(
         pipeName,

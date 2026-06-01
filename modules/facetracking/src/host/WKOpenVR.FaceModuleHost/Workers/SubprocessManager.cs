@@ -55,6 +55,8 @@ public sealed class SubprocessManager : IDisposable
 
     private const string VrcftCompatAdapterType =
         "WKOpenVR.FaceTracking.VrcftCompat.ReflectingExtTrackingModuleAdapter";
+    private const string LegacyOpenVrPairVrcftCompatAdapterType =
+        "OpenVRPair.FaceTracking.VrcftCompat.ReflectingExtTrackingModuleAdapter";
 
     private readonly HostOptions    _opts;
     private readonly HostLogger     _logger;
@@ -313,9 +315,11 @@ public sealed class SubprocessManager : IDisposable
         }
 
         // Resolve the upstream module DLL path.
-        // If the manifest uses the VrcftCompat adapter, read bridge.json to get the real DLL.
+        // Legacy registry payloads may still carry the pre-rename OpenVRPair
+        // adapter type. Both adapter names use bridge.json to point at the
+        // real upstream module DLL.
         string moduleDllPath;
-        if (manifest.EntryType == VrcftCompatAdapterType)
+        if (IsVrcftCompatAdapter(manifest.EntryType))
         {
             string bridgePath = Path.Combine(dir, "assemblies", "bridge.json");
             if (!File.Exists(bridgePath))
@@ -355,8 +359,12 @@ public sealed class SubprocessManager : IDisposable
         ulong hash = Fnv1a64(manifest.Uuid);
         _loaded.Add(new DiscoveredModule(manifest.Uuid, manifest, moduleDllPath, hash));
         _logger.Info($"[ftp/spawn] discovered {manifest.Name} v{manifest.Version} " +
-                     $"dll={Path.GetFileName(moduleDllPath)} uuid_hash=0x{hash:X16}");
+                      $"dll={Path.GetFileName(moduleDllPath)} uuid_hash=0x{hash:X16}");
     }
+
+    private static bool IsVrcftCompatAdapter(string entryType) =>
+        string.Equals(entryType, VrcftCompatAdapterType, StringComparison.Ordinal) ||
+        string.Equals(entryType, LegacyOpenVrPairVrcftCompatAdapterType, StringComparison.Ordinal);
 
     // -------------------------------------------------------------------------
     // Internal: subprocess lifecycle
