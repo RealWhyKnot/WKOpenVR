@@ -22,36 +22,10 @@
 // require a deliberate two-touch acknowledgement, not to gate releases.
 // ---------------------------------------------------------------------------
 TEST(ProtocolTest, VersionPinnedToCurrent) {
-    EXPECT_EQ(protocol::Version, 26u)
+    EXPECT_EQ(protocol::Version, 27u)
         << "Protocol version changed without updating the test pin. If this is "
            "intentional: bump the literal here and update wiki/Protocol.md "
            "with the new version.";
-}
-
-// v24 added four `double` fields to AlignmentSpeedParams to drive the
-// slew-rate cap in BlendTransform. Pin defaults are picked centrally;
-// pin the in-struct existence + zero-initialisation here so a future
-// repack or reorder of the struct can't silently shift offsets without
-// the protocol-version bump catching it.
-TEST(ProtocolTest, AlignmentSpeedParamsCarriesSlewRateFields) {
-    protocol::AlignmentSpeedParams p{};
-    // Just touching the fields proves they exist at compile time. Zero-init
-    // contract is verified by the static value-init above.
-    EXPECT_DOUBLE_EQ(p.slew_stationary_pos_rate, 0.0);
-    EXPECT_DOUBLE_EQ(p.slew_stationary_rot_rate, 0.0);
-    EXPECT_DOUBLE_EQ(p.slew_moving_pos_rate,     0.0);
-    EXPECT_DOUBLE_EQ(p.slew_moving_rot_rate,     0.0);
-
-    // Driver Init() and CalibrationContext::ResetConfig() set the real
-    // defaults; both should be wired to the same numeric constants so a
-    // fresh overlay -> driver handshake is a no-op at the rate level.
-    p.slew_stationary_pos_rate = 0.0005;
-    p.slew_stationary_rot_rate = 0.000873;
-    p.slew_moving_pos_rate     = 0.010;
-    p.slew_moving_rot_rate     = 0.01745;
-    EXPECT_LT(p.slew_stationary_pos_rate, p.slew_moving_pos_rate)
-        << "Moving rate must be >= stationary or the cap inverts";
-    EXPECT_LT(p.slew_stationary_rot_rate, p.slew_moving_rot_rate);
 }
 
 // v23 added `updateQuash` to SetDeviceTransform. The wire-layout gate is the

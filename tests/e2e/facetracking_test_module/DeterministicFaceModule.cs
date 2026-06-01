@@ -58,6 +58,11 @@ public sealed class DeterministicFaceModule : ExtTrackingModule
 
     private static void WriteFrame()
     {
+        for (int i = 0; i < UnifiedTracking.Data.Shapes.Length; ++i)
+        {
+            UnifiedTracking.Data.Shapes[i].Weight = 0.0f;
+        }
+
         UnifiedTracking.Data.Eye.Left.Gaze = new Vector2(0.11f, -0.22f);
         UnifiedTracking.Data.Eye.Left.Openness = 0.62f;
         UnifiedTracking.Data.Eye.Left.PupilDiameter_MM = 4.0f;

@@ -238,7 +238,12 @@ namespace protocol
 	// fields for tracker stale detection, grace hold, fallback blend,
 	// stable-return hold, and synth blend. The payload grows, so paired
 	// overlay+driver install is required.
-	const uint32_t Version = 26;
+	//
+	// v27 (2026-06-01): AlignmentSpeedParams drops the unused slew-rate
+	// fields. The driver blend path no longer reads them, and the matching
+	// overlay controls/config persistence were removed. The payload shrinks,
+	// so paired overlay+driver install is required.
+	const uint32_t Version = 27;
 
 	// Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 	// "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -1091,12 +1096,19 @@ namespace protocol
 		float    head_pos_y;
 		float    head_pos_z;
 		uint32_t head_flags;
+
+		// Raw upstream VRCFaceTracking UnifiedExpressions slots. This is not part
+		// of the shmem wire body; FaceFrameReader copies it from
+		// FaceTrackingFrameBodyWire so OSC publishing can mirror VRCFaceTracking's
+		// current FT/v2 parameter family without losing shapes during the internal
+		// 63-slot remap.
+		float    upstream_expressions[FACETRACKING_UPSTREAM_EXPRESSION_COUNT];
 	};
 
 	static_assert(std::is_trivially_copyable<FaceTrackingFrameBody>::value,
 		"FaceTrackingFrameBody must be trivially copyable for shmem use");
 	static_assert(std::is_standard_layout<FaceTrackingFrameBody>::value,
-		"FaceTrackingFrameBody must be standard-layout for stable wire format");
+		"FaceTrackingFrameBody must be standard-layout for field translation");
 
 	// Wire-format body. Same field shape as FaceTrackingFrameBody except the
 	// expression array carries FACETRACKING_UPSTREAM_EXPRESSION_COUNT (88)
@@ -1139,10 +1151,10 @@ namespace protocol
 	static_assert(std::is_standard_layout<FaceTrackingFrameBodyWire>::value,
 		"FaceTrackingFrameBodyWire must be standard-layout for stable wire format");
 
-	// Sanity-check that the wire body matches the consumer-facing body
-	// everywhere except expressions[]. If a field is added/reordered to
-	// FaceTrackingFrameBody, the same change has to land in the wire body
-	// or the host writes through the wrong offsets.
+	// Sanity-check that the wire body starts with the same fields as the
+	// consumer-facing body. FaceTrackingFrameBody may carry non-wire fields at
+	// the tail, but shared wire fields must stay aligned or the host writes
+	// through the wrong offsets.
 	static_assert(
 		offsetof(FaceTrackingFrameBodyWire, qpc_sample_time)
 		    == offsetof(FaceTrackingFrameBody, qpc_sample_time),

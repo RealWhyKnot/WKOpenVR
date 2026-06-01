@@ -7,6 +7,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -34,14 +35,18 @@ void TranslateWireBody(const protocol::FaceTrackingFrameBodyWire &wire,
     out.eye_confidence_l = wire.eye_confidence_l;
     out.eye_confidence_r = wire.eye_confidence_r;
 
-    // Zero our 63-slot array first; the remap only fills slots that have
-    // an upstream equivalent. Slots with no upstream source (EyeLook*,
-    // MouthSmile, NoseSneer, MouthClose, MouthSad) stay at 0.
-    for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i)
-        out.expressions[i] = 0.f;
-    facetracking::RemapUpstreamShapes(wire.expressions, out.expressions);
+    // Zero our 63-slot array first; the remap fills direct and aliased
+    // upstream equivalents, and slots with no upstream source stay at 0.
+	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i)
+		out.expressions[i] = 0.f;
+	facetracking::RemapUpstreamShapes(wire.expressions, out.expressions);
+	for (uint32_t i = 0; i < protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT; ++i) {
+		const float v = wire.expressions[i];
+		out.upstream_expressions[i] =
+			(std::isnan(v) || std::isinf(v)) ? 0.0f : std::clamp(v, 0.0f, 1.0f);
+	}
 
-    out.flags      = wire.flags;
+	out.flags      = wire.flags;
     out.head_yaw   = wire.head_yaw;
     out.head_pitch = wire.head_pitch;
     out.head_roll  = wire.head_roll;

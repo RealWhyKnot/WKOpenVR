@@ -39,7 +39,6 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_watchdog_decisions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_state_transitions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_gate.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_slew_rate_cap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_common_helpers.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_device_filters.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dev_fake_devices.cpp

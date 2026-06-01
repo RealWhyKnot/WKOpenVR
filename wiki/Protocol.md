@@ -2,7 +2,7 @@
 
 ## Version
 
-`protocol::Version = 26`, defined in [core/src/common/Protocol.h](https://github.com/RealWhyKnot/WKOpenVR/blob/main/core/src/common/Protocol.h). The handshake fails closed on mismatch -- a paired install where overlay and driver are different versions is rejected at connect time rather than silently misrouting request bytes.
+`protocol::Version = 27`, defined in [core/src/common/Protocol.h](https://github.com/RealWhyKnot/WKOpenVR/blob/main/core/src/common/Protocol.h). The handshake fails closed on mismatch -- a paired install where overlay and driver are different versions is rejected at connect time rather than silently misrouting request bytes.
 
 ### Bump discipline
 

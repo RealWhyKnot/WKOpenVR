@@ -148,8 +148,8 @@ void CCal_DrawSettings() {
 	ImVec2 panel_size { ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0 };
 
 	// Non-continuous and continuous Advanced read as two different surfaces.
-	// Continuous owns the long-session refinement knobs (slew rate,
-	// recalibration threshold, tracker offset, target-quash); one-shot only
+	// Continuous owns the long-session refinement knobs (recalibration
+	// threshold, tracker offset, target-quash); one-shot only
 	// uses a couple of always-applicable thresholds.
 	// Everything that only does something while continuous calibration is
 	// running is gated on this flag and hidden in one-shot.
@@ -427,129 +427,6 @@ void CCal_DrawSettings() {
 			}
 			ImGui::EndGroupPanel();
 		}
-
-		// Slew rate is a continuous-only knob. Hide it outside continuous
-		// mode so the Advanced tab doesn't read as a settings dump for
-		// one-shot users.
-		if (kInContinuous) {
-		// Calibration slew rate -- the absolute mm/sec and deg/sec caps on
-		// how fast the user-visible transform is allowed to converge toward
-		// the calibration target. Active only when the Basic tab's
-		// "Recalibrate on movement" toggle is on. Replaces the prior
-		// regime-based still-floor (10/50/90 percent) that produced visible
-		// snaps after long stationary stretches. See SlewRateCap.h.
-		{
-			ImGui::BeginGroupPanel("Calibration slew rate", panel_size);
-			ImGui::TextWrapped("When 'Recalibrate on movement' is on (Basic tab), calibration "
-				"corrections converge at a capped rate -- imperceptible when still, brisk when "
-				"moving. Set the moving rates very high (e.g. 1000) to approximate the prior "
-				"instant-snap behaviour.");
-			ImGui::Spacing();
-
-			constexpr double kRadPerDeg = 0.017453292519943295;
-			constexpr double kDegPerRad = 57.29577951308232;
-
-			if (ImGui::BeginTable("##advanced_slew_grid", 2,
-					ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody)) {
-				ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 230.0f);
-				ImGui::TableSetupColumn("##control", ImGuiTableColumnFlags_WidthStretch);
-
-				// Stationary position cap. Default 0.5 mm/sec sits at the
-				// published lateral-drift detection threshold in VR.
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::AlignTextToFramePadding();
-				ImGui::TextUnformatted("Still: position cap");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::PushID("adv_slew_stat_pos");
-				ImGui::SetNextItemWidth(-FLT_MIN);
-				{
-					float displayed = (float)(CalCtx.alignmentSpeedParams.slew_stationary_pos_rate * 1000.0);
-					if (ImGui::SliderFloat("##adv_slew_stat_pos_slider", &displayed, 0.0f, 5.0f, "%.2f mm/s", 0)) {
-						CalCtx.alignmentSpeedParams.slew_stationary_pos_rate = (double)displayed / 1000.0;
-					}
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Maximum position drift, in millimetres per second, while you're stationary.\n"
-						"Default 0.5 mm/sec is below the threshold most users notice. A 30 mm pending\n"
-						"correction takes ~60 s to converge if you never move.");
-				}
-				AddResetContextMenu("adv_slew_stat_pos_ctx", []
-					{ CalCtx.alignmentSpeedParams.slew_stationary_pos_rate = 0.0005; });
-				ImGui::PopID();
-
-				// Stationary rotation cap.
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::AlignTextToFramePadding();
-				ImGui::TextUnformatted("Still: rotation cap");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::PushID("adv_slew_stat_rot");
-				ImGui::SetNextItemWidth(-FLT_MIN);
-				{
-					float displayed = (float)(CalCtx.alignmentSpeedParams.slew_stationary_rot_rate * kDegPerRad);
-					if (ImGui::SliderFloat("##adv_slew_stat_rot_slider", &displayed, 0.0f, 1.0f, "%.3f deg/s", 0)) {
-						CalCtx.alignmentSpeedParams.slew_stationary_rot_rate = (double)displayed * kRadPerDeg;
-					}
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Maximum rotation drift, in degrees per second, while you're stationary.\n"
-						"Default 0.05 deg/sec sits below typical VOR (head-stabilisation reflex) detection.");
-				}
-				AddResetContextMenu("adv_slew_stat_rot_ctx", []
-					{ CalCtx.alignmentSpeedParams.slew_stationary_rot_rate = 0.000873; });
-				ImGui::PopID();
-
-				// Moving position cap.
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::AlignTextToFramePadding();
-				ImGui::TextUnformatted("Moving: position cap");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::PushID("adv_slew_mov_pos");
-				ImGui::SetNextItemWidth(-FLT_MIN);
-				{
-					float displayed = (float)(CalCtx.alignmentSpeedParams.slew_moving_pos_rate * 1000.0);
-					if (ImGui::SliderFloat("##adv_slew_mov_pos_slider", &displayed, 0.5f, 1000.0f, "%.1f mm/s", ImGuiSliderFlags_Logarithmic)) {
-						CalCtx.alignmentSpeedParams.slew_moving_pos_rate = (double)displayed / 1000.0;
-					}
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Maximum position catch-up rate, in millimetres per second, while moving.\n"
-						"Default 10 mm/sec; a 30 mm correction catches up in ~3 s once you move.\n"
-						"Set this very high (e.g. 1000) to approximate the pre-2026 instant-snap behaviour.");
-				}
-				AddResetContextMenu("adv_slew_mov_pos_ctx", []
-					{ CalCtx.alignmentSpeedParams.slew_moving_pos_rate = 0.010; });
-				ImGui::PopID();
-
-				// Moving rotation cap.
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::AlignTextToFramePadding();
-				ImGui::TextUnformatted("Moving: rotation cap");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::PushID("adv_slew_mov_rot");
-				ImGui::SetNextItemWidth(-FLT_MIN);
-				{
-					float displayed = (float)(CalCtx.alignmentSpeedParams.slew_moving_rot_rate * kDegPerRad);
-					if (ImGui::SliderFloat("##adv_slew_mov_rot_slider", &displayed, 0.05f, 100.0f, "%.2f deg/s", ImGuiSliderFlags_Logarithmic)) {
-						CalCtx.alignmentSpeedParams.slew_moving_rot_rate = (double)displayed * kRadPerDeg;
-					}
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Maximum rotation catch-up rate, in degrees per second, while moving.\n"
-						"Default 1.0 deg/sec.");
-				}
-				AddResetContextMenu("adv_slew_mov_rot_ctx", []
-					{ CalCtx.alignmentSpeedParams.slew_moving_rot_rate = 0.01745; });
-				ImGui::PopID();
-
-				ImGui::EndTable();
-			}
-			ImGui::EndGroupPanel();
-		}
-		} // if (kInContinuous): slew rate
 
 		// Tracker offset is continuous-only: only the Continuous path applies
 		// it via continuousCalibrationOffset. Hide outside continuous so the

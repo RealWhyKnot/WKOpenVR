@@ -9,11 +9,8 @@
 //
 // History: this header also carried regime-based still-floor helpers
 // (ClassifyCorrection / StillFloor / Regime) for the original 2026-05-04
-// recalibrateOnMovement implementation. Those were replaced on 2026-05-24
-// by the absolute mm/sec time-rate cap in SlewRateCap.h, which avoids the
-// visible snap that the 90 percent Large-regime floor produced after long
-// stationary stretches. The cycle-level snap decision is independent of
-// the floor and stays here.
+// recalibrateOnMovement implementation. The cycle-level snap decision is
+// independent of that removed floor logic and stays here.
 
 namespace spacecal::motiongate {
 
@@ -39,7 +36,7 @@ constexpr bool ShouldBlendCycle(bool inContinuousState,
 // First accepted continuous candidate after entering continuous mode gets
 // special handling: if it differs from the profile that was just loaded by
 // more than the solve's own noise floor, snap so the user sees the calibration
-// take effect instead of waiting for motion-gated slew to catch up.
+// take effect immediately instead of waiting on a blend from stale state.
 constexpr bool ShouldSnapFirstContinuousCandidate(bool inContinuousState,
                                                   bool hasAcceptedSnapshot,
                                                   bool hasGuardBaseline,

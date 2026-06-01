@@ -481,6 +481,104 @@ bool SendFaceHostMessage(const std::wstring &pipeName, const std::string &wire)
     return ok && written == wire.size();
 }
 
+bool ParseUnsignedAfter(
+    const std::string &text,
+    const std::string &prefix,
+    uint16_t &out)
+{
+    size_t pos = text.find(prefix);
+    if (pos == std::string::npos) return false;
+    pos += prefix.size();
+
+    size_t end = pos;
+    while (end < text.size() && text[end] >= '0' && text[end] <= '9') {
+        ++end;
+    }
+    if (end == pos) return false;
+
+    unsigned long value = std::stoul(text.substr(pos, end - pos));
+    if (value == 0 || value > 65535) return false;
+    out = static_cast<uint16_t>(value);
+    return true;
+}
+
+bool ParseFaceHostOscQueryPorts(
+    const std::string &log,
+    uint16_t &httpPort,
+    uint16_t &oscPort)
+{
+    return ParseUnsignedAfter(log, "httpPort=", httpPort) &&
+        ParseUnsignedAfter(log, "oscPort=", oscPort);
+}
+
+std::string HttpGetLocalhost(uint16_t port, const std::string &path)
+{
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) return {};
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    if (connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return {};
+    }
+
+    std::string request = "GET " + path + " HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n\r\n";
+    int sent = send(sock, request.data(), static_cast<int>(request.size()), 0);
+    if (sent <= 0) {
+        closesocket(sock);
+        return {};
+    }
+
+    std::string response;
+    char buffer[4096];
+    for (;;) {
+        int got = recv(sock, buffer, sizeof(buffer), 0);
+        if (got <= 0) break;
+        response.append(buffer, buffer + got);
+    }
+    closesocket(sock);
+
+    size_t body = response.find("\r\n\r\n");
+    if (body == std::string::npos) return response;
+    return response.substr(body + 4);
+}
+
+void AppendOscString(std::vector<uint8_t> &packet, const std::string &value)
+{
+    packet.insert(packet.end(), value.begin(), value.end());
+    packet.push_back(0);
+    while ((packet.size() % 4) != 0) packet.push_back(0);
+}
+
+bool SendOscStringLocalhost(
+    uint16_t port,
+    const std::string &address,
+    const std::string &value)
+{
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) return false;
+
+    std::vector<uint8_t> packet;
+    AppendOscString(packet, address);
+    AppendOscString(packet, ",s");
+    AppendOscString(packet, value);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    int sent = sendto(sock, reinterpret_cast<const char*>(packet.data()),
+        static_cast<int>(packet.size()), 0,
+        reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    closesocket(sock);
+    return sent == static_cast<int>(packet.size());
+}
+
 void CreateFakeFaceModule(
     const std::filesystem::path &modulesDir,
     const std::string &uuid,
@@ -627,21 +725,29 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
 
     float jawLegacy = 0.0f;
     float jawV2 = 0.0f;
+    float jawFtV2 = 0.0f;
     float lidLegacy = 0.0f;
     float lidV2 = 0.0f;
+    float lidFtV2 = 0.0f;
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/JawOpen", jawLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/JawOpen", jawV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/JawOpen", jawFtV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/LeftEyeLid", lidLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/EyeOpenLeft", lidV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/EyeLidLeft", lidFtV2, 5000ms));
 
     EXPECT_NEAR(jawLegacy, 0.75f, 0.001f);
     EXPECT_NEAR(jawV2, 0.75f, 0.001f);
+    EXPECT_NEAR(jawFtV2, 0.75f, 0.001f);
     EXPECT_NEAR(lidLegacy, 0.62f, 0.001f);
     EXPECT_NEAR(lidV2, 0.62f, 0.001f);
+    EXPECT_NEAR(lidFtV2, 0.465f, 0.001f);
 
     // Dual-emit smoke check: an avatar built against legacy VRCFT binds to
     // MouthSmileLeft, an avatar built against modern v5 VRCFT binds to
@@ -649,6 +755,7 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     // module wrote so neither avatar style gets stuck at zero.
     float smileLegacy = 0.0f, smileV2 = 0.0f;
     float cornerLegacy = 0.0f, cornerV2 = 0.0f;
+    float smileFrownFtV2 = 0.0f;
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/MouthSmileLeft", smileLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
@@ -657,10 +764,13 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
         "/avatar/parameters/MouthCornerPullLeft", cornerLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/MouthCornerPullLeft", cornerV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/SmileFrownLeft", smileFrownFtV2, 5000ms));
     EXPECT_NEAR(smileLegacy,  0.25f, 0.001f);
     EXPECT_NEAR(smileV2,      0.25f, 0.001f);
     EXPECT_NEAR(cornerLegacy, 0.25f, 0.001f);
     EXPECT_NEAR(cornerV2,     0.25f, 0.001f);
+    EXPECT_NEAR(smileFrownFtV2, 0.2f, 0.001f);
 
     harness.Stop();
 }
@@ -704,15 +814,44 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
         L"--debug-logging", L"1",
     })) << "CreateProcess failed: " << host.ExitCode();
 
-    ASSERT_TRUE(WaitUntil([&] {
-        std::string status = ReadFileUtf8(statusPath);
-        return status.find("\"module_count\": 1") != std::string::npos;
-    }, 30000ms)) << "host did not discover loadable test module. status: "
-                 << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
+	ASSERT_TRUE(WaitUntil([&] {
+		std::string status = ReadFileUtf8(statusPath);
+		return status.find("\"module_count\": 1") != std::string::npos;
+	}, 30000ms)) << "host did not discover loadable test module. status: "
+	             << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
 
-    ASSERT_TRUE(SendFaceHostMessage(
-        pipeName,
-        EncodeFaceHostMessage("SelectModule", uuid)));
+	uint16_t httpPort = 0;
+	uint16_t oscPort = 0;
+	ASSERT_TRUE(WaitUntil([&] {
+		return ParseFaceHostOscQueryPorts(ReadFileUtf8(logPath), httpPort, oscPort);
+	}, 30000ms)) << "host did not advertise OSCQuery ports. log: "
+	             << ReadFileUtf8(logPath);
+	EXPECT_NE(oscPort, 9000u);
+
+	const std::string hostInfo = HttpGetLocalhost(httpPort, "/?HOST_INFO");
+	EXPECT_NE(hostInfo.find("\"OSC_PORT\": " + std::to_string(oscPort)),
+		std::string::npos) << hostInfo;
+	EXPECT_EQ(hostInfo.find("\"OSC_PORT\": 9000"), std::string::npos) << hostInfo;
+	EXPECT_NE(hostInfo.find("\"CLIPMODE\": false"), std::string::npos) << hostInfo;
+	EXPECT_NE(hostInfo.find("\"RANGE\": true"), std::string::npos) << hostInfo;
+
+	const std::string tree = HttpGetLocalhost(httpPort, "/");
+	EXPECT_NE(tree.find("\"FULL_PATH\":\"/avatar/change\""), std::string::npos)
+		<< tree;
+	EXPECT_NE(tree.find("\"ACCESS\":2"), std::string::npos) << tree;
+	EXPECT_EQ(tree.find("\"FULL_PATH\":\"/avatar/parameters/JawOpen\""),
+		std::string::npos) << tree;
+
+	ASSERT_TRUE(SendOscStringLocalhost(oscPort, "/avatar/change", "avatar-id"));
+	ASSERT_TRUE(WaitUntil([&] {
+		return ReadFileUtf8(logPath).find(
+			"addr=/avatar/change") != std::string::npos;
+	}, 5000ms)) << "host did not receive callback on advertised OSC port. log: "
+	            << ReadFileUtf8(logPath);
+
+	ASSERT_TRUE(SendFaceHostMessage(
+		pipeName,
+		EncodeFaceHostMessage("SelectModule", uuid)));
 
     facetracking::FaceFrameReader reader;
     reader.Open(shmemName.c_str());
@@ -746,15 +885,27 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
     float jawV2 = 0.0f;
     float lidV2 = 0.0f;
     float smileV2 = 0.0f;
+    float jawFtV2 = 0.0f;
+    float lidFtV2 = 0.0f;
+    float smileFrownFtV2 = 0.0f;
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/JawOpen", jawV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/EyeOpenLeft", lidV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/MouthSmileLeft", smileV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/JawOpen", jawFtV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/EyeLidLeft", lidFtV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/SmileFrownLeft", smileFrownFtV2, 5000ms));
     EXPECT_NEAR(jawV2, 0.75f, 0.001f);
     EXPECT_NEAR(lidV2, 0.62f, 0.001f);
     EXPECT_NEAR(smileV2, 0.25f, 0.001f);
+    EXPECT_NEAR(jawFtV2, 0.75f, 0.001f);
+    EXPECT_NEAR(lidFtV2, 0.465f, 0.001f);
+    EXPECT_NEAR(smileFrownFtV2, 0.2f, 0.001f);
 
     ASSERT_TRUE(SendFaceHostMessage(
         pipeName,

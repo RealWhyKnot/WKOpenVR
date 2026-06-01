@@ -6,10 +6,8 @@
 //
 // History: this file previously also pinned regime-based still-floor
 // helpers (ClassifyCorrection / StillFloor) that gated the per-tick lerp
-// progress while recalibrateOnMovement was on. Those were replaced on
-// 2026-05-24 by an absolute mm/sec time-rate cap (SlewRateCap.h +
-// test_slew_rate_cap.cpp); the cycle-level snap decision below is
-// orthogonal and stayed.
+// progress while recalibrateOnMovement was on. That floor logic was removed;
+// the cycle-level snap decision below is orthogonal and stayed.
 
 #include <gtest/gtest.h>
 

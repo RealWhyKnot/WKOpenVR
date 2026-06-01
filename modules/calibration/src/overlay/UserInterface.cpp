@@ -436,7 +436,7 @@ inline const char* GetPrettyTrackingSystemName(const std::string& value) {
 // touches: outlier rejection, universe-shift correction, calibration speed,
 // chaperone bounds, maintenance. Continuous-only knobs (Lock relative
 // position, Recalibrate on movement, recalibration threshold, alignment
-// thresholds, slew rate) live on the continuous Basic /
+// thresholds) live on the continuous Basic /
 // Advanced tabs where they actually do something.
 //
 // The reasoning for having both this AND CCal_BasicInfo's Common settings
@@ -458,10 +458,10 @@ static void OneShot_DrawSettings() {
 		// (Lock relative position and Recalibrate on movement moved to the
 		// continuous-cal Basic tab. Both knobs only behave during continuous
 		// refinement -- Lock gates the relative-pose constraint inside
-		// ComputeIncremental, Recalibrate-on-movement drives the slew-rate
-		// cap on per-frame transform updates. Rendering them on the one-shot
-		// Settings tab created the impression they affect the one-shot solve,
-		// which they do not.)
+		// ComputeIncremental, and Recalibrate-on-movement gates per-frame
+		// transform blending. Rendering them on the one-shot Settings tab
+		// created the impression they affect the one-shot solve, which they
+		// do not.)
 
 		// (Hide tracker controls moved out of one-shot Settings. The
 		// calibration-target hide lives on the Advanced tab (continuous-only).

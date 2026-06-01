@@ -154,16 +154,6 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		alignmentSpeedParams.align_speed_small = 0.2f;
 		alignmentSpeedParams.align_speed_large = 2.0f;
 
-		// Slew-rate cap defaults. Stationary at the published lateral-drift
-		// detection threshold in VR (~0.5 mm/sec); moving at 20x that so a
-		// pending correction catches up in a few seconds once motion masks it.
-		// Overridden per-session by the overlay's first SetAlignmentSpeedParams
-		// after profile load.
-		alignmentSpeedParams.slew_stationary_pos_rate = 0.0005;   // 0.5 mm/sec
-		alignmentSpeedParams.slew_stationary_rot_rate = 0.000873; // ~0.05 deg/sec
-		alignmentSpeedParams.slew_moving_pos_rate     = 0.010;    // 10  mm/sec
-		alignmentSpeedParams.slew_moving_rot_rate     = 0.01745;  // ~1.0 deg/sec
-
 		if (!shmem.Create(OPENVR_PAIRDRIVER_SHMEM_NAME)) {
 			// Non-fatal: pose telemetry is not essential -- calibration still
 			// works without it. Log so the overlay's diagnostics (or a post-
