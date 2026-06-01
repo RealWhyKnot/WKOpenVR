@@ -33,6 +33,11 @@ public class ModuleAssembly
         {
             if (string.Equals(assemblyName.Name, "VRCFaceTracking.Core", StringComparison.OrdinalIgnoreCase))
             {
+                return typeof(UnifiedTracking).Assembly;
+            }
+
+            if (string.Equals(assemblyName.Name, "VRCFaceTracking.SDK", StringComparison.OrdinalIgnoreCase))
+            {
                 return typeof(ExtTrackingModule).Assembly;
             }
 
@@ -100,7 +105,9 @@ public class ModuleAssembly
             var oldRefs = false;
             foreach ( var reference in references )
             {
-                if ( reference.Name == "VRCFaceTracking" || reference.Name == "VRCFaceTracking.Core" )
+                if ( reference.Name == "VRCFaceTracking" ||
+                     reference.Name == "VRCFaceTracking.Core" ||
+                     reference.Name == "VRCFaceTracking.SDK" )
                 {
                     if ( reference.Version < new Version(5, 0, 0, 0) )
                     {

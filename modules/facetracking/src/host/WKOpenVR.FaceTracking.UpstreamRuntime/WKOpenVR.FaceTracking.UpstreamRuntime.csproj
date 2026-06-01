@@ -4,8 +4,8 @@
          which runs as a subprocess. No Windows-only APIs needed here. -->
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>VRCFaceTracking.Core</AssemblyName>
-    <AssemblyVersion>5.1.1.1</AssemblyVersion>
-    <FileVersion>5.1.1.1</FileVersion>
+    <AssemblyVersion>5.4.5.0</AssemblyVersion>
+    <FileVersion>5.4.5.0</FileVersion>
     <!-- Keep upstream namespaces verbatim so future rebases are a straight copy. -->
     <RootNamespace>VRCFaceTracking</RootNamespace>
     <LangVersion>latest</LangVersion>
@@ -16,6 +16,9 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8625;CS0168;CS0169;CS0414;NU1507</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\WKOpenVR.FaceTracking.UpstreamSdk\WKOpenVR.FaceTracking.UpstreamSdk.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />

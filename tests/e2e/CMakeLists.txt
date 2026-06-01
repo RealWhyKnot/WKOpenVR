@@ -86,6 +86,8 @@ if(TARGET openvr_pair_feature_facetracking_host)
 
         add_custom_target(openvr_pair_e2e_facetracking_test_module
             DEPENDS "${FACE_TEST_MODULE_STAMP}")
+        add_dependencies(openvr_pair_e2e_facetracking_test_module
+            openvr_pair_feature_facetracking_host)
         add_dependencies(e2e_tests openvr_pair_e2e_facetracking_test_module)
     else()
         message(WARNING "dotnet CLI not found on PATH. The e2e face-tracking test module will not build.")

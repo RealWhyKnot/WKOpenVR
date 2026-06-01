@@ -4,12 +4,10 @@
 //   VRCFaceTracking.Core/UnifiedTracking.cs
 // Copyright (c) benaclejames and contributors. Licensed under Apache 2.0.
 //
-// Modifications: stripped to ONLY the static UnifiedTrackingData Data field
-// and EyeImageData/LipImageData stubs. The host process does not need
-// AllParameters_v1/_v2, Mutator, OSC machinery, or UpdateData() -- modules
-// write Data via module.Update() inside the subprocess, and the subprocess
-// snapshots it into ReplyUpdatePacket.
+// Modifications: output-parameter arrays are present for binary/API
+// compatibility, but left empty because WKOpenVR publishes frames itself.
 // ----------------------------------------------------------------------------
+using VRCFaceTracking.Core.Params;
 using VRCFaceTracking.Core.Params.Data;
 using VRCFaceTracking.Core.Types;
 
@@ -18,11 +16,43 @@ namespace VRCFaceTracking;
 public class UnifiedTracking
 {
     /// <summary>
+    /// Eye image data sent from the loaded eye module.
+    /// </summary>
+    public static Image EyeImageData = new();
+
+    /// <summary>
+    /// Lip / Expression image data sent from the loaded expressions module.
+    /// </summary>
+    public static Image LipImageData = new();
+
+    /// <summary>
     /// Latest Expression Data accessible and sent by all VRCFaceTracking modules.
     /// </summary>
     public static UnifiedTrackingData Data = new();
 
-    // Stubs for things upstream modules might reference but we don't use:
-    public static object EyeImageData = new();
-    public static object LipImageData = new();
+    /// <summary>
+    /// Container of features that mutate incoming expression data.
+    /// </summary>
+    public static UnifiedTrackingMutator? Mutator;
+
+    public static readonly Parameter[] AllParameters_v1 = [];
+    public static readonly Parameter[] AllParameters_v2 = [];
+    public static readonly Parameter[] HeadParameters = [];
+    public static readonly Parameter[] AllParameters = [];
+
+    /// <summary>
+    /// Central update action for expression data subscribers.
+    /// </summary>
+    public static Action<UnifiedTrackingData> OnUnifiedDataUpdated = _ => { };
+
+    /// <summary>
+    /// Updates subscribers with the current data snapshot.
+    /// </summary>
+    public static Task UpdateData(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        UnifiedTrackingData data = Mutator?.MutateData(Data) ?? Data;
+        OnUnifiedDataUpdated.Invoke(data);
+        return Task.CompletedTask;
+    }
 }

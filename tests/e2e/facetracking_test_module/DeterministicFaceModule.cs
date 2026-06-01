@@ -1,4 +1,5 @@
 using VRCFaceTracking;
+using VRCFaceTracking.Core;
 using VRCFaceTracking.Core.Params.Expressions;
 using VRCFaceTracking.Core.Types;
 
@@ -21,6 +22,22 @@ public sealed class DeterministicFaceModule : ExtTrackingModule
         bool eyeAvailable,
         bool expressionAvailable)
     {
+        _ = Utils.CustomLibsDirectory;
+        VRChat.EnsureVRCOSCDirectory();
+        UnifiedTracking.OnUnifiedDataUpdated += _ => { };
+        UnifiedTracking.EyeImageData = new Image
+        {
+            ImageSize = (1, 1),
+            ImageData = [0, 0, 0, 255],
+            SupportsImage = true,
+        };
+        UnifiedTracking.LipImageData = new Image
+        {
+            ImageSize = (1, 1),
+            ImageData = [255, 255, 255, 255],
+            SupportsImage = true,
+        };
+
         ModuleInformation.Active = true;
         ModuleInformation.UsingEye = eyeAvailable;
         ModuleInformation.UsingExpression = expressionAvailable;
@@ -51,5 +68,6 @@ public sealed class DeterministicFaceModule : ExtTrackingModule
 
         UnifiedTracking.Data.Shapes[(int)UnifiedExpressions.JawOpen].Weight = 0.75f;
         UnifiedTracking.Data.Shapes[(int)UnifiedExpressions.MouthCornerPullLeft].Weight = 0.25f;
+        _ = UnifiedSimplifier.ExpressionMap[UnifiedSimpleExpressions.MouthSmileLeft](UnifiedTracking.Data);
     }
 }

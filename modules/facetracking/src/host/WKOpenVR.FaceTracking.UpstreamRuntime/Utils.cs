@@ -1,6 +1,10 @@
 // Vendored from VRCFaceTracking (Apache-2.0) -- namespace VRCFaceTracking.Core preserved verbatim.
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Principal;
 
 namespace VRCFaceTracking.Core;
 
@@ -16,4 +20,73 @@ public static class Utils
     [SuppressUnmanagedCodeSecurity]
     [DllImport("winmm.dll", EntryPoint = "timeEndPeriod", SetLastError = true)]
     public static extern uint TimeEndPeriod(uint uMilliseconds);
+
+    public const int PROCESS_VM_READ = 0x0010;
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool ReadProcessMemory(int hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, ref int lpNumberOfBytesRead);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeleteFile(string lpFileName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern uint GetFileAttributes(string lpFileName);
+
+    public static readonly bool HasAdmin = !OperatingSystem.IsWindows() ||
+        new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+
+    public static readonly string UserAccessibleDataDirectory =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "VRCFaceTracking");
+    public static readonly string PersistentDataDirectory =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VRCFaceTracking");
+    public static readonly string CustomLibsDirectory = Path.Combine(PersistentDataDirectory, "CustomLibs");
+
+    public static int GetRandomFreePort()
+    {
+        var listener = new TcpListener(IPAddress.Any, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    private const string K_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static readonly Random Random = new();
+
+    public static string GetRandomChars(int num) =>
+        new(Enumerable.Repeat(K_CHARS, num).Select(s => s[Random.Next(s.Length)]).ToArray());
+
+    public static void KillAllProcessesOfName(string name)
+    {
+        foreach (var proc in Process.GetProcessesByName(name))
+        {
+            if (proc.Id == Environment.ProcessId)
+            {
+                continue;
+            }
+
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+                if (!proc.WaitForExit(2000) && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    using var killer = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "taskkill",
+                        Arguments = $"/F /T /PID {proc.Id}",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    });
+                    killer?.WaitForExit(2000);
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
 }

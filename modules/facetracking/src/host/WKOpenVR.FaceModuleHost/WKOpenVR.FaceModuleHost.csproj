@@ -15,6 +15,7 @@
     <ProjectReference Include="..\WKOpenVR.FaceTracking.ModuleSdk\WKOpenVR.FaceTracking.ModuleSdk.csproj" />
     <ProjectReference Include="..\WKOpenVR.FaceTracking.VrcftCompat\WKOpenVR.FaceTracking.VrcftCompat.csproj" />
     <ProjectReference Include="..\WKOpenVR.FaceTracking.Registry\WKOpenVR.FaceTracking.Registry.csproj" />
+    <ProjectReference Include="..\WKOpenVR.FaceTracking.UpstreamSdk\WKOpenVR.FaceTracking.UpstreamSdk.csproj" />
     <ProjectReference Include="..\WKOpenVR.FaceTracking.UpstreamRuntime\WKOpenVR.FaceTracking.UpstreamRuntime.csproj" />
     <!-- subprocess EXE: build alongside but do not load as a managed assembly reference -->
     <ProjectReference Include="..\WKOpenVR.FaceModuleProcess\WKOpenVR.FaceModuleProcess.csproj">

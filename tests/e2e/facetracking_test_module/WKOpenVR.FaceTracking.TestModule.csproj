@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\modules\facetracking\src\host\WKOpenVR.FaceTracking.UpstreamSdk\WKOpenVR.FaceTracking.UpstreamSdk.csproj" />
     <ProjectReference Include="..\..\..\modules\facetracking\src\host\WKOpenVR.FaceTracking.UpstreamRuntime\WKOpenVR.FaceTracking.UpstreamRuntime.csproj" />
   </ItemGroup>
 </Project>
