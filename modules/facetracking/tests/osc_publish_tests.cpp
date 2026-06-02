@@ -13,6 +13,7 @@
 // exposed via the FACETRACKING_TESTS guard below.
 
 #include "Protocol.h"
+#include "FaceOscPublisher.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -21,6 +22,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 // ---------------------------------------------------------------------------
 // Reference OSC 1.0 float packet builder (mirrors OscSender.BuildOscFloatPacket
@@ -130,6 +132,68 @@ TEST(OscPublishFloat, ZeroValueEncoding)
     EXPECT_EQ(argBytes[1], 0u);
     EXPECT_EQ(argBytes[2], 0u);
     EXPECT_EQ(argBytes[3], 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Tests: avatar OSC address allowlist
+// ---------------------------------------------------------------------------
+
+static std::wstring TempAllowListPath()
+{
+    wchar_t dir[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, dir);
+    wchar_t path[MAX_PATH] = {};
+    GetTempFileNameW(dir, L"ft", 0, path);
+    DeleteFileW(path);
+    return path;
+}
+
+static void WriteUtf8File(const std::wstring &path, const char *body)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(h, INVALID_HANDLE_VALUE);
+    DWORD written = 0;
+    const DWORD len = static_cast<DWORD>(std::strlen(body));
+    ASSERT_TRUE(WriteFile(h, body, len, &written, nullptr));
+    EXPECT_EQ(written, len);
+    CloseHandle(h);
+}
+
+TEST(FaceOscAddressFilter, MissingFileBlocksWhenActive)
+{
+    std::wstring path = TempAllowListPath();
+    facetracking::FaceOscAddressFilter filter(path);
+
+    EXPECT_TRUE(filter.ReloadIfChanged());
+    EXPECT_TRUE(filter.Active());
+    EXPECT_EQ(filter.AllowedCount(), 0u);
+    EXPECT_FALSE(filter.Allows("/avatar/parameters/JawOpen"));
+}
+
+TEST(FaceOscAddressFilter, LoadsAndReloadsAddresses)
+{
+    std::wstring path = TempAllowListPath();
+    WriteUtf8File(path,
+        "/avatar/parameters/v2/JawOpen\n"
+        "  /avatar/parameters/v2/EyeLidLeft\r\n");
+
+    facetracking::FaceOscAddressFilter filter(path);
+    EXPECT_TRUE(filter.ReloadIfChanged());
+    EXPECT_EQ(filter.AllowedCount(), 2u);
+    EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/JawOpen"));
+    EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/EyeLidLeft"));
+    EXPECT_FALSE(filter.Allows("/avatar/parameters/v2/SmileFrownLeft"));
+
+    WriteUtf8File(path,
+        "/avatar/parameters/v2/JawOpen\n"
+        "/avatar/parameters/v2/SmileFrownLeft\n");
+    EXPECT_TRUE(filter.ReloadIfChanged());
+    EXPECT_EQ(filter.AllowedCount(), 2u);
+    EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/SmileFrownLeft"));
+    EXPECT_FALSE(filter.Allows("/avatar/parameters/v2/EyeLidLeft"));
+
+    DeleteFileW(path.c_str());
 }
 
 // ---------------------------------------------------------------------------

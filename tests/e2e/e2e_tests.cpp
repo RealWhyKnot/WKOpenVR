@@ -725,29 +725,29 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
 
     float jawLegacy = 0.0f;
     float jawV2 = 0.0f;
-    float jawFtV2 = 0.0f;
+    float jawCurrentV2 = 0.0f;
     float lidLegacy = 0.0f;
     float lidV2 = 0.0f;
-    float lidFtV2 = 0.0f;
+    float lidCurrentV2 = 0.0f;
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/JawOpen", jawLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/JawOpen", jawV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
-        "/avatar/parameters/FT/v2/JawOpen", jawFtV2, 5000ms));
+        "/avatar/parameters/v2/JawOpen", jawCurrentV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/LeftEyeLid", lidLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/EyeOpenLeft", lidV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
-        "/avatar/parameters/FT/v2/EyeLidLeft", lidFtV2, 5000ms));
+        "/avatar/parameters/v2/EyeLidLeft", lidCurrentV2, 5000ms));
 
     EXPECT_NEAR(jawLegacy, 0.75f, 0.001f);
     EXPECT_NEAR(jawV2, 0.75f, 0.001f);
-    EXPECT_NEAR(jawFtV2, 0.75f, 0.001f);
+    EXPECT_NEAR(jawCurrentV2, 0.75f, 0.001f);
     EXPECT_NEAR(lidLegacy, 0.62f, 0.001f);
     EXPECT_NEAR(lidV2, 0.62f, 0.001f);
-    EXPECT_NEAR(lidFtV2, 0.465f, 0.001f);
+    EXPECT_NEAR(lidCurrentV2, 0.465f, 0.001f);
 
     // Dual-emit smoke check: an avatar built against legacy VRCFT binds to
     // MouthSmileLeft, an avatar built against modern v5 VRCFT binds to
@@ -755,7 +755,7 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     // module wrote so neither avatar style gets stuck at zero.
     float smileLegacy = 0.0f, smileV2 = 0.0f;
     float cornerLegacy = 0.0f, cornerV2 = 0.0f;
-    float smileFrownFtV2 = 0.0f;
+    float smileFrownCurrentV2 = 0.0f;
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/MouthSmileLeft", smileLegacy, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
@@ -765,12 +765,12 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/MouthCornerPullLeft", cornerV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
-        "/avatar/parameters/FT/v2/SmileFrownLeft", smileFrownFtV2, 5000ms));
+        "/avatar/parameters/v2/SmileFrownLeft", smileFrownCurrentV2, 5000ms));
     EXPECT_NEAR(smileLegacy,  0.25f, 0.001f);
     EXPECT_NEAR(smileV2,      0.25f, 0.001f);
     EXPECT_NEAR(cornerLegacy, 0.25f, 0.001f);
     EXPECT_NEAR(cornerV2,     0.25f, 0.001f);
-    EXPECT_NEAR(smileFrownFtV2, 0.2f, 0.001f);
+    EXPECT_NEAR(smileFrownCurrentV2, 0.2f, 0.001f);
 
     harness.Stop();
 }
@@ -885,9 +885,9 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
     float jawV2 = 0.0f;
     float lidV2 = 0.0f;
     float smileV2 = 0.0f;
-    float jawFtV2 = 0.0f;
-    float lidFtV2 = 0.0f;
-    float smileFrownFtV2 = 0.0f;
+    float jawCurrentV2 = 0.0f;
+    float lidCurrentV2 = 0.0f;
+    float smileFrownCurrentV2 = 0.0f;
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/JawOpen", jawV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
@@ -895,17 +895,17 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/v2/MouthSmileLeft", smileV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
-        "/avatar/parameters/FT/v2/JawOpen", jawFtV2, 5000ms));
+        "/avatar/parameters/v2/JawOpen", jawCurrentV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
-        "/avatar/parameters/FT/v2/EyeLidLeft", lidFtV2, 5000ms));
+        "/avatar/parameters/v2/EyeLidLeft", lidCurrentV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
-        "/avatar/parameters/FT/v2/SmileFrownLeft", smileFrownFtV2, 5000ms));
+        "/avatar/parameters/v2/SmileFrownLeft", smileFrownCurrentV2, 5000ms));
     EXPECT_NEAR(jawV2, 0.75f, 0.001f);
     EXPECT_NEAR(lidV2, 0.62f, 0.001f);
     EXPECT_NEAR(smileV2, 0.25f, 0.001f);
-    EXPECT_NEAR(jawFtV2, 0.75f, 0.001f);
-    EXPECT_NEAR(lidFtV2, 0.465f, 0.001f);
-    EXPECT_NEAR(smileFrownFtV2, 0.2f, 0.001f);
+    EXPECT_NEAR(jawCurrentV2, 0.75f, 0.001f);
+    EXPECT_NEAR(lidCurrentV2, 0.465f, 0.001f);
+    EXPECT_NEAR(smileFrownCurrentV2, 0.2f, 0.001f);
 
     ASSERT_TRUE(SendFaceHostMessage(
         pipeName,

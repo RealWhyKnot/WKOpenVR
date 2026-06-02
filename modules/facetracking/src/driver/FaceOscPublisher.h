@@ -3,6 +3,8 @@
 #include "Protocol.h"
 
 #include <cstdint>
+#include <string>
+#include <unordered_set>
 
 namespace facetracking {
 
@@ -18,10 +20,29 @@ struct FaceOscPublishCounts
     }
 };
 
+class FaceOscAddressFilter
+{
+public:
+    FaceOscAddressFilter() = default;
+    explicit FaceOscAddressFilter(std::wstring path);
+
+    bool ReloadIfChanged();
+    bool Allows(const char *address) const;
+    bool Active() const { return !path_.empty(); }
+    uint32_t AllowedCount() const;
+
+private:
+    std::wstring path_;
+    uint64_t file_stamp_ = UINT64_MAX;
+    bool loaded_ = false;
+    std::unordered_set<std::string> allowed_;
+};
+
 // Publishes one already-filtered face frame through the OSC router. Eye data
 // and expression data are gated by FaceTrackingFrameBody::flags.
 FaceOscPublishCounts PublishFaceFrameOsc(
-    const protocol::FaceTrackingFrameBody &frame);
+    const protocol::FaceTrackingFrameBody &frame,
+    const FaceOscAddressFilter *filter = nullptr);
 
 const char *FaceExpressionOscName(uint32_t index);
 

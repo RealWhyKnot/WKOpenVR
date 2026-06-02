@@ -299,7 +299,7 @@ void OscRouter::SendWorkerMain()
                         sent,
                         sendHost_.c_str(), (unsigned)sendPort_);
                 }
-                if (total % 1000 == 0) {
+                if (total % 100000 == 0) {
                     OR_LOG("[OscRouter] sent %llu packets target=%s:%u",
                         (unsigned long long)total,
                         sendHost_.c_str(), (unsigned)sendPort_);

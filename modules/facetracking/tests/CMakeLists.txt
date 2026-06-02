@@ -24,6 +24,7 @@ add_executable(facetracking_tests
     ${FT_DRIVER_SRC}/CalibrationEngine.cpp
     ${FT_DRIVER_SRC}/VergenceLock.cpp
     ${FT_DRIVER_SRC}/EyelidSync.cpp
+    ${FT_DRIVER_SRC}/FaceOscAddressFilter.cpp
 )
 
 target_include_directories(facetracking_tests

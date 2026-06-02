@@ -10,6 +10,7 @@
 #include <cstring>
 
 namespace facetracking {
+
 namespace {
 
 struct OscCounts
@@ -17,10 +18,10 @@ struct OscCounts
     uint32_t sent = 0;
     uint32_t dropped = 0;
 
-    void Add(bool ok)
+    void Add(int result)
     {
-        if (ok) ++sent;
-        else ++dropped;
+        if (result > 0) ++sent;
+        else if (result < 0) ++dropped;
     }
 
     FaceOscPublishCounts Public() const
@@ -29,8 +30,12 @@ struct OscCounts
     }
 };
 
-static inline bool OscPublishFloat(const char *address, float value)
+static thread_local const FaceOscAddressFilter *t_addressFilter = nullptr;
+
+static inline int OscPublishFloat(const char *address, float value)
 {
+    if (t_addressFilter && !t_addressFilter->Allows(address)) return 0;
+
     uint32_t bits;
     std::memcpy(&bits, &value, sizeof(bits));
     uint8_t arg_bytes[4] = {
@@ -40,7 +45,7 @@ static inline bool OscPublishFloat(const char *address, float value)
         static_cast<uint8_t>(bits        ),
     };
     return pairdriver::oscrouter::PublishOsc(
-        "facetracking", address, ",f", arg_bytes, 4);
+        "facetracking", address, ",f", arg_bytes, 4) ? 1 : -1;
 }
 
 static const char *const kExprParamNames[protocol::FACETRACKING_EXPRESSION_COUNT] = {
@@ -151,7 +156,7 @@ static_assert(
 // Upstream VRCFaceTracking UnifiedExpressions order. This mirrors
 // modules/facetracking/src/host/WKOpenVR.FaceTracking.UpstreamRuntime/
 // Params/Expressions/UnifiedExpressions.cs and lets us publish the current
-// VRCFT FT/v2 address family from the raw 88-slot wire data.
+// VRCFT v2 address family from the raw 88-slot wire data.
 static const char *const kUpstreamExpressionNames[protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT] = {
     "EyeSquintRight",
     "EyeSquintLeft",
@@ -355,7 +360,7 @@ static inline float Avg2(float a, float b)
 
 static bool PublishFtV2Float(OscCounts &counts, const char *name, float value)
 {
-    static const char kPrefix[] = "/avatar/parameters/FT/v2/";
+    static const char kPrefix[] = "/avatar/parameters/v2/";
     char address[96];
     int written = std::snprintf(address, sizeof(address), "%s%s", kPrefix, name);
     if (written <= 0 || static_cast<size_t>(written) >= sizeof(address)) return false;
@@ -683,14 +688,20 @@ static OscCounts PublishCurrentVrcft(const protocol::FaceTrackingFrameBody &fram
 } // namespace
 
 FaceOscPublishCounts PublishFaceFrameOsc(
-    const protocol::FaceTrackingFrameBody &frame)
+    const protocol::FaceTrackingFrameBody &frame,
+    const FaceOscAddressFilter *filter)
 {
+    const FaceOscAddressFilter *previousFilter = t_addressFilter;
+    t_addressFilter = filter;
+
     FaceOscPublishCounts counts;
     if ((frame.flags & 0x1u) != 0) counts.Add(PublishEye(frame).Public());
     if ((frame.flags & 0x2u) != 0) {
         counts.Add(PublishExpressions(frame).Public());
         counts.Add(PublishCurrentVrcft(frame).Public());
     }
+
+    t_addressFilter = previousFilter;
     return counts;
 }
 

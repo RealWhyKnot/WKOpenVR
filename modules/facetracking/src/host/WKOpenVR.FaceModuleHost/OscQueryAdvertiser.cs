@@ -40,6 +40,7 @@ public sealed class OscQueryAdvertiser : IDisposable
     public async Task StartAsync(HostLogger logger, CancellationToken ct)
     {
         _ct = ct;
+        AvatarParameterAllowList.Clear(logger);
 
         // --- 1. Bind a private OSC receive socket -------------------------------
         _udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
@@ -162,6 +163,14 @@ public sealed class OscQueryAdvertiser : IDisposable
 
             int count = Interlocked.Increment(ref _inboundOscCount);
             string address = TryReadOscAddress(result.Buffer);
+            if (string.Equals(address, "/avatar/change", StringComparison.Ordinal))
+            {
+                string avatarId = TryReadFirstOscStringArgument(result.Buffer);
+                _ = Task.Run(
+                    () => AvatarParameterAllowList.RefreshForAvatarAsync(avatarId, logger, ct),
+                    CancellationToken.None);
+            }
+
             if (count == 1 || count % 100000 == 0
                 || string.Equals(address, "/avatar/change", StringComparison.Ordinal))
             {
@@ -242,5 +251,36 @@ public sealed class OscQueryAdvertiser : IDisposable
         {
             return "(unknown)";
         }
+    }
+
+    private static string TryReadFirstOscStringArgument(byte[] packet)
+    {
+        int offset = 0;
+        if (!TryReadOscString(packet, ref offset, out _)) return "";
+        if (!TryReadOscString(packet, ref offset, out string typeTags)) return "";
+        if (!typeTags.Contains('s')) return "";
+        if (!TryReadOscString(packet, ref offset, out string value)) return "";
+        return value;
+    }
+
+    private static bool TryReadOscString(byte[] packet, ref int offset, out string value)
+    {
+        value = "";
+        if (offset < 0 || offset >= packet.Length) return false;
+
+        int end = Array.IndexOf(packet, (byte)0, offset);
+        if (end < offset) return false;
+
+        try
+        {
+            value = Encoding.UTF8.GetString(packet, offset, end - offset);
+        }
+        catch
+        {
+            return false;
+        }
+
+        offset = (end + 4) & ~3;
+        return offset <= packet.Length;
     }
 }

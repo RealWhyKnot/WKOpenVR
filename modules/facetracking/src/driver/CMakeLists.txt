@@ -10,6 +10,7 @@ add_library(openvr_pair_feature_facetracking_driver STATIC
 	EyelidSync.h
 	FaceFrameReader.cpp
 	FaceFrameReader.h
+	FaceOscAddressFilter.cpp
 	FaceOscPublisher.cpp
 	FaceOscPublisher.h
 	FaceTrackingDevice.cpp

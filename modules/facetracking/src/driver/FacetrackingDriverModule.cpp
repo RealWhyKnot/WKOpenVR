@@ -194,6 +194,7 @@ public:
         if (!tdir.empty()) {
             CreateDirectoryW(tdir.c_str(), nullptr); // ignore ERROR_ALREADY_EXISTS
             telemetry_path_ = tdir + L"\\driver_telemetry.json";
+            osc_filter_ = FaceOscAddressFilter(tdir + L"\\avatar_parameters.txt");
         }
 
         // Create the shmem ring through the reader so we map the segment
@@ -321,6 +322,7 @@ private:
     uint64_t frames_read_ = 0;
     uint64_t osc_messages_sent_ = 0;
     uint64_t osc_messages_dropped_ = 0;
+    FaceOscAddressFilter osc_filter_;
 
     // Diagnostics state: OSC output transition tracking.
     bool     osc_was_enabled_     = false;
@@ -487,17 +489,23 @@ private:
                     all_zero_warned_ = false;
                 }
 
-                if (!osc_first_publish_ && (eye_valid || expr_valid)) {
-                    FT_LOG_DRV("[facetracking] first OSC publish: JawOpen=%.3f LeftEyeLid=%.3f flags=0x%x paths=both",
+                if (osc_filter_.ReloadIfChanged()) {
+                    FT_LOG_DRV("[facetracking] avatar OSC allowlist loaded: %u addresses",
+                        (unsigned)osc_filter_.AllowedCount());
+                }
+
+                FaceOscPublishCounts counts = PublishFaceFrameOsc(frame, &osc_filter_);
+                osc_messages_sent_ += counts.sent;
+                osc_messages_dropped_ += counts.dropped;
+
+                if (!osc_first_publish_ && counts.sent > 0) {
+                    FT_LOG_DRV("[facetracking] first OSC publish: sent=%u JawOpen=%.3f LeftEyeLid=%.3f flags=0x%x",
+                        (unsigned)counts.sent,
                         frame.expressions[26], // index 26 = JawOpen
                         frame.eye_openness_l,
                         (unsigned)frame.flags);
                     osc_first_publish_ = true;
                 }
-
-                FaceOscPublishCounts counts = PublishFaceFrameOsc(frame);
-                osc_messages_sent_ += counts.sent;
-                osc_messages_dropped_ += counts.dropped;
             }
 
             ++frames_processed_;
