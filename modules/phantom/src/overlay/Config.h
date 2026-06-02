@@ -21,6 +21,22 @@ struct PhantomRoleOffset
     double rel_rotation_z = 0.0;
 };
 
+struct PhantomSolverCalibration
+{
+    bool calibrated = false;
+    double floor_y_m = 0.0;
+    double height_m = 1.70;
+    double forward_yaw_rad = 0.0;
+    double stance_width_m = 0.28;
+    double shoulder_width_m = 0.38;
+    double pelvis_width_m = 0.28;
+    double upper_arm_m = 0.30;
+    double lower_arm_m = 0.27;
+    double upper_leg_m = 0.45;
+    double lower_leg_m = 0.45;
+    double virtual_min_confidence = 0.20;
+};
+
 // Persisted Phantom overlay state. Saved to
 // %LocalAppDataLow%\WKOpenVR\profiles\phantom.txt as plain key=value lines,
 // matching the smoothing.txt / inputhealth.txt convention so a user can
@@ -60,11 +76,13 @@ struct PhantomConfig
     std::unordered_map<phantom::BodyRole, PhantomRoleOffset> role_offset;
 
     // Phase 2: per-body-role absent-mode toggle. When true (and the role
-    // has a calibration on file), the driver publishes a virtual
-    // GenericTracker for the role with the vive_tracker_<role> controller
-    // type so VRChat / Resonite / Neos pick it up automatically as a
-    // body-bound tracker.
+    // has a solver pose above the configured confidence threshold), the
+    // driver publishes a virtual GenericTracker for the role with the
+    // vive_tracker_<role> controller type so supported apps pick it up
+    // automatically as a body-bound tracker.
     std::unordered_map<phantom::BodyRole, bool> virtual_enabled;
+
+    PhantomSolverCalibration solver;
 };
 
 // Load from disk. On any read / parse error the on-disk file is ignored and

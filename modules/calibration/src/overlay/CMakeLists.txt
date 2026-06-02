@@ -24,7 +24,6 @@ if(OPENVR_PAIR_BUILD_UMBRELLA)
     list(FILTER SPACECAL_UMBRELLA_SOURCES EXCLUDE REGEX ".*/SpaceCalibratorUmbrellaRuntime\\.(cpp|h)$")
     list(FILTER SPACECAL_UMBRELLA_SOURCES EXCLUDE REGEX ".*/InputHealth.*\\.(cpp|h)$")
     if(WKOPENVR_RELEASE_BUILD)
-        list(FILTER SPACECAL_UMBRELLA_SOURCES EXCLUDE REGEX ".*/DevFakeDevices\\.(cpp|h)$")
         list(FILTER SPACECAL_UMBRELLA_SOURCES EXCLUDE REGEX ".*/MotionRecording\\.(cpp|h)$")
     endif()
 

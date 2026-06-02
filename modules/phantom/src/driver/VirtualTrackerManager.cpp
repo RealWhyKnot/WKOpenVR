@@ -37,18 +37,49 @@ bool VirtualTrackerManager::IsEnabled(BodyRole role) const
     return enabled_[idx];
 }
 
-bool VirtualTrackerManager::IsCalibrated(BodyRole role, const IkFallback& ik) const
+namespace {
+
+vr::DriverPose_t PoseFromCompletion(const vr::DriverPose_t& hmd_pose,
+                                    const BodyCompletionRoleOutput& role)
 {
-    return ik.HasOffset(role);
+    vr::DriverPose_t out = hmd_pose;
+    out.poseTimeOffset = 0.0;
+    out.vecPosition[0] = role.pose.position[0];
+    out.vecPosition[1] = role.pose.position[1];
+    out.vecPosition[2] = role.pose.position[2];
+    out.vecVelocity[0] = role.pose.velocity[0];
+    out.vecVelocity[1] = role.pose.velocity[1];
+    out.vecVelocity[2] = role.pose.velocity[2];
+    out.vecAcceleration[0] = 0.0;
+    out.vecAcceleration[1] = 0.0;
+    out.vecAcceleration[2] = 0.0;
+    out.qRotation = {
+        role.pose.rotation[0],
+        role.pose.rotation[1],
+        role.pose.rotation[2],
+        role.pose.rotation[3],
+    };
+    out.vecAngularVelocity[0] = 0.0;
+    out.vecAngularVelocity[1] = 0.0;
+    out.vecAngularVelocity[2] = 0.0;
+    out.vecAngularAcceleration[0] = 0.0;
+    out.vecAngularAcceleration[1] = 0.0;
+    out.vecAngularAcceleration[2] = 0.0;
+    out.result = vr::TrackingResult_Running_OK;
+    out.poseIsValid = true;
+    out.deviceIsConnected = true;
+    out.shouldApplyHeadModel = false;
+    return out;
 }
 
-void VirtualTrackerManager::MaybeActivate(BodyRole role, const IkFallback& ik)
+} // namespace
+
+void VirtualTrackerManager::MaybeActivate(BodyRole role)
 {
     const auto idx = static_cast<size_t>(role);
     if (idx >= devices_.size()) return;
     if (devices_[idx]) return;                   // already activated
     if (!enabled_[idx]) return;
-    if (!ik.HasOffset(role)) return;             // calibration prerequisite
     if (!hmd_pose_seen_.load(std::memory_order_acquire)) return;
 
     // openvr#1536 mitigation: wait at least kInitSettleDelay past driver
@@ -79,7 +110,8 @@ void VirtualTrackerManager::MaybeActivate(BodyRole role, const IkFallback& ik)
 }
 
 void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose,
-                                 const IkFallback& ik)
+                                 const BodyCompletionResult& body,
+                                 double min_confidence)
 {
     if (hmd_pose.poseIsValid
         && hmd_pose.deviceIsConnected
@@ -90,15 +122,15 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose,
     for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
         const auto role = static_cast<BodyRole>(i);
         if (BodyRoleToControllerType(role) == nullptr) continue; // HMD / hand roles not publishable
-        MaybeActivate(role, ik);
+        MaybeActivate(role);
 
         auto& dev = devices_[i];
         if (!dev || !dev->Activated()) continue;
         if (!enabled_[i]) continue;
 
-        vr::DriverPose_t synth{};
-        if (ik.Solve(role, hmd_pose, synth)) {
-            dev->Publish(synth);
+        const auto& solved = body.roles[i];
+        if (solved.valid && solved.confidence >= min_confidence) {
+            dev->Publish(PoseFromCompletion(hmd_pose, solved));
         }
     }
 }

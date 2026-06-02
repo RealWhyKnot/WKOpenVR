@@ -19,6 +19,7 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dead_reckoner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_blend_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dropout_state.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_body_completion_solver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_frozen_tracker_invariant.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_ik_fallback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_role_catalog.cpp
@@ -29,6 +30,7 @@ add_executable(phantom_tests
     ${PH_DRIVER_SRC}/PoseHistory.cpp
     ${PH_DRIVER_SRC}/DeadReckoner.cpp
     ${PH_DRIVER_SRC}/BlendController.cpp
+    ${PH_DRIVER_SRC}/BodyCompletionSolver.cpp
     ${PH_DRIVER_SRC}/DropoutState.cpp
     ${PH_DRIVER_SRC}/IkFallback.cpp
     ${PH_COMMON_SRC}/PhantomInferenceShmem.cpp

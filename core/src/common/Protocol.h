@@ -190,9 +190,8 @@ namespace protocol
 	// RequestSetPhantomVirtualEnabled -- a per-role toggle for users who
 	// do not physically own a tracker for the role. The driver creates an
 	// ITrackedDeviceServerDriver for each enabled role with the published
-	// Valve "vive_tracker_<role>" controller type, and pushes IK-derived
-	// poses every time the HMD pose updates. Gated on the user having a
-	// T-pose calibration for the role.
+	// Valve "vive_tracker_<role>" controller type, and pushes synthetic
+	// poses every time the HMD pose updates.
 	//
 	// v22 (2026-05-17): OSC router live send-port edit. Adds
 	// RequestSetOscRouterConfig (OscRouterConfig payload, 8 bytes) so the
@@ -243,7 +242,12 @@ namespace protocol
 	// fields. The driver blend path no longer reads them, and the matching
 	// overlay controls/config persistence were removed. The payload shrinks,
 	// so paired overlay+driver install is required.
-	const uint32_t Version = 27;
+	//
+	// v28 (2026-06-02): adds RequestSetPhantomSolverConfig for in-process
+	// Phantom body-completion calibration. The payload is smaller than
+	// SetDeviceTransform, so sizeof(Request) is unchanged; the bump forces
+	// paired overlay+driver install.
+	const uint32_t Version = 28;
 
 	// Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 	// "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -347,6 +351,9 @@ namespace protocol
 		// the profile JSON itself. Driver caches the payload and reads it
 		// on the per-tick pose-update path.
 		RequestSetHeadMountConfig,
+		// v28 (2026-06-02): body-completion solver calibration and
+		// confidence threshold for Phantom virtual roles.
+		RequestSetPhantomSolverConfig,
 	};
 
 	enum ResponseType

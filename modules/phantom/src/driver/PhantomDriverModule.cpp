@@ -10,6 +10,7 @@
 
 #include "BlendController.h"
 #include "BlendCurves.h"
+#include "BodyCompletionSolver.h"
 #include "DeadReckoner.h"
 #include "DropoutState.h"
 #include "IkFallback.h"
@@ -22,6 +23,7 @@
 
 #include <openvr_driver.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -47,6 +49,79 @@ uint64_t Fnv1a64(const char* s)
     return h;
 }
 
+bool PoseIsTrackedOk(const vr::DriverPose_t& pose)
+{
+    return pose.poseIsValid
+        && pose.deviceIsConnected
+        && pose.result == vr::TrackingResult_Running_OK;
+}
+
+uint32_t AgeMsFromQpc(int64_t now_qpc, int64_t sample_qpc, int64_t qpc_freq)
+{
+    if (qpc_freq <= 0 || sample_qpc <= 0 || now_qpc <= sample_qpc) return 0;
+    const int64_t age = ((now_qpc - sample_qpc) * 1000) / qpc_freq;
+    return static_cast<uint32_t>(std::max<int64_t>(0, age));
+}
+
+BodyCompletionPose ToBodyCompletionPose(const vr::DriverPose_t& pose)
+{
+    BodyCompletionPose out;
+    out.position[0] = pose.vecPosition[0];
+    out.position[1] = pose.vecPosition[1];
+    out.position[2] = pose.vecPosition[2];
+    out.rotation[0] = pose.qRotation.w;
+    out.rotation[1] = pose.qRotation.x;
+    out.rotation[2] = pose.qRotation.y;
+    out.rotation[3] = pose.qRotation.z;
+    out.velocity[0] = pose.vecVelocity[0];
+    out.velocity[1] = pose.vecVelocity[1];
+    out.velocity[2] = pose.vecVelocity[2];
+    return out;
+}
+
+BodyCompletionSensorPose ToBodyCompletionSensorPose(const vr::DriverPose_t& pose,
+                                                    uint32_t age_ms)
+{
+    BodyCompletionSensorPose out;
+    out.pose = ToBodyCompletionPose(pose);
+    out.valid = PoseIsTrackedOk(pose);
+    out.age_ms = age_ms;
+    return out;
+}
+
+vr::DriverPose_t PoseFromBodyCompletion(const vr::DriverPose_t& base,
+                                        const BodyCompletionRoleOutput& role)
+{
+    vr::DriverPose_t out = base;
+    out.poseTimeOffset = 0.0;
+    out.vecPosition[0] = role.pose.position[0];
+    out.vecPosition[1] = role.pose.position[1];
+    out.vecPosition[2] = role.pose.position[2];
+    out.vecVelocity[0] = role.pose.velocity[0];
+    out.vecVelocity[1] = role.pose.velocity[1];
+    out.vecVelocity[2] = role.pose.velocity[2];
+    out.vecAcceleration[0] = 0.0;
+    out.vecAcceleration[1] = 0.0;
+    out.vecAcceleration[2] = 0.0;
+    out.qRotation = {
+        role.pose.rotation[0],
+        role.pose.rotation[1],
+        role.pose.rotation[2],
+        role.pose.rotation[3],
+    };
+    out.vecAngularVelocity[0] = 0.0;
+    out.vecAngularVelocity[1] = 0.0;
+    out.vecAngularVelocity[2] = 0.0;
+    out.vecAngularAcceleration[0] = 0.0;
+    out.vecAngularAcceleration[1] = 0.0;
+    out.vecAngularAcceleration[2] = 0.0;
+    out.poseIsValid = true;
+    out.deviceIsConnected = true;
+    out.shouldApplyHeadModel = false;
+    out.result = vr::TrackingResult_Running_OK;
+    return out;
+}
+
 // Per-device state owned by PhantomDriverModule. Keyed by OpenVR device id
 // (small fixed range, allows a vector for O(1) access). Holds the ring,
 // the state machine, and the cached opt-in flag.
@@ -58,15 +133,21 @@ struct DeviceSlot
     uint64_t     serial_hash = 0;
     bool         opted_in    = false;
 
-    // Body role assigned via the T-pose calibration wizard. The IK
-    // fallback (Phase 1.5+) consults this to decide which rigid offset
-    // to apply when the device drops out.
+    // Body role assigned by the calibration UI. The completion solver treats
+    // fresh role-assigned trackers as measured anchors.
     BodyRole     role = BodyRole::None;
 
     // Tracks whether this device is the HMD; the IK solver needs the
     // HMD's live pose as its reference frame. Set the first time
     // ResolveSerialIfMissing identifies a Class_HMD device.
     bool         is_hmd = false;
+
+    vr::ETrackedDeviceClass    device_class = vr::TrackedDeviceClass_Invalid;
+    vr::ETrackedControllerRole controller_role = vr::TrackedControllerRole_Invalid;
+
+    vr::DriverPose_t last_observed{};
+    int64_t          last_observed_qpc = 0;
+    bool             last_observed_valid = false;
 
     // Cached "latest published pose" so BLEND_IN has a starting point that
     // matches what SteamVR is currently seeing. Updated whenever phantom
@@ -101,6 +182,9 @@ public:
 private:
     DeviceSlot& slot(uint32_t openVRID);
     void ResolveSerialIfMissing(uint32_t openVRID, DeviceSlot& s);
+    BodyCompletionInput BuildBodyCompletionInput(int64_t now_qpc) const;
+    void UpdateBodyCompletion(int64_t now_qpc);
+    bool TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const;
     void PublishStateSnapshot();
 
     LadderTimings timings_ = LadderTimings::Defaults();
@@ -122,6 +206,11 @@ private:
     bool             last_hmd_valid_ = false;
 
     IkFallback ik_fallback_;
+    BodyCompletionSolver body_solver_;
+    BodyCompletionCalibration body_calibration_;
+    BodyCompletionResult last_body_completion_{};
+    int64_t last_body_completion_qpc_ = 0;
+    int64_t qpc_freq_ = 0;
     VirtualTrackerManager virtual_trackers_;
 
     // Phase 3 scaffold: out-of-process inference sidecar. Supervisor spawns
@@ -170,9 +259,20 @@ void PhantomModule::ResolveSerialIfMissing(uint32_t openVRID, DeviceSlot& s)
     vr::ETrackedPropertyError classErr = vr::TrackedProp_Success;
     const int32_t deviceClass = vr::VRProperties()->GetInt32Property(
         handle, vr::Prop_DeviceClass_Int32, &classErr);
-    if (classErr == vr::TrackedProp_Success
-        && deviceClass == vr::TrackedDeviceClass_HMD) {
-        s.is_hmd = true;
+    if (classErr == vr::TrackedProp_Success) {
+        s.device_class = static_cast<vr::ETrackedDeviceClass>(deviceClass);
+        if (deviceClass == vr::TrackedDeviceClass_HMD) {
+            s.is_hmd = true;
+        }
+    }
+
+    if (s.device_class == vr::TrackedDeviceClass_Controller) {
+        vr::ETrackedPropertyError roleErr = vr::TrackedProp_Success;
+        const int32_t controllerRole = vr::VRProperties()->GetInt32Property(
+            handle, vr::Prop_ControllerRoleHint_Int32, &roleErr);
+        if (roleErr == vr::TrackedProp_Success) {
+            s.controller_role = static_cast<vr::ETrackedControllerRole>(controllerRole);
+        }
     }
 
     std::lock_guard<std::mutex> lk(state_mutex_);
@@ -195,11 +295,87 @@ DeviceSlot& PhantomModule::slot(uint32_t openVRID)
     return slots_[openVRID];
 }
 
+BodyCompletionInput PhantomModule::BuildBodyCompletionInput(int64_t now_qpc) const
+{
+    BodyCompletionInput input;
+    input.calibration = body_calibration_;
+    if (qpc_freq_ > 0 && last_body_completion_qpc_ > 0 && now_qpc > last_body_completion_qpc_) {
+        input.dt_seconds = std::clamp(
+            static_cast<double>(now_qpc - last_body_completion_qpc_) /
+                static_cast<double>(qpc_freq_),
+            1.0 / 240.0,
+            0.10);
+    }
+
+    if (last_hmd_valid_) {
+        input.hmd = ToBodyCompletionSensorPose(last_hmd_pose_, 0);
+        input.enabled_roles[static_cast<uint8_t>(BodyRole::Hmd)] = true;
+    }
+
+    for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+        const auto role = static_cast<BodyRole>(i);
+        if (virtual_trackers_.IsEnabled(role)) {
+            input.enabled_roles[i] = true;
+        }
+    }
+
+    for (const auto& s : slots_) {
+        if (s.role != BodyRole::None) {
+            input.enabled_roles[static_cast<uint8_t>(s.role)] = true;
+        }
+        if (!s.last_observed_valid) continue;
+
+        const uint32_t age_ms = AgeMsFromQpc(now_qpc, s.last_observed_qpc, qpc_freq_);
+        const auto sensor = ToBodyCompletionSensorPose(s.last_observed, age_ms);
+
+        if (s.device_class == vr::TrackedDeviceClass_Controller && age_ms <= 250u) {
+            if (s.controller_role == vr::TrackedControllerRole_LeftHand) {
+                input.left_controller = sensor;
+            } else if (s.controller_role == vr::TrackedControllerRole_RightHand) {
+                input.right_controller = sensor;
+            }
+        }
+
+        if (s.role == BodyRole::None) continue;
+        if (static_cast<uint8_t>(s.role) >= input.real_roles.size()) continue;
+        if (age_ms > std::max<uint32_t>(timings_.dropout_silence_ms, 200u)) continue;
+        if (s.ladder.state() != TrackerState::REAL
+            && s.ladder.state() != TrackerState::BLEND_IN) {
+            continue;
+        }
+        input.real_roles[static_cast<uint8_t>(s.role)] = sensor;
+    }
+
+    return input;
+}
+
+void PhantomModule::UpdateBodyCompletion(int64_t now_qpc)
+{
+    last_body_completion_ = body_solver_.Solve(BuildBodyCompletionInput(now_qpc));
+    last_body_completion_qpc_ = now_qpc;
+}
+
+bool PhantomModule::TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const
+{
+    const auto idx = static_cast<uint8_t>(role);
+    if (!last_hmd_valid_ || idx >= last_body_completion_.roles.size()) return false;
+    const auto& solved = last_body_completion_.roles[idx];
+    if (!solved.valid || solved.confidence < body_calibration_.virtual_min_confidence) {
+        return false;
+    }
+    synth = PoseFromBodyCompletion(last_hmd_pose_, solved);
+    return true;
+}
+
 bool PhantomModule::Init(DriverModuleContext& context)
 {
     context_ = context;
     g_active = this;
     virtual_trackers_.OnDriverInit();
+    LARGE_INTEGER freqLI{};
+    if (QueryPerformanceFrequency(&freqLI)) {
+        qpc_freq_ = freqLI.QuadPart;
+    }
     if (!shmem_.Create(OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME)) {
         // Non-fatal: badge readout is a nice-to-have. Driver still synthesises.
         LOG("[phantom] PhantomStateShmem.Create('%s') failed; overlay badges disabled",
@@ -259,6 +435,29 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
                 (unsigned)timings_.lost_hold_ms);
             return true;
         }
+        case protocol::RequestSetPhantomSolverConfig: {
+            const auto& c = request.setPhantomSolverConfig;
+            body_calibration_.floor_y_m = c.floor_y_m;
+            body_calibration_.height_m = c.height_m;
+            body_calibration_.forward_yaw_rad = c.forward_yaw_rad;
+            body_calibration_.stance_width_m = c.stance_width_m;
+            body_calibration_.shoulder_width_m = c.shoulder_width_m;
+            body_calibration_.pelvis_width_m = c.pelvis_width_m;
+            body_calibration_.upper_arm_m = c.upper_arm_m;
+            body_calibration_.lower_arm_m = c.lower_arm_m;
+            body_calibration_.upper_leg_m = c.upper_leg_m;
+            body_calibration_.lower_leg_m = c.lower_leg_m;
+            body_calibration_.virtual_min_confidence = c.virtual_min_confidence;
+            body_calibration_.forward_calibrated = (c.calibrated != 0);
+            body_solver_.Reset();
+            response.type = protocol::ResponseSuccess;
+            LOG("[phantom] solver config applied: calibrated=%u height=%.2f floor=%.2f virtual_min=%.2f",
+                (unsigned)c.calibrated,
+                body_calibration_.height_m,
+                body_calibration_.floor_y_m,
+                body_calibration_.virtual_min_confidence);
+            return true;
+        }
         case protocol::RequestSetPhantomDeviceOptIn: {
             const auto& e = request.setPhantomDeviceOptIn;
             std::lock_guard<std::mutex> lk(state_mutex_);
@@ -286,7 +485,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
             for (auto& s : slots_) {
                 if (s.serial_hash == e.device_serial_hash) {
                     s.role = role;
-                    s.ladder.SetIkAvailable(ik_fallback_.HasOffset(s.role));
+                    s.ladder.SetIkAvailable(s.role != BodyRole::None);
                 }
             }
             response.type = protocol::ResponseSuccess;
@@ -305,8 +504,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
             // calibrated role applies to a device that already has its
             // role assigned.
             for (auto& s : slots_) {
-                s.ladder.SetIkAvailable(s.role != BodyRole::None
-                    && ik_fallback_.HasOffset(s.role));
+                s.ladder.SetIkAvailable(s.role != BodyRole::None);
             }
             response.type = protocol::ResponseSuccess;
             return true;
@@ -330,20 +528,25 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID,
     if (openVRID >= slots_.size()) return;
     DeviceSlot& s = slots_[openVRID];
     ResolveSerialIfMissing(openVRID, s);
+    s.last_observed = pose;
+    s.last_observed_qpc = qpc_ns;
+    s.last_observed_valid = PoseIsTrackedOk(pose);
     s.history.Push(qpc_ns, pose);
     s.ladder.SetTimings(timings_);
-    s.ladder.SetIkAvailable(s.role != BodyRole::None
-        && ik_fallback_.HasOffset(s.role));
+    s.ladder.SetIkAvailable(s.role != BodyRole::None);
     s.ladder.OnRealPoseObserved(qpc_ns, s.history, pose);
     if (s.is_hmd && pose.poseIsValid && pose.deviceIsConnected
         && pose.result == vr::TrackingResult_Running_OK) {
         last_hmd_pose_ = pose;
         last_hmd_valid_ = true;
-        // Drive any absent-mode virtual trackers off the HMD's pose
-        // cadence. Each HMD update -> one virtual-pose update per
-        // enabled role. Activation is deferred inside the manager until
-        // the openvr#1536 settle window has elapsed.
-        virtual_trackers_.Tick(last_hmd_pose_, ik_fallback_);
+        UpdateBodyCompletion(qpc_ns);
+        // Drive virtual trackers off the HMD pose cadence. Each HMD update
+        // produces one completion frame; the manager only publishes roles
+        // whose confidence passes the policy threshold.
+        virtual_trackers_.Tick(
+            last_hmd_pose_,
+            last_body_completion_,
+            body_calibration_.virtual_min_confidence);
 
         // Phase 3: refresh the inference-IN shmem so the sidecar has a
         // current frame to consume. Per-role slots carry the latest pose
@@ -449,14 +652,18 @@ bool PhantomModule::MaybeOverridePose(uint32_t openVRID,
         case TrackerState::SYNTH_IK:
         case TrackerState::SYNTH_ML:
         case TrackerState::OUT_OF_RANGE: {
-            // Cascade: ML sidecar (Phase 3) -> rigid-offset IK (Phase 1.5)
-            // -> dead reckoner (Phase 1). Each layer is independently
-            // optional; the cascade falls through to the next when its
-            // input is missing or below confidence. The ladder state is
-            // mostly a hint for the diagnostics badge -- the actual
-            // dispatch picks the best source available regardless.
+            // Cascade: in-process completion -> sidecar backend ->
+            // rigid-offset IK -> dead reckoner. Each layer is optional; the
+            // cascade falls through to the next when its input is missing or
+            // below confidence. The ladder state is mostly a diagnostics
+            // hint -- the dispatch picks the best source available.
             vr::DriverPose_t synth{};
             bool produced = false;
+            if (!produced
+                && s.role != BodyRole::None
+                && TryBodyCompletionPose(s.role, synth)) {
+                produced = true;
+            }
             (void)sidecar_bridge_.TryOpen();
             if (!produced
                 && s.role != BodyRole::None
@@ -543,6 +750,28 @@ void PhantomModule::PublishStateSnapshot()
 
         MemoryBarrier();
         // Bump epoch back to even (stable) state.
+        dst.epoch = dst.epoch + 1;
+    }
+
+    for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+        const auto& src = last_body_completion_.roles[i];
+        auto& dst = layout->roles[i];
+        dst.epoch = dst.epoch + 1;
+        MemoryBarrier();
+
+        dst.role = i;
+        dst.valid = src.valid ? 1u : 0u;
+        dst.solver_mode = static_cast<uint8_t>(src.mode);
+        dst._pad0 = 0;
+        dst.source_mask = src.source_mask;
+        dst._pad1 = 0;
+        dst.confidence = src.confidence;
+        dst.age_ms = src.age_ms;
+        dst.position[0] = src.pose.position[0];
+        dst.position[1] = src.pose.position[1];
+        dst.position[2] = src.pose.position[2];
+
+        MemoryBarrier();
         dst.epoch = dst.epoch + 1;
     }
 }

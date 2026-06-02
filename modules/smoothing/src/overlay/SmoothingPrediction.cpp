@@ -4,7 +4,6 @@
 #include "SmoothingPlugin.h"
 
 #include "CalibrationAnchor.h"
-#include "DevSimulationState.h"
 #include "DeviceFilters.h"
 #include "Protocol.h"
 #include "UiHelpers.h"
@@ -23,8 +22,6 @@
 #include <string>
 
 namespace {
-
-namespace devsim = openvr_pair::overlay::devsim;
 
 struct ExternalSmoothingTool
 {
@@ -235,7 +232,7 @@ void SmoothingPlugin::DrawPredictionTab()
 	};
 
 	auto *vrSystem = vr::VRSystem();
-	if (!vrSystem && !devsim::IsEnabled()) {
+	if (!vrSystem) {
 		ImGui::TextDisabled("(VR system not available)");
 		return;
 	}
@@ -270,35 +267,6 @@ void SmoothingPlugin::DrawPredictionTab()
 			}
 
 			drawPredictionDevice(id, deviceClass, serial, model, rawSystem, sys, true);
-		}
-	}
-
-	if (devsim::IsEnabled()) {
-		drawPredictionDevice(devsim::kHmdId, vr::TrackedDeviceClass_HMD,
-			devsim::SerialForDeviceId(devsim::kHmdId),
-			devsim::ModelForDeviceId(devsim::kHmdId),
-			devsim::ReferenceTrackingSystem(),
-			PrettyTrackingSystem(devsim::ReferenceTrackingSystem()),
-			false);
-		drawPredictionDevice(devsim::kTrackerId, vr::TrackedDeviceClass_GenericTracker,
-			devsim::SerialForDeviceId(devsim::kTrackerId),
-			devsim::ModelForDeviceId(devsim::kTrackerId),
-			devsim::TargetTrackingSystem(),
-			PrettyTrackingSystem(devsim::TargetTrackingSystem()),
-			false);
-		if (devsim::IncludeIndexControllers()) {
-			drawPredictionDevice(devsim::kLeftControllerId, vr::TrackedDeviceClass_Controller,
-				devsim::SerialForDeviceId(devsim::kLeftControllerId),
-				devsim::ModelForDeviceId(devsim::kLeftControllerId),
-				devsim::TargetTrackingSystem(),
-				PrettyTrackingSystem(devsim::TargetTrackingSystem()),
-				false);
-			drawPredictionDevice(devsim::kRightControllerId, vr::TrackedDeviceClass_Controller,
-				devsim::SerialForDeviceId(devsim::kRightControllerId),
-				devsim::ModelForDeviceId(devsim::kRightControllerId),
-				devsim::TargetTrackingSystem(),
-				PrettyTrackingSystem(devsim::TargetTrackingSystem()),
-				false);
 		}
 	}
 

@@ -57,9 +57,10 @@
 // Phantom-tracker per-device state shmem. Created by the driver only when
 // the phantom feature is enabled; the Phantom overlay opens it to render
 // per-tracker state badges (REAL / RECKON / IK / ML / OUTOFRANGE / LOST)
-// and dropout-count counters at ~10 Hz. Single writer (driver) /
-// single reader (overlay).
-#define OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME "WKOpenVRPhantomStateV1"
+// and dropout-count counters at ~10 Hz. V2 adds per-role body completion
+// confidence/source diagnostics. Single writer (driver) / single reader
+// (overlay).
+#define OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME "WKOpenVRPhantomStateV2"
 
 // Phantom Phase 3 inference shmems. The driver writes per-frame inputs
 // into the IN segment; the sidecar (WKOpenVRPhantomSidecar.exe) reads,

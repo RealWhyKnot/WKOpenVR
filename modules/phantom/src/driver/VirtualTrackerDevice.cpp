@@ -32,7 +32,7 @@ VirtualTrackerDevice::VirtualTrackerDevice(BodyRole role)
         static_cast<unsigned long long>(Fnv1a64(roleKey)));
     serial_ = buf;
     // Identity rotation, zero translation; safe default until the first
-    // Publish overwrites with an IK-derived pose.
+    // Publish overwrites with a solver-derived pose.
     last_pose_.qWorldFromDriverRotation = {1, 0, 0, 0};
     last_pose_.qDriverFromHeadRotation  = {1, 0, 0, 0};
     last_pose_.qRotation = {1, 0, 0, 0};

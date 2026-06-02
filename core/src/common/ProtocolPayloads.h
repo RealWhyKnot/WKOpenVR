@@ -591,16 +591,36 @@
 	};
 
 	// POD payload for RequestSetPhantomVirtualEnabled. Per-role boolean for
-	// absent-mode virtual trackers. The driver only honours the request
-	// when the role has a T-pose calibration on file (otherwise the
-	// virtual tracker would have no pose source). Flipping off removes
-	// the virtual device from future creation; the live instance lives
-	// out the current vrserver process.
+	// absent-mode virtual trackers. The driver publishes a role only when
+	// the in-process completion result passes the configured confidence
+	// threshold. Flipping off removes the virtual device from future
+	// creation; the live instance lives out the current vrserver process.
 	struct PhantomVirtualEnabled
 	{
 		uint8_t body_role;
 		uint8_t enabled;
 		uint8_t _reserved[6];
+	};
+
+	// POD payload for RequestSetPhantomSolverConfig. Carries the body
+	// completion calibration used by the in-process solver. Timeout ladder
+	// values stay in PhantomConfig; this request is only body dimensions,
+	// floor, neutral forward, and the minimum confidence for virtual roles.
+	struct PhantomSolverConfig
+	{
+		uint8_t calibrated;
+		uint8_t _reserved[7];
+		double floor_y_m;
+		double height_m;
+		double forward_yaw_rad;
+		double stance_width_m;
+		double shoulder_width_m;
+		double pelvis_width_m;
+		double upper_arm_m;
+		double lower_arm_m;
+		double upper_leg_m;
+		double lower_leg_m;
+		double virtual_min_confidence;
 	};
 
 	// POD payload for RequestSetHeadMountConfig (v25/v26). The overlay resolves
@@ -683,6 +703,8 @@
 			PhantomTrackerOffset  setPhantomTrackerOffset;
 			// v21: phantom Phase 2 absent-mode virtual-tracker toggle.
 			PhantomVirtualEnabled setPhantomVirtualEnabled;
+			// v28: phantom in-process body completion calibration.
+			PhantomSolverConfig   setPhantomSolverConfig;
 			// v22: OSC router live send-port edit. Tiny (8 bytes); does not
 			// grow the union.
 			OscRouterConfig       setOscRouterConfig;
@@ -724,6 +746,8 @@
 		"PhantomTrackerOffset must not grow Request");
 	static_assert(sizeof(PhantomVirtualEnabled) <= sizeof(SetDeviceTransform),
 		"PhantomVirtualEnabled must not grow Request");
+	static_assert(sizeof(PhantomSolverConfig) <= sizeof(SetDeviceTransform),
+		"PhantomSolverConfig must not grow Request");
 
 	struct Response
 	{

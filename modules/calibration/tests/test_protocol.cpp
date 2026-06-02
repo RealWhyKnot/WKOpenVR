@@ -22,7 +22,7 @@
 // require a deliberate two-touch acknowledgement, not to gate releases.
 // ---------------------------------------------------------------------------
 TEST(ProtocolTest, VersionPinnedToCurrent) {
-    EXPECT_EQ(protocol::Version, 27u)
+    EXPECT_EQ(protocol::Version, 28u)
         << "Protocol version changed without updating the test pin. If this is "
            "intentional: bump the literal here and update wiki/Protocol.md "
            "with the new version.";
@@ -67,6 +67,14 @@ TEST(ProtocolTest, PhantomDeviceOptInLayout) {
     protocol::PhantomDeviceOptIn e{};
     EXPECT_EQ(e.device_serial_hash, 0u);
     EXPECT_EQ(e.dropout_enabled, 0u);
+}
+
+TEST(ProtocolTest, PhantomSolverConfigLayout) {
+    EXPECT_LE(sizeof(protocol::PhantomSolverConfig), sizeof(protocol::SetDeviceTransform));
+    protocol::PhantomSolverConfig c{};
+    EXPECT_EQ(c.calibrated, 0u);
+    EXPECT_DOUBLE_EQ(c.height_m, 0.0);
+    EXPECT_DOUBLE_EQ(c.virtual_min_confidence, 0.0);
 }
 
 // ---------------------------------------------------------------------------

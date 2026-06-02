@@ -6,9 +6,6 @@
 #include "UiControls.h"
 #include "UserInterfaceLogFiles.h"
 #include "Win32Text.h"
-#if WKOPENVR_BUILD_IS_DEV
-#include "DevFakeDevices.h"
-#endif
 
 #include <string>
 #include <shellapi.h>
@@ -179,34 +176,6 @@ void CCal_DrawDevToolsPanel() {
 	if (ImGui::IsItemHovered()) {
 		ImGui::SetTooltip(
 			"Write per-tick calibration rows that can be replayed locally.");
-	}
-
-	ImGui::Spacing();
-	ui::DrawSectionHeading("Simulation");
-	bool fakeDevices = spacecal::devfake::IsEnabled();
-	if (ImGui::Checkbox("Simulated tracker and HMD", &fakeDevices)) {
-		spacecal::devfake::SetEnabled(fakeDevices);
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip(
-			"Adds a simulated Quest HMD and Vive tracker so calibration UI can run from the desktop.");
-	}
-
-	bool fakeControllers = spacecal::devfake::IncludeIndexControllers();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!fakeDevices);
-	if (ImGui::Checkbox("Simulated Index controllers", &fakeControllers)) {
-		spacecal::devfake::SetIncludeIndexControllers(fakeControllers);
-	}
-	ImGui::EndDisabled();
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip(
-			"Adds left and right Index-style controllers to the fake lighthouse space.");
-	}
-
-	if (fakeDevices) {
-		ImGui::TextWrapped(
-			"Simulated devices are local to the overlay and do not push transforms to the SteamVR driver.");
 	}
 
 	ImGui::Spacing();

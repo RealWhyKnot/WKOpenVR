@@ -18,12 +18,21 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <cmath>
 #include <string>
+
+namespace {
+
+const char* SolverModeLabel(uint8_t mode);
+std::string SourceMaskLabel(uint16_t mask);
+
+} // namespace
 
 void PhantomPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 {
     (void)ConnectIfNeeded();
     SendConfig();
+    SendSolverConfig();
     // Push the persisted per-device opt-in map + calibration so the driver
     // picks up the user's prior choices without needing to wait for them
     // to re-toggle / re-calibrate.
@@ -40,6 +49,7 @@ void PhantomPlugin::Tick(openvr_pair::overlay::ShellContext&)
         // Reconnected after a drop -- replay full state so the driver is in
         // sync with what the overlay believes.
         SendConfig();
+        SendSolverConfig();
         for (const auto& kv : cfg_.dropout_enabled) {
             if (kv.second) SendDeviceOptIn(kv.first, true);
         }
@@ -86,6 +96,31 @@ void PhantomPlugin::SendConfig()
     c.reckon_hold_ms = cfg_.reckon_hold_ms;
     c.synth_hold_ms  = cfg_.synth_hold_ms;
     c.lost_hold_ms   = cfg_.lost_hold_ms;
+    try {
+        ipc_.SendBlocking(req);
+    } catch (const std::exception& e) {
+        connectError_ = e.what();
+    }
+}
+
+void PhantomPlugin::SendSolverConfig()
+{
+    if (!ipc_.IsConnected()) return;
+    protocol::Request req(protocol::RequestSetPhantomSolverConfig);
+    auto& s = req.setPhantomSolverConfig;
+    std::memset(&s, 0, sizeof(s));
+    s.calibrated = cfg_.solver.calibrated ? 1u : 0u;
+    s.floor_y_m = cfg_.solver.floor_y_m;
+    s.height_m = cfg_.solver.height_m;
+    s.forward_yaw_rad = cfg_.solver.forward_yaw_rad;
+    s.stance_width_m = cfg_.solver.stance_width_m;
+    s.shoulder_width_m = cfg_.solver.shoulder_width_m;
+    s.pelvis_width_m = cfg_.solver.pelvis_width_m;
+    s.upper_arm_m = cfg_.solver.upper_arm_m;
+    s.lower_arm_m = cfg_.solver.lower_arm_m;
+    s.upper_leg_m = cfg_.solver.upper_leg_m;
+    s.lower_leg_m = cfg_.solver.lower_leg_m;
+    s.virtual_min_confidence = cfg_.solver.virtual_min_confidence;
     try {
         ipc_.SendBlocking(req);
     } catch (const std::exception& e) {
@@ -217,6 +252,10 @@ void PhantomPlugin::DrawDiagnosticsTab()
         ImGui::TextDisabled("Driver state shmem has unexpected magic; mismatched install?");
         return;
     }
+    if (layout->version != phantom::kPhantomStateShmemVersion) {
+        ImGui::TextDisabled("Driver state shmem has unexpected version; mismatched install?");
+        return;
+    }
 
     openvr_pair::overlay::ui::TableScope table("PhantomDiag", 5,
         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH);
@@ -242,6 +281,42 @@ void PhantomPlugin::DrawDiagnosticsTab()
             ImGui::Text("%u", d.dropout_age_ms);
             ImGui::TableNextColumn();
             ImGui::Text("%u", d.longest_dropout_ms);
+        }
+    }
+
+    if (layout->version >= phantom::kPhantomStateShmemVersion) {
+        ImGui::Spacing();
+        ImGui::SeparatorText("Role completion");
+        openvr_pair::overlay::ui::TableScope roleTable("PhantomRoleDiag", 6,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH);
+        if (roleTable) {
+            ImGui::TableSetupColumn("Role");
+            ImGui::TableSetupColumn("Confidence");
+            ImGui::TableSetupColumn("Mode");
+            ImGui::TableSetupColumn("Source");
+            ImGui::TableSetupColumn("Age");
+            ImGui::TableSetupColumn("Position");
+            ImGui::TableHeadersRow();
+            for (uint8_t i = 0; i < phantom::kBodyRoleCount; ++i) {
+                const auto& r = layout->roles[i];
+                if (!r.valid) continue;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", phantom::BodyRoleLabel(
+                    static_cast<phantom::BodyRole>(r.role)));
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", r.confidence);
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", SolverModeLabel(r.solver_mode));
+                ImGui::TableNextColumn();
+                const std::string sources = SourceMaskLabel(r.source_mask);
+                ImGui::TextWrapped("%s", sources.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%u ms", r.age_ms);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f %.2f %.2f",
+                    r.position[0], r.position[1], r.position[2]);
+            }
         }
     }
 }
@@ -376,6 +451,46 @@ void QRotateInverse(const vr::HmdQuaternion_t& q, const double v[3], double out[
     out[2] = v[2] + s * tz + (ux * ty - uy * tx);
 }
 
+double YawRadiansFromQuat(const vr::HmdQuaternion_t& q)
+{
+    const double siny = 2.0 * (q.w * q.y + q.x * q.z);
+    const double cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+    return std::atan2(siny, cosy);
+}
+
+const char* SolverModeLabel(uint8_t mode)
+{
+    switch (mode) {
+    case 0: return "none";
+    case 1: return "measured";
+    case 2: return "hmd_root";
+    case 3: return "controller_ik";
+    case 4: return "floor_contact";
+    case 5: return "held_contact";
+    case 6: return "low_confidence";
+    }
+    return "unknown";
+}
+
+std::string SourceMaskLabel(uint16_t mask)
+{
+    std::string out;
+    auto add = [&](uint16_t bit, const char* label) {
+        if ((mask & bit) == 0) return;
+        if (!out.empty()) out += ",";
+        out += label;
+    };
+    add(1u << 0, "measured");
+    add(1u << 1, "hmd");
+    add(1u << 2, "controller");
+    add(1u << 3, "floor");
+    add(1u << 4, "contact");
+    add(1u << 5, "predicted");
+    add(1u << 6, "held");
+    if (out.empty()) out = "none";
+    return out;
+}
+
 } // namespace
 
 void PhantomPlugin::SendDeviceRole(const std::string& serial, phantom::BodyRole role)
@@ -425,6 +540,7 @@ void PhantomPlugin::SendVirtualEnabled(phantom::BodyRole role, bool enabled)
 void PhantomPlugin::ReplayCalibration()
 {
     if (!ipc_.IsConnected()) return;
+    SendSolverConfig();
     for (const auto& kv : cfg_.device_role) {
         SendDeviceRole(kv.first, kv.second);
     }
@@ -434,6 +550,64 @@ void PhantomPlugin::ReplayCalibration()
     for (const auto& kv : cfg_.virtual_enabled) {
         if (kv.second) SendVirtualEnabled(kv.first, true);
     }
+}
+
+void PhantomPlugin::CaptureNeutralStanding()
+{
+    auto* vrSystem = vr::VRSystem();
+    if (!vrSystem) {
+        lastSolverCalibrationSummary_ = "VR system not available; neutral pose not captured.";
+        return;
+    }
+
+    vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount]{};
+    vrSystem->GetDeviceToAbsoluteTrackingPose(
+        vr::TrackingUniverseStanding,
+        /*predictedSecondsToPhotonsFromNow=*/0.0f,
+        poses,
+        vr::k_unMaxTrackedDeviceCount);
+
+    uint32_t hmdId = vr::k_unTrackedDeviceIndexInvalid;
+    for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
+        if (vrSystem->GetTrackedDeviceClass(id) == vr::TrackedDeviceClass_HMD
+            && poses[id].bPoseIsValid
+            && poses[id].eTrackingResult == vr::TrackingResult_Running_OK) {
+            hmdId = id;
+            break;
+        }
+    }
+    if (hmdId == vr::k_unTrackedDeviceIndexInvalid) {
+        lastSolverCalibrationSummary_ = "HMD not tracked; neutral pose not captured.";
+        return;
+    }
+
+    double hmdPos[3];
+    vr::HmdQuaternion_t hmdRot;
+    DecomposeMatrix34(poses[hmdId].mDeviceToAbsoluteTracking, hmdPos, hmdRot);
+
+    cfg_.solver.calibrated = true;
+    cfg_.solver.floor_y_m = 0.0;
+    cfg_.solver.height_m = std::clamp(hmdPos[1] - cfg_.solver.floor_y_m, 1.0, 2.4);
+    cfg_.solver.forward_yaw_rad = YawRadiansFromQuat(hmdRot);
+
+    const double h = cfg_.solver.height_m;
+    cfg_.solver.stance_width_m = std::clamp(h * 0.165, 0.10, 0.70);
+    cfg_.solver.shoulder_width_m = std::clamp(h * 0.225, 0.20, 0.70);
+    cfg_.solver.pelvis_width_m = std::clamp(h * 0.165, 0.15, 0.60);
+    cfg_.solver.upper_arm_m = std::clamp(h * 0.176, 0.15, 0.55);
+    cfg_.solver.lower_arm_m = std::clamp(h * 0.159, 0.15, 0.55);
+    cfg_.solver.upper_leg_m = std::clamp(h * 0.265, 0.20, 0.70);
+    cfg_.solver.lower_leg_m = std::clamp(h * 0.265, 0.20, 0.70);
+
+    SendSolverConfig();
+    SavePhantomConfig(cfg_);
+
+    char tmp[128];
+    std::snprintf(tmp, sizeof(tmp),
+        "Neutral standing captured: height %.2f m, forward %.2f rad.",
+        cfg_.solver.height_m,
+        cfg_.solver.forward_yaw_rad);
+    lastSolverCalibrationSummary_ = tmp;
 }
 
 void PhantomPlugin::CaptureTPose()
@@ -536,20 +710,57 @@ void PhantomPlugin::DrawCalibrationTab()
 {
     ImGui::Spacing();
     ImGui::TextWrapped(
-        "Assign a body role to each physical tracker, hold T-pose, then "
-        "click Capture. The driver remembers the rigid offset between "
-        "each tracker and your head; when a tracker drops out the offset "
-        "is reapplied to your live head pose so the avatar stays plausible "
-        "past the dead-reckoning window.");
+        "Capture neutral standing first for headset/controller body completion. "
+        "Assign physical trackers below only when a real tracker should anchor "
+        "or disambiguate a body role.");
     ImGui::Spacing();
 
+    ImGui::SeparatorText("Neutral standing");
+    if (ImGui::Button("Capture neutral standing")) {
+        CaptureNeutralStanding();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Stand upright, face forward, and click. Uses the current HMD pose "
+            "to set height, floor, forward direction, and starting proportions.");
+    }
+    if (!lastSolverCalibrationSummary_.empty()) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", lastSolverCalibrationSummary_.c_str());
+    }
+
+    auto solverSlider = [&](const char* label, double& v, float lo, float hi,
+                            const char* fmt) {
+        float tmp = static_cast<float>(v);
+        if (ImGui::SliderFloat(label, &tmp, lo, hi, fmt)) {
+            v = static_cast<double>(std::clamp(tmp, lo, hi));
+            cfg_.solver.calibrated = true;
+            SendSolverConfig();
+            SavePhantomConfig(cfg_);
+        }
+    };
+
+    ImGui::Spacing();
+    solverSlider("Height", cfg_.solver.height_m, 1.0f, 2.4f, "%.2f m");
+    solverSlider("Floor Y", cfg_.solver.floor_y_m, -1.0f, 1.0f, "%.2f m");
+    solverSlider("Stance width", cfg_.solver.stance_width_m, 0.10f, 0.70f, "%.2f m");
+    solverSlider("Shoulder width", cfg_.solver.shoulder_width_m, 0.20f, 0.70f, "%.2f m");
+    solverSlider("Pelvis width", cfg_.solver.pelvis_width_m, 0.15f, 0.60f, "%.2f m");
+    solverSlider("Upper arm", cfg_.solver.upper_arm_m, 0.15f, 0.55f, "%.2f m");
+    solverSlider("Lower arm", cfg_.solver.lower_arm_m, 0.15f, 0.55f, "%.2f m");
+    solverSlider("Upper leg", cfg_.solver.upper_leg_m, 0.20f, 0.70f, "%.2f m");
+    solverSlider("Lower leg", cfg_.solver.lower_leg_m, 0.20f, 0.70f, "%.2f m");
+    solverSlider("Minimum virtual confidence",
+        cfg_.solver.virtual_min_confidence, 0.0f, 1.0f, "%.2f");
+
+    ImGui::Spacing();
     auto* vrSystem = vr::VRSystem();
     if (!vrSystem) {
         ImGui::TextDisabled("(VR system not available)");
         return;
     }
 
-    ImGui::SeparatorText("Role assignment");
+    ImGui::SeparatorText("Physical tracker roles");
     char buffer[vr::k_unMaxPropertyStringSize];
     for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
         const auto cls = vrSystem->GetTrackedDeviceClass(id);
@@ -610,15 +821,15 @@ void PhantomPlugin::DrawCalibrationTab()
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("T-pose capture");
+    ImGui::SeparatorText("Tracker mounting offsets");
     if (ImGui::Button("Capture T-pose now")) {
         CaptureTPose();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
             "Stand in a T-pose (arms out, body upright, head level) and click.\n"
-            "Captures the rigid offset of every assigned-role tracker from your\n"
-            "head. Reassigning a role or moving a tracker means re-capturing.");
+            "Captures the rigid mounting offset of every assigned physical\n"
+            "tracker. Reassigning a role or moving a tracker means re-capturing.");
     }
     if (!lastCalibrationSummary_.empty()) {
         ImGui::Spacing();
@@ -643,10 +854,9 @@ void PhantomPlugin::DrawAbsentTab()
     ImGui::Spacing();
     ImGui::TextWrapped(
         "Add body trackers you do not physically own. The driver creates a "
-        "virtual SteamVR tracker for each enabled role and feeds it from the "
-        "T-pose calibration in the Calibration tab. VRChat / Resonite / Neos "
-        "pick the role up automatically because the virtual device reports "
-        "the published vive_tracker_<role> controller type.");
+        "virtual SteamVR tracker for each enabled role and feeds it from "
+        "headset/controller/physical-tracker body completion when confidence "
+        "is high enough.");
     ImGui::Spacing();
     ImGui::TextDisabled(
         "Note: SteamVR does not allow live retraction. Disabling a role here "
@@ -664,25 +874,18 @@ void PhantomPlugin::DrawAbsentTab()
         phantom::BodyRole::LeftShoulder, phantom::BodyRole::RightShoulder,
     };
     for (auto role : roles) {
-        const auto offsetIt = cfg_.role_offset.find(role);
-        const bool calibrated = (offsetIt != cfg_.role_offset.end()
-            && offsetIt->second.calibrated);
         bool enabled = cfg_.virtual_enabled.count(role)
             ? cfg_.virtual_enabled[role]
             : false;
 
         ImGui::PushID(static_cast<int>(role));
-        ImGui::BeginDisabled(!calibrated);
         if (ImGui::Checkbox("##en", &enabled)) {
             cfg_.virtual_enabled[role] = enabled;
             SendVirtualEnabled(role, enabled);
             SavePhantomConfig(cfg_);
         }
-        ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::Text("%-18s %s",
-            phantom::BodyRoleLabel(role),
-            calibrated ? "" : "(needs T-pose calibration)");
+        ImGui::Text("%-18s", phantom::BodyRoleLabel(role));
         ImGui::PopID();
     }
 }

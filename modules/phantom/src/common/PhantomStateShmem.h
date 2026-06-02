@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PhantomTypes.h"
+#include "RoleCatalog.h"
 
 #include <windows.h>
 
@@ -54,6 +55,24 @@ struct PhantomDeviceState
     char serial[kMaxSerialLen];
 };
 
+struct PhantomRoleCompletionState
+{
+    // Bumped before and after each role write. Even = stable, odd = writing.
+    uint32_t epoch;
+
+    uint8_t role;        // BodyRole
+    uint8_t valid;
+    uint8_t solver_mode; // BodyCompletionMode wire value
+    uint8_t _pad0;
+
+    uint16_t source_mask;
+    uint16_t _pad1;
+
+    float confidence;
+    uint32_t age_ms;
+    double position[3];
+};
+
 struct PhantomStateShmemLayout
 {
     // Sanity guard for shape changes; reader verifies before trusting layout.
@@ -63,13 +82,14 @@ struct PhantomStateShmemLayout
     uint32_t _reserved;
 
     PhantomDeviceState devices[kMaxPhantomDevices];
+    PhantomRoleCompletionState roles[kBodyRoleCount];
 };
 
 static_assert(sizeof(PhantomStateShmemLayout) < 8192,
     "PhantomStateShmemLayout must fit comfortably in a single 4 KB page family");
 
 constexpr uint32_t kPhantomStateShmemMagic   = 0x54534850; // 'PHST' little-endian
-constexpr uint32_t kPhantomStateShmemVersion = 1;
+constexpr uint32_t kPhantomStateShmemVersion = 2;
 
 // Thin RAII wrapper around the named-shmem mapping. Driver calls Create,
 // overlay calls Open; both call Close on shutdown.

@@ -30,7 +30,7 @@ uint64_t Fnv1a64(const std::string &s) {
 }
 
 bool ProbePhantomShmem(uint32_t &magic, uint32_t &version, uint32_t &device_count) {
-	HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, "WKOpenVRPhantomStateV1");
+	HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, "WKOpenVRPhantomStateV2");
 	if (h == nullptr) return false;
 	void *view = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
 	if (view == nullptr) { ::CloseHandle(h); return false; }
@@ -139,21 +139,21 @@ ScenarioResult RunScenario_phantom(ScenarioContext &ctx) {
 	}
 	if (!found) {
 		return Fail("phantom", duration_now(),
-			"WKOpenVRPhantomStateV1 shmem segment not visible");
+			"WKOpenVRPhantomStateV2 shmem segment not visible");
 	}
 	if (magic != 0x54534850u /* 'PHST' little-endian */) {
 		return Fail("phantom", duration_now(),
-			"WKOpenVRPhantomStateV1 magic=0x" + std::to_string(magic)
+			"WKOpenVRPhantomStateV2 magic=0x" + std::to_string(magic)
 			+ " (expected 0x54534850)");
 	}
 	if (version != 1u) {
 		return Fail("phantom", duration_now(),
-			"WKOpenVRPhantomStateV1 version=" + std::to_string(version)
+			"WKOpenVRPhantomStateV2 version=" + std::to_string(version)
 			+ " (expected 1)");
 	}
 	if (device_count != 64u) {
 		return Fail("phantom", duration_now(),
-			"WKOpenVRPhantomStateV1 device_count=" + std::to_string(device_count)
+			"WKOpenVRPhantomStateV2 device_count=" + std::to_string(device_count)
 			+ " (expected 64)");
 	}
 	ctx.log.Info("phantom shmem header OK (magic=PHST, ver=1, devices=64)");

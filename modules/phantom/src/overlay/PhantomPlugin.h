@@ -44,6 +44,7 @@ private:
     // and rendered as a one-line "captured N roles, M skipped" badge until
     // the user starts another capture.
     std::string lastCalibrationSummary_;
+    std::string lastSolverCalibrationSummary_;
 
     void DrawDropoutsTab();
     void DrawDiagnosticsTab();
@@ -53,10 +54,12 @@ private:
 
     bool ConnectIfNeeded();
     void SendConfig();
+    void SendSolverConfig();
     void SendDeviceOptIn(const std::string& serial, bool enabled);
     void SendDeviceRole(const std::string& serial, phantom::BodyRole role);
     void SendTrackerOffset(phantom::BodyRole role, const PhantomRoleOffset& offset);
     void SendVirtualEnabled(phantom::BodyRole role, bool enabled);
     void ReplayCalibration();
+    void CaptureNeutralStanding();
     void CaptureTPose();
 };

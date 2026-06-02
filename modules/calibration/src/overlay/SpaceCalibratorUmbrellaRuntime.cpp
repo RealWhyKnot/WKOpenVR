@@ -6,9 +6,6 @@
 #include "CalibrationMetrics.h"
 #include "Configuration.h"
 #include "UserInterface.h"
-#if WKOPENVR_BUILD_IS_DEV
-#include "DevFakeDevices.h"
-#endif
 
 #include <openvr.h>
 
@@ -108,20 +105,10 @@ void CCal_UmbrellaTick()
 	const auto now = std::chrono::steady_clock::now();
 	if (!g_vrReady && now - g_lastRetry >= g_retryPeriod) {
 		g_lastRetry = now;
-#if WKOPENVR_BUILD_IS_DEV
-		if (!spacecal::devfake::IsEnabled()) {
-			TryConnect();
-		}
-#else
 		TryConnect();
-#endif
 	}
 
-#if WKOPENVR_BUILD_IS_DEV
-	if (g_vrReady || spacecal::devfake::IsEnabled()) {
-#else
 	if (g_vrReady) {
-#endif
 		CalibrationTick(SecondsSinceStart());
 
 		std::vector<openvr_pair::overlay::CalibrationDeviceLock> locks;
@@ -173,11 +160,7 @@ void RequestExit()
 
 bool IsVRReady()
 {
-#if WKOPENVR_BUILD_IS_DEV
-	return g_vrReady || spacecal::devfake::IsEnabled();
-#else
 	return g_vrReady;
-#endif
 }
 
 const std::string &LastVRConnectError()

@@ -2,7 +2,7 @@
 
 ## Version
 
-`protocol::Version = 27`, defined in [core/src/common/Protocol.h](https://github.com/RealWhyKnot/WKOpenVR/blob/main/core/src/common/Protocol.h). The handshake fails closed on mismatch -- a paired install where overlay and driver are different versions is rejected at connect time rather than silently misrouting request bytes.
+`protocol::Version = 28`, defined in [core/src/common/Protocol.h](https://github.com/RealWhyKnot/WKOpenVR/blob/main/core/src/common/Protocol.h). The handshake fails closed on mismatch -- a paired install where overlay and driver are different versions is rejected at connect time rather than silently misrouting request bytes.
 
 ### Bump discipline
 
@@ -21,6 +21,7 @@ Each bump is documented in a comment above the `const uint32_t Version = N;` lin
 | `\\.\pipe\OpenVR-Calibration` | overlay <-> driver | calibration |
 | `\\.\pipe\WKOpenVR-Smoothing` | overlay <-> driver | smoothing |
 | `\\.\pipe\WKOpenVR-InputHealth` | overlay <-> driver | inputhealth |
+| `\\.\pipe\WKOpenVR-Phantom` | overlay <-> driver | phantom |
 
 Each overlay sends only its own request types. The driver routes by request type and rejects messages on the wrong pipe. Pipe names are exposed in `Protocol.h` as `OPENVR_PAIRDRIVER_*_PIPE_NAME` macros so both sides resolve them through a single source of truth.
 
@@ -30,6 +31,7 @@ Each overlay sends only its own request types. The driver routes by request type
 |---|---|---|
 | `WKOpenVRPoseMemoryV2` | driver -> overlay | calibration pose telemetry |
 | `WKOpenVRInputHealthMemoryV1` | driver -> overlay | 10 Hz input-health snapshot ring |
+| `WKOpenVRPhantomStateV2` | driver -> overlay | phantom dropout state and role-completion diagnostics |
 
 The seqlock discipline used by the shmem classes:
 

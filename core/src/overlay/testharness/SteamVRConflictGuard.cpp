@@ -59,7 +59,7 @@ std::string DetectLiveShmem() {
 		"WKOpenVRInputHealthMemoryV1",
 		"WKOpenVRFaceTrackingFrameRingV2",
 		"WKOpenVROscRouterStatsV1",
-		"WKOpenVRPhantomStateV1",
+		"WKOpenVRPhantomStateV2",
 	};
 	for (const char *name : kSegments) {
 		HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, name);

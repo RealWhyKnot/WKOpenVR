@@ -1,6 +1,6 @@
 #pragma once
 
-#include "IkFallback.h"
+#include "BodyCompletionSolver.h"
 #include "RoleCatalog.h"
 #include "VirtualTrackerDevice.h"
 
@@ -19,7 +19,7 @@ namespace phantom {
 // settle delay; deferred-add gate mitigates openvr#1536-class regressions
 // where adding a virtual device before physical tracker enumeration
 // stabilises suppresses pose acquisition on later devices) and drives
-// per-tick pose publishing from IkFallback output.
+// per-tick pose publishing from BodyCompletionSolver output.
 //
 // Phase 2 limitation: SteamVR does not support TrackedDeviceRemoved
 // live for generic trackers; flipping a role's enable to false retracts
@@ -38,18 +38,19 @@ public:
     // conditions are met.
     void SetEnabled(BodyRole role, bool enabled);
     bool IsEnabled(BodyRole role) const;
-    bool IsCalibrated(BodyRole role, const IkFallback& ik) const;
 
     // Called every tick by PhantomModule (specifically when the HMD pose
     // updates). Lazily activates pending virtual devices and pushes
-    // IK-derived poses on every already-activated device.
-    void Tick(const vr::DriverPose_t& hmd_pose, const IkFallback& ik);
+    // solver-derived poses on every already-activated device.
+    void Tick(const vr::DriverPose_t& hmd_pose,
+              const BodyCompletionResult& body,
+              double min_confidence);
 
     // Diagnostic: how many virtual devices are currently activated.
     int ActiveCount() const;
 
 private:
-    void MaybeActivate(BodyRole role, const IkFallback& ik);
+    void MaybeActivate(BodyRole role);
 
     std::array<std::unique_ptr<VirtualTrackerDevice>, kBodyRoleCount> devices_{};
     std::array<bool, kBodyRoleCount> enabled_{};

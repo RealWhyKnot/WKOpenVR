@@ -9,11 +9,7 @@
 #include "CalibrationRejectReason.h"
 #include "CalibrationRecoveryTick.h"
 #include "CalibrationMetrics.h"
-#include "BuildChannel.h"
 #include "Configuration.h"
-#if WKOPENVR_BUILD_IS_DEV
-#include "DevFakeDevices.h"
-#endif
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
 #include "VRState.h"
@@ -1413,17 +1409,11 @@ void EndContinuousCalibration() {
 
 void CalibrationTick(double time)
 {
-	const bool fakeDevices =
-#if WKOPENVR_BUILD_IS_DEV
-		spacecal::devfake::IsEnabled();
-#else
-		false;
-#endif
-	if (!vr::VRSystem() && !fakeDevices) {
+	if (!vr::VRSystem()) {
 		static double s_lastNoVrSystemLog = -1e9;
 		if (time - s_lastNoVrSystemLog >= 5.0) {
 			s_lastNoVrSystemLog = time;
-			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem fake_devices=0");
+			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
 		}
 		return;
 	}
@@ -1431,11 +1421,6 @@ void CalibrationTick(double time)
 	auto &ctx = CalCtx;
 	if ((time - ctx.timeLastTick) < 0.05)
 		return;
-	if (fakeDevices) {
-#if WKOPENVR_BUILD_IS_DEV
-		spacecal::devfake::TickPoses(ctx, time);
-#endif
-	}
 
 	// Resolve LockMode -> lockRelativePosition every tick before any code
 	// downstream reads the bool. The detector itself is updated in
@@ -2222,14 +2207,12 @@ void CalibrationTick(double time)
 	// cadence and surfaces the banner inside its Prediction sub-tab.
 
 	ctx.timeLastTick = time;
-	if (!fakeDevices) {
-		shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
-			if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
-				ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
-				ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
-			}
-		});
-	}
+	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
+		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
+			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
+			ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
+		}
+	});
 
 	// Sample driver-side telemetry counters and push the per-tick deltas (in Hz)
 	// into the metrics time series. Initialize the prior snapshot lazily on the
@@ -2503,14 +2486,6 @@ void CalibrationTick(double time)
 			vrSystem->GetStringTrackedDeviceProperty(ctx.referenceID, vr::Prop_SerialNumber_String, referenceSerial, 256);
 			vrSystem->GetStringTrackedDeviceProperty(ctx.targetID, vr::Prop_SerialNumber_String, targetSerial, 256);
 		}
-#if WKOPENVR_BUILD_IS_DEV
-		else if (fakeDevices) {
-			snprintf(referenceSerial, sizeof referenceSerial, "%s",
-				spacecal::devfake::SerialForDeviceId(ctx.referenceID));
-			snprintf(targetSerial, sizeof targetSerial, "%s",
-				spacecal::devfake::SerialForDeviceId(ctx.targetID));
-		}
-#endif
 
 		char buf[256];
 		snprintf(buf, sizeof buf, "Reference device ID: %d, serial: %s\n", ctx.referenceID, referenceSerial);
@@ -2838,8 +2813,7 @@ void CalibrationTick(double time)
 
 	if (CalCtx.state == CalibrationState::Continuous
 		&& CalCtx.requireTriggerPressToApply
-		&& CalCtx.hasAppliedCalibrationResult
-		&& !fakeDevices) {
+		&& CalCtx.hasAppliedCalibrationResult) {
 		bool triggerPressed = true;
 		bool sawController = false;
 		auto* vrs = vr::VRSystem();

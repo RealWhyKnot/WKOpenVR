@@ -3,10 +3,6 @@
 #include "CalibrationInternal.h"
 #include "CalibrationMetrics.h"
 #include "CalibrationPoseSampling.h"
-#include "BuildChannel.h"
-#if WKOPENVR_BUILD_IS_DEV
-#include "DevFakeDevices.h"
-#endif
 #include "MotionGate.h"
 #include "HeadMountVisibility.h"
 #include "VRState.h"
@@ -240,20 +236,8 @@ void ScanAndApplyProfile(
 	bool forceSnapThisCycle,
 	const char* forceSnapReason)
 {
-	if (!vr::VRSystem()
-#if WKOPENVR_BUILD_IS_DEV
-		|| spacecal::devfake::IsEnabled()
-#endif
-		) {
+	if (!vr::VRSystem()) {
 		ctx.enabled = ctx.validProfile;
-#if WKOPENVR_BUILD_IS_DEV
-		static bool s_loggedSkippedApply = false;
-		if (spacecal::devfake::IsEnabled() && !s_loggedSkippedApply) {
-			s_loggedSkippedApply = true;
-			Metrics::WriteLogAnnotation(
-				"[dev-fake-devices] profile apply skipped for simulated devices");
-		}
-#endif
 		return;
 	}
 
