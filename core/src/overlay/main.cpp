@@ -419,10 +419,6 @@ int main(int argc, char **argv)
 
 		context.TickToggles();
 
-		for (auto &plugin : plugins) {
-			if (plugin->IsInstalled(context)) plugin->Tick(context);
-		}
-
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 
@@ -448,6 +444,10 @@ int main(int argc, char **argv)
 			haveVrState = true;
 			prevDashboardVisible = dashboardVisible;
 			prevVrConnected = context.vrConnected;
+		}
+
+		for (auto &plugin : plugins) {
+			if (plugin->IsInstalled(context)) plugin->Tick(context);
 		}
 
 		ImGuiIO &io = ImGui::GetIO();

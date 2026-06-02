@@ -59,6 +59,7 @@ private:
     void SendDeviceRole(const std::string& serial, phantom::BodyRole role);
     void SendTrackerOffset(phantom::BodyRole role, const PhantomRoleOffset& offset);
     void SendVirtualEnabled(phantom::BodyRole role, bool enabled);
+    void ReplayDriverState();
     void ReplayCalibration();
     void CaptureNeutralStanding();
     void CaptureTPose();

@@ -4,6 +4,8 @@
 #include "RouterIpcClient.h"
 #include "ShellContext.h"
 
+#include <chrono>
+
 // Renders the OSC Router Modules-tab subpage. Displays send-target config,
 // active route list with per-route message counts, and a test-publish row.
 // No DockSpace or docking-branch ImGui APIs (pinned at master 82d0584e7).
@@ -21,7 +23,8 @@ public:
 private:
     OscRouterStatsReader statsReader_;
     RouterIpcClient      ipc_;
-    bool                 ipcConnectAttempted_ = false;
+    std::chrono::steady_clock::time_point nextIpcConnectAttempt_{};
+    std::chrono::steady_clock::time_point driverWaitStarted_{};
 
     // Test publish state.
     char testAddress_[64] = "/avatar/parameters/Test";
@@ -33,14 +36,16 @@ private:
     // subsequent edits flow through SendPortChanged() to persist + push.
     int  portEdit_   = 9000;
     bool portLoaded_ = false;
+    bool portPushedToDriver_ = false;
 
     // Last known global stats for display.
     protocol::OscRouterStats lastStats_ = {};
 
     void DrawConnectedModules(openvr_pair::overlay::ShellContext &ctx);
     void DrawRouteTable();
-    void DrawTestPublish();
-    void TrySendTestPublish();
-    void EnsureIpc();
-    void SendPortChanged(int newPort);
+    void DrawTestPublish(openvr_pair::overlay::ShellContext &ctx);
+    void TrySendTestPublish(openvr_pair::overlay::ShellContext &ctx);
+    bool EnsureIpc(openvr_pair::overlay::ShellContext &ctx);
+    bool PushLivePortConfig(int newPort);
+    void SendPortChanged(openvr_pair::overlay::ShellContext &ctx, int newPort);
 };

@@ -7,6 +7,7 @@
 #include "PhantomPlugin.h"
 
 #include "DeviceFilters.h"
+#include "PhantomUiLogic.h"
 #include "Protocol.h"
 #include "ShellContext.h"
 #include "UiHelpers.h"
@@ -30,30 +31,32 @@ std::string SourceMaskLabel(uint16_t mask);
 
 void PhantomPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 {
-    (void)ConnectIfNeeded();
-    SendConfig();
-    SendSolverConfig();
-    // Push the persisted per-device opt-in map + calibration so the driver
-    // picks up the user's prior choices without needing to wait for them
-    // to re-toggle / re-calibrate.
-    for (const auto& kv : cfg_.dropout_enabled) {
-        if (kv.second) SendDeviceOptIn(kv.first, true);
-    }
-    ReplayCalibration();
-    seededDriver_ = ipc_.IsConnected();
+    connectError_.clear();
+    seededDriver_ = false;
 }
 
-void PhantomPlugin::Tick(openvr_pair::overlay::ShellContext&)
+void PhantomPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 {
-    if (!ipc_.IsConnected() && ConnectIfNeeded()) {
-        // Reconnected after a drop -- replay full state so the driver is in
-        // sync with what the overlay believes.
-        SendConfig();
-        SendSolverConfig();
-        for (const auto& kv : cfg_.dropout_enabled) {
-            if (kv.second) SendDeviceOptIn(kv.first, true);
+    if (!phantom::ui::ShouldAttemptDriverConnection(context.vrConnected)) {
+        if (ipc_.IsConnected()) ipc_.Close();
+        if (stateShmemReady_) {
+            stateShmem_.Close();
+            stateShmemReady_ = false;
         }
-        ReplayCalibration();
+        connectError_.clear();
+        nextConnectAttempt_ = {};
+        seededDriver_ = false;
+        return;
+    }
+
+    if (!ipc_.IsConnected() && ConnectIfNeeded()) {
+        seededDriver_ = false;
+    }
+
+    if (ipc_.IsConnected() && !seededDriver_) {
+        // Connected after startup or after a drop -- replay full state so the
+        // driver is in sync with what the overlay believes.
+        ReplayDriverState();
         seededDriver_ = true;
     }
 
@@ -150,8 +153,14 @@ void PhantomPlugin::SendDeviceOptIn(const std::string& serial, bool enabled)
     }
 }
 
-void PhantomPlugin::DrawTab(openvr_pair::overlay::ShellContext&)
+void PhantomPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 {
+    if (!context.vrConnected) {
+        openvr_pair::overlay::ui::DrawWaitingBanner(
+            "Waiting for SteamVR -- Phantom Trackers sync when the driver is live.");
+        ImGui::Spacing();
+    }
+
     openvr_pair::overlay::ui::TabBarScope tabs("PhantomTabs");
     if (tabs) {
         openvr_pair::overlay::ui::DrawTabItem("Dropouts", [&] { DrawDropoutsTab(); });
@@ -161,7 +170,8 @@ void PhantomPlugin::DrawTab(openvr_pair::overlay::ShellContext&)
         openvr_pair::overlay::ui::DrawTabItem("Advanced", [&] { DrawAdvancedTab(); });
     }
 
-    if (!connectError_.empty() && !ipc_.IsConnected()) {
+    if (phantom::ui::ShouldShowDriverError(context.vrConnected, !connectError_.empty())
+        && !ipc_.IsConnected()) {
         ImGui::Spacing();
         ImGui::TextColored(openvr_pair::overlay::ui::GetPalette().statusError,
             "IPC: %s", connectError_.c_str());
@@ -535,6 +545,16 @@ void PhantomPlugin::SendVirtualEnabled(phantom::BodyRole role, bool enabled)
                 sizeof(req.setPhantomVirtualEnabled._reserved));
     try { ipc_.SendBlocking(req); }
     catch (const std::exception& e) { connectError_ = e.what(); }
+}
+
+void PhantomPlugin::ReplayDriverState()
+{
+    if (!ipc_.IsConnected()) return;
+    SendConfig();
+    for (const auto& kv : cfg_.dropout_enabled) {
+        if (kv.second) SendDeviceOptIn(kv.first, true);
+    }
+    ReplayCalibration();
 }
 
 void PhantomPlugin::ReplayCalibration()

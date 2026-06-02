@@ -7,6 +7,7 @@ add_library(openvr_pair_feature_oscrouter_overlay STATIC
     OscRouterPlugin.h
     OscRouterStatsReader.cpp
     OscRouterStatsReader.h
+    OscRouterUiLogic.h
     RouterIpcClient.cpp
     RouterIpcClient.h
     RouterTab.cpp

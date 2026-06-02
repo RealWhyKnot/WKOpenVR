@@ -1,4 +1,5 @@
 #include "RouterTab.h"
+#include "OscRouterUiLogic.h"
 #include "ShellContext.h"
 #include "UiHelpers.h"
 #include "JsonUtil.h"
@@ -8,6 +9,7 @@
 #include <imgui.h>
 #include <cstring>
 #include <cstdio>
+#include <chrono>
 #include <fstream>
 #include <sstream>
 
@@ -78,31 +80,70 @@ static bool WriteProfileSendPort(int port)
     return MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
 }
 
-void RouterTab::EnsureIpc()
+bool RouterTab::EnsureIpc(openvr_pair::overlay::ShellContext &ctx)
 {
-    if (!ipc_.IsConnected() && !ipcConnectAttempted_) {
-        ipcConnectAttempted_ = true;
-        try { ipc_.Connect(); } catch (...) {}
+    if (ipc_.IsConnected()) return true;
+    if (!oscrouter::ui::ShouldAttemptLiveDriverIpc(ctx.vrConnected)) {
+        nextIpcConnectAttempt_ = {};
+        return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const bool retryDue =
+        nextIpcConnectAttempt_.time_since_epoch().count() == 0
+        || now >= nextIpcConnectAttempt_;
+    if (!oscrouter::ui::ShouldRetryLiveDriverIpc(ctx.vrConnected, ipc_.IsConnected(), retryDue)) {
+        return false;
+    }
+    nextIpcConnectAttempt_ = now + std::chrono::seconds(1);
+
+    try {
+        ipc_.Connect();
+        nextIpcConnectAttempt_ = {};
+        return true;
+    } catch (...) {
+        portPushedToDriver_ = false;
+        return false;
     }
 }
 
-void RouterTab::Tick(openvr_pair::overlay::ShellContext &)
+void RouterTab::Tick(openvr_pair::overlay::ShellContext &ctx)
 {
-    statsReader_.TryOpen();
+    if (!ctx.vrConnected) {
+        statsReader_.Close();
+        if (ipc_.IsConnected()) ipc_.Close();
+        lastStats_ = {};
+        driverWaitStarted_ = {};
+        nextIpcConnectAttempt_ = {};
+        portPushedToDriver_ = false;
+        return;
+    }
+
+    const bool statsOpen = statsReader_.TryOpen();
+    if (!statsOpen) {
+        if (driverWaitStarted_.time_since_epoch().count() == 0) {
+            driverWaitStarted_ = std::chrono::steady_clock::now();
+        }
+    } else {
+        driverWaitStarted_ = {};
+    }
+
     if (statsReader_.IsOpen()) {
         statsReader_.ReadGlobal(lastStats_);
+    }
+
+    EnsureIpc(ctx);
+    if (ipc_.IsConnected() && !portPushedToDriver_) {
+        if (!portLoaded_) {
+            portEdit_ = ReadProfileSendPort();
+            portLoaded_ = true;
+        }
+        portPushedToDriver_ = PushLivePortConfig(portEdit_);
     }
 }
 
 void RouterTab::Draw(openvr_pair::overlay::ShellContext &ctx)
 {
-    if (!statsReader_.IsOpen()) {
-        openvr_pair::overlay::ui::DrawErrorBanner(
-            "OSC Router not active",
-            "Enable OSC Router or a module that publishes OSC, then restart SteamVR.");
-        return;
-    }
-
     // Send-port editor. Hydrated once from the profile on the first draw;
     // user edits commit on focus-out (IsItemDeactivatedAfterEdit) so dragging
     // through intermediate values doesn't fire a write per increment.
@@ -119,13 +160,47 @@ void RouterTab::Draw(openvr_pair::overlay::ShellContext &ctx)
         // Clamp to a valid UDP range; 0 and >65535 are nonsense.
         if (portEdit_ < 1)     portEdit_ = 1;
         if (portEdit_ > 65535) portEdit_ = 65535;
-        SendPortChanged(portEdit_);
+        SendPortChanged(ctx, portEdit_);
     }
     openvr_pair::overlay::ui::TooltipOnHover(
         "Outbound OSC target port. Edits write to profiles\\oscrouter.json\n"
         "and push to the live driver immediately when SteamVR is running.");
 
+    ImGui::Spacing();
     DrawConnectedModules(ctx);
+
+    const bool driverWaitElapsed =
+        driverWaitStarted_.time_since_epoch().count() != 0
+        && (std::chrono::steady_clock::now() - driverWaitStarted_) >= std::chrono::seconds(5);
+    const auto panelState = oscrouter::ui::ResolveDriverPanelState(
+        ctx.vrConnected,
+        statsReader_.IsOpen(),
+        driverWaitElapsed);
+
+    if (panelState == oscrouter::ui::DriverPanelState::WaitingForSteamVr) {
+        openvr_pair::overlay::ui::DrawWaitingBanner(
+            "Waiting for SteamVR -- OSC Router connects when the driver is live.");
+        return;
+    }
+    if (panelState == oscrouter::ui::DriverPanelState::WaitingForDriver) {
+        openvr_pair::overlay::ui::DrawWaitingBanner(
+            "Waiting for OSC Router driver to finish loading.");
+        return;
+    }
+    if (panelState == oscrouter::ui::DriverPanelState::Problem) {
+        openvr_pair::overlay::ui::DrawErrorBanner(
+            "OSC Router not active",
+            "SteamVR is running, but the OSC Router driver state is unavailable. "
+            "Restart SteamVR or reinstall WKOpenVR.");
+        return;
+    }
+
+    if (!statsReader_.IsOpen()) {
+        openvr_pair::overlay::ui::DrawErrorBanner(
+            "OSC Router not active",
+            "Enable OSC Router or a module that publishes OSC, then restart SteamVR.");
+        return;
+    }
 
     ImGui::Separator();
 
@@ -138,7 +213,7 @@ void RouterTab::Draw(openvr_pair::overlay::ShellContext &ctx)
     ImGui::Separator();
     DrawRouteTable();
     ImGui::Separator();
-    DrawTestPublish();
+    DrawTestPublish(ctx);
 }
 
 void RouterTab::DrawConnectedModules(openvr_pair::overlay::ShellContext &ctx)
@@ -214,7 +289,7 @@ void RouterTab::DrawRouteTable()
     }
 }
 
-void RouterTab::DrawTestPublish()
+void RouterTab::DrawTestPublish(openvr_pair::overlay::ShellContext &ctx)
 {
     ImGui::Text("Test publish:");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
@@ -226,14 +301,31 @@ void RouterTab::DrawTestPublish()
     openvr_pair::overlay::ui::TooltipOnHover("Float value to send as a ,f argument");
     ImGui::SameLine();
     if (ImGui::Button("Send##testsend")) {
-        TrySendTestPublish();
+        TrySendTestPublish(ctx);
     }
     if (testStatus_[0] != '\0') {
         ImGui::TextUnformatted(testStatus_);
     }
 }
 
-void RouterTab::SendPortChanged(int newPort)
+bool RouterTab::PushLivePortConfig(int newPort)
+{
+    if (!ipc_.IsConnected()) return false;
+    protocol::Request req(protocol::RequestSetOscRouterConfig);
+    req.setOscRouterConfig.send_port = (uint16_t)newPort;
+    for (int i = 0; i < 6; ++i) req.setOscRouterConfig._reserved[i] = 0;
+    try {
+        ipc_.SendBlocking(req);
+        return true;
+    } catch (...) {
+        ipc_.Close();
+        nextIpcConnectAttempt_ = {};
+        portPushedToDriver_ = false;
+        return false;
+    }
+}
+
+void RouterTab::SendPortChanged(openvr_pair::overlay::ShellContext &ctx, int newPort)
 {
     // Persist first so the value survives a crash before the driver round-
     // trips. WriteProfileSendPort is best-effort -- a write failure leaves
@@ -244,28 +336,24 @@ void RouterTab::SendPortChanged(int newPort)
     // Push live if the IPC pipe is open. When the driver isn't running yet,
     // the on-disk write above is sufficient -- the driver reads send_port
     // from oscrouter.json at init time.
-    EnsureIpc();
-    if (!ipc_.IsConnected()) return;
-
-    protocol::Request req(protocol::RequestSetOscRouterConfig);
-    req.setOscRouterConfig.send_port = (uint16_t)newPort;
-    for (int i = 0; i < 6; ++i) req.setOscRouterConfig._reserved[i] = 0;
-    try {
-        ipc_.SendBlocking(req);
-    } catch (...) {
-        ipc_.Close();
-        ipcConnectAttempted_ = false;
+    EnsureIpc(ctx);
+    if (!ipc_.IsConnected()) {
+        portPushedToDriver_ = false;
+        return;
     }
+    portPushedToDriver_ = PushLivePortConfig(newPort);
 }
 
-void RouterTab::TrySendTestPublish()
+void RouterTab::TrySendTestPublish(openvr_pair::overlay::ShellContext &ctx)
 {
     testStatus_[0] = '\0';
-    EnsureIpc();
+    EnsureIpc(ctx);
 
     if (!ipc_.IsConnected()) {
         snprintf(testStatus_, sizeof(testStatus_),
-            "Not connected to driver. Is OSC Router enabled?");
+            ctx.vrConnected
+                ? "Not connected to driver. Is OSC Router enabled?"
+                : "Waiting for SteamVR.");
         return;
     }
 
@@ -309,6 +397,7 @@ void RouterTab::TrySendTestPublish()
     } catch (const std::exception &e) {
         snprintf(testStatus_, sizeof(testStatus_), "IPC error: %s", e.what());
         ipc_.Close();
-        ipcConnectAttempted_ = false;
+        nextIpcConnectAttempt_ = {};
+        portPushedToDriver_ = false;
     }
 }

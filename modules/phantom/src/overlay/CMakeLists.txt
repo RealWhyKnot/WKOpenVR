@@ -15,7 +15,8 @@ add_library(openvr_pair_feature_phantom_overlay STATIC
 	IPCClient.cpp
 	IPCClient.h
 	PhantomPlugin.cpp
-	PhantomPlugin.h)
+	PhantomPlugin.h
+	PhantomUiLogic.h)
 
 target_include_directories(openvr_pair_feature_phantom_overlay PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}

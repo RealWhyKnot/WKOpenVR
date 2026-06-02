@@ -13,12 +13,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(OR_DRIVER_SRC "${CMAKE_SOURCE_DIR}/modules/oscrouter/src/driver")
+set(OR_OVERLAY_SRC "${CMAKE_SOURCE_DIR}/modules/oscrouter/src/overlay")
 
 add_executable(oscrouter_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/router_tests.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/router_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oscrouter_ui_logic.cpp)
 
 target_include_directories(oscrouter_tests
     PRIVATE ${OR_DRIVER_SRC}
+    PRIVATE ${OR_OVERLAY_SRC}
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers)
