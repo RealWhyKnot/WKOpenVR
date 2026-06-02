@@ -782,10 +782,10 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     ASSERT_TRUE(filter.ReloadIfChanged());
 
     protocol::FaceTrackingFrameBody processedFrame = frame;
-    processedFrame.expressions[26] = 0.80f; // internal JawOpen after calibration
-    processedFrame.expressions[40] = 0.50f; // internal MouthClose
+    processedFrame.expressions[26] = 0.50f; // internal JawOpen after calibration
+    processedFrame.expressions[40] = 0.0f; // internal MouthClose
     processedFrame.upstream_expressions[22] = 0.90f; // raw upstream JawOpen
-    processedFrame.upstream_expressions[29] = 0.50f; // raw upstream MouthClosed
+    processedFrame.upstream_expressions[29] = 0.0f; // raw upstream MouthClosed
     protocol::FaceTrackingConfig signalCfg{};
     signalCfg.master_enabled = 1;
     facetracking::FaceSignalProcessor signalProcessor;

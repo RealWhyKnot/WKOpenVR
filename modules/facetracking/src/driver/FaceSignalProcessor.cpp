@@ -11,7 +11,33 @@ namespace {
 
 static constexpr uint32_t kOursJawOpen = 26;
 static constexpr uint32_t kOursMouthClose = 40;
+static constexpr uint32_t kOursBrowLowererLeft = 12;
+static constexpr uint32_t kOursBrowLowererRight = 13;
+static constexpr uint32_t kOursBrowInnerUpLeft = 14;
+static constexpr uint32_t kOursBrowInnerUpRight = 15;
+static constexpr uint32_t kOursBrowOuterUpLeft = 16;
+static constexpr uint32_t kOursBrowOuterUpRight = 17;
+static constexpr uint32_t kOursBrowPinchLeft = 18;
+static constexpr uint32_t kOursBrowPinchRight = 19;
+static constexpr uint32_t kOursLipFunnelUpperLeft = 34;
+static constexpr uint32_t kOursLipFunnelUpperRight = 35;
+static constexpr uint32_t kOursLipFunnelLowerLeft = 36;
+static constexpr uint32_t kOursLipFunnelLowerRight = 37;
+static constexpr uint32_t kOursLipPuckerUpperLeft = 38;
+static constexpr uint32_t kOursLipPuckerUpperRight = 39;
+static constexpr uint32_t kOursMouthSmileLeft = 45;
+static constexpr uint32_t kOursMouthSmileRight = 46;
+static constexpr uint32_t kOursMouthSadLeft = 47;
+static constexpr uint32_t kOursMouthSadRight = 48;
+static constexpr uint32_t kOursMouthStretchLeft = 49;
+static constexpr uint32_t kOursMouthStretchRight = 50;
 static constexpr float kMouthCloseJawScale = 0.60f;
+static constexpr float kSmileAssistThreshold = 0.35f;
+static constexpr float kSmileAssistMaxJaw = 0.18f;
+static constexpr float kIdleMouthJawMin = 0.08f;
+static constexpr float kIdleMouthJawMax = 0.28f;
+static constexpr float kIdleMouthActivityMax = 0.20f;
+static constexpr float kIdleMouthDelaySec = 1.20f;
 static constexpr float kDefaultFrameDtSec = 1.0f / 120.0f;
 static constexpr float kMaxSmoothingGapSec = 0.250f;
 
@@ -24,6 +50,18 @@ float Clamp01(float v)
 float ClampFinite(float v)
 {
     return std::isfinite(v) ? v : 0.0f;
+}
+
+float Strength01(uint8_t strength)
+{
+    return std::max(0.0f, std::min(100.0f, static_cast<float>(strength))) / 100.0f;
+}
+
+float SmoothStep(float edge0, float edge1, float x)
+{
+    if (edge1 <= edge0) return x >= edge1 ? 1.0f : 0.0f;
+    x = std::max(0.0f, std::min(1.0f, (x - edge0) / (edge1 - edge0)));
+    return x * x * (3.0f - 2.0f * x);
 }
 
 float SmoothAlpha(uint8_t strength, float dt_sec)
@@ -57,14 +95,108 @@ void NormalizeVec3(float v[3])
     v[2] *= inv;
 }
 
+bool HasCorrection(const protocol::FaceTrackingConfig &config, uint8_t flag)
+{
+    return (config.expression_correction_flags & flag) != 0;
+}
+
+uint8_t MouthCorrectionStrength(const protocol::FaceTrackingConfig &config)
+{
+    return static_cast<uint8_t>(config.expression_correction_strengths & 0xFFu);
+}
+
+uint8_t BrowCorrectionStrength(const protocol::FaceTrackingConfig &config)
+{
+    return static_cast<uint8_t>((config.expression_correction_strengths >> 8) & 0xFFu);
+}
+
+float MaxExpr(const protocol::FaceTrackingFrameBody &frame,
+              uint32_t a,
+              uint32_t b)
+{
+    return std::max(Clamp01(frame.expressions[a]), Clamp01(frame.expressions[b]));
+}
+
 void ApplyMouthCloseCompensation(protocol::FaceTrackingFrameBody &frame)
 {
-    if ((frame.flags & 0x2u) == 0) return;
-
     const float jaw = Clamp01(frame.expressions[kOursJawOpen]);
     const float close = Clamp01(frame.expressions[kOursMouthClose]);
     frame.expressions[kOursJawOpen] =
         std::max(0.0f, jaw - kMouthCloseJawScale * close);
+}
+
+void ApplySmileMouthOpenAssist(protocol::FaceTrackingFrameBody &frame,
+                               uint8_t strength)
+{
+    const float amount = Strength01(strength);
+    if (amount <= 0.0f) return;
+
+    const float smile = MaxExpr(frame, kOursMouthSmileLeft, kOursMouthSmileRight);
+    const float assist = SmoothStep(kSmileAssistThreshold, 1.0f, smile) *
+                         kSmileAssistMaxJaw * amount;
+    frame.expressions[kOursJawOpen] =
+        std::max(Clamp01(frame.expressions[kOursJawOpen]), assist);
+}
+
+float MouthActivity(const protocol::FaceTrackingFrameBody &frame)
+{
+    float activity = 0.0f;
+    activity = std::max(activity, MaxExpr(frame, kOursMouthSmileLeft, kOursMouthSmileRight));
+    activity = std::max(activity, MaxExpr(frame, kOursMouthSadLeft, kOursMouthSadRight));
+    activity = std::max(activity, MaxExpr(frame, kOursMouthStretchLeft, kOursMouthStretchRight));
+    activity = std::max(activity, MaxExpr(frame, kOursLipFunnelUpperLeft, kOursLipFunnelUpperRight));
+    activity = std::max(activity, MaxExpr(frame, kOursLipFunnelLowerLeft, kOursLipFunnelLowerRight));
+    activity = std::max(activity, MaxExpr(frame, kOursLipPuckerUpperLeft, kOursLipPuckerUpperRight));
+    return activity;
+}
+
+bool IsIdleMouthOpenCandidate(const protocol::FaceTrackingFrameBody &frame)
+{
+    const float jaw = Clamp01(frame.expressions[kOursJawOpen]);
+    if (jaw < kIdleMouthJawMin || jaw > kIdleMouthJawMax) return false;
+    if (Clamp01(frame.expressions[kOursMouthClose]) > kIdleMouthActivityMax) return false;
+    return MouthActivity(frame) <= kIdleMouthActivityMax;
+}
+
+void ApplyBrowSync(protocol::FaceTrackingFrameBody &frame, uint8_t strength)
+{
+    if ((frame.flags & 0x1u) == 0) return;
+
+    const float amount = Strength01(strength);
+    if (amount <= 0.0f) return;
+
+    auto applySide = [&](float eye_openness,
+                         uint32_t lower,
+                         uint32_t inner_up,
+                         uint32_t outer_up,
+                         uint32_t pinch)
+    {
+        const float closed = 1.0f - Clamp01(eye_openness);
+        const float influence = amount * closed;
+        if (influence <= 0.0f) return;
+
+        const float reduce_up = 1.0f - 0.40f * influence;
+        frame.expressions[inner_up] = Clamp01(frame.expressions[inner_up] * reduce_up);
+        frame.expressions[outer_up] = Clamp01(frame.expressions[outer_up] * reduce_up);
+
+        const float lower_floor = 0.12f * influence;
+        const float pinch_floor = 0.06f * influence;
+        frame.expressions[lower] =
+            std::max(Clamp01(frame.expressions[lower]), lower_floor);
+        frame.expressions[pinch] =
+            std::max(Clamp01(frame.expressions[pinch]), pinch_floor);
+    };
+
+    applySide(frame.eye_openness_l,
+              kOursBrowLowererLeft,
+              kOursBrowInnerUpLeft,
+              kOursBrowOuterUpLeft,
+              kOursBrowPinchLeft);
+    applySide(frame.eye_openness_r,
+              kOursBrowLowererRight,
+              kOursBrowInnerUpRight,
+              kOursBrowOuterUpRight,
+              kOursBrowPinchRight);
 }
 
 void CopyMappedInternalShapesToUpstream(protocol::FaceTrackingFrameBody &frame)
@@ -178,7 +310,43 @@ void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody &frame,
                      config.openness_smoothing, dt_sec);
     }
 
-    ApplyMouthCloseCompensation(frame);
+    if ((frame.flags & 0x2u) != 0) {
+        if (HasCorrection(config, protocol::FACETRACKING_EXPR_CORRECT_MOUTH_CLOSE)) {
+            ApplyMouthCloseCompensation(frame);
+        }
+
+        if (HasCorrection(config, protocol::FACETRACKING_EXPR_CORRECT_SMILE_OPEN)) {
+            ApplySmileMouthOpenAssist(frame, MouthCorrectionStrength(config));
+        }
+
+        if (HasCorrection(config, protocol::FACETRACKING_EXPR_CORRECT_IDLE_CLOSE) &&
+            frame.qpc_sample_time != 0 &&
+            IsIdleMouthOpenCandidate(frame)) {
+            if (idle_mouth_open_since_qpc_ == 0) {
+                idle_mouth_open_since_qpc_ = frame.qpc_sample_time;
+            }
+            const LARGE_INTEGER freq = QpcFreq();
+            const float held_sec =
+                (freq.QuadPart > 0 && frame.qpc_sample_time > idle_mouth_open_since_qpc_)
+                    ? static_cast<float>(frame.qpc_sample_time - idle_mouth_open_since_qpc_) /
+                      static_cast<float>(freq.QuadPart)
+                    : 0.0f;
+            if (held_sec >= kIdleMouthDelaySec) {
+                const float keep = 1.0f - Strength01(MouthCorrectionStrength(config));
+                frame.expressions[kOursJawOpen] =
+                    Clamp01(frame.expressions[kOursJawOpen]) * keep;
+            }
+        } else {
+            idle_mouth_open_since_qpc_ = 0;
+        }
+
+        if (HasCorrection(config, protocol::FACETRACKING_EXPR_CORRECT_BROW_SYNC)) {
+            ApplyBrowSync(frame, BrowCorrectionStrength(config));
+        }
+    } else {
+        idle_mouth_open_since_qpc_ = 0;
+    }
+
     CopyMappedInternalShapesToUpstream(frame);
 }
 
@@ -189,6 +357,7 @@ void FaceSignalProcessor::Reset()
     gaze_l_ = Vec3Filter{};
     gaze_r_ = Vec3Filter{};
     last_qpc_sample_time_ = 0;
+    idle_mouth_open_since_qpc_ = 0;
 }
 
 } // namespace facetracking

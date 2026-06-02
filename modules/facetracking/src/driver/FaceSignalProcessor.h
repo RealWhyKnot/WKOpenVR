@@ -37,6 +37,7 @@ private:
     Vec3Filter gaze_r_;
 
     uint64_t last_qpc_sample_time_ = 0;
+    uint64_t idle_mouth_open_since_qpc_ = 0;
     uint64_t last_source_hash_ = 0;
     mutable LARGE_INTEGER qpc_freq_{ 0 };
 

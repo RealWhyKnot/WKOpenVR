@@ -170,16 +170,29 @@ void FacetrackingPlugin::PushConfigToDriver()
         cfg.continuous_calib_mode      = static_cast<uint8_t>(p.continuous_calib_mode);
         cfg.output_osc_enabled         = p.output_osc_enabled          ? 1 : 0;
         cfg._reserved_native           = 0;
-        cfg._reserved1                 = 0;
+        cfg.expression_correction_flags = 0;
+        if (p.mouth_close_compensation_enabled)
+            cfg.expression_correction_flags |= protocol::FACETRACKING_EXPR_CORRECT_MOUTH_CLOSE;
+        if (p.smile_mouth_open_assist_enabled)
+            cfg.expression_correction_flags |= protocol::FACETRACKING_EXPR_CORRECT_SMILE_OPEN;
+        if (p.idle_mouth_auto_close_enabled)
+            cfg.expression_correction_flags |= protocol::FACETRACKING_EXPR_CORRECT_IDLE_CLOSE;
+        if (p.eyelid_brow_sync_enabled)
+            cfg.expression_correction_flags |= protocol::FACETRACKING_EXPR_CORRECT_BROW_SYNC;
         cfg.eyelid_sync_strength       = static_cast<uint8_t>(p.eyelid_sync_strength);
         cfg.vergence_lock_strength     = static_cast<uint8_t>(p.vergence_lock_strength);
         cfg.gaze_smoothing             = static_cast<uint8_t>(p.gaze_smoothing);
         cfg.openness_smoothing         = static_cast<uint8_t>(p.openness_smoothing);
+        {
+            const int mouth = std::clamp(p.smile_mouth_open_strength, 0, 100);
+            const int brow  = std::clamp(p.eyelid_brow_sync_strength, 0, 100);
+            cfg.expression_correction_strengths =
+                static_cast<uint16_t>((brow << 8) | mouth);
+        }
         // osc_port / osc_host are deprecated; the router owns the UDP socket.
         // Leave them zeroed. The driver ignores them once output_osc_enabled
         // routes through the in-process PublishOsc path.
         cfg.osc_port   = 0;
-        cfg._reserved2 = 0;
         cfg.osc_host[0] = '\0';
 
         // Active module = first enabled entry. On a fresh profile, select the

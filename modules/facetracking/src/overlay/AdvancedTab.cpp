@@ -24,7 +24,7 @@ void DrawAdvancedTab(FacetrackingPlugin &plugin)
             0, 100, "%d%%",
             "EMA strength applied to eye-gaze direction after vergence\n"
             "lock reconstruction. Higher values reduce jitter at the\n"
-            "cost of response lag on fast saccades. 20-40 is typical.")) {
+            "cost of response lag on fast saccades. 0 leaves gaze raw.")) {
         plugin.PushConfigToDriver();
     }
 
@@ -32,7 +32,7 @@ void DrawAdvancedTab(FacetrackingPlugin &plugin)
             0, 100, "%d%%",
             "EMA strength applied to eye-openness values after eyelid\n"
             "sync. Smooths blink onset/offset ringing without delaying\n"
-            "the closed position significantly. 15-30 is typical.")) {
+            "the closed position significantly. 0 leaves openness raw.")) {
         plugin.PushConfigToDriver();
     }
 

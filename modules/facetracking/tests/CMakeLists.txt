@@ -32,6 +32,7 @@ add_executable(facetracking_tests
 target_include_directories(facetracking_tests
     PRIVATE ${CMAKE_SOURCE_DIR}
     PRIVATE ${FT_DRIVER_SRC}
+    PRIVATE ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/driver
     PRIVATE ${CMAKE_SOURCE_DIR}/lib

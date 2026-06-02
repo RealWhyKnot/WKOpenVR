@@ -9,6 +9,7 @@
 //     frame-time-aware behaviour.
 
 #include "FaceSignalProcessor.h"
+#include "Profiles.h"
 #include "Protocol.h"
 #include "facetracking/UpstreamShapeMap.h"
 
@@ -24,10 +25,20 @@ namespace {
 
 constexpr uint32_t kOursJawOpen = 26;
 constexpr uint32_t kOursMouthClose = 40;
+constexpr uint32_t kOursBrowLowererLeft = 12;
+constexpr uint32_t kOursBrowInnerUpLeft = 14;
+constexpr uint32_t kOursBrowOuterUpLeft = 16;
+constexpr uint32_t kOursBrowPinchLeft = 18;
 constexpr uint32_t kUpstreamJawOpen = 22;
 constexpr uint32_t kUpstreamMouthClosed = 29;
 constexpr uint32_t kUpstreamMouthCornerPullLeft = 57;
 constexpr uint32_t kOursMouthSmileLeft = 45;
+constexpr uint32_t kOursMouthSmileRight = 46;
+
+uint16_t PackStrengths(uint8_t mouth, uint8_t brow)
+{
+    return static_cast<uint16_t>((static_cast<uint16_t>(brow) << 8) | mouth);
+}
 
 uint64_t QpcNow()
 {
@@ -103,10 +114,28 @@ TEST(FaceSignalProcessor, MappedInternalValuesOverwriteRawUpstreamSlots)
     EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.40f, 1e-6f);
 }
 
+TEST(FaceSignalProcessor, MouthCloseCompensationIsDisabledByDefault)
+{
+    facetracking::FaceSignalProcessor processor;
+    protocol::FaceTrackingConfig cfg = MakeConfig();
+    protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+
+    frame.expressions[kOursJawOpen] = 0.80f;
+    frame.expressions[kOursMouthClose] = 0.50f;
+    frame.upstream_expressions[kUpstreamJawOpen] = 0.10f;
+
+    processor.Apply(frame, cfg);
+
+    EXPECT_NEAR(frame.expressions[kOursJawOpen], 0.80f, 1e-6f);
+    EXPECT_NEAR(frame.upstream_expressions[kUpstreamJawOpen], 0.80f, 1e-6f);
+}
+
 TEST(FaceSignalProcessor, MouthCloseCompensationUpdatesInternalAndUpstream)
 {
     facetracking::FaceSignalProcessor processor;
     protocol::FaceTrackingConfig cfg = MakeConfig();
+    cfg.expression_correction_flags =
+        protocol::FACETRACKING_EXPR_CORRECT_MOUTH_CLOSE;
     protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 
     frame.expressions[kOursJawOpen] = 0.80f;
@@ -119,6 +148,86 @@ TEST(FaceSignalProcessor, MouthCloseCompensationUpdatesInternalAndUpstream)
     EXPECT_NEAR(frame.expressions[kOursJawOpen], 0.50f, 1e-6f);
     EXPECT_NEAR(frame.upstream_expressions[kUpstreamJawOpen], 0.50f, 1e-6f);
     EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthClosed], 0.50f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, SmileMouthOpenAssistIsOptIn)
+{
+    facetracking::FaceSignalProcessor processor;
+    protocol::FaceTrackingConfig cfg = MakeConfig();
+    protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+
+    frame.expressions[kOursJawOpen] = 0.01f;
+    frame.expressions[kOursMouthSmileLeft] = 1.0f;
+    frame.expressions[kOursMouthSmileRight] = 1.0f;
+
+    processor.Apply(frame, cfg);
+    EXPECT_NEAR(frame.expressions[kOursJawOpen], 0.01f, 1e-6f);
+
+    cfg.expression_correction_flags =
+        protocol::FACETRACKING_EXPR_CORRECT_SMILE_OPEN;
+    cfg.expression_correction_strengths = PackStrengths(100, 0);
+    frame = MakeExpressionFrame();
+    frame.expressions[kOursJawOpen] = 0.01f;
+    frame.expressions[kOursMouthSmileLeft] = 1.0f;
+    frame.expressions[kOursMouthSmileRight] = 1.0f;
+
+    processor.Apply(frame, cfg);
+    EXPECT_NEAR(frame.expressions[kOursJawOpen], 0.18f, 1e-5f);
+    EXPECT_NEAR(frame.upstream_expressions[kUpstreamJawOpen], 0.18f, 1e-5f);
+}
+
+TEST(FaceSignalProcessor, IdleMouthAutoCloseRequiresOptInAndHoldTime)
+{
+    facetracking::FaceSignalProcessor processor;
+    protocol::FaceTrackingConfig cfg = MakeConfig();
+    cfg.expression_correction_flags =
+        protocol::FACETRACKING_EXPR_CORRECT_IDLE_CLOSE;
+    cfg.expression_correction_strengths = PackStrengths(100, 0);
+    const uint64_t base = QpcNow();
+
+    protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+    frame.qpc_sample_time = base;
+    frame.expressions[kOursJawOpen] = 0.16f;
+    processor.Apply(frame, cfg);
+    EXPECT_NEAR(frame.expressions[kOursJawOpen], 0.16f, 1e-6f);
+
+    frame = MakeExpressionFrame();
+    frame.qpc_sample_time = QpcAfterMs(base, 1300.0);
+    frame.expressions[kOursJawOpen] = 0.16f;
+    processor.Apply(frame, cfg);
+
+    EXPECT_NEAR(frame.expressions[kOursJawOpen], 0.0f, 1e-6f);
+    EXPECT_NEAR(frame.upstream_expressions[kUpstreamJawOpen], 0.0f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, EyelidBrowSyncRequiresOptIn)
+{
+    facetracking::FaceSignalProcessor processor;
+    protocol::FaceTrackingConfig cfg = MakeConfig();
+    protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+    frame.flags = 0x3;
+    frame.eye_openness_l = 0.0f;
+    frame.expressions[kOursBrowInnerUpLeft] = 0.80f;
+    frame.expressions[kOursBrowOuterUpLeft] = 0.70f;
+
+    processor.Apply(frame, cfg);
+    EXPECT_NEAR(frame.expressions[kOursBrowInnerUpLeft], 0.80f, 1e-6f);
+
+    cfg.expression_correction_flags =
+        protocol::FACETRACKING_EXPR_CORRECT_BROW_SYNC;
+    cfg.expression_correction_strengths = PackStrengths(0, 100);
+    frame = MakeExpressionFrame();
+    frame.flags = 0x3;
+    frame.eye_openness_l = 0.0f;
+    frame.expressions[kOursBrowInnerUpLeft] = 0.80f;
+    frame.expressions[kOursBrowOuterUpLeft] = 0.70f;
+
+    processor.Apply(frame, cfg);
+
+    EXPECT_NEAR(frame.expressions[kOursBrowInnerUpLeft], 0.48f, 1e-6f);
+    EXPECT_NEAR(frame.expressions[kOursBrowOuterUpLeft], 0.42f, 1e-6f);
+    EXPECT_NEAR(frame.expressions[kOursBrowLowererLeft], 0.12f, 1e-6f);
+    EXPECT_NEAR(frame.expressions[kOursBrowPinchLeft], 0.06f, 1e-6f);
 }
 
 TEST(FaceSignalProcessor, UnmappedUpstreamShapesRemainRaw)
@@ -205,4 +314,17 @@ TEST(FaceSignalProcessor, GazeSmoothingKeepsUnitLength)
     processor.Apply(frame, cfg);
 
     EXPECT_NEAR(Length3(frame.eye_gaze_l), 1.0f, 1e-5f);
+}
+
+TEST(FaceTrackingProfileDefaults, PreferenceCorrectionsAreOptIn)
+{
+    FacetrackingProfile profile;
+
+    EXPECT_FALSE(profile.eyelid_sync_enabled);
+    EXPECT_EQ(profile.gaze_smoothing, 0);
+    EXPECT_EQ(profile.openness_smoothing, 0);
+    EXPECT_FALSE(profile.mouth_close_compensation_enabled);
+    EXPECT_FALSE(profile.smile_mouth_open_assist_enabled);
+    EXPECT_FALSE(profile.idle_mouth_auto_close_enabled);
+    EXPECT_FALSE(profile.eyelid_brow_sync_enabled);
 }

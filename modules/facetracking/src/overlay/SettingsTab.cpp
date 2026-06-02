@@ -45,6 +45,62 @@ void DrawSettingsTab(FacetrackingPlugin &plugin)
 
     if (!p.eyelid_sync_enabled) ImGui::EndDisabled();
 
+    // ---- Expression Corrections ----
+    DrawSectionHeading("Expression Corrections");
+
+    if (CheckboxWithTooltip("Mouth-close compensation", &p.mouth_close_compensation_enabled,
+            "Reduces JawOpen when MouthClose is also active.\n"
+            "Use this when the tracker leaves the avatar's mouth slightly open\n"
+            "even though the lips are meant to be closed.")) {
+        plugin.PushConfigToDriver();
+    }
+
+    if (CheckboxWithTooltip("Smile opens mouth", &p.smile_mouth_open_assist_enabled,
+            "Adds a small JawOpen floor as smiles get stronger.\n"
+            "Use this on avatars where a broad tracked smile looks too stiff\n"
+            "with the mouth fully closed.")) {
+        plugin.PushConfigToDriver();
+    }
+
+    if (!p.smile_mouth_open_assist_enabled) ImGui::BeginDisabled();
+
+    if (SliderIntWithTooltip("Smile open strength##smile_mouth_open",
+            &p.smile_mouth_open_strength, 0, 100, "%d%%",
+            "Maximum mouth-open assist for strong smiles.\n"
+            "Lower values keep closed-mouth smiles mostly intact; higher\n"
+            "values force a clearer open-mouth grin.")) {
+        plugin.PushConfigToDriver();
+    }
+
+    if (!p.smile_mouth_open_assist_enabled) ImGui::EndDisabled();
+
+    if (CheckboxWithTooltip("Auto-close idle mouth", &p.idle_mouth_auto_close_enabled,
+            "Closes a small, steady JawOpen value after it persists for a\n"
+            "short time with little other mouth expression.\n"
+            "Use this for headset noise that appears when reclining or lying down.")) {
+        plugin.PushConfigToDriver();
+    }
+
+    if (CheckboxWithTooltip("Sync brows with closed eyes", &p.eyelid_brow_sync_enabled,
+            "Softly reduces brow-up shapes and adds a small brow-lowerer\n"
+            "hint when eyelids are closed.\n"
+            "Use this when blinks or reclined poses make brows and lids look\n"
+            "out of sync on a specific avatar.")) {
+        plugin.PushConfigToDriver();
+    }
+
+    if (!p.eyelid_brow_sync_enabled) ImGui::BeginDisabled();
+
+    if (SliderIntWithTooltip("Brow sync strength##eyelid_brow",
+            &p.eyelid_brow_sync_strength, 0, 100, "%d%%",
+            "How strongly closed eyelids influence brow shapes.\n"
+            "Lower values preserve expressive brows; higher values make\n"
+            "blinks and closed-eye poses more tightly coordinated.")) {
+        plugin.PushConfigToDriver();
+    }
+
+    if (!p.eyelid_brow_sync_enabled) ImGui::EndDisabled();
+
     // ---- Vergence Lock ----
     DrawSectionHeading("Vergence Lock");
 

@@ -14,7 +14,7 @@
 struct FacetrackingProfile
 {
     // --- wire-side settings (mirrored to the driver on connect) ---
-    bool    eyelid_sync_enabled        = true;
+    bool    eyelid_sync_enabled        = false;
     bool    eyelid_sync_preserve_winks = true;
     int     eyelid_sync_strength       = 70;   // 0..100
 
@@ -28,8 +28,17 @@ struct FacetrackingProfile
     // entirely, clear this toggle; individual route filtering lives on the router tab.
     bool    output_osc_enabled         = true;
 
-    int     gaze_smoothing             = 30;   // 0..100
-    int     openness_smoothing         = 20;   // 0..100
+    int     gaze_smoothing             = 0;    // 0..100
+    int     openness_smoothing         = 0;    // 0..100
+
+    // Avatar-expression shaping. These are preference controls, not baseline
+    // compatibility behaviour, so new profiles keep them disabled.
+    bool    mouth_close_compensation_enabled = false;
+    bool    smile_mouth_open_assist_enabled = false;
+    int     smile_mouth_open_strength       = 50; // 0..100
+    bool    idle_mouth_auto_close_enabled   = false;
+    bool    eyelid_brow_sync_enabled        = false;
+    int     eyelid_brow_sync_strength       = 50; // 0..100
 
     // Which installed modules the user has toggled on in the Modules tab.
     // Empty list = a fresh profile; the overlay selects the first installed

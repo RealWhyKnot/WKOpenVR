@@ -281,6 +281,13 @@
 	// NUL-terminated tokens.
 	static const size_t FACETRACKING_MODULE_UUID_LEN = 40;
 
+	// FaceTrackingConfig::expression_correction_flags bit layout. These are
+	// avatar-expression shaping options, disabled unless explicitly enabled.
+	static const uint8_t FACETRACKING_EXPR_CORRECT_MOUTH_CLOSE = 0x01;
+	static const uint8_t FACETRACKING_EXPR_CORRECT_SMILE_OPEN  = 0x02;
+	static const uint8_t FACETRACKING_EXPR_CORRECT_IDLE_CLOSE  = 0x04;
+	static const uint8_t FACETRACKING_EXPR_CORRECT_BROW_SYNC   = 0x08;
+
 	// v15 (2026-05-12): face-tracking master config.
 	//
 	// POD-only, fits in the existing Request union -- the static_assert below
@@ -312,7 +319,7 @@
 		// reserved for Phase 3 -- always zero for now.
 		uint8_t output_osc_enabled;
 		uint8_t _reserved_native;   // was output_native_enabled; Phase 3
-		uint8_t _reserved1;
+		uint8_t expression_correction_flags;
 
 		// Sync feature strengths on a 0..100 scale, identical semantics to
 		// the smoothing module's existing scale. 0=feature observable but no
@@ -325,7 +332,9 @@
 		// OSC target. Driver forwards these to the host over the host control
 		// pipe; the host owns the UDP socket. Default 127.0.0.1:9000 (VRChat).
 		uint16_t osc_port;
-		uint16_t _reserved2;
+		// Low byte = mouth shaping strength, high byte = eyelid/brow sync
+		// strength. Both are 0..100 and only used when their flag is enabled.
+		uint16_t expression_correction_strengths;
 		char     osc_host[FACETRACKING_OSC_HOST_LEN];
 
 		// Active hardware module. Empty string = host picks automatically

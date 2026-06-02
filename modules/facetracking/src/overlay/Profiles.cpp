@@ -50,6 +50,12 @@ FacetrackingProfile Decode(const picojson::value &v)
     getBool("output_osc_enabled",         p.output_osc_enabled);
     getInt ("gaze_smoothing",             p.gaze_smoothing);
     getInt ("openness_smoothing",         p.openness_smoothing);
+    getBool("mouth_close_compensation_enabled", p.mouth_close_compensation_enabled);
+    getBool("smile_mouth_open_assist_enabled", p.smile_mouth_open_assist_enabled);
+    getInt ("smile_mouth_open_strength",       p.smile_mouth_open_strength);
+    getBool("idle_mouth_auto_close_enabled",   p.idle_mouth_auto_close_enabled);
+    getBool("eyelid_brow_sync_enabled",        p.eyelid_brow_sync_enabled);
+    getInt ("eyelid_brow_sync_strength",       p.eyelid_brow_sync_strength);
     // enabled_module_uuids -- the multi-select list the Modules tab edits.
     // Read the array form first; if missing, fall back to the deprecated
     // single-uuid string field so users upgrading across this change keep
@@ -86,6 +92,12 @@ std::string Encode(const FacetrackingProfile &p)
     obj["output_osc_enabled"]         = picojson::value(p.output_osc_enabled);
     obj["gaze_smoothing"]             = picojson::value((double)p.gaze_smoothing);
     obj["openness_smoothing"]         = picojson::value((double)p.openness_smoothing);
+    obj["mouth_close_compensation_enabled"] = picojson::value(p.mouth_close_compensation_enabled);
+    obj["smile_mouth_open_assist_enabled"] = picojson::value(p.smile_mouth_open_assist_enabled);
+    obj["smile_mouth_open_strength"]       = picojson::value((double)p.smile_mouth_open_strength);
+    obj["idle_mouth_auto_close_enabled"]   = picojson::value(p.idle_mouth_auto_close_enabled);
+    obj["eyelid_brow_sync_enabled"]        = picojson::value(p.eyelid_brow_sync_enabled);
+    obj["eyelid_brow_sync_strength"]       = picojson::value((double)p.eyelid_brow_sync_strength);
     {
         picojson::array arr;
         for (const auto &u : p.enabled_module_uuids)
