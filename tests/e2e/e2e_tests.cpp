@@ -8,6 +8,7 @@
 #include "DriverModule.h"
 #include "FaceFrameReader.h"
 #include "FaceOscPublisher.h"
+#include "FaceSignalProcessor.h"
 #include "OscRouter.h"
 #include "OscWire.h"
 #include "Protocol.h"
@@ -780,8 +781,18 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     facetracking::FaceOscAddressFilter filter(allowListPath.wstring());
     ASSERT_TRUE(filter.ReloadIfChanged());
 
+    protocol::FaceTrackingFrameBody processedFrame = frame;
+    processedFrame.expressions[26] = 0.80f; // internal JawOpen after calibration
+    processedFrame.expressions[40] = 0.50f; // internal MouthClose
+    processedFrame.upstream_expressions[22] = 0.90f; // raw upstream JawOpen
+    processedFrame.upstream_expressions[29] = 0.50f; // raw upstream MouthClosed
+    protocol::FaceTrackingConfig signalCfg{};
+    signalCfg.master_enabled = 1;
+    facetracking::FaceSignalProcessor signalProcessor;
+    signalProcessor.Apply(processedFrame, signalCfg);
+
     facetracking::FaceOscPublishCounts filteredCounts =
-        facetracking::PublishFaceFrameOsc(frame, &filter);
+        facetracking::PublishFaceFrameOsc(processedFrame, &filter);
     EXPECT_EQ(filteredCounts.sent, 3u);
     EXPECT_EQ(filteredCounts.dropped, 0u);
 
@@ -794,7 +805,7 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
         "/avatar/parameters/OSCm/Proxy/FT/v2/EyeLidLeft", lidJerryV2, 5000ms));
     ASSERT_TRUE(harness.receiver.WaitForFloat(
         "/avatar/parameters/Example/Nest/v2/SmileFrownLeft", smileJerryV2, 5000ms));
-    EXPECT_NEAR(jawJerryV2, 0.75f, 0.001f);
+    EXPECT_NEAR(jawJerryV2, 0.50f, 0.001f);
     EXPECT_NEAR(lidJerryV2, 0.465f, 0.001f);
     EXPECT_NEAR(smileJerryV2, 0.2f, 0.001f);
 

@@ -13,6 +13,8 @@ add_library(openvr_pair_feature_facetracking_driver STATIC
 	FaceOscAddressFilter.cpp
 	FaceOscPublisher.cpp
 	FaceOscPublisher.h
+	FaceSignalProcessor.cpp
+	FaceSignalProcessor.h
 	FaceTrackingDevice.cpp
 	FaceTrackingDevice.h
 	FacetrackingDriverModule.cpp

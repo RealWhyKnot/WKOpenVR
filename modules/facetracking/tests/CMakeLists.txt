@@ -18,12 +18,14 @@ add_executable(facetracking_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/calibration_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vergence_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/eyelid_sync_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/face_signal_processor_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/feature_flags_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/osc_publish_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/upstream_shape_map_tests.cpp
     ${FT_DRIVER_SRC}/CalibrationEngine.cpp
     ${FT_DRIVER_SRC}/VergenceLock.cpp
     ${FT_DRIVER_SRC}/EyelidSync.cpp
+    ${FT_DRIVER_SRC}/FaceSignalProcessor.cpp
     ${FT_DRIVER_SRC}/FaceOscAddressFilter.cpp
 )
 

@@ -3,6 +3,7 @@
 #include "EyelidSync.h"
 #include "FaceFrameReader.h"
 #include "FaceOscPublisher.h"
+#include "FaceSignalProcessor.h"
 #include "FaceTrackingDevice.h"
 #include "HostSupervisor.h"
 #include "Logging.h"
@@ -307,6 +308,7 @@ private:
     CalibrationEngine calib_;
     VergenceLock      vergence_;
     EyelidSync        eyelid_;
+    FaceSignalProcessor signal_processor_;
 
     // Config cache -- written by HandleRequest, read by WorkerLoop.
     protocol::FaceTrackingConfig config_{};
@@ -440,6 +442,8 @@ private:
                     cfg.eyelid_sync_strength,
                     cfg.eyelid_sync_preserve_winks != 0);
             }
+
+            signal_processor_.Apply(frame, cfg);
 
             // Publish to SteamVR inputs.
             if (cfg._reserved_native && device_) {
