@@ -1511,10 +1511,40 @@ TEST(BoundaryPreviewTest, UploadFailuresDisableAfterThreshold) {
     EXPECT_TRUE(BoundaryPreviewShouldDisableUploadsAfterFailureCount(4));
 }
 
-TEST(BoundaryPreviewTest, UsesRawRgbaUploadForHmdPreview) {
-    // The preview pushes a CPU RGBA buffer via SetOverlayRaw (no GL context),
-    // so the upload works from the capture-tick thread.
-    EXPECT_FALSE(BoundaryPreviewUsesOpenGlTextureUpload());
+TEST(BoundaryPreviewTest, UsesOpenGlTextureUploadForHmdPreview) {
+    // The preview uploads the CPU raster into a GL texture and submits it via
+    // SetOverlayTexture, the same path the dashboard overlay uses. SetOverlayRaw
+    // (the old path) fails with RequestFailed because its IPC byte-stream cap is
+    // below the 512x512x4 buffer size. The boundary tick runs on the overlay's
+    // main GL thread, so a GL texture upload is valid.
+    EXPECT_TRUE(BoundaryPreviewUsesOpenGlTextureUpload());
+}
+
+TEST(BoundaryFloorTest, StandingZeroTargetStoresAndClears) {
+    // Contract the floor watchdog (TickFloorStandingZeroWatchdog) and the
+    // boundary push (PushToChaperone) rely on: the standing-zero committed for
+    // the floor is recorded, returned, and cleared. The watchdog re-commits this
+    // target when the live standing-zero drifts; clearing it stops the watchdog.
+    using wkopenvr::boundary::ClearFloorStandingZeroTarget;
+    using wkopenvr::boundary::GetFloorStandingZeroTarget;
+    using wkopenvr::boundary::SetFloorStandingZeroTarget;
+
+    ClearFloorStandingZeroTarget();
+    vr::HmdMatrix34_t out{};
+    EXPECT_FALSE(GetFloorStandingZeroTarget(&out));
+
+    vr::HmdMatrix34_t target{};
+    target.m[0][0] = 1.0f;
+    target.m[1][1] = 1.0f;
+    target.m[2][2] = 1.0f;
+    target.m[1][3] = 0.5027f;  // floor offset along world up
+    SetFloorStandingZeroTarget(target);
+
+    EXPECT_TRUE(GetFloorStandingZeroTarget(&out));
+    EXPECT_FLOAT_EQ(out.m[1][3], 0.5027f);
+
+    ClearFloorStandingZeroTarget();
+    EXPECT_FALSE(GetFloorStandingZeroTarget(&out));
 }
 
 TEST(BoundaryPreviewTest, StatusExposesInitialUploadDiagnostics) {

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -1052,6 +1053,133 @@ static bool SetWorkingBoundary(
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Floor-protection: hold the SteamVR standing-zero floor against runtime resets.
+//
+// On a Quest + lighthouse (space-cal) rig the Oculus runtime owns the universe
+// and re-asserts its own (zeroed) standing-zero after a chaperone reload -- and a
+// boundary push calls ReloadInfo, so drawing a boundary wipes a floor the user
+// just set. Rather than fight the runtime with a parallel offset, we keep the
+// standing-zero mechanism (the same call OpenVR Advanced Settings uses) and hold
+// it: record the standing-zero committed for the floor, fold that re-assert into
+// every boundary push, and re-commit it whenever the live standing-zero drifts.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool g_floorTargetActive = false;
+vr::HmdMatrix34_t g_floorTargetZero = {};
+
+// Watchdog cadence: read the live standing-zero a few times a second; re-commit
+// at most twice a second so a stubborn runtime can't drive a per-frame flicker
+// war; emit a low-rate heartbeat so a session log shows whether the floor holds.
+constexpr double kFloorWatchdogCheckIntervalSec = 0.33;  // ~3 Hz
+constexpr double kFloorReassertDebounceSec = 0.5;        // <=2 Hz re-commit
+constexpr double kFloorWatchdogHeartbeatSec = 5.0;       // ~0.2 Hz log
+constexpr double kFloorDriftToleranceM = 0.02;           // 2 cm
+constexpr int kFloorReassertStreakWarn = 5;
+
+double g_floorWatchdogLastCheck = 0.0;
+double g_floorWatchdogLastReassert = 0.0;
+double g_floorWatchdogLastHeartbeat = 0.0;
+int g_floorWatchdogReassertStreak = 0;
+
+double NowSecondsSteady() {
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+
+double StandingZeroTranslationDeltaM(const vr::HmdMatrix34_t& a,
+                                     const vr::HmdMatrix34_t& b) {
+    const double dx = a.m[0][3] - b.m[0][3];
+    const double dy = a.m[1][3] - b.m[1][3];
+    const double dz = a.m[2][3] - b.m[2][3];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+}  // namespace
+
+void SetFloorStandingZeroTarget(const vr::HmdMatrix34_t& standingZeroToRaw) {
+    g_floorTargetZero = standingZeroToRaw;
+    g_floorTargetActive = true;
+    g_floorWatchdogReassertStreak = 0;
+    g_floorWatchdogLastReassert = 0.0;
+    g_floorWatchdogLastHeartbeat = 0.0;
+}
+
+void ClearFloorStandingZeroTarget() {
+    g_floorTargetActive = false;
+    g_floorWatchdogReassertStreak = 0;
+}
+
+bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out) {
+    if (!g_floorTargetActive) return false;
+    if (out) *out = g_floorTargetZero;
+    return true;
+}
+
+void TickFloorStandingZeroWatchdog() {
+    if (!g_floorTargetActive) return;
+    if (!ChaperoneSetupOk()) return;
+
+    const double now = NowSecondsSteady();
+    if (g_floorWatchdogLastCheck > 0.0 && now >= g_floorWatchdogLastCheck
+        && now - g_floorWatchdogLastCheck < kFloorWatchdogCheckIntervalSec) {
+        return;
+    }
+    g_floorWatchdogLastCheck = now;
+
+    auto* setup = vr::VRChaperoneSetup();
+    setup->RevertWorkingCopy();
+    vr::HmdMatrix34_t live;
+    if (!setup->GetWorkingStandingZeroPoseToRawTrackingPose(&live)) return;
+
+    const double driftM = StandingZeroTranslationDeltaM(live, g_floorTargetZero);
+
+    if (g_floorWatchdogLastHeartbeat <= 0.0
+        || now - g_floorWatchdogLastHeartbeat >= kFloorWatchdogHeartbeatSec) {
+        g_floorWatchdogLastHeartbeat = now;
+        char hbuf[192];
+        snprintf(hbuf, sizeof hbuf,
+            "[boundary-floor] floor_state live_y=%.4f expected_y=%.4f drift_mm=%.1f reasserts=%d",
+            live.m[1][3], g_floorTargetZero.m[1][3], driftM * 1000.0,
+            g_floorWatchdogReassertStreak);
+        Metrics::WriteLogAnnotation(hbuf);
+    }
+
+    if (driftM <= kFloorDriftToleranceM) {
+        g_floorWatchdogReassertStreak = 0;  // floor is holding
+        return;
+    }
+
+    // Debounce re-commits; the streak counter makes a flicker war visible.
+    if (g_floorWatchdogLastReassert > 0.0
+        && now - g_floorWatchdogLastReassert < kFloorReassertDebounceSec) {
+        return;
+    }
+    g_floorWatchdogLastReassert = now;
+
+    // Re-commit only the standing-zero; the reverted working copy already holds
+    // the live bounds, so they are preserved. No ReloadInfo (matches the floor
+    // apply path) -- ReloadInfo is what nudges the runtime to re-sync.
+    setup->SetWorkingStandingZeroPoseToRawTrackingPose(&g_floorTargetZero);
+    const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+    ++g_floorWatchdogReassertStreak;
+
+    char lbuf[224];
+    snprintf(lbuf, sizeof lbuf,
+        "[boundary-floor] reasserted drift_mm=%.1f live_y=%.4f target_y=%.4f committed=%d streak=%d source=watchdog",
+        driftM * 1000.0, live.m[1][3], g_floorTargetZero.m[1][3],
+        committed ? 1 : 0, g_floorWatchdogReassertStreak);
+    Metrics::WriteLogAnnotation(lbuf);
+
+    if (g_floorWatchdogReassertStreak == kFloorReassertStreakWarn) {
+        Metrics::WriteLogAnnotation(
+            "[boundary-floor] standing-zero keeps resetting after re-assert -- the runtime is "
+            "overriding the floor; the driver-side floor offset is the durable fallback");
+    }
+}
+
 bool PushToChaperone(const std::vector<BoundaryVertex>& standingUniverseVertices,
                      double floorY, double ceilingY) {
     if (!ChaperoneSetupOk()) {
@@ -1088,6 +1216,15 @@ bool PushToChaperone(const std::vector<BoundaryVertex>& standingUniverseVertices
     if (!SetWorkingBoundary(setup, standingUniverseVertices, floorY, ceilingY)) {
         Metrics::WriteLogAnnotation("[boundary] chaperone push failed: invalid_working_set");
         return false;
+    }
+    // Re-assert the floor standing-zero inside this SAME transaction so a boundary
+    // push can't drop a floor the user set (OVRAS commits bounds + standing-zero
+    // together). TickFloorStandingZeroWatchdog covers any later runtime reset.
+    {
+        vr::HmdMatrix34_t floorZero;
+        if (GetFloorStandingZeroTarget(&floorZero)) {
+            setup->SetWorkingStandingZeroPoseToRawTrackingPose(&floorZero);
+        }
     }
     const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
     if (committed && vr::VRChaperone()) {

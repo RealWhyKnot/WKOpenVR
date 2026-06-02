@@ -400,10 +400,9 @@ void ApplyBoundaryFloorY(double floorY)
 // agreement, unlike a per-device world-Y shift which fights the runtime. The
 // offset is applied along the standing-zero's own up axis so the rotation is
 // untouched and the play space can't tilt. Returns true on a committed write.
-bool AdjustStandingZeroFloorY(double deltaY)
+bool AdjustStandingZeroFloorY(double deltaY, vr::HmdMatrix34_t* committedOut = nullptr)
 {
     if (!std::isfinite(deltaY)) return false;
-    if (std::fabs(deltaY) < 1e-6) return true;
     auto* setup = vr::VRChaperoneSetup();
     if (!setup) return false;
 
@@ -414,12 +413,20 @@ bool AdjustStandingZeroFloorY(double deltaY)
         return false;
     }
 
+    // A ~zero delta leaves the standing-zero unchanged; still report the current
+    // pose so callers can record it as the floor target to hold.
+    if (std::fabs(deltaY) < 1e-6) {
+        if (committedOut) *committedOut = zero;
+        return true;
+    }
+
     const double beforeY = zero.m[1][3];
     zero.m[0][3] += zero.m[0][1] * deltaY;
     zero.m[1][3] += zero.m[1][1] * deltaY;
     zero.m[2][3] += zero.m[2][1] * deltaY;
     setup->SetWorkingStandingZeroPoseToRawTrackingPose(&zero);
     const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+    if (committed && committedOut) *committedOut = zero;
 
     char lbuf[224];
     snprintf(lbuf, sizeof lbuf,
@@ -1171,7 +1178,8 @@ bool ApplyFloorFromStandingContactPose(
     // controller's height above the current floor, so shifting by it is cumulative
     // and converges to zero over repeated applies.
     const double previousOffset = CalCtx.floorOffsetMetersY;
-    if (!AdjustStandingZeroFloorY(measuredStandingY)) {
+    vr::HmdMatrix34_t committedZero;
+    if (!AdjustStandingZeroFloorY(measuredStandingY, &committedZero)) {
         s_boundaryError = "Couldn't write floor height to SteamVR's chaperone.";
         char fbuf[256];
         snprintf(fbuf, sizeof fbuf,
@@ -1181,6 +1189,10 @@ bool ApplyFloorFromStandingContactPose(
         openvr_pair::common::DiagnosticLog("boundary-floor", "%s", fbuf);
         return false;
     }
+    // Hold this standing-zero against runtime resets -- a boundary push's
+    // ReloadInfo otherwise lets the Oculus runtime wipe it (see the watchdog in
+    // Boundary.cpp). This is what makes "set floor, then draw a boundary" stick.
+    wkopenvr::boundary::SetFloorStandingZeroTarget(committedZero);
     // Track the cumulative shift applied to the standing-zero so Reset undoes it.
     CalCtx.floorOffsetMetersY = previousOffset + measuredStandingY;
     CalCtx.floorEnabled = true;
@@ -1657,9 +1669,15 @@ void DrawBoundarySection(ImVec2 panelSize) {
             if (hasFloorOffset) {
                 bool floorOn = CalCtx.floorEnabled;
                 if (ImGui::Checkbox("Floor height applied", &floorOn)) {
-                    AdjustStandingZeroFloorY(floorOn
-                        ? CalCtx.floorOffsetMetersY
-                        : -CalCtx.floorOffsetMetersY);
+                    if (floorOn) {
+                        vr::HmdMatrix34_t committedZero;
+                        if (AdjustStandingZeroFloorY(CalCtx.floorOffsetMetersY, &committedZero)) {
+                            wkopenvr::boundary::SetFloorStandingZeroTarget(committedZero);
+                        }
+                    } else {
+                        AdjustStandingZeroFloorY(-CalCtx.floorOffsetMetersY);
+                        wkopenvr::boundary::ClearFloorStandingZeroTarget();
+                    }
                     CalCtx.floorEnabled = floorOn;
                     SaveProfile(CalCtx);
                 }
@@ -1672,6 +1690,7 @@ void DrawBoundarySection(ImVec2 panelSize) {
             if (!hasFloorOffset) ImGui::BeginDisabled();
             if (ImGui::Button("Reset floor")) {
                 AdjustStandingZeroFloorY(-CalCtx.floorOffsetMetersY);
+                wkopenvr::boundary::ClearFloorStandingZeroTarget();
                 CalCtx.floorOffsetMetersY = 0.0;
                 CalCtx.floorEnabled = false;
                 ApplyBoundaryFloorY(0.0);
@@ -2064,6 +2083,10 @@ void CCal_TickBoundaryCapture() {
     const bool captureActive = s_capture.state() == wkopenvr::boundary::CaptureState::Active;
     if (!captureActive && !s_floorCapture.active()) {
         TickPersistentBoundaryOverlay();
+        // Hold the SteamVR floor against runtime resets while idle. Runs only
+        // when not capturing, so it can't disturb a live working-set preview;
+        // no-op unless a floor target is active.
+        wkopenvr::boundary::TickFloorStandingZeroWatchdog();
         return;
     }
 

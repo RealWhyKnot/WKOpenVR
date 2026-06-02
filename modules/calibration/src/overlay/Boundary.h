@@ -266,6 +266,19 @@ std::vector<uint8_t> SnapshotCurrentChaperone();
 // Returns false if snapshot bytes don't parse.
 bool RestoreChaperoneFromSnapshot(const std::vector<uint8_t>& snapshot);
 
+// Floor-protection: hold the SteamVR standing-zero floor against runtime resets.
+// On a Quest + lighthouse (space-cal) rig the Oculus runtime re-asserts its own
+// zeroed standing-zero after a chaperone reload (e.g. the ReloadInfo a boundary
+// push triggers), wiping a floor the user set. SetFloorStandingZeroTarget records
+// the standing-zero we committed for the floor; PushToChaperone folds that
+// re-assert into the boundary push, and TickFloorStandingZeroWatchdog re-commits
+// it whenever the live standing-zero drifts away. Keeps the standing-zero
+// mechanism (the same call OpenVR Advanced Settings uses).
+void SetFloorStandingZeroTarget(const vr::HmdMatrix34_t& standingZeroToRaw);
+void ClearFloorStandingZeroTarget();
+bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out);
+void TickFloorStandingZeroWatchdog();
+
 PolygonBounds ComputePolygonBoundsXZ(const std::vector<BoundaryVertex>& v);
 
 }  // namespace wkopenvr::boundary

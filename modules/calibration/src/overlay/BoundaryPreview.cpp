@@ -5,6 +5,8 @@
 
 #include <openvr.h>
 
+#include <GL/gl3w.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -28,9 +30,9 @@ constexpr double kMinPreviewSpanMeters = 1.0;
 constexpr double kPreviewPadMeters = 0.30;
 constexpr int kUploadFailureDisableThreshold = 3;
 constexpr int kMaxFileMarkerOverlays = 32;
-// Texture-upload retry backoff. A transient SetOverlayRaw failure never disables
-// the boundary permanently; failures only pace retries between these bounds while
-// a vertex-marker fallback keeps the boundary visible.
+// Texture-upload retry backoff. A transient SetOverlayTexture failure never
+// disables the boundary permanently; failures only pace retries between these
+// bounds while a vertex-marker fallback keeps the boundary visible.
 constexpr double kUploadBackoffBaseSec = 0.1;
 constexpr double kUploadBackoffCapSec = 1.0;
 constexpr uint64_t kFnvOffset = 1469598103934665603ull;
@@ -46,6 +48,7 @@ struct PreviewState {
     bool fileMarkersVisible = false;
     bool fileMarkerTextureReady = false;
     bool textureReady = false;
+    GLuint glTexture = 0;  // GL texture backing the overlay, uploaded via SetOverlayTexture.
     uint64_t uploadedHash = 0;
     uint64_t lastRasterHash = 0;
     int uploadFailureCount = 0;
@@ -486,6 +489,10 @@ void Destroy()
             }
         }
     }
+    if (s.glTexture != 0) {
+        glDeleteTextures(1, &s.glTexture);
+        s.glTexture = 0;
+    }
     s.handle = vr::k_ulOverlayHandleInvalid;
     s.fileMarkerHandles.fill(vr::k_ulOverlayHandleInvalid);
     s.fileMarkerCreated.fill(false);
@@ -522,18 +529,43 @@ vr::EVROverlayError UploadRasterTexture(const BoundaryPreviewRaster& raster)
         return s.lastError;
     }
 
-    // Hand SteamVR the CPU RGBA buffer directly. SetOverlayRaw copies the
-    // pixels and needs no GL/DX context, so the upload works from whatever
-    // thread the capture tick runs on -- unlike SetOverlayTexture, which
-    // silently failed when no GL context was current here.
-    constexpr uint32_t size =
-        static_cast<uint32_t>(BoundaryPreviewRaster::kTextureSize);
-    const vr::EVROverlayError err = vr::VROverlay()->SetOverlayRaw(
-        s.handle,
-        const_cast<uint8_t*>(raster.rgba.data()),
-        size,
-        size,
-        4u);
+    // Upload the CPU raster into a GL texture and hand SteamVR that texture, the
+    // same way the dashboard overlay does (VrOverlayHost::SubmitTexture). The old
+    // path, SetOverlayRaw, ships the pixels as an IPC byte stream that has a size
+    // cap; a 512x512x4 (1 MB) buffer exceeds it and the call returns
+    // VROverlayError_RequestFailed every time. The boundary tick runs on the
+    // overlay's main thread with the GL context current (the same thread that
+    // submits the dashboard texture), so SetOverlayTexture is valid here.
+    constexpr GLsizei size =
+        static_cast<GLsizei>(BoundaryPreviewRaster::kTextureSize);
+    if (s.glTexture == 0) {
+        glGenTextures(1, &s.glTexture);
+        if (s.glTexture == 0) {
+            // No GL texture (e.g. no current context): report a failure so the
+            // caller keeps the marker fallback visible and retries.
+            s.lastError = vr::VROverlayError_RequestFailed;
+            return s.lastError;
+        }
+        glBindTexture(GL_TEXTURE_2D, s.glTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0,
+            GL_RGBA, GL_UNSIGNED_BYTE, raster.rgba.data());
+    } else {
+        glBindTexture(GL_TEXTURE_2D, s.glTexture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, size,
+            GL_RGBA, GL_UNSIGNED_BYTE, raster.rgba.data());
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    vr::Texture_t tex{};
+    tex.handle = reinterpret_cast<void*>(static_cast<uintptr_t>(s.glTexture));
+    tex.eType = vr::TextureType_OpenGL;
+    tex.eColorSpace = vr::ColorSpace_Auto;
+    const vr::EVROverlayError err =
+        vr::VROverlay()->SetOverlayTexture(s.handle, &tex);
     s.lastError = err;
     return err;
 }
@@ -925,7 +957,7 @@ bool BoundaryPreviewShouldDisableUploadsAfterFailureCount(int failureCount)
 
 bool BoundaryPreviewUsesOpenGlTextureUpload()
 {
-    return false;
+    return true;
 }
 
 int BoundaryPreviewFileMarkerLimit()
@@ -1107,11 +1139,12 @@ void TickBoundaryPreview(
         return;
     }
 
-    // Upload the current raster when its content changes. A failed SetOverlayRaw
-    // (e.g. a transient RequestFailed while drawing) must NEVER permanently
-    // disable a safety boundary, so failures only schedule a short, growing
-    // backoff and we always retry. Freshly drawn/applied content (a new hash that
-    // hasn't failed) clears the backoff for an immediate clean attempt.
+    // Upload the current raster when its content changes. A failed
+    // SetOverlayTexture (e.g. a transient RequestFailed while drawing) must
+    // NEVER permanently disable a safety boundary, so failures only schedule a
+    // short, growing backoff and we always retry. Freshly drawn/applied content
+    // (a new hash that hasn't failed) clears the backoff for an immediate clean
+    // attempt.
     const bool contentChanged = (raster.hash != s.uploadedHash);
     if (contentChanged && raster.hash != s.lastFailedHash) {
         s.uploadFailureCount = 0;
