@@ -40,6 +40,8 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **calibration:** Make head-mount offset auto-correct log-only (e353bb9)
 - diag(calibration): log snap-suppress corroboration inputs at relocalization (3e1a7fd)
 - diag(smoothing): make smart-smoothing shadow a selectable A/B testbed (3fb2afb)
+- **calibration:** Remove headset tracker auto-pick (6867472)
+- **facetracking:** Remove custom module bridge (4e9271a)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -95,6 +97,20 @@ Mirror of the root `CHANGELOG.md`, kept in lock-step by `.github/scripts/Update-
 - **calibration:** Harden hmd preview overlays (d9a271a)
 - **boundary:** Keep local boundary when native push is ineligible (728e5cd)
 - **calibration:** Guard head-mounted tracker source changes (39bb172)
+- **boundary:** Upload preview via SetOverlayTexture; hold floor on reload (cd302f4)
+- **facetracking:** Support prefixed VRCFT parameters (8e4b202)
+- **facetracking:** Filter OSC to active avatar (d6a7c34)
+- Align face OSC and remove slew controls (80ab8a9)
+- **calibration:** Simplify forehead offset tuning (f04eae9)
+- **facetracking:** Harden registry installs (d14742e)
+- **calibration:** Auto-select headset tracker (76e5672)
+- **quick:** Start steam after deploy (c9fa8cf)
+- **facetracking:** Make registry sync list-only (98e4d19)
+- **overlay:** Simplify logs tab (e316302)
+- **overlay:** Align module wait states (8b385f9)
+- **facetracking:** Harden sidecar router lifecycle (028ee3c)
+- **facetracking:** Mirror VRCFT SDK assembly identity (f80c3b0)
+- **facetracking:** Recognize legacy VRCFT bridge manifests (3923ce6)
 
 ---
 
