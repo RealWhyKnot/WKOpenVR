@@ -856,7 +856,8 @@ void PhantomPlugin::DrawAbsentTab()
         "Add body trackers you do not physically own. The driver creates a "
         "virtual SteamVR tracker for each enabled role and feeds it from "
         "headset/controller/physical-tracker body completion when confidence "
-        "is high enough.");
+        "is high enough. The list follows VRChat's eight supported extra "
+        "tracker points.");
     ImGui::Spacing();
     ImGui::TextDisabled(
         "Note: SteamVR does not allow live retraction. Disabling a role here "
@@ -871,7 +872,6 @@ void PhantomPlugin::DrawAbsentTab()
         phantom::BodyRole::LeftFoot,  phantom::BodyRole::RightFoot,
         phantom::BodyRole::LeftKnee,  phantom::BodyRole::RightKnee,
         phantom::BodyRole::LeftElbow, phantom::BodyRole::RightElbow,
-        phantom::BodyRole::LeftShoulder, phantom::BodyRole::RightShoulder,
     };
     for (auto role : roles) {
         bool enabled = cfg_.virtual_enabled.count(role)

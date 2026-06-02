@@ -49,11 +49,10 @@ inline const char* BodyRoleLabel(BodyRole r)
     return "?";
 }
 
-// SteamVR controller-type string Phase 2 publishes for absent-mode trackers.
-// VRChat / Resonite / Neos match against these to assign the virtual device
-// to its full-body slot without the user touching SteamVR's tracker
-// manager UI. nullptr for roles that are never published as virtual
-// trackers (HMD, hands -- those exist via the user's real headset + controllers).
+// SteamVR controller-type string published for absent-mode trackers. The
+// virtual target set follows VRChat's supported extra tracker points:
+// waist/hip, chest, feet, knees, and upper-arm/elbow. Shoulder roles stay in
+// the internal solver, but are not separate virtual trackers.
 inline const char* BodyRoleToControllerType(BodyRole r)
 {
     switch (r) {
@@ -65,12 +64,12 @@ inline const char* BodyRoleToControllerType(BodyRole r)
         case BodyRole::RightKnee:     return "vive_tracker_right_knee";
         case BodyRole::LeftElbow:     return "vive_tracker_left_elbow";
         case BodyRole::RightElbow:    return "vive_tracker_right_elbow";
-        case BodyRole::LeftShoulder:  return "vive_tracker_left_shoulder";
-        case BodyRole::RightShoulder: return "vive_tracker_right_shoulder";
         case BodyRole::None:
         case BodyRole::Hmd:
         case BodyRole::LeftHand:
         case BodyRole::RightHand:
+        case BodyRole::LeftShoulder:
+        case BodyRole::RightShoulder:
             return nullptr;
     }
     return nullptr;

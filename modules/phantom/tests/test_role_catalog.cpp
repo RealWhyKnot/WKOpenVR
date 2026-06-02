@@ -13,10 +13,22 @@ TEST(RoleCatalogTest, ControllerTypeStringMatchesValveConvention)
                  "vive_tracker_right_foot");
     EXPECT_STREQ(BodyRoleToControllerType(phantom::BodyRole::Chest),
                  "vive_tracker_chest");
+    EXPECT_STREQ(BodyRoleToControllerType(phantom::BodyRole::LeftKnee),
+                 "vive_tracker_left_knee");
+    EXPECT_STREQ(BodyRoleToControllerType(phantom::BodyRole::RightKnee),
+                 "vive_tracker_right_knee");
+    EXPECT_STREQ(BodyRoleToControllerType(phantom::BodyRole::LeftElbow),
+                 "vive_tracker_left_elbow");
+    EXPECT_STREQ(BodyRoleToControllerType(phantom::BodyRole::RightElbow),
+                 "vive_tracker_right_elbow");
     // HMD/hand roles never publish as a generic-tracker virtual device.
     EXPECT_EQ(BodyRoleToControllerType(phantom::BodyRole::Hmd),       nullptr);
     EXPECT_EQ(BodyRoleToControllerType(phantom::BodyRole::LeftHand),  nullptr);
     EXPECT_EQ(BodyRoleToControllerType(phantom::BodyRole::RightHand), nullptr);
+    // VRChat uses upper-arm/elbow trackers to drive shoulders; shoulders are
+    // internal solver roles, not separate virtual trackers.
+    EXPECT_EQ(BodyRoleToControllerType(phantom::BodyRole::LeftShoulder),  nullptr);
+    EXPECT_EQ(BodyRoleToControllerType(phantom::BodyRole::RightShoulder), nullptr);
 }
 
 TEST(RoleCatalogTest, KeyRoundTripsThroughFromKey)
