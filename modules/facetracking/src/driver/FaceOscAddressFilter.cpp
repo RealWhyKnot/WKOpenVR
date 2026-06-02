@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -75,6 +76,31 @@ static std::string TrimAddressLine(const std::string &line)
     return line.substr(first, last - first);
 }
 
+static bool StartsWith(const std::string &value, const char *prefix)
+{
+    const size_t prefixLen = std::strlen(prefix);
+    return value.size() >= prefixLen &&
+           std::memcmp(value.data(), prefix, prefixLen) == 0;
+}
+
+static std::string CompatibleKey(const std::string &address)
+{
+    static const char kAvatarPrefix[] = "/avatar/parameters/";
+
+    std::string body = StartsWith(address, kAvatarPrefix)
+        ? address.substr(sizeof(kAvatarPrefix) - 1)
+        : address;
+
+    if (StartsWith(body, "v2/")) return body;
+
+    const size_t nestedV2 = body.rfind("/v2/");
+    if (nestedV2 != std::string::npos) {
+        return body.substr(nestedV2 + 1);
+    }
+
+    return body;
+}
+
 } // namespace
 
 FaceOscAddressFilter::FaceOscAddressFilter(std::wstring path)
@@ -92,6 +118,7 @@ bool FaceOscAddressFilter::ReloadIfChanged()
     file_stamp_ = stamp;
     loaded_ = true;
     allowed_.clear();
+    compatible_.clear();
 
     std::string body;
     if (stamp == 0 || !ReadWholeFile(path_, body)) return true;
@@ -101,7 +128,10 @@ bool FaceOscAddressFilter::ReloadIfChanged()
         const size_t newline = body.find('\n', offset);
         const size_t end = (newline == std::string::npos) ? body.size() : newline;
         const std::string line = TrimAddressLine(body.substr(offset, end - offset));
-        if (!line.empty()) allowed_.insert(line);
+        if (!line.empty()) {
+            allowed_.insert(line);
+            compatible_.try_emplace(CompatibleKey(line), line);
+        }
         if (newline == std::string::npos) break;
         offset = newline + 1;
     }
@@ -114,6 +144,13 @@ bool FaceOscAddressFilter::Allows(const char *address) const
     if (path_.empty()) return true;
     if (!address || !loaded_) return false;
     return allowed_.find(address) != allowed_.end();
+}
+
+const std::string *FaceOscAddressFilter::CompatibleAddress(const char *address) const
+{
+    if (path_.empty() || !address || !loaded_) return nullptr;
+    auto it = compatible_.find(CompatibleKey(address));
+    return it == compatible_.end() ? nullptr : &it->second;
 }
 
 uint32_t FaceOscAddressFilter::AllowedCount() const

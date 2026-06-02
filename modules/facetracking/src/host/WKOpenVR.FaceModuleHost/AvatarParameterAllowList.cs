@@ -47,7 +47,8 @@ internal static class AvatarParameterAllowList
 
             await using var fs = File.OpenRead(configPath);
             using var doc = await JsonDocument.ParseAsync(fs, cancellationToken: ct);
-            var addresses = new SortedSet<string>(StringComparer.Ordinal);
+            var addresses = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
 
             if (doc.RootElement.TryGetProperty("parameters", out JsonElement parameters) &&
                 parameters.ValueKind == JsonValueKind.Array)
@@ -72,7 +73,8 @@ internal static class AvatarParameterAllowList
                         ? addressElement.GetString()
                         : null;
                     if (address is not null &&
-                        address.StartsWith("/avatar/parameters/", StringComparison.Ordinal))
+                        address.StartsWith("/avatar/parameters/", StringComparison.Ordinal) &&
+                        seen.Add(address))
                     {
                         addresses.Add(address);
                     }

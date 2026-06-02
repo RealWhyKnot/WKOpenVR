@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <unordered_set>
 
 namespace facetracking {
 
@@ -31,10 +32,19 @@ struct OscCounts
 };
 
 static thread_local const FaceOscAddressFilter *t_addressFilter = nullptr;
+static thread_local std::unordered_set<std::string> *t_filteredDestinations = nullptr;
 
 static inline int OscPublishFloat(const char *address, float value)
 {
-    if (t_addressFilter && !t_addressFilter->Allows(address)) return 0;
+    if (t_addressFilter && t_addressFilter->Active()) {
+        const std::string *compatibleAddress = t_addressFilter->CompatibleAddress(address);
+        if (!compatibleAddress) return 0;
+        if (t_filteredDestinations &&
+            !t_filteredDestinations->insert(*compatibleAddress).second) {
+            return 0;
+        }
+        address = compatibleAddress->c_str();
+    }
 
     uint32_t bits;
     std::memcpy(&bits, &value, sizeof(bits));
@@ -692,15 +702,24 @@ FaceOscPublishCounts PublishFaceFrameOsc(
     const FaceOscAddressFilter *filter)
 {
     const FaceOscAddressFilter *previousFilter = t_addressFilter;
+    std::unordered_set<std::string> filteredDestinations;
+    std::unordered_set<std::string> *previousFilteredDestinations = t_filteredDestinations;
     t_addressFilter = filter;
+    t_filteredDestinations = (filter && filter->Active()) ? &filteredDestinations : nullptr;
 
     FaceOscPublishCounts counts;
     if ((frame.flags & 0x1u) != 0) counts.Add(PublishEye(frame).Public());
     if ((frame.flags & 0x2u) != 0) {
-        counts.Add(PublishExpressions(frame).Public());
-        counts.Add(PublishCurrentVrcft(frame).Public());
+        if (filter && filter->Active()) {
+            counts.Add(PublishCurrentVrcft(frame).Public());
+            counts.Add(PublishExpressions(frame).Public());
+        } else {
+            counts.Add(PublishExpressions(frame).Public());
+            counts.Add(PublishCurrentVrcft(frame).Public());
+        }
     }
 
+    t_filteredDestinations = previousFilteredDestinations;
     t_addressFilter = previousFilter;
     return counts;
 }

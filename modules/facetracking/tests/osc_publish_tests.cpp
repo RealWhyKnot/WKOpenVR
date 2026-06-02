@@ -196,6 +196,34 @@ TEST(FaceOscAddressFilter, LoadsAndReloadsAddresses)
     DeleteFileW(path.c_str());
 }
 
+TEST(FaceOscAddressFilter, ResolvesPrefixedVrcftV2Addresses)
+{
+    std::wstring path = TempAllowListPath();
+    WriteUtf8File(path,
+        "/avatar/parameters/FT/v2/JawOpen\n"
+        "/avatar/parameters/OSCm/Proxy/FT/v2/EyeLidLeft\n"
+        "/avatar/parameters/Example/Nest/v2/SmileFrownLeft\n");
+
+    facetracking::FaceOscAddressFilter filter(path);
+    ASSERT_TRUE(filter.ReloadIfChanged());
+
+    const std::string *jaw = filter.CompatibleAddress("/avatar/parameters/v2/JawOpen");
+    ASSERT_NE(jaw, nullptr);
+    EXPECT_EQ(*jaw, "/avatar/parameters/FT/v2/JawOpen");
+
+    const std::string *lid = filter.CompatibleAddress("/avatar/parameters/v2/EyeLidLeft");
+    ASSERT_NE(lid, nullptr);
+    EXPECT_EQ(*lid, "/avatar/parameters/OSCm/Proxy/FT/v2/EyeLidLeft");
+
+    const std::string *smile = filter.CompatibleAddress("/avatar/parameters/v2/SmileFrownLeft");
+    ASSERT_NE(smile, nullptr);
+    EXPECT_EQ(*smile, "/avatar/parameters/Example/Nest/v2/SmileFrownLeft");
+
+    EXPECT_EQ(filter.CompatibleAddress("/avatar/parameters/v2/MouthOpen"), nullptr);
+
+    DeleteFileW(path.c_str());
+}
+
 // ---------------------------------------------------------------------------
 // Tests: expression param name table
 // ---------------------------------------------------------------------------

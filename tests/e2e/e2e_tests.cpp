@@ -772,6 +772,32 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
     EXPECT_NEAR(cornerV2,     0.25f, 0.001f);
     EXPECT_NEAR(smileFrownCurrentV2, 0.2f, 0.001f);
 
+    auto allowListPath = temp / L"jerry_prefixed_avatar_parameters.txt";
+    WriteFileUtf8(allowListPath,
+        "/avatar/parameters/FT/v2/JawOpen\n"
+        "/avatar/parameters/OSCm/Proxy/FT/v2/EyeLidLeft\n"
+        "/avatar/parameters/Example/Nest/v2/SmileFrownLeft\n");
+    facetracking::FaceOscAddressFilter filter(allowListPath.wstring());
+    ASSERT_TRUE(filter.ReloadIfChanged());
+
+    facetracking::FaceOscPublishCounts filteredCounts =
+        facetracking::PublishFaceFrameOsc(frame, &filter);
+    EXPECT_EQ(filteredCounts.sent, 3u);
+    EXPECT_EQ(filteredCounts.dropped, 0u);
+
+    float jawJerryV2 = 0.0f;
+    float lidJerryV2 = 0.0f;
+    float smileJerryV2 = 0.0f;
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/FT/v2/JawOpen", jawJerryV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/OSCm/Proxy/FT/v2/EyeLidLeft", lidJerryV2, 5000ms));
+    ASSERT_TRUE(harness.receiver.WaitForFloat(
+        "/avatar/parameters/Example/Nest/v2/SmileFrownLeft", smileJerryV2, 5000ms));
+    EXPECT_NEAR(jawJerryV2, 0.75f, 0.001f);
+    EXPECT_NEAR(lidJerryV2, 0.465f, 0.001f);
+    EXPECT_NEAR(smileJerryV2, 0.2f, 0.001f);
+
     harness.Stop();
 }
 
