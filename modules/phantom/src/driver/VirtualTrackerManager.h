@@ -38,6 +38,10 @@ public:
     // conditions are met.
     void SetEnabled(BodyRole role, bool enabled);
     bool IsEnabled(BodyRole role) const;
+    int EnabledCount() const;
+
+    void SetMasterEnabled(bool enabled);
+    bool MasterEnabled() const;
 
     // Called every tick by PhantomModule (specifically when the HMD pose
     // updates). Lazily activates pending virtual devices and pushes
@@ -55,6 +59,7 @@ private:
     std::array<std::unique_ptr<VirtualTrackerDevice>, kBodyRoleCount> devices_{};
     std::array<bool, kBodyRoleCount> enabled_{};
 
+    std::atomic<bool> master_enabled_{false};
     std::atomic<bool> hmd_pose_seen_{false};
     std::chrono::steady_clock::time_point init_time_{};
 

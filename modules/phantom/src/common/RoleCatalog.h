@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 namespace phantom {
 
@@ -110,6 +112,25 @@ inline BodyRole BodyRoleFromKey(const char* s)
         if (*a == 0 && *b == 0) return r;
     }
     return BodyRole::None;
+}
+
+inline bool BodyRoleInputProfilePath(BodyRole r, char* out, std::size_t out_size)
+{
+    if (!out || out_size == 0 || !BodyRoleToControllerType(r)) {
+        return false;
+    }
+
+    const int written = std::snprintf(
+        out,
+        out_size,
+        "{01wkopenvr}/input/vive_tracker_%s_profile.json",
+        BodyRoleToKey(r));
+    return written > 0 && static_cast<std::size_t>(written) < out_size;
+}
+
+inline bool PhantomVirtualTrackersShouldRun(bool master_enabled)
+{
+    return master_enabled;
 }
 
 } // namespace phantom

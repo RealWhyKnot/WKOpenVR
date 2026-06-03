@@ -14,6 +14,18 @@ namespace facetracking {
 // the driver remaps them into our protocol::FACETRACKING_EXPRESSION_COUNT
 // slots via the table below.
 inline constexpr int kUpstreamShapeCount = 88;
+inline constexpr float kInvalidSignalMin = 1000000.0f;
+
+inline bool IsInvalidUpstreamSignal(float v)
+{
+    return !std::isfinite(v) || v >= kInvalidSignalMin;
+}
+
+inline float ClampUpstreamUnitSignal(float v)
+{
+    if (IsInvalidUpstreamSignal(v)) return 0.0f;
+    return std::clamp(v, 0.0f, 1.0f);
+}
 
 // Index into protocol::FACETRACKING_EXPRESSION_COUNT slots for each
 // upstream shape, or -1 if the upstream shape has no equivalent in our
@@ -156,8 +168,9 @@ inline constexpr int kUpstreamToOurs[kUpstreamShapeCount] = {
 // Remap an upstream dense expression array into our protocol-ordered
 // dense array. Indices unmapped on the upstream side are silently
 // dropped (the corresponding slot in `dst` stays at whatever the
-// caller initialised it to, typically zero). NaN / Inf in src are
-// also dropped. Each output is clamped to [0, 1].
+// caller initialised it to, typically zero). NaN / Inf and VRCFT's
+// 0xFFFFFFFF invalid sentinel are also dropped. Each output is clamped
+// to [0, 1].
 //
 // `src` must have at least kUpstreamShapeCount entries; `dst` must
 // have at least protocol::FACETRACKING_EXPRESSION_COUNT entries.
@@ -168,7 +181,7 @@ inline void RemapUpstreamShapes(const float* src, float* dst)
         const int o = kUpstreamToOurs[u];
         if (o < 0 || o >= kOurCount) continue;
         const float v = src[u];
-        if (std::isnan(v) || std::isinf(v)) continue;
+        if (IsInvalidUpstreamSignal(v)) continue;
         dst[o] = std::clamp(v, 0.0f, 1.0f);
     }
 }

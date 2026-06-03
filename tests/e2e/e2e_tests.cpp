@@ -900,19 +900,29 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
                (frame.flags & 0x2u) != 0u &&
                frame.eye_openness_l > 0.6f &&
                frame.expressions[26] > 0.7f &&
-               frame.expressions[45] > 0.2f;
+               frame.expressions[45] > 0.2f &&
+               frame.upstream_expressions[3] == 0.0f;
     }, 30000ms)) << "loadable test module did not publish expected frame. status: "
                  << ReadFileUtf8(statusPath) << " log: " << ReadFileUtf8(logPath);
 
     EXPECT_NEAR(frame.eye_openness_l, 0.62f, 0.001f);
     EXPECT_NEAR(frame.eye_openness_r, 0.58f, 0.001f);
+    EXPECT_NEAR(frame.eye_gaze_l[0], 0.1068f, 0.001f);
+    EXPECT_NEAR(frame.eye_gaze_l[1], -0.2136f, 0.001f);
+    EXPECT_NEAR(frame.eye_gaze_r[0], -0.1269f, 0.001f);
+    EXPECT_NEAR(frame.eye_gaze_r[1], -0.1757f, 0.001f);
+    EXPECT_NEAR(frame.pupil_dilation_l, 0.50f, 0.001f);
+    EXPECT_NEAR(frame.pupil_dilation_r, 0.60f, 0.001f);
     EXPECT_NEAR(frame.expressions[26], 0.75f, 0.001f);
+    EXPECT_NEAR(frame.expressions[8], 0.0f, 0.001f);
     EXPECT_NEAR(frame.expressions[45], 0.25f, 0.001f);
+    EXPECT_NEAR(frame.upstream_expressions[3], 0.0f, 0.001f);
 
     const std::string log = ReadFileUtf8(logPath);
     EXPECT_NE(log.find("RECV ReplyInit"), std::string::npos);
     EXPECT_NE(log.find("WKOpenVR E2E Face Module"), std::string::npos);
     EXPECT_NE(log.find("first non-zero shapes"), std::string::npos);
+    EXPECT_NE(log.find("invalid upstream signal(s) ignored"), std::string::npos);
 
     facetracking::FaceOscPublishCounts counts =
         facetracking::PublishFaceFrameOsc(frame);
@@ -943,6 +953,14 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
     EXPECT_NEAR(jawCurrentV2, 0.75f, 0.001f);
     EXPECT_NEAR(lidCurrentV2, 0.465f, 0.001f);
     EXPECT_NEAR(smileFrownCurrentV2, 0.2f, 0.001f);
+
+    ASSERT_TRUE(SendFaceHostMessage(
+        pipeName,
+        EncodeFaceHostMessage("SelectModule", uuid)));
+    std::this_thread::sleep_for(500ms);
+    const std::string reselectLog = ReadFileUtf8(logPath);
+    EXPECT_NE(reselectLog.find("active module unchanged"), std::string::npos);
+    EXPECT_EQ(reselectLog.find("moduleChanged=true"), std::string::npos);
 
     ASSERT_TRUE(SendFaceHostMessage(
         pipeName,

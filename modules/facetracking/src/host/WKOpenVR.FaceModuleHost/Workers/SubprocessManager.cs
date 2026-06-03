@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -27,6 +28,9 @@ public sealed record HostRuntimeStatus(
 /// </summary>
 public sealed class SubprocessManager : IDisposable
 {
+    private const float InvalidFloatSentinel = unchecked((float)0xFFFFFFFF);
+    private const float LargeInvalidSignalMin = 1_000_000.0f;
+
     // bridge.json fields we read to resolve the upstream DLL path.
     private sealed class BridgeConfig
     {
@@ -217,6 +221,55 @@ public sealed class SubprocessManager : IDisposable
         _activeModule = null;
     }
 
+    private static bool IsInvalidSignal(float value) =>
+        !float.IsFinite(value)
+        || value == InvalidFloatSentinel
+        || value >= LargeInvalidSignalMin;
+
+    private static bool TryUnitSignal(float value, out float clamped, out bool wasClamped)
+    {
+        clamped = 0.0f;
+        wasClamped = false;
+        if (IsInvalidSignal(value)) return false;
+        clamped = Math.Clamp(value, 0.0f, 1.0f);
+        wasClamped = clamped != value;
+        return true;
+    }
+
+    private static bool TrySignedUnitSignal(float value, out float clamped, out bool wasClamped)
+    {
+        clamped = 0.0f;
+        wasClamped = false;
+        if (IsInvalidSignal(value)) return false;
+        clamped = Math.Clamp(value, -1.0f, 1.0f);
+        wasClamped = clamped != value;
+        return true;
+    }
+
+    private static bool TryPositiveSignal(float value, out float sanitized)
+    {
+        sanitized = 0.0f;
+        if (IsInvalidSignal(value) || value <= 0.0f || value > 100.0f) return false;
+        sanitized = value;
+        return true;
+    }
+
+    private static Vector3 GazeDirection(float x, float y)
+    {
+        Vector3 dir = new(x, y, -1.0f);
+        float lenSq = dir.LengthSquared();
+        return lenSq > 0.000001f
+            ? Vector3.Normalize(dir)
+            : new Vector3(0.0f, 0.0f, -1.0f);
+    }
+
+    private static bool SameModuleIdentity(DiscoveredModule a, DiscoveredModule b) =>
+        string.Equals(a.Uuid, b.Uuid, StringComparison.Ordinal)
+        && string.Equals(a.ModuleDllPath, b.ModuleDllPath, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(a.Manifest.Version, b.Manifest.Version, StringComparison.Ordinal)
+        && a.ModuleLastWriteUtc == b.ModuleLastWriteUtc
+        && a.ModuleFileSize == b.ModuleFileSize;
+
     public void SelectActive(string uuid)
     {
         uuid ??= "";
@@ -246,6 +299,7 @@ public sealed class SubprocessManager : IDisposable
             _logger.Warn($"[ftp/spawn] module rescan failed before selection: {ex.Message}");
         }
 
+        var previous = _activeModule;
         var m = _loaded.FirstOrDefault(m => m.Uuid == uuid);
         if (m is null)
         {
@@ -255,6 +309,12 @@ public sealed class SubprocessManager : IDisposable
                 _activeModule = null;
             SetPhase("module-select-failed", msg);
             _logger.Warn($"[ftp/spawn] {msg}");
+            return;
+        }
+        if (previous is not null && SameModuleIdentity(previous, m))
+        {
+            SetPhase("module-selected");
+            _logger.Info($"[ftp/spawn] active module unchanged: {m.Manifest.Name} v{m.Manifest.Version} ({uuid})");
             return;
         }
         _activeModule = m;
@@ -391,8 +451,15 @@ public sealed class SubprocessManager : IDisposable
             return;
         }
 
+        var moduleFile = new FileInfo(moduleDllPath);
         ulong hash = Fnv1a64(manifest.Uuid);
-        _loaded.Add(new DiscoveredModule(manifest.Uuid, manifest, moduleDllPath, hash));
+        _loaded.Add(new DiscoveredModule(
+            manifest.Uuid,
+            manifest,
+            moduleDllPath,
+            hash,
+            moduleFile.LastWriteTimeUtc,
+            moduleFile.Length));
         _logger.Info($"[ftp/spawn] discovered {manifest.Name} v{manifest.Version} " +
                       $"dll={Path.GetFileName(moduleDllPath)} uuid_hash=0x{hash:X16}");
     }
@@ -635,9 +702,15 @@ public sealed class SubprocessManager : IDisposable
             int  noDataRun        = 0;
             int  zeroRunFrames    = 0;
             bool firstNonZero     = false;
+            bool sawExpressionData = false;
+            bool sawEyeData        = false;
+            bool firstInvalidSignal = false;
             var  dataPeriodSw     = Stopwatch.StartNew();
             long framesInPeriod   = 0;
             float lastJawOpen     = 0f;
+            long invalidExprSignalsInPeriod = 0;
+            long invalidEyeSignalsInPeriod  = 0;
+            long clampedSignalsInPeriod     = 0;
             var  lastUpdateTime   = DateTime.UtcNow;
 
             _logger.Info($"[ftp/data] pull loop started for {module.Manifest.Name} PID={proc.Id}");
@@ -682,19 +755,139 @@ public sealed class SubprocessManager : IDisposable
 
                 var decoded = snap.DecodedData;
                 float[]? shapes = decoded.GetExpressionShapes();
-                Array.Clear(upstreamShapes);
+                int validExprSignals = 0;
+                int invalidExprSignals = 0;
+                int clampedSignals = 0;
                 if (shapes is not null)
                 {
                     int n = Math.Min(shapes.Length, upstreamShapes.Length);
-                    Array.Copy(shapes, upstreamShapes, n);
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (TryUnitSignal(shapes[i], out float value, out bool wasClamped))
+                        {
+                            upstreamShapes[i] = value;
+                            validExprSignals++;
+                            if (wasClamped) clampedSignals++;
+                        }
+                        else
+                        {
+                            invalidExprSignals++;
+                        }
+                    }
                 }
+                if (validExprSignals > 0) sawExpressionData = true;
 
                 // Eye data.
-                const float kInvalid = unchecked((float)0xFFFFFFFF);
+                int validEyeSignals = 0;
+                int invalidEyeSignals = 0;
                 float leftOpen = decoded.GetEyeLeftOpenness();
-                if (leftOpen != kInvalid) eyeSink.LeftOpenness  = leftOpen;
+                if (TryUnitSignal(leftOpen, out float leftOpenValue, out bool leftOpenClamped))
+                {
+                    eyeSink.LeftOpenness = leftOpenValue;
+                    eyeSink.Left.Confidence = 1.0f;
+                    validEyeSignals++;
+                    if (leftOpenClamped) clampedSignals++;
+                }
+                else
+                {
+                    invalidEyeSignals++;
+                }
                 float rightOpen = decoded.GetEyeRightOpenness();
-                if (rightOpen != kInvalid) eyeSink.RightOpenness = rightOpen;
+                if (TryUnitSignal(rightOpen, out float rightOpenValue, out bool rightOpenClamped))
+                {
+                    eyeSink.RightOpenness = rightOpenValue;
+                    eyeSink.Right.Confidence = 1.0f;
+                    validEyeSignals++;
+                    if (rightOpenClamped) clampedSignals++;
+                }
+                else
+                {
+                    invalidEyeSignals++;
+                }
+
+                bool leftGazeXValid = TrySignedUnitSignal(
+                    decoded.GetEyeLeftGazeX(),
+                    out float leftGazeX,
+                    out bool leftGazeXClamped);
+                bool leftGazeYValid = TrySignedUnitSignal(
+                    decoded.GetEyeLeftGazeY(),
+                    out float leftGazeY,
+                    out bool leftGazeYClamped);
+                bool leftGazeValid = leftGazeXValid && leftGazeYValid;
+                if (leftGazeValid)
+                {
+                    eyeSink.Left.DirHmd = GazeDirection(leftGazeX, leftGazeY);
+                    eyeSink.Left.Confidence = 1.0f;
+                    validEyeSignals += 2;
+                    if (leftGazeXClamped || leftGazeYClamped) clampedSignals++;
+                }
+                else
+                {
+                    invalidEyeSignals += 2;
+                }
+
+                bool rightGazeXValid = TrySignedUnitSignal(
+                    decoded.GetEyeRightGazeX(),
+                    out float rightGazeX,
+                    out bool rightGazeXClamped);
+                bool rightGazeYValid = TrySignedUnitSignal(
+                    decoded.GetEyeRightGazeY(),
+                    out float rightGazeY,
+                    out bool rightGazeYClamped);
+                bool rightGazeValid = rightGazeXValid && rightGazeYValid;
+                if (rightGazeValid)
+                {
+                    eyeSink.Right.DirHmd = GazeDirection(rightGazeX, rightGazeY);
+                    eyeSink.Right.Confidence = 1.0f;
+                    validEyeSignals += 2;
+                    if (rightGazeXClamped || rightGazeYClamped) clampedSignals++;
+                }
+                else
+                {
+                    invalidEyeSignals += 2;
+                }
+
+                bool haveMinDilation = TryPositiveSignal(decoded.GetEyeMinDilation(), out float minDilation);
+                bool haveMaxDilation = TryPositiveSignal(decoded.GetEyeMaxDilation(), out float maxDilation);
+                bool haveDilationRange = haveMinDilation && haveMaxDilation && maxDilation > minDilation;
+                if (TryPositiveSignal(decoded.GetEyeLeftPupilMM(), out float leftPupilMm))
+                {
+                    if (haveDilationRange)
+                        eyeSink.PupilDilationLeft = Math.Clamp(
+                            (leftPupilMm - minDilation) / (maxDilation - minDilation),
+                            0.0f,
+                            1.0f);
+                    validEyeSignals++;
+                }
+                else
+                {
+                    invalidEyeSignals++;
+                }
+                if (TryPositiveSignal(decoded.GetEyeRightPupilMM(), out float rightPupilMm))
+                {
+                    if (haveDilationRange)
+                        eyeSink.PupilDilationRight = Math.Clamp(
+                            (rightPupilMm - minDilation) / (maxDilation - minDilation),
+                            0.0f,
+                            1.0f);
+                    validEyeSignals++;
+                }
+                else
+                {
+                    invalidEyeSignals++;
+                }
+                if (validEyeSignals > 0) sawEyeData = true;
+                invalidExprSignalsInPeriod += invalidExprSignals;
+                invalidEyeSignalsInPeriod += invalidEyeSignals;
+                clampedSignalsInPeriod += clampedSignals;
+
+                if (!firstInvalidSignal && (invalidExprSignals > 0 || invalidEyeSignals > 0))
+                {
+                    firstInvalidSignal = true;
+                    _logger.Warn($"[ftp/data] invalid upstream signal(s) ignored: frame={frameNum + 1} " +
+                                 $"expr_invalid={invalidExprSignals} eye_invalid={invalidEyeSignals} " +
+                                 $"valid_expr={validExprSignals} valid_eye={validEyeSignals}");
+                }
 
                 frameNum++;
                 framesInPeriod++;
@@ -709,18 +902,18 @@ public sealed class SubprocessManager : IDisposable
                     : 0f;
                 lastJawOpen = jawOpen;
 
-                if (nonZero > 0 || (leftOpen is not 0f and not kInvalid))
+                if (nonZero > 0 || sawEyeData)
                     Interlocked.Increment(ref _framesWithData);
 
                 if (nonZero > 0 && !firstNonZero)
                 {
                     firstNonZero = true;
                     _logger.Info($"[ftp/data] first non-zero shapes: frame={frameNum} " +
-                                 $"nonZeroShapes={nonZero}/{s.Length} jawOpen={jawOpen:F3} " +
-                                 $"leftEyeLid={eyeSink.LeftOpenness:F3}");
+                                 $"nonZeroShapes={nonZero}/{s.Length} validExprSignals={validExprSignals} " +
+                                 $"jawOpen={jawOpen:F3} leftEyeLid={eyeSink.LeftOpenness:F3}");
                 }
 
-                if (nonZero == 0 && leftOpen is 0f or kInvalid)
+                if (nonZero == 0 && !sawEyeData)
                 {
                     noDataRun++;
                     zeroRunFrames++;
@@ -737,7 +930,11 @@ public sealed class SubprocessManager : IDisposable
                 {
                     _logger.Info($"[ftp/data] heartbeat module={module.Manifest.Name} " +
                                  $"frame={frameNum} jawOpen={jawOpen:F3} " +
-                                 $"leftEyeLid={eyeSink.LeftOpenness:F3} nonZeroShapes={nonZero}/{s.Length}");
+                                 $"leftEyeLid={eyeSink.LeftOpenness:F3} rightEyeLid={eyeSink.RightOpenness:F3} " +
+                                 $"gazeL=({eyeSink.Left.DirHmd.X:F3},{eyeSink.Left.DirHmd.Y:F3}) " +
+                                 $"pupil=({eyeSink.PupilDilationLeft:F3},{eyeSink.PupilDilationRight:F3}) " +
+                                 $"nonZeroShapes={nonZero}/{s.Length} validExprSignals={validExprSignals} " +
+                                 $"validEyeSignals={validEyeSignals}");
                 }
 
                 // 5-second throughput report.
@@ -745,15 +942,21 @@ public sealed class SubprocessManager : IDisposable
                 {
                     _logger.Info($"[ftp/data] period: published {framesInPeriod} frames in last " +
                                  $"{dataPeriodSw.Elapsed.TotalSeconds:F1}s; lastJawOpen={lastJawOpen:F3}; " +
-                                 $"consecutive_zero_frames={zeroRunFrames}");
+                                 $"consecutive_zero_frames={zeroRunFrames}; " +
+                                 $"invalid_expr={invalidExprSignalsInPeriod}; invalid_eye={invalidEyeSignalsInPeriod}; " +
+                                 $"clamped={clampedSignalsInPeriod}");
                     framesInPeriod = 0;
                     zeroRunFrames  = 0;
+                    invalidExprSignalsInPeriod = 0;
+                    invalidEyeSignalsInPeriod = 0;
+                    clampedSignalsInPeriod = 0;
                     dataPeriodSw.Restart();
                 }
 
                 await writer.PublishAsync(
                     eyeSink, upstreamShapes,
-                    initReply.eyeSuccess, initReply.expressionSuccess,
+                    initReply.eyeSuccess && sawEyeData,
+                    initReply.expressionSuccess && sawExpressionData,
                     module.UuidHash, ct);
                 Interlocked.Increment(ref _framesWritten);
             }

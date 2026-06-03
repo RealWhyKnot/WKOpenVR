@@ -11,4 +11,6 @@ public sealed record DiscoveredModule(
     string Uuid,
     Manifest Manifest,
     string ModuleDllPath,
-    ulong UuidHash);
+    ulong UuidHash,
+    DateTime ModuleLastWriteUtc,
+    long ModuleFileSize);

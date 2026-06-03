@@ -17,8 +17,16 @@ void VirtualTrackerManager::SetEnabled(BodyRole role, bool enabled)
 {
     const auto idx = static_cast<size_t>(role);
     if (idx >= enabled_.size()) return;
+    const bool was_enabled = enabled_[idx];
     enabled_[idx] = enabled;
-    if (!enabled && devices_[idx]) {
+    if (enabled && !was_enabled) {
+        char profilePath[160] = {};
+        const bool hasProfile = BodyRoleInputProfilePath(role, profilePath, sizeof(profilePath));
+        LOG("[phantom] virtual role %s enabled; profile=%s master_enabled=%d",
+            BodyRoleToKey(role),
+            hasProfile ? profilePath : "(none)",
+            MasterEnabled() ? 1 : 0);
+    } else if (!enabled && devices_[idx]) {
         // SteamVR does not honour TrackedDeviceRemoved live for generic
         // trackers; the slot stays activated for the rest of the session.
         // Mark it disabled so future Tick() calls stop publishing poses
@@ -35,6 +43,32 @@ bool VirtualTrackerManager::IsEnabled(BodyRole role) const
     const auto idx = static_cast<size_t>(role);
     if (idx >= enabled_.size()) return false;
     return enabled_[idx];
+}
+
+int VirtualTrackerManager::EnabledCount() const
+{
+    int n = 0;
+    for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+        const auto role = static_cast<BodyRole>(i);
+        if (BodyRoleToControllerType(role) != nullptr && enabled_[i]) ++n;
+    }
+    return n;
+}
+
+void VirtualTrackerManager::SetMasterEnabled(bool enabled)
+{
+    const bool previous = master_enabled_.exchange(enabled, std::memory_order_acq_rel);
+    if (previous != enabled) {
+        LOG("[phantom] virtual tracker master gate %s (enabled_roles=%d active=%d)",
+            enabled ? "enabled" : "disabled",
+            EnabledCount(),
+            ActiveCount());
+    }
+}
+
+bool VirtualTrackerManager::MasterEnabled() const
+{
+    return master_enabled_.load(std::memory_order_acquire);
 }
 
 namespace {
@@ -79,6 +113,7 @@ void VirtualTrackerManager::MaybeActivate(BodyRole role)
     const auto idx = static_cast<size_t>(role);
     if (idx >= devices_.size()) return;
     if (devices_[idx]) return;                   // already activated
+    if (!MasterEnabled()) return;
     if (!enabled_[idx]) return;
     if (!hmd_pose_seen_.load(std::memory_order_acquire)) return;
 
@@ -106,13 +141,16 @@ void VirtualTrackerManager::MaybeActivate(BodyRole role)
         return;
     }
     devices_[idx] = std::move(device);
-    LOG("[phantom] virtual %s activated", BodyRoleToKey(role));
+    LOG("[phantom] virtual %s activated (serial=%s)",
+        BodyRoleToKey(role), serial.c_str());
 }
 
 void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose,
                                  const BodyCompletionResult& body,
                                  double min_confidence)
 {
+    if (!MasterEnabled()) return;
+
     if (hmd_pose.poseIsValid
         && hmd_pose.deviceIsConnected
         && hmd_pose.result == vr::TrackingResult_Running_OK) {

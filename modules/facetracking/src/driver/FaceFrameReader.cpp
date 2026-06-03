@@ -41,9 +41,8 @@ void TranslateWireBody(const protocol::FaceTrackingFrameBodyWire &wire,
 		out.expressions[i] = 0.f;
 	facetracking::RemapUpstreamShapes(wire.expressions, out.expressions);
 	for (uint32_t i = 0; i < protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT; ++i) {
-		const float v = wire.expressions[i];
 		out.upstream_expressions[i] =
-			(std::isnan(v) || std::isinf(v)) ? 0.0f : std::clamp(v, 0.0f, 1.0f);
+			facetracking::ClampUpstreamUnitSignal(wire.expressions[i]);
 	}
 
 	out.flags      = wire.flags;

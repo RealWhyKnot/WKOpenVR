@@ -49,3 +49,28 @@ TEST(RoleCatalogTest, UnknownKeyReturnsNone)
     EXPECT_EQ(phantom::BodyRoleFromKey("nope"),      phantom::BodyRole::None);
     EXPECT_EQ(phantom::BodyRoleFromKey("waist_no"),  phantom::BodyRole::None);
 }
+
+TEST(RoleCatalogTest, InputProfilePathUsesInstalledDriverResourceRoot)
+{
+    char path[128] = {};
+    ASSERT_TRUE(phantom::BodyRoleInputProfilePath(
+        phantom::BodyRole::RightElbow,
+        path,
+        sizeof(path)));
+    EXPECT_STREQ(path, "{01wkopenvr}/input/vive_tracker_right_elbow_profile.json");
+
+    EXPECT_FALSE(phantom::BodyRoleInputProfilePath(
+        phantom::BodyRole::Hmd,
+        path,
+        sizeof(path)));
+    EXPECT_FALSE(phantom::BodyRoleInputProfilePath(
+        phantom::BodyRole::RightShoulder,
+        path,
+        sizeof(path)));
+}
+
+TEST(RoleCatalogTest, VirtualTrackersRespectMasterGate)
+{
+    EXPECT_FALSE(phantom::PhantomVirtualTrackersShouldRun(false));
+    EXPECT_TRUE(phantom::PhantomVirtualTrackersShouldRun(true));
+}

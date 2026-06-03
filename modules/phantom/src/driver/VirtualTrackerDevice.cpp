@@ -61,11 +61,12 @@ vr::EVRInitError VirtualTrackerDevice::Activate(vr::TrackedDeviceIndex_t unObjec
     if (controllerType) {
         props->SetStringProperty(prop_container_, vr::Prop_ControllerType_String, controllerType);
     }
-    // {wkopenvr} resource root resolves to drivers/01wkopenvr/resources/.
     char profilePath[160];
-    std::snprintf(profilePath, sizeof(profilePath),
-        "{wkopenvr}/input/vive_tracker_%s_profile.json", roleKey);
-    props->SetStringProperty(prop_container_, vr::Prop_InputProfilePath_String, profilePath);
+    bool hasProfile = false;
+    if (BodyRoleInputProfilePath(role_, profilePath, sizeof(profilePath))) {
+        props->SetStringProperty(prop_container_, vr::Prop_InputProfilePath_String, profilePath);
+        hasProfile = true;
+    }
 
     props->SetInt32Property(prop_container_, vr::Prop_DeviceClass_Int32,
         vr::TrackedDeviceClass_GenericTracker);
@@ -75,8 +76,12 @@ vr::EVRInitError VirtualTrackerDevice::Activate(vr::TrackedDeviceIndex_t unObjec
     props->SetBoolProperty(prop_container_, vr::Prop_NeverTracked_Bool, false);
     props->SetBoolProperty(prop_container_, vr::Prop_Identifiable_Bool, false);
 
-    LOG("[phantom] VirtualTrackerDevice activated: role=%s serial=%s objectId=%u",
-        roleKey, serial_.c_str(), (unsigned)unObjectId);
+    LOG("[phantom] VirtualTrackerDevice activated: role=%s serial=%s objectId=%u controller_type=%s profile=%s",
+        roleKey,
+        serial_.c_str(),
+        (unsigned)unObjectId,
+        controllerType ? controllerType : "(none)",
+        hasProfile ? profilePath : "(none)");
     return vr::VRInitError_None;
 }
 

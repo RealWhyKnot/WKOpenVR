@@ -70,8 +70,11 @@ public sealed class DeterministicFaceModule : ExtTrackingModule
         UnifiedTracking.Data.Eye.Right.Gaze = new Vector2(-0.13f, -0.18f);
         UnifiedTracking.Data.Eye.Right.Openness = 0.58f;
         UnifiedTracking.Data.Eye.Right.PupilDiameter_MM = 4.2f;
+        UnifiedTracking.Data.Eye._minDilation = 3.0f;
+        UnifiedTracking.Data.Eye._maxDilation = 5.0f;
 
         UnifiedTracking.Data.Shapes[(int)UnifiedExpressions.JawOpen].Weight = 0.75f;
+        UnifiedTracking.Data.Shapes[(int)UnifiedExpressions.EyeWideLeft].Weight = 0xFFFFFFFF;
         UnifiedTracking.Data.Shapes[(int)UnifiedExpressions.MouthCornerPullLeft].Weight = 0.25f;
         _ = UnifiedSimplifier.ExpressionMap[UnifiedSimpleExpressions.MouthSmileLeft](UnifiedTracking.Data);
     }

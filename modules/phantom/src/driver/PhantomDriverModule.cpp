@@ -14,11 +14,8 @@
 #include "DeadReckoner.h"
 #include "DropoutState.h"
 #include "IkFallback.h"
-#include "PhantomInferenceShmem.h"
 #include "PoseHistory.h"
 #include "RoleCatalog.h"
-#include "SidecarBridge.h"
-#include "SidecarSupervisor.h"
 #include "VirtualTrackerManager.h"
 
 #include <openvr_driver.h>
@@ -212,16 +209,7 @@ private:
     int64_t last_body_completion_qpc_ = 0;
     int64_t qpc_freq_ = 0;
     VirtualTrackerManager virtual_trackers_;
-
-    // Phase 3 scaffold: out-of-process inference sidecar. Supervisor spawns
-    // and restarts WKOpenVRPhantomSidecar.exe; bridge reads its OUT shmem
-    // when DropoutState selects SYNTH_ML. Both are inert no-ops when the
-    // sidecar binary is missing.
-    SidecarSupervisor sidecar_supervisor_;
-    SidecarBridge     sidecar_bridge_;
-    phantom::PhantomInferenceInShmem inference_in_shmem_;
-    uint32_t inference_frame_id_ = 0;
-    float    ml_min_confidence_  = 0.6f;   // overlay-tunable in a later pass
+    bool virtual_master_disabled_logged_ = false;
 
     // Per-openVRID device state. The hot path runs without locking these
     // because openVRID assignments are stable for the lifetime of the
@@ -381,14 +369,6 @@ bool PhantomModule::Init(DriverModuleContext& context)
         LOG("[phantom] PhantomStateShmem.Create('%s') failed; overlay badges disabled",
             OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME);
     }
-    // Phase 3: open the inference IN shmem the sidecar will read.
-    // Non-fatal: when this fails the sidecar simply never sees inputs and
-    // the bridge stays inert. The supervisor still spawns the sidecar.
-    if (!inference_in_shmem_.Create(OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_IN_SHMEM_NAME)) {
-        LOG("[phantom] PhantomInferenceInShmem.Create('%s') failed; ML inference disabled",
-            OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_IN_SHMEM_NAME);
-    }
-    sidecar_supervisor_.Start();
     LOG("[phantom] PhantomModule initialised; ladder defaults silence=%u blend_out=%u blend_in=%u reckon=%u synth=%u lost=%u (ms)",
         (unsigned)timings_.dropout_silence_ms,
         (unsigned)timings_.blend_out_ms,
@@ -402,9 +382,6 @@ bool PhantomModule::Init(DriverModuleContext& context)
 void PhantomModule::Shutdown()
 {
     g_active = nullptr;
-    sidecar_supervisor_.Stop();
-    sidecar_bridge_.Close();
-    inference_in_shmem_.Close();
     shmem_.Close();
     LOG("[phantom] PhantomModule shutdown");
 }
@@ -423,7 +400,10 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
                 /*synth_hold_ms=*/      c.synth_hold_ms ? c.synth_hold_ms : DefaultTimings::kSynthHoldMs,
                 /*lost_hold_ms=*/       c.lost_hold_ms  ? c.lost_hold_ms  : DefaultTimings::kLostHoldMs,
             };
-            master_enabled_.store(c.master_enabled != 0, std::memory_order_release);
+            const bool master_enabled = c.master_enabled != 0;
+            master_enabled_.store(master_enabled, std::memory_order_release);
+            virtual_trackers_.SetMasterEnabled(master_enabled);
+            virtual_master_disabled_logged_ = false;
             // Apply new timings to every active slot. Cheap: just a copy.
             std::lock_guard<std::mutex> lk(state_mutex_);
             for (auto& s : slots_) s.ladder.SetTimings(timings_);
@@ -543,55 +523,18 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID,
         // Drive virtual trackers off the HMD pose cadence. Each HMD update
         // produces one completion frame; the manager only publishes roles
         // whose confidence passes the policy threshold.
-        virtual_trackers_.Tick(
-            last_hmd_pose_,
-            last_body_completion_,
-            body_calibration_.virtual_min_confidence);
-
-        // Phase 3: refresh the inference-IN shmem so the sidecar has a
-        // current frame to consume. Per-role slots carry the latest pose
-        // we have for each device that has a body-role assignment, plus
-        // a has_real_pose flag the sidecar uses to gate inference. The
-        // sidecar's OUT shmem is consulted in MaybeOverridePose's
-        // SYNTH_ML branch.
-        if (auto* L = inference_in_shmem_.layout()) {
-            L->epoch = L->epoch + 1;
-            MemoryBarrier();
-            ++inference_frame_id_;
-            L->frame_id = inference_frame_id_;
-            L->hmd_position[0] = pose.vecPosition[0];
-            L->hmd_position[1] = pose.vecPosition[1];
-            L->hmd_position[2] = pose.vecPosition[2];
-            L->hmd_rotation[0] = pose.qRotation.w;
-            L->hmd_rotation[1] = pose.qRotation.x;
-            L->hmd_rotation[2] = pose.qRotation.y;
-            L->hmd_rotation[3] = pose.qRotation.z;
-            for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
-                auto& slot = L->trackers[i];
-                slot.role = i;
-                slot.has_real_pose = 0;
-                slot.has_offset = ik_fallback_.HasOffset(static_cast<BodyRole>(i)) ? 1 : 0;
-            }
-            for (uint32_t idx = 0; idx < slots_.size(); ++idx) {
-                const auto& slot = slots_[idx];
-                if (slot.role == BodyRole::None) continue;
-                const auto& cur = slot.last_published_valid
-                    ? slot.last_published
-                    : slot.history.Size() > 0
-                        ? slot.history.GetNewest(0)->pose
-                        : vr::DriverPose_t{};
-                auto& dst = L->trackers[static_cast<uint8_t>(slot.role)];
-                dst.has_real_pose = (slot.ladder.state() == TrackerState::REAL) ? 1 : 0;
-                dst.position[0] = cur.vecPosition[0];
-                dst.position[1] = cur.vecPosition[1];
-                dst.position[2] = cur.vecPosition[2];
-                dst.rotation[0] = cur.qRotation.w;
-                dst.rotation[1] = cur.qRotation.x;
-                dst.rotation[2] = cur.qRotation.y;
-                dst.rotation[3] = cur.qRotation.z;
-            }
-            MemoryBarrier();
-            L->epoch = L->epoch + 1;
+        const bool master_enabled = master_enabled_.load(std::memory_order_acquire);
+        if (PhantomVirtualTrackersShouldRun(master_enabled)) {
+            virtual_trackers_.Tick(
+                last_hmd_pose_,
+                last_body_completion_,
+                body_calibration_.virtual_min_confidence);
+            virtual_master_disabled_logged_ = false;
+        } else if (!virtual_master_disabled_logged_
+                   && virtual_trackers_.EnabledCount() > 0) {
+            virtual_master_disabled_logged_ = true;
+            LOG("[phantom] virtual trackers gated off: master_enabled=0 enabled_roles=%d",
+                virtual_trackers_.EnabledCount());
         }
     }
 }
@@ -652,23 +595,16 @@ bool PhantomModule::MaybeOverridePose(uint32_t openVRID,
         case TrackerState::SYNTH_IK:
         case TrackerState::SYNTH_ML:
         case TrackerState::OUT_OF_RANGE: {
-            // Cascade: in-process completion -> sidecar backend ->
-            // rigid-offset IK -> dead reckoner. Each layer is optional; the
-            // cascade falls through to the next when its input is missing or
-            // below confidence. The ladder state is mostly a diagnostics
-            // hint -- the dispatch picks the best source available.
+            // Cascade: in-process completion -> rigid-offset IK -> dead
+            // reckoner. Each layer is optional; the cascade falls through
+            // to the next when its input is missing or below confidence.
+            // The ladder state is mostly a diagnostics hint -- the dispatch
+            // picks the best source available.
             vr::DriverPose_t synth{};
             bool produced = false;
             if (!produced
                 && s.role != BodyRole::None
                 && TryBodyCompletionPose(s.role, synth)) {
-                produced = true;
-            }
-            (void)sidecar_bridge_.TryOpen();
-            if (!produced
-                && s.role != BodyRole::None
-                && sidecar_bridge_.IsReady()
-                && sidecar_bridge_.FetchPose(s.role, ml_min_confidence_, synth)) {
                 produced = true;
             }
             if (!produced

@@ -2,6 +2,7 @@
 #include "FaceOscPublisher.h"
 
 #include "RouterPublishApi.h"
+#include "facetracking/UpstreamShapeMap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -355,12 +356,15 @@ enum UpstreamShape : uint32_t
     U_NeckFlexLeft,
 };
 
-static inline float FiniteOrZero(float v) { return std::isfinite(v) ? v : 0.0f; }
+static inline float FiniteOrZero(float v)
+{
+    return facetracking::IsInvalidUpstreamSignal(v) ? 0.0f : v;
+}
 
 static inline float Upstream(const protocol::FaceTrackingFrameBody &frame, uint32_t index)
 {
     if (index >= protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT) return 0.0f;
-    return FiniteOrZero(frame.upstream_expressions[index]);
+    return facetracking::ClampUpstreamUnitSignal(frame.upstream_expressions[index]);
 }
 
 static inline float Avg2(float a, float b)

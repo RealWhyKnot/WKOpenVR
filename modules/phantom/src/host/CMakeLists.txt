@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 
-# Phase 3 scaffold: the WKOpenVRPhantomSidecar.exe binary that hosts ML
-# pose-completion inference. Ships as a passthrough stub today; the
-# follow-up that lands ONNX Runtime + a SparsePoser model replaces the
-# inference body without touching the IPC / shmem boundary.
+# Optional future Phantom backend. The driver does not launch this binary
+# in the deterministic completion path; it remains buildable so a later
+# backend can reuse the existing process and shared-memory boundary.
 
 # Belt-and-suspenders guard for the disabled-in-release path (see the
 # matching note in modules/facetracking/src/host/CMakeLists.txt).
@@ -16,7 +15,7 @@ if(COMMAND wkopenvr_module_disabled)
 endif()
 
 option(OPENVR_PAIR_BUILD_PHANTOM_SIDECAR
-    "Build the phantom-tracker inference sidecar exe" ON)
+    "Build the phantom-tracker optional backend exe" ON)
 
 if(NOT OPENVR_PAIR_BUILD_PHANTOM_SIDECAR)
     message(STATUS "Phantom sidecar build disabled")
@@ -46,7 +45,7 @@ target_compile_definitions(WKOpenVRPhantomSidecar PRIVATE
     _UNICODE)
 
 # Stage the built exe into the deployable driver tree under
-# resources/phantom/host/ so the SidecarSupervisor walk-up resolves it.
+# resources/phantom/host/ for optional backend development.
 add_custom_command(TARGET WKOpenVRPhantomSidecar POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         ${CMAKE_BINARY_DIR}/driver_wkopenvr/resources/phantom/host

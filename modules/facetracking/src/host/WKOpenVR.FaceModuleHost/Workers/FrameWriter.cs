@@ -117,6 +117,25 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
     private volatile bool _disposed;
     private int           _droppedFrameLogCounter;
 
+    private const float InvalidSignalMin = 1_000_000.0f;
+
+    private static bool IsInvalidSignal(float value) =>
+        !float.IsFinite(value) || value >= InvalidSignalMin;
+
+    private static float SanitizeUnit(float value, float fallback, ref int replaced)
+    {
+        if (IsInvalidSignal(value)) { replaced++; return fallback; }
+        float clamped = Math.Clamp(value, 0.0f, 1.0f);
+        if (clamped != value) replaced++;
+        return clamped;
+    }
+
+    private static float SanitizeFinite(float value, float fallback, ref int replaced)
+    {
+        if (IsInvalidSignal(value)) { replaced++; return fallback; }
+        return value;
+    }
+
     public async Task OpenAsync(CancellationToken ct)
     {
         await Task.Run(() =>
@@ -202,51 +221,46 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
         for (int i = 0; i < count; i++)
             body.expressions[i] = upstreamShapes[i];
 
-        SanitizeNonFinite(ref body);
+        SanitizeSignals(ref body);
         WriteUnderSeqlock(ref body);
         return ValueTask.CompletedTask;
     }
 
-    // A buggy module returning NaN or Inf for any expression parameter
-    // (common during partial-face init) would otherwise propagate straight
-    // through the shmem ring into the driver and on into SteamVR input
-    // components; sanitize at the publisher boundary so the rest of the
-    // pipeline can assume finite floats.
-    private void SanitizeNonFinite(ref FaceTrackingFrameBodyNative body)
+    private void SanitizeSignals(ref FaceTrackingFrameBodyNative body)
     {
         int replaced = 0;
 
-        if (!float.IsFinite(body.eye_openness_l))   { body.eye_openness_l = 0f;   replaced++; }
-        if (!float.IsFinite(body.eye_openness_r))   { body.eye_openness_r = 0f;   replaced++; }
-        if (!float.IsFinite(body.pupil_dilation_l)) { body.pupil_dilation_l = 0f; replaced++; }
-        if (!float.IsFinite(body.pupil_dilation_r)) { body.pupil_dilation_r = 0f; replaced++; }
-        if (!float.IsFinite(body.eye_confidence_l)) { body.eye_confidence_l = 0f; replaced++; }
-        if (!float.IsFinite(body.eye_confidence_r)) { body.eye_confidence_r = 0f; replaced++; }
+        body.eye_openness_l = SanitizeUnit(body.eye_openness_l, 1.0f, ref replaced);
+        body.eye_openness_r = SanitizeUnit(body.eye_openness_r, 1.0f, ref replaced);
+        body.pupil_dilation_l = SanitizeUnit(body.pupil_dilation_l, 0.5f, ref replaced);
+        body.pupil_dilation_r = SanitizeUnit(body.pupil_dilation_r, 0.5f, ref replaced);
+        body.eye_confidence_l = SanitizeUnit(body.eye_confidence_l, 0.0f, ref replaced);
+        body.eye_confidence_r = SanitizeUnit(body.eye_confidence_r, 0.0f, ref replaced);
 
         for (int i = 0; i < 3; i++)
         {
-            if (!float.IsFinite(body.eye_origin_l[i])) { body.eye_origin_l[i] = 0f; replaced++; }
-            if (!float.IsFinite(body.eye_origin_r[i])) { body.eye_origin_r[i] = 0f; replaced++; }
-            if (!float.IsFinite(body.eye_gaze_l[i]))   { body.eye_gaze_l[i]   = 0f; replaced++; }
-            if (!float.IsFinite(body.eye_gaze_r[i]))   { body.eye_gaze_r[i]   = 0f; replaced++; }
+            body.eye_origin_l[i] = SanitizeFinite(body.eye_origin_l[i], 0.0f, ref replaced);
+            body.eye_origin_r[i] = SanitizeFinite(body.eye_origin_r[i], 0.0f, ref replaced);
+            body.eye_gaze_l[i] = SanitizeFinite(body.eye_gaze_l[i], i == 2 ? -1.0f : 0.0f, ref replaced);
+            body.eye_gaze_r[i] = SanitizeFinite(body.eye_gaze_r[i], i == 2 ? -1.0f : 0.0f, ref replaced);
         }
 
         for (int i = 0; i < UpstreamShapeCount; i++)
         {
-            if (!float.IsFinite(body.expressions[i])) { body.expressions[i] = 0f; replaced++; }
+            body.expressions[i] = SanitizeUnit(body.expressions[i], 0.0f, ref replaced);
         }
 
-        if (!float.IsFinite(body.head_yaw))   { body.head_yaw   = 0f; replaced++; }
-        if (!float.IsFinite(body.head_pitch)) { body.head_pitch = 0f; replaced++; }
-        if (!float.IsFinite(body.head_roll))  { body.head_roll  = 0f; replaced++; }
-        if (!float.IsFinite(body.head_pos_x)) { body.head_pos_x = 0f; replaced++; }
-        if (!float.IsFinite(body.head_pos_y)) { body.head_pos_y = 0f; replaced++; }
-        if (!float.IsFinite(body.head_pos_z)) { body.head_pos_z = 0f; replaced++; }
+        body.head_yaw = SanitizeFinite(body.head_yaw, 0.0f, ref replaced);
+        body.head_pitch = SanitizeFinite(body.head_pitch, 0.0f, ref replaced);
+        body.head_roll = SanitizeFinite(body.head_roll, 0.0f, ref replaced);
+        body.head_pos_x = SanitizeFinite(body.head_pos_x, 0.0f, ref replaced);
+        body.head_pos_y = SanitizeFinite(body.head_pos_y, 0.0f, ref replaced);
+        body.head_pos_z = SanitizeFinite(body.head_pos_z, 0.0f, ref replaced);
 
         if (replaced > 0 && !_sanitizationLogged)
         {
             _sanitizationLogged = true;
-            logger.Warn($"FrameWriter: sanitized {replaced} non-finite float(s) in module frame; further occurrences suppressed.");
+            logger.Warn($"FrameWriter: sanitized {replaced} invalid float signal(s) in module frame; further occurrences suppressed.");
         }
     }
 

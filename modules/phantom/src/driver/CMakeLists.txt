@@ -7,8 +7,6 @@ add_library(openvr_pair_feature_phantom_driver STATIC
 	# Common headers shared with the overlay + tests.
 	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/PhantomStateShmem.cpp
 	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/PhantomStateShmem.h
-	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/PhantomInferenceShmem.cpp
-	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/PhantomInferenceShmem.h
 	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/PhantomTypes.h
 	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/BlendCurves.h
 	${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common/PoseSample.h
@@ -30,10 +28,6 @@ add_library(openvr_pair_feature_phantom_driver STATIC
 	VirtualTrackerDevice.h
 	VirtualTrackerManager.cpp
 	VirtualTrackerManager.h
-	SidecarSupervisor.cpp
-	SidecarSupervisor.h
-	SidecarBridge.cpp
-	SidecarBridge.h
 	# Module entry point + IPC dispatch + state ownership. Hot-path entry
 	# points are declared in core/src/driver/DriverModule.h next to the
 	# CreateDriverModule forward decl so the umbrella driver can call them

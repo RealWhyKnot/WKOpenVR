@@ -62,12 +62,7 @@
 // (overlay).
 #define OPENVR_PAIRDRIVER_PHANTOM_STATE_SHMEM_NAME "WKOpenVRPhantomStateV2"
 
-// Phantom Phase 3 inference shmems. The driver writes per-frame inputs
-// into the IN segment; the sidecar (WKOpenVRPhantomSidecar.exe) reads,
-// runs ML inference (passthrough stub today, ONNX SparsePoser in the
-// follow-up), and writes per-role completed poses + per-role
-// confidence into the OUT segment. The driver consults the OUT
-// segment when DropoutState selects SYNTH_ML and falls through to the
-// IK fallback when the sidecar is absent / confidence is low.
+// Phantom optional backend shmems. Not used by the deterministic in-driver
+// completion path; kept stable for a future out-of-process backend.
 #define OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_IN_SHMEM_NAME  "WKOpenVRPhantomInferenceInV1"
 #define OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_OUT_SHMEM_NAME "WKOpenVRPhantomInferenceOutV1"

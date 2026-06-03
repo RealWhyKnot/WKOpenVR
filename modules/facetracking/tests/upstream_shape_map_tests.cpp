@@ -211,6 +211,20 @@ TEST(UpstreamShapeMap, NaNAndInfAreDropped)
     EXPECT_NEAR(dst[9], 0.5f, 1e-6f); // EyeWideRight took the OK 0.5
 }
 
+TEST(UpstreamShapeMap, VrcftInvalidSentinelIsDropped)
+{
+    float src[kUpstreamShapeCount] = {};
+    src[22] = 4294967296.0f; // 0xFFFFFFFF as a float in VRCFT IPC
+    src[57] = 0.25f;
+
+    float dst[p::FACETRACKING_EXPRESSION_COUNT] = {};
+    RemapUpstreamShapes(src, dst);
+
+    EXPECT_FLOAT_EQ(dst[26], 0.0f);
+    EXPECT_NEAR(dst[45], 0.25f, 1e-6f);
+    EXPECT_FLOAT_EQ(ClampUpstreamUnitSignal(src[22]), 0.0f);
+}
+
 TEST(UpstreamShapeMap, ValuesAreClampedTo01)
 {
     float src[kUpstreamShapeCount] = {};
