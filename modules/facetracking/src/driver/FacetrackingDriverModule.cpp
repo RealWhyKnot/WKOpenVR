@@ -10,6 +10,7 @@
 #include "VergenceLock.h"
 
 #include "DriverModule.h"
+#include "DebugLogging.h"
 #include "FeatureFlags.h"
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
@@ -332,6 +333,14 @@ private:
     uint32_t all_zero_frames_     = 0;
     bool     all_zero_warned_     = false;
     bool     native_unavailable_warned_ = false;
+    bool     first_frame_diag_logged_ = false;
+    std::chrono::steady_clock::time_point last_diag_log_{};
+    uint64_t diag_frames_ = 0;
+    uint64_t diag_eye_valid_ = 0;
+    uint64_t diag_expr_valid_ = 0;
+    uint64_t diag_zero_expr_ = 0;
+    uint64_t diag_osc_sent_ = 0;
+    uint64_t diag_osc_dropped_ = 0;
 
     // -----------------------------------------------------------------------
     // Worker thread: polls shmem, runs the filter pipeline, publishes.
@@ -417,6 +426,10 @@ private:
             protocol::FaceTrackingFrameBody frame{};
             if (!reader_.TryRead(frame)) continue;
             ++frames_read_;
+            const uint32_t input_flags = frame.flags;
+            const float input_jaw_open = frame.upstream_expressions[22]; // UnifiedExpressions.JawOpen
+            const float input_mouth_closed = frame.upstream_expressions[29]; // UnifiedExpressions.MouthClosed
+            const float input_eye_wide_l = frame.upstream_expressions[3]; // UnifiedExpressions.EyeWideLeft
 
             // Snapshot config under lock.
             protocol::FaceTrackingConfig cfg;
@@ -445,6 +458,9 @@ private:
 
             signal_processor_.Apply(frame, cfg);
 
+            const bool eye_valid  = (frame.flags & 0x1u) != 0;
+            const bool expr_valid = (frame.flags & 0x2u) != 0;
+
             // Publish to SteamVR inputs.
             if (cfg._reserved_native && device_) {
                 device_->PublishFrame(frame);
@@ -467,17 +483,17 @@ private:
                 osc_was_enabled_ = osc_enabled;
             }
 
-            if (osc_enabled) {
-                const bool eye_valid  = (frame.flags & 0x1u) != 0;
-                const bool expr_valid = (frame.flags & 0x2u) != 0;
-
-                // All-zero expression guard.
-                bool has_nonzero = false;
-                if (expr_valid) {
-                    for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-                        if (frame.expressions[i] != 0.f) { has_nonzero = true; break; }
-                    }
+            FaceOscPublishCounts counts{};
+            const bool debug_logging_enabled = openvr_pair::common::IsDebugLoggingEnabled();
+            bool expr_nonzero = false;
+            if ((osc_enabled || debug_logging_enabled) && expr_valid) {
+                for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+                    if (frame.expressions[i] != 0.f) { expr_nonzero = true; break; }
                 }
+            }
+            if (osc_enabled) {
+                // All-zero expression guard.
+                bool has_nonzero = expr_nonzero;
                 if (eye_valid) {
                     has_nonzero = has_nonzero ||
                         frame.eye_openness_l != 0.f || frame.eye_openness_r != 0.f;
@@ -498,7 +514,7 @@ private:
                         (unsigned)osc_filter_.AllowedCount());
                 }
 
-                FaceOscPublishCounts counts = PublishFaceFrameOsc(frame, &osc_filter_);
+                counts = PublishFaceFrameOsc(frame, &osc_filter_);
                 osc_messages_sent_ += counts.sent;
                 osc_messages_dropped_ += counts.dropped;
 
@@ -509,6 +525,91 @@ private:
                         frame.eye_openness_l,
                         (unsigned)frame.flags);
                     osc_first_publish_ = true;
+                }
+            }
+
+            if (debug_logging_enabled) {
+                ++diag_frames_;
+                if (eye_valid) ++diag_eye_valid_;
+                if (expr_valid) ++diag_expr_valid_;
+                if (expr_valid && !expr_nonzero) ++diag_zero_expr_;
+                diag_osc_sent_ += counts.sent;
+                diag_osc_dropped_ += counts.dropped;
+
+                if (!first_frame_diag_logged_) {
+                    first_frame_diag_logged_ = true;
+                    FT_LOG_DRV("[facetracking][diag] first-frame flags_in=0x%x flags_out=0x%x "
+                               "host_state=%u hb_age_ms=%llu module='%s' osc=%u calib=%u "
+                               "eyelid=%u/%u vergence=%u/%u corr=0x%02x smooth(gaze=%u open=%u) "
+                               "jaw(raw=%.3f out=%.3f mouthClosedRaw=%.3f) "
+                               "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) "
+                               "pupil=(%.3f,%.3f) rawEyeWideL=%.3f allowlist=%u",
+                               (unsigned)input_flags,
+                               (unsigned)frame.flags,
+                               host_state,
+                               static_cast<unsigned long long>(hb_age_ms),
+                               cfg.active_module_uuid,
+                               (unsigned)cfg.output_osc_enabled,
+                               (unsigned)cfg.continuous_calib_mode,
+                               (unsigned)cfg.eyelid_sync_enabled,
+                               (unsigned)cfg.eyelid_sync_strength,
+                               (unsigned)cfg.vergence_lock_enabled,
+                               (unsigned)cfg.vergence_lock_strength,
+                               (unsigned)cfg.expression_correction_flags,
+                               (unsigned)cfg.gaze_smoothing,
+                               (unsigned)cfg.openness_smoothing,
+                               input_jaw_open,
+                               frame.expressions[26],
+                               input_mouth_closed,
+                               frame.eye_openness_l,
+                               frame.eye_openness_r,
+                               frame.eye_gaze_l[0],
+                               frame.eye_gaze_l[1],
+                               frame.eye_gaze_l[2],
+                               frame.pupil_dilation_l,
+                               frame.pupil_dilation_r,
+                               input_eye_wide_l,
+                               (unsigned)osc_filter_.AllowedCount());
+                }
+
+                const auto diag_now = std::chrono::steady_clock::now();
+                if (last_diag_log_ == std::chrono::steady_clock::time_point{}) {
+                    last_diag_log_ = diag_now;
+                } else if (diag_now - last_diag_log_ >= std::chrono::seconds(5)) {
+                    FT_LOG_DRV("[facetracking][diag] period frames=%llu eye_valid=%llu expr_valid=%llu "
+                               "zero_expr=%llu host_state=%u hb_age_ms=%llu module='%s' "
+                               "osc=%u osc_delta=(sent=%llu drop=%llu) total_osc=(sent=%llu drop=%llu) "
+                               "allowlist=%u calib=%u eyelid=%u vergence=%u corr=0x%02x "
+                               "last_jaw=%.3f last_eye=(%.3f,%.3f) last_pupil=(%.3f,%.3f)",
+                               static_cast<unsigned long long>(diag_frames_),
+                               static_cast<unsigned long long>(diag_eye_valid_),
+                               static_cast<unsigned long long>(diag_expr_valid_),
+                               static_cast<unsigned long long>(diag_zero_expr_),
+                               host_state,
+                               static_cast<unsigned long long>(hb_age_ms),
+                               cfg.active_module_uuid,
+                               (unsigned)cfg.output_osc_enabled,
+                               static_cast<unsigned long long>(diag_osc_sent_),
+                               static_cast<unsigned long long>(diag_osc_dropped_),
+                               static_cast<unsigned long long>(osc_messages_sent_),
+                               static_cast<unsigned long long>(osc_messages_dropped_),
+                               (unsigned)osc_filter_.AllowedCount(),
+                               (unsigned)cfg.continuous_calib_mode,
+                               (unsigned)cfg.eyelid_sync_enabled,
+                               (unsigned)cfg.vergence_lock_enabled,
+                               (unsigned)cfg.expression_correction_flags,
+                               frame.expressions[26],
+                               frame.eye_openness_l,
+                               frame.eye_openness_r,
+                               frame.pupil_dilation_l,
+                               frame.pupil_dilation_r);
+                    diag_frames_ = 0;
+                    diag_eye_valid_ = 0;
+                    diag_expr_valid_ = 0;
+                    diag_zero_expr_ = 0;
+                    diag_osc_sent_ = 0;
+                    diag_osc_dropped_ = 0;
+                    last_diag_log_ = diag_now;
                 }
             }
 

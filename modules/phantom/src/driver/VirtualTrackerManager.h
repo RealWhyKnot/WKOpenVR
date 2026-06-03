@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 
 namespace phantom {
@@ -62,6 +63,11 @@ private:
     std::atomic<bool> master_enabled_{false};
     std::atomic<bool> hmd_pose_seen_{false};
     std::chrono::steady_clock::time_point init_time_{};
+    std::chrono::steady_clock::time_point last_diag_log_{};
+    uint64_t diag_ticks_ = 0;
+    uint64_t diag_published_ = 0;
+    uint64_t diag_skip_invalid_ = 0;
+    uint64_t diag_skip_confidence_ = 0;
 
     // Defer TrackedDeviceAdded for this long after driver init so SteamVR
     // has time to enumerate real devices first. The exact duration is a

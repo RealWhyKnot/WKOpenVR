@@ -1,5 +1,6 @@
 #include "VirtualTrackerManager.h"
 
+#include "DebugLogging.h"
 #include "Logging.h"
 
 #include <cstddef>
@@ -150,6 +151,8 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose,
                                  double min_confidence)
 {
     if (!MasterEnabled()) return;
+    const bool debug_logging_enabled = openvr_pair::common::IsDebugLoggingEnabled();
+    if (debug_logging_enabled) ++diag_ticks_;
 
     if (hmd_pose.poseIsValid
         && hmd_pose.deviceIsConnected
@@ -169,6 +172,34 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose,
         const auto& solved = body.roles[i];
         if (solved.valid && solved.confidence >= min_confidence) {
             dev->Publish(PoseFromCompletion(hmd_pose, solved));
+            if (debug_logging_enabled) ++diag_published_;
+        } else if (!solved.valid) {
+            if (debug_logging_enabled) ++diag_skip_invalid_;
+        } else {
+            if (debug_logging_enabled) ++diag_skip_confidence_;
+        }
+    }
+
+    if (debug_logging_enabled) {
+        const auto now = std::chrono::steady_clock::now();
+        if (last_diag_log_ == std::chrono::steady_clock::time_point{}) {
+            last_diag_log_ = now;
+        } else if (now - last_diag_log_ >= std::chrono::seconds(5)) {
+            LOG("[phantom][diag] virtual tick period ticks=%llu enabled=%d active=%d "
+                "hmd_seen=%u min_conf=%.2f published=%llu skip_invalid=%llu skip_conf=%llu",
+                static_cast<unsigned long long>(diag_ticks_),
+                EnabledCount(),
+                ActiveCount(),
+                hmd_pose_seen_.load(std::memory_order_acquire) ? 1u : 0u,
+                min_confidence,
+                static_cast<unsigned long long>(diag_published_),
+                static_cast<unsigned long long>(diag_skip_invalid_),
+                static_cast<unsigned long long>(diag_skip_confidence_));
+            diag_ticks_ = 0;
+            diag_published_ = 0;
+            diag_skip_invalid_ = 0;
+            diag_skip_confidence_ = 0;
+            last_diag_log_ = now;
         }
     }
 }

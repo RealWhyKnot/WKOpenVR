@@ -12,6 +12,7 @@
 #include "BlendCurves.h"
 #include "BodyCompletionSolver.h"
 #include "DeadReckoner.h"
+#include "DebugLogging.h"
 #include "DropoutState.h"
 #include "IkFallback.h"
 #include "PoseHistory.h"
@@ -58,6 +59,33 @@ uint32_t AgeMsFromQpc(int64_t now_qpc, int64_t sample_qpc, int64_t qpc_freq)
     if (qpc_freq <= 0 || sample_qpc <= 0 || now_qpc <= sample_qpc) return 0;
     const int64_t age = ((now_qpc - sample_qpc) * 1000) / qpc_freq;
     return static_cast<uint32_t>(std::max<int64_t>(0, age));
+}
+
+const char* DeviceClassLabel(vr::ETrackedDeviceClass c)
+{
+    switch (c) {
+        case vr::TrackedDeviceClass_Invalid:           return "invalid";
+        case vr::TrackedDeviceClass_HMD:               return "hmd";
+        case vr::TrackedDeviceClass_Controller:        return "controller";
+        case vr::TrackedDeviceClass_GenericTracker:    return "tracker";
+        case vr::TrackedDeviceClass_TrackingReference: return "tracking_reference";
+        case vr::TrackedDeviceClass_DisplayRedirect:   return "display_redirect";
+        case vr::TrackedDeviceClass_Max:               return "max";
+    }
+    return "unknown";
+}
+
+const char* ControllerRoleLabel(vr::ETrackedControllerRole r)
+{
+    switch (r) {
+        case vr::TrackedControllerRole_Invalid:   return "invalid";
+        case vr::TrackedControllerRole_LeftHand:  return "left_hand";
+        case vr::TrackedControllerRole_RightHand: return "right_hand";
+        case vr::TrackedControllerRole_OptOut:    return "opt_out";
+        case vr::TrackedControllerRole_Treadmill: return "treadmill";
+        case vr::TrackedControllerRole_Stylus:    return "stylus";
+    }
+    return "unknown";
 }
 
 BodyCompletionPose ToBodyCompletionPose(const vr::DriverPose_t& pose)
@@ -117,6 +145,37 @@ vr::DriverPose_t PoseFromBodyCompletion(const vr::DriverPose_t& base,
     out.shouldApplyHeadModel = false;
     out.result = vr::TrackingResult_Running_OK;
     return out;
+}
+
+struct CompletionDiagSummary
+{
+    uint32_t valid_roles = 0;
+    uint32_t publishable_valid_roles = 0;
+    BodyRole best_role = BodyRole::None;
+    BodyCompletionMode best_mode = BodyCompletionMode::None;
+    float best_confidence = 0.0f;
+};
+
+CompletionDiagSummary SummarizeCompletionResult(const BodyCompletionResult& result,
+                                                double min_confidence)
+{
+    CompletionDiagSummary summary;
+    for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+        const auto role = static_cast<BodyRole>(i);
+        const auto& solved = result.roles[i];
+        if (!solved.valid) continue;
+        ++summary.valid_roles;
+        if (BodyRoleToControllerType(role) != nullptr
+            && solved.confidence >= min_confidence) {
+            ++summary.publishable_valid_roles;
+        }
+        if (solved.confidence >= summary.best_confidence) {
+            summary.best_role = role;
+            summary.best_mode = solved.mode;
+            summary.best_confidence = solved.confidence;
+        }
+    }
+    return summary;
 }
 
 // Per-device state owned by PhantomDriverModule. Keyed by OpenVR device id
@@ -210,6 +269,11 @@ private:
     int64_t qpc_freq_ = 0;
     VirtualTrackerManager virtual_trackers_;
     bool virtual_master_disabled_logged_ = false;
+    bool first_hmd_diag_logged_ = false;
+    std::chrono::steady_clock::time_point last_body_diag_log_{};
+    uint64_t body_diag_ticks_ = 0;
+    uint64_t body_diag_valid_roles_ = 0;
+    uint64_t body_diag_publishable_roles_ = 0;
 
     // Per-openVRID device state. The hot path runs without locking these
     // because openVRID assignments are stable for the lifetime of the
@@ -263,15 +327,28 @@ void PhantomModule::ResolveSerialIfMissing(uint32_t openVRID, DeviceSlot& s)
         }
     }
 
-    std::lock_guard<std::mutex> lk(state_mutex_);
-    if (auto it = opt_in_by_serial_hash_.find(s.serial_hash);
-        it != opt_in_by_serial_hash_.end()) {
-        s.opted_in = it->second;
+    {
+        std::lock_guard<std::mutex> lk(state_mutex_);
+        if (auto it = opt_in_by_serial_hash_.find(s.serial_hash);
+            it != opt_in_by_serial_hash_.end()) {
+            s.opted_in = it->second;
+        }
+        if (auto it = role_by_serial_hash_.find(s.serial_hash);
+            it != role_by_serial_hash_.end()) {
+            s.role = it->second;
+        }
     }
-    if (auto it = role_by_serial_hash_.find(s.serial_hash);
-        it != role_by_serial_hash_.end()) {
-        s.role = it->second;
-    }
+
+    LOG("[phantom][diag] device resolved id=%u serial_hash=0x%016llx serial_len=%u "
+        "class=%s controller_role=%s role=%s opted_in=%u master=%u",
+        (unsigned)openVRID,
+        static_cast<unsigned long long>(s.serial_hash),
+        (unsigned)s.serial.size(),
+        DeviceClassLabel(s.device_class),
+        ControllerRoleLabel(s.controller_role),
+        BodyRoleToKey(s.role),
+        s.opted_in ? 1u : 0u,
+        master_enabled_.load(std::memory_order_acquire) ? 1u : 0u);
 }
 
 DeviceSlot& PhantomModule::slot(uint32_t openVRID)
@@ -341,6 +418,43 @@ void PhantomModule::UpdateBodyCompletion(int64_t now_qpc)
 {
     last_body_completion_ = body_solver_.Solve(BuildBodyCompletionInput(now_qpc));
     last_body_completion_qpc_ = now_qpc;
+    if (!openvr_pair::common::IsDebugLoggingEnabled()) return;
+
+    const auto summary = SummarizeCompletionResult(
+        last_body_completion_,
+        body_calibration_.virtual_min_confidence);
+    ++body_diag_ticks_;
+    body_diag_valid_roles_ += summary.valid_roles;
+    body_diag_publishable_roles_ += summary.publishable_valid_roles;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (last_body_diag_log_ == std::chrono::steady_clock::time_point{}) {
+        last_body_diag_log_ = now;
+    } else if (now - last_body_diag_log_ >= std::chrono::seconds(5)) {
+        const double ticks = body_diag_ticks_ > 0
+            ? static_cast<double>(body_diag_ticks_)
+            : 1.0;
+        LOG("[phantom][diag] completion period ticks=%llu master=%u hmd_valid=%u "
+            "virtual=(enabled=%d active=%d min_conf=%.2f) "
+            "roles=(valid_avg=%.2f publishable_avg=%.2f best=%s best_conf=%.2f best_mode=%s) "
+            "global_conf=%.2f",
+            static_cast<unsigned long long>(body_diag_ticks_),
+            master_enabled_.load(std::memory_order_acquire) ? 1u : 0u,
+            last_hmd_valid_ ? 1u : 0u,
+            virtual_trackers_.EnabledCount(),
+            virtual_trackers_.ActiveCount(),
+            body_calibration_.virtual_min_confidence,
+            static_cast<double>(body_diag_valid_roles_) / ticks,
+            static_cast<double>(body_diag_publishable_roles_) / ticks,
+            BodyRoleToKey(summary.best_role),
+            summary.best_confidence,
+            BodyCompletionModeLabel(summary.best_mode),
+            last_body_completion_.global_confidence);
+        body_diag_ticks_ = 0;
+        body_diag_valid_roles_ = 0;
+        body_diag_publishable_roles_ = 0;
+        last_body_diag_log_ = now;
+    }
 }
 
 bool PhantomModule::TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const
@@ -440,35 +554,51 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
         }
         case protocol::RequestSetPhantomDeviceOptIn: {
             const auto& e = request.setPhantomDeviceOptIn;
-            std::lock_guard<std::mutex> lk(state_mutex_);
-            opt_in_by_serial_hash_[e.device_serial_hash] = (e.dropout_enabled != 0);
-            // Push the change into any currently-active slot whose serial hash
-            // matches. Devices not yet seen will pick it up on their first
-            // OnRealPoseObserved.
-            for (auto& s : slots_) {
-                if (s.serial_hash == e.device_serial_hash) {
-                    s.opted_in = (e.dropout_enabled != 0);
+            uint32_t applied_slots = 0;
+            {
+                std::lock_guard<std::mutex> lk(state_mutex_);
+                opt_in_by_serial_hash_[e.device_serial_hash] = (e.dropout_enabled != 0);
+                // Push the change into any currently-active slot whose serial hash
+                // matches. Devices not yet seen will pick it up on their first
+                // OnRealPoseObserved.
+                for (auto& s : slots_) {
+                    if (s.serial_hash == e.device_serial_hash) {
+                        s.opted_in = (e.dropout_enabled != 0);
+                        ++applied_slots;
+                    }
                 }
             }
             response.type = protocol::ResponseSuccess;
+            LOG("[phantom][diag] opt-in serial_hash=0x%016llx enabled=%u applied_slots=%u",
+                static_cast<unsigned long long>(e.device_serial_hash),
+                e.dropout_enabled ? 1u : 0u,
+                (unsigned)applied_slots);
             return true;
         }
         case protocol::RequestSetPhantomDeviceRole: {
             const auto& e = request.setPhantomDeviceRole;
             const BodyRole role = static_cast<BodyRole>(e.body_role);
-            std::lock_guard<std::mutex> lk(state_mutex_);
-            if (role == BodyRole::None) {
-                role_by_serial_hash_.erase(e.device_serial_hash);
-            } else {
-                role_by_serial_hash_[e.device_serial_hash] = role;
-            }
-            for (auto& s : slots_) {
-                if (s.serial_hash == e.device_serial_hash) {
-                    s.role = role;
-                    s.ladder.SetIkAvailable(s.role != BodyRole::None);
+            uint32_t applied_slots = 0;
+            {
+                std::lock_guard<std::mutex> lk(state_mutex_);
+                if (role == BodyRole::None) {
+                    role_by_serial_hash_.erase(e.device_serial_hash);
+                } else {
+                    role_by_serial_hash_[e.device_serial_hash] = role;
+                }
+                for (auto& s : slots_) {
+                    if (s.serial_hash == e.device_serial_hash) {
+                        s.role = role;
+                        s.ladder.SetIkAvailable(s.role != BodyRole::None);
+                        ++applied_slots;
+                    }
                 }
             }
             response.type = protocol::ResponseSuccess;
+            LOG("[phantom][diag] role serial_hash=0x%016llx role=%s applied_slots=%u",
+                static_cast<unsigned long long>(e.device_serial_hash),
+                BodyRoleToKey(role),
+                (unsigned)applied_slots);
             return true;
         }
         case protocol::RequestSetPhantomTrackerOffset: {
@@ -487,6 +617,17 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
                 s.ladder.SetIkAvailable(s.role != BodyRole::None);
             }
             response.type = protocol::ResponseSuccess;
+            LOG("[phantom][diag] offset role=%s calibrated=%u pos=(%.3f,%.3f,%.3f) "
+                "rot=(%.3f,%.3f,%.3f,%.3f)",
+                BodyRoleToKey(role),
+                e.calibrated ? 1u : 0u,
+                e.rel_position[0],
+                e.rel_position[1],
+                e.rel_position[2],
+                e.rel_rotation.w,
+                e.rel_rotation.x,
+                e.rel_rotation.y,
+                e.rel_rotation.z);
             return true;
         }
         case protocol::RequestSetPhantomVirtualEnabled: {
@@ -494,6 +635,13 @@ bool PhantomModule::HandleRequest(const protocol::Request& request,
             const BodyRole role = static_cast<BodyRole>(e.body_role);
             virtual_trackers_.SetEnabled(role, e.enabled != 0);
             response.type = protocol::ResponseSuccess;
+            LOG("[phantom][diag] virtual role request role=%s enabled=%u master=%u "
+                "enabled_roles=%d active=%d",
+                BodyRoleToKey(role),
+                e.enabled ? 1u : 0u,
+                master_enabled_.load(std::memory_order_acquire) ? 1u : 0u,
+                virtual_trackers_.EnabledCount(),
+                virtual_trackers_.ActiveCount());
             return true;
         }
         default:
@@ -517,6 +665,22 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID,
     s.ladder.OnRealPoseObserved(qpc_ns, s.history, pose);
     if (s.is_hmd && pose.poseIsValid && pose.deviceIsConnected
         && pose.result == vr::TrackingResult_Running_OK) {
+        if (!first_hmd_diag_logged_) {
+            first_hmd_diag_logged_ = true;
+            LOG("[phantom][diag] first valid HMD pose id=%u pos=(%.3f,%.3f,%.3f) "
+                "rot=(%.3f,%.3f,%.3f,%.3f) virtual=(enabled=%d active=%d master=%u)",
+                (unsigned)openVRID,
+                pose.vecPosition[0],
+                pose.vecPosition[1],
+                pose.vecPosition[2],
+                pose.qRotation.w,
+                pose.qRotation.x,
+                pose.qRotation.y,
+                pose.qRotation.z,
+                virtual_trackers_.EnabledCount(),
+                virtual_trackers_.ActiveCount(),
+                master_enabled_.load(std::memory_order_acquire) ? 1u : 0u);
+        }
         last_hmd_pose_ = pose;
         last_hmd_valid_ = true;
         UpdateBodyCompletion(qpc_ns);
