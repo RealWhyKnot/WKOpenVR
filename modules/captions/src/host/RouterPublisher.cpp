@@ -67,8 +67,8 @@ bool RouterPublisher::Write(const void* data, size_t size)
 // OSC packet encoding
 // ---------------------------------------------------------------------------
 //
-// /chatbox/input ,sTT
-//   Address:   "/chatbox/input" padded to 4-byte boundary
+// <address> ,sTT
+//   Address:   OSC address padded to 4-byte boundary
 //   TypeTag:   ",sTT" padded to 4-byte boundary
 //   Arg0 (s):  text as NUL-terminated string padded to 4-byte boundary
 //   Arg1 (T/F): sendImmediate -- OSC True/False type tag (no data bytes)
@@ -92,16 +92,18 @@ static void WriteOscString(uint8_t*& out, const char* s)
 	out += pad;
 }
 
-size_t RouterPublisher::EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const char* text, bool send_immediate,
-                                            bool notify)
+size_t RouterPublisher::EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const char* address, const char* text,
+                                            bool send_immediate, bool notify)
 {
+	if (!address || address[0] != '/' || !text) return 0;
+
 	// Build the typetag string with T/F for the bool args.
 	char typetag[8];
 	snprintf(typetag, sizeof(typetag), ",s%c%c", send_immediate ? 'T' : 'F', notify ? 'T' : 'F');
 
 	// Estimate packet size.
 	size_t text_len = strlen(text) + 1;
-	size_t addr_bytes = Pad4(strlen("/chatbox/input") + 1);
+	size_t addr_bytes = Pad4(strlen(address) + 1);
 	size_t tag_bytes = Pad4(strlen(typetag) + 1);
 	size_t str_bytes = Pad4(text_len);
 	size_t total = addr_bytes + tag_bytes + str_bytes;
@@ -109,7 +111,7 @@ size_t RouterPublisher::EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const
 	if (total > buf_size) return 0;
 
 	uint8_t* out = buf;
-	WriteOscString(out, "/chatbox/input");
+	WriteOscString(out, address);
 	WriteOscString(out, typetag);
 	WriteOscString(out, text);
 
@@ -137,9 +139,11 @@ static std::string TruncateToVrchatLimit(const std::string& text)
 	return result;
 }
 
-bool RouterPublisher::PublishChatbox(const std::string& text_in, bool send_immediate, bool notify)
+bool RouterPublisher::PublishChatbox(const std::string& address, const std::string& text_in, bool send_immediate,
+                                     bool notify)
 {
 	std::string text = TruncateToVrchatLimit(text_in);
+	const char* packet_address = (!address.empty() && address.front() == '/') ? address.c_str() : "/chatbox/input";
 
 	// Try to send; reconnect on failure.
 	for (int attempt = 0; attempt < 2; ++attempt) {
@@ -152,9 +156,9 @@ bool RouterPublisher::PublishChatbox(const std::string& text_in, bool send_immed
 		}
 
 		uint8_t pkt[1024];
-		size_t pkt_size = EncodeChatboxPacket(pkt, sizeof(pkt), text.c_str(), send_immediate, notify);
+		size_t pkt_size = EncodeChatboxPacket(pkt, sizeof(pkt), packet_address, text.c_str(), send_immediate, notify);
 		if (pkt_size == 0) {
-			TH_LOG("[publisher] failed to encode chatbox packet (text too long?)");
+			TH_LOG("[publisher] failed to encode chatbox packet (addr='%s')", packet_address);
 			return false;
 		}
 

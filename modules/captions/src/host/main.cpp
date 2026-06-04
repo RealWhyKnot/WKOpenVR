@@ -246,6 +246,7 @@ struct HostConfig
 	std::string target_lang = ""; // empty = transcribe only
 	std::string chatbox_address = "/chatbox/input";
 	uint16_t chatbox_port = 9000;
+	bool notify_sound = false;
 	bool transcript_logging = false;
 	int mode = 0; // 0=PTT, 1=always-on
 
@@ -264,6 +265,20 @@ static HostConfig g_config;
 #define HOST_CONTROL_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-Captions.host"
 
 static std::atomic<bool> g_shutdown{false};
+
+static bool TryParseInt(const std::string& text, int& value)
+{
+	try {
+		size_t consumed = 0;
+		int parsed = std::stoi(text, &consumed);
+		if (consumed != text.size()) return false;
+		value = parsed;
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
 
 static void DispatchControlMessage(char* buf, DWORD got)
 {
@@ -288,12 +303,24 @@ static void DispatchControlMessage(char* buf, DWORD got)
 			g_config.source_lang = val;
 		else if (key == "tgt")
 			g_config.target_lang = val;
-		else if (key == "mode")
-			g_config.mode = std::stoi(val);
+		else if (key == "mode") {
+			int parsed = 0;
+			if (TryParseInt(val, parsed)) {
+				if (parsed < 0) parsed = 0;
+				if (parsed > 1) parsed = 1;
+				g_config.mode = parsed;
+			}
+		}
 		else if (key == "addr")
 			g_config.chatbox_address = val;
-		else if (key == "port")
-			g_config.chatbox_port = (uint16_t)std::stoi(val);
+		else if (key == "port") {
+			int parsed = 0;
+			if (TryParseInt(val, parsed) && parsed >= 0 && parsed <= 65535) {
+				g_config.chatbox_port = (uint16_t)parsed;
+			}
+		}
+		else if (key == "notify")
+			g_config.notify_sound = (val != "0");
 		else if (key == "log")
 			g_config.transcript_logging = (val != "0");
 
@@ -426,7 +453,7 @@ static int RunE2eFakePublish(const std::string& text, HostStatus& status)
 	RouterPublisher publisher;
 	bool sent = false;
 	for (int i = 0; i < 8 && !sent; ++i) {
-		sent = publisher.PublishChatbox(text, true, false);
+		sent = publisher.PublishChatbox("/chatbox/input", text, true, false);
 		if (!sent) Sleep(100);
 	}
 
@@ -639,17 +666,23 @@ try {
 	status.Flush();
 	// Load Silero VAD.
 	std::unique_ptr<SileroVad> vad;
+	auto next_vad_load_attempt = std::chrono::steady_clock::time_point{};
 	{
 		std::string silero_path;
 		{
 			std::lock_guard<std::mutex> lk(g_config_mutex);
 			silero_path = g_config.silero_model_path;
 		}
-		if (SileroVad::RuntimeAvailable()) {
+		if (SileroVad::RuntimeAvailable() && FileExistsA(silero_path)) {
 			vad = std::make_unique<SileroVad>();
 			if (!vad->Load(silero_path)) {
+				vad.reset();
+				next_vad_load_attempt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 				TH_LOG("[main] Silero VAD load failed; path='%s'", silero_path.c_str());
 			}
+		}
+		else if (!FileExistsA(silero_path)) {
+			TH_LOG("[main] Silero VAD model missing; path='%s'", silero_path.c_str());
 		}
 		else {
 			TH_LOG("[main] Silero VAD runtime missing; install the speech pack to enable always-on speech detection");
@@ -661,14 +694,25 @@ try {
 	status.Flush();
 	// Load Whisper.
 	WhisperEngine whisper;
+	bool whisper_load_attempted = false;
+	bool whisper_load_failed = false;
+	auto next_whisper_load_attempt = std::chrono::steady_clock::time_point{};
 	{
 		std::string model_path;
 		{
 			std::lock_guard<std::mutex> lk(g_config_mutex);
 			model_path = g_config.whisper_model_path;
 		}
-		if (!whisper.Load(model_path)) {
-			TH_LOG("[main] Whisper model load failed; path='%s'", model_path.c_str());
+		if (FileExistsA(model_path)) {
+			whisper_load_attempted = true;
+			if (!whisper.Load(model_path)) {
+				whisper_load_failed = true;
+				next_whisper_load_attempt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+				TH_LOG("[main] Whisper model load failed; path='%s'", model_path.c_str());
+			}
+		}
+		else {
+			TH_LOG("[main] Whisper model missing; path='%s'", model_path.c_str());
 		}
 	}
 
@@ -677,6 +721,8 @@ try {
 	std::string loaded_src_lang;
 	std::string loaded_tgt_lang;
 	std::string loaded_model_dir;
+	bool translation_load_failed = false;
+	auto next_translation_load_attempt = std::chrono::steady_clock::time_point{};
 
 	// Action bindings for PTT.
 	ActionBindings actions;
@@ -731,6 +777,8 @@ try {
 	// ---------------------------------------------------------------------------
 
 	while (!g_shutdown.load(std::memory_order_acquire)) {
+		const auto loop_now = std::chrono::steady_clock::now();
+
 		// Poll PTT action.
 		bool ptt_held = actions.Poll();
 
@@ -748,8 +796,35 @@ try {
 		}
 		UpdatePackStatus(status, cfg);
 
+		if ((!vad || !vad->IsLoaded()) && SileroVad::RuntimeAvailable() && FileExistsA(cfg.silero_model_path) &&
+		    loop_now >= next_vad_load_attempt) {
+			auto candidate = std::make_unique<SileroVad>();
+			if (candidate->Load(cfg.silero_model_path)) {
+				vad = std::move(candidate);
+			}
+			else {
+				next_vad_load_attempt = loop_now + std::chrono::seconds(5);
+				status.SetLastError("Speech VAD model failed to load.");
+			}
+		}
+
 		// Update whisper language hint.
 		whisper.SetLanguage(cfg.source_lang == "auto" ? "" : cfg.source_lang);
+		if (!whisper.IsLoaded() && FileExistsA(cfg.whisper_model_path) && loop_now >= next_whisper_load_attempt) {
+			whisper_load_attempted = true;
+			whisper_load_failed = !whisper.Load(cfg.whisper_model_path);
+			if (whisper_load_failed) {
+				next_whisper_load_attempt = loop_now + std::chrono::seconds(5);
+				status.SetLastError("Whisper model failed to load.");
+			}
+		}
+		else if (!whisper.IsLoaded() && FileExistsA(cfg.whisper_model_path) && whisper_load_attempted &&
+		         whisper_load_failed) {
+			status.SetLastError("Whisper model failed to load.");
+		}
+		else if (whisper.IsLoaded()) {
+			whisper_load_failed = false;
+		}
 
 		// Load/unload translation model as packs appear, disappear, or the
 		// selected pair changes. Pack install/uninstall can happen while this
@@ -762,6 +837,7 @@ try {
 			loaded_src_lang.clear();
 			loaded_tgt_lang.clear();
 			loaded_model_dir.clear();
+			translation_load_failed = false;
 		}
 		else {
 			std::string model_dir = ResolveCaptionsModelDir(cfg.source_lang, cfg.target_lang);
@@ -778,18 +854,28 @@ try {
 				loaded_src_lang.clear();
 				loaded_tgt_lang.clear();
 				loaded_model_dir.clear();
+				translation_load_failed = false;
 			}
 			else if (!captions_engine.IsLoaded() || cfg.source_lang != loaded_src_lang ||
 			         cfg.target_lang != loaded_tgt_lang || model_dir != loaded_model_dir) {
-				if (captions_engine.Load(model_dir)) {
-					loaded_src_lang = cfg.source_lang;
-					loaded_tgt_lang = cfg.target_lang;
-					loaded_model_dir = model_dir;
+				if (loop_now < next_translation_load_attempt) {
+					if (translation_load_failed) status.SetLastError("Translation model failed to load.");
 				}
 				else {
-					loaded_src_lang.clear();
-					loaded_tgt_lang.clear();
-					loaded_model_dir.clear();
+					if (captions_engine.Load(model_dir)) {
+						loaded_src_lang = cfg.source_lang;
+						loaded_tgt_lang = cfg.target_lang;
+						loaded_model_dir = model_dir;
+						translation_load_failed = false;
+					}
+					else {
+						loaded_src_lang.clear();
+						loaded_tgt_lang.clear();
+						loaded_model_dir.clear();
+						translation_load_failed = true;
+						next_translation_load_attempt = loop_now + std::chrono::seconds(5);
+						status.SetLastError("Translation model failed to load.");
+					}
 				}
 			}
 		}
@@ -851,7 +937,13 @@ try {
 
 			{
 				std::string detected_lang;
-				std::string transcript = whisper.Transcribe(speech_buf, &detected_lang);
+				std::string transcript;
+				if (whisper.IsLoaded()) {
+					transcript = whisper.Transcribe(speech_buf, &detected_lang);
+				}
+				else if (whisper_load_attempted && whisper_load_failed) {
+					status.SetLastError("Whisper model failed to load.");
+				}
 				speech_buf.clear();
 				status.SetLastTranscript(transcript);
 				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
@@ -867,7 +959,7 @@ try {
 				}
 
 				if (!output.empty()) {
-					pacer.Enqueue(output, true, cfg.chatbox_port != 0);
+					pacer.Enqueue(output, true, cfg.notify_sound);
 				}
 				status.SetState(HostStatus::State::Idle);
 			}
@@ -877,10 +969,13 @@ try {
 		ChatboxPacer::Entry entry;
 		while (pacer.Dequeue(entry)) {
 			status.SetState(HostStatus::State::Sending);
-			bool sent = publisher.PublishChatbox(entry.text, entry.send_immediate, entry.notify);
+			bool sent = publisher.PublishChatbox(cfg.chatbox_address, entry.text, entry.send_immediate, entry.notify);
 			if (sent) {
 				status.IncrementPacketsSent();
 				TH_LOG("[main] published: '%s'", entry.text.c_str());
+			}
+			else {
+				status.SetLastError("OSC router publish pipe unavailable.");
 			}
 			status.SetState(HostStatus::State::Idle);
 		}

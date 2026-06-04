@@ -24,12 +24,14 @@ public:
 	RouterPublisher();
 	~RouterPublisher();
 
-	// Send a /chatbox/input ,sTT packet. Connects (or reconnects) on demand.
+	// Send an OSC chatbox ,sTT packet. Connects (or reconnects) on demand.
 	// text must be <= 144 UTF-8 bytes; longer strings are truncated at the
 	// last whitespace boundary before byte 144.
+	// address defaults to VRChat's /chatbox/input; custom endpoints must be
+	// absolute OSC addresses.
 	// send_immediate: chatbox sendImmediate flag (true = PTT / final).
 	// notify: chatbox playNotification flag.
-	bool PublishChatbox(const std::string& text, bool send_immediate, bool notify);
+	bool PublishChatbox(const std::string& address, const std::string& text, bool send_immediate, bool notify);
 
 	// Disconnect and release the pipe handle.
 	void Disconnect();
@@ -45,8 +47,8 @@ private:
 	bool Connect();
 	bool Write(const void* data, size_t size);
 
-	// Encode a /chatbox/input ,sTT OSC packet into buf.
+	// Encode a chatbox ,sTT OSC packet into buf.
 	// Returns the number of bytes written, or 0 on error.
-	static size_t EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const char* text, bool send_immediate,
-	                                  bool notify);
+	static size_t EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const char* address, const char* text,
+	                                  bool send_immediate, bool notify);
 };

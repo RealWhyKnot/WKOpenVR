@@ -168,6 +168,7 @@ private:
 		return std::string("config:") + "src=" + config.source_lang + ",tgt=" + config.target_lang +
 		       ",mode=" + std::to_string((int)config.mode) + ",addr=" + config.chatbox_address +
 		       ",port=" + std::to_string((int)config.chatbox_port) +
+		       ",notify=" + std::to_string((int)config.notify_sound) +
 		       ",log=" + std::to_string((int)config.transcript_logging) + "\n";
 	}
 

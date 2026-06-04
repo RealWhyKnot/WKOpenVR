@@ -178,7 +178,21 @@ try {
 	Write-CasePass "captions-idempotent-rerun"
 
 	# --------------------------------------------------------------------
-	# Case 3: captions bad-sha (manifest declares wrong SHA, installer rejects)
+	# Case 3: captions transient HTTP failure retries and succeeds
+	# --------------------------------------------------------------------
+	Write-CaseStart "captions-transient-retry"
+	$retryManifest = Get-Content -LiteralPath $captionsManifestDst -Raw
+	$retryManifest = $retryManifest.Replace('/captions/ggml-stub.bin"', '/captions/ggml-stub.bin?flaky=2"')
+	$retryManifestPath = Join-Path $WorkingRoot 'captions-retry.json'
+	[System.IO.File]::WriteAllText($retryManifestPath, $retryManifest, (New-Object System.Text.UTF8Encoding($false)))
+	Remove-Item -LiteralPath (Join-Path $captionsRoot 'models\ggml-base.bin') -Force -ErrorAction SilentlyContinue
+	& pwsh.exe -NoProfile -File $CaptionsPs1 -PackId $Summary.captions_pack_id -Manifest $retryManifestPath
+	if ($LASTEXITCODE -ne 0) { throw "captions retry installer exited $LASTEXITCODE" }
+	Assert-Sha256Matches (Join-Path $captionsRoot 'models\ggml-base.bin') $Summary.captions_ggml_sha
+	Write-CasePass "captions-transient-retry"
+
+	# --------------------------------------------------------------------
+	# Case 4: captions bad-sha (manifest declares wrong SHA, installer rejects)
 	# --------------------------------------------------------------------
 	Write-CaseStart "captions-bad-sha"
 	$badManifest = Get-Content -LiteralPath $captionsManifestDst -Raw
@@ -206,7 +220,31 @@ try {
 	Write-CasePass "captions-bad-sha"
 
 	# --------------------------------------------------------------------
-	# Case 4: facetracking folder install (no HTTP needed; tests local-path branch)
+	# Case 5: captions manifest path traversal is rejected
+	# --------------------------------------------------------------------
+	Write-CaseStart "captions-path-traversal"
+	$escapeManifest = Get-Content -LiteralPath $captionsManifestDst -Raw | ConvertFrom-Json
+	$escapeManifest.packs[0].files[0].destination = '..\escape.bin'
+	$escapeManifestPath = Join-Path $WorkingRoot 'captions-path-traversal.json'
+	[System.IO.File]::WriteAllText($escapeManifestPath, ($escapeManifest | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+	$oldErrorActionPreference = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		$escapeOutput = & pwsh.exe -NoProfile -File $CaptionsPs1 -PackId $Summary.captions_pack_id -Manifest $escapeManifestPath 2>&1
+		$escapeExit = $LASTEXITCODE
+	}
+	finally {
+		$ErrorActionPreference = $oldErrorActionPreference
+	}
+	Assert-True ($escapeExit -ne 0) "installer must reject path traversal (got exit=$escapeExit; output: $($escapeOutput -join ' | '))"
+	$escapeOutputJoined = ($escapeOutput -join "`n").ToLowerInvariant()
+	Assert-True ($escapeOutputJoined -match 'escape|relative|root') `
+		"installer error must mention escaped root (got: $escapeOutputJoined)"
+	Assert-FileMissing (Join-Path $LocalAppDataLow 'WKOpenVR\escape.bin') 'path traversal output outside captions root'
+	Write-CasePass "captions-path-traversal"
+
+	# --------------------------------------------------------------------
+	# Case 6: facetracking folder install (no HTTP needed; tests local-path branch)
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-install"
 	$faceResultPath = Join-Path $WorkingRoot 'face-folder-result.json'
@@ -224,7 +262,7 @@ try {
 	Write-CasePass "facetracking-folder-install"
 
 	# --------------------------------------------------------------------
-	# Case 5: facetracking registry sync is list-only
+	# Case 7: facetracking registry sync is list-only
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-registry-sync-list-only"
 	Remove-Item -LiteralPath (Join-Path $LocalAppDataLow 'WKOpenVR\facetracking\modules') -Recurse -Force -ErrorAction SilentlyContinue
@@ -253,7 +291,7 @@ try {
 	Write-CasePass "facetracking-registry-sync-list-only"
 
 	# --------------------------------------------------------------------
-	# Case 6: facetracking registry installs only the selected module
+	# Case 8: facetracking registry installs only the selected module
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-registry-install-selected"
 	$availableModule = $available.modules[0]
@@ -281,7 +319,7 @@ try {
 	Write-CasePass "facetracking-registry-install-selected"
 
 	# --------------------------------------------------------------------
-	# Case 7: facetracking missing folder reports a structured failure.
+	# Case 9: facetracking missing folder reports a structured failure.
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-missing-source"
 	$bogusFolder = Join-Path $WorkingRoot ('no-such-folder-' + ([Guid]::NewGuid().ToString('N')))

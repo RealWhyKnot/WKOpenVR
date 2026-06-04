@@ -151,7 +151,9 @@ namespace protocol {
 // v16 (2026-05-13): adds the OSC Router substrate. Driver opens a fifth
 // pipe (\\.\pipe\WKOpenVR-OscRouter) gated on enable_oscrouter.flag,
 // plus a fire-and-forget publish pipe (\\.\pipe\WKOpenVR-OscRouterPub)
-// for out-of-process sidecars. New request types: RequestOscRouteSubscribe,
+// for out-of-process sidecars. The publish pipe starts with one 32-byte
+// source-id per connection, then repeats 4-byte LE length + raw OSC packet
+// frames until disconnect. New request types: RequestOscRouteSubscribe,
 // RequestOscRouteUnsubscribe, RequestOscPublish, RequestOscGetStats.
 // New shmem segment (WKOpenVROscRouterStatsV1) carries per-route counters
 // at ~10 Hz for the overlay's Modules tab display. Also standardises the

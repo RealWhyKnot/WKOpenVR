@@ -30,6 +30,29 @@ function Write-Log {
     Add-Content -LiteralPath $script:LogPath -Value $line
 }
 
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Script,
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [int]$MaxAttempts = 4
+    )
+
+    $delay = 1
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            return & $Script
+        } catch {
+            $message = $_.Exception.Message
+            if ($attempt -ge $MaxAttempts) {
+                throw "$Operation failed after $MaxAttempts attempts: $message"
+            }
+            Write-Log "$Operation failed on attempt $attempt/$MaxAttempts`: $message; retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+            $delay = [Math]::Min($delay * 2, 16)
+        }
+    }
+}
+
 function Ensure-Parent {
     param([string]$Path)
     $parent = Split-Path -Parent $Path
@@ -41,6 +64,31 @@ function Ensure-Parent {
 function Get-Sha256 {
     param([string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Join-InstallPath {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+    if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+        throw "Install path must be relative: $RelativePath"
+    }
+
+    $root = [System.IO.Path]::GetFullPath($script:InstallRoot)
+    $candidate = [System.IO.Path]::GetFullPath((Join-Path $root $RelativePath))
+    $trimChars = [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $rootWithSep = $root.TrimEnd($trimChars) + [System.IO.Path]::DirectorySeparatorChar
+    if ($candidate -ne $root -and -not $candidate.StartsWith($rootWithSep, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Install path escapes captions root: $RelativePath"
+    }
+    return $candidate
+}
+
+function Write-Utf8NoBom {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Content
+    )
+    Ensure-Parent -Path $Path
+    [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Download-VerifiedFile {
@@ -59,22 +107,40 @@ function Download-VerifiedFile {
         }
     }
 
-    $tmp = "$Destination.download"
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    $parent = Split-Path -Parent $Destination
+    $leaf = Split-Path -Leaf $Destination
+    if ($parent) {
+        Get-ChildItem -LiteralPath $parent -Filter "$leaf.download*" -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    $tmp = Join-Path $parent ("$leaf.download.$PID.$([guid]::NewGuid().ToString('N'))")
 
     Write-Log "Downloading $Url"
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tmp
+    try {
+        Invoke-WithRetry -Operation "Download $Url" -Script {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tmp -TimeoutSec 120 -MaximumRedirection 10
+            if (-not (Test-Path -LiteralPath $tmp)) {
+                throw "download did not create $tmp"
+            }
+        } | Out-Null
 
-    if ($Sha256) {
-        $actual = Get-Sha256 -Path $tmp
-        if ($actual -ne $Sha256.ToLowerInvariant()) {
-            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-            throw "Hash mismatch for $Url. Expected $Sha256, got $actual"
+        if ($Sha256) {
+            $actual = Get-Sha256 -Path $tmp
+            if ($actual -ne $Sha256.ToLowerInvariant()) {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                throw "Hash mismatch for $Url. Expected $Sha256, got $actual"
+            }
+            Write-Log "Verified SHA256 $actual"
         }
-        Write-Log "Verified SHA256 $actual"
-    }
 
-    Move-Item -LiteralPath $tmp -Destination $Destination -Force
+        Move-Item -LiteralPath $tmp -Destination $Destination -Force
+    } catch {
+        if (Test-Path -LiteralPath $tmp) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
 }
 
 function Extract-ZipEntries {
@@ -94,7 +160,7 @@ function Extract-ZipEntries {
         Expand-Archive -LiteralPath $archivePath -DestinationPath $tmpRoot -Force
         foreach ($entry in $Entries) {
             $from = Join-Path $tmpRoot ([string]$entry.from)
-            $to = Join-Path $script:InstallRoot ([string]$entry.to)
+            $to = Join-InstallPath -RelativePath ([string]$entry.to)
             if (-not (Test-Path -LiteralPath $from)) {
                 throw "Zip entry missing: $($entry.from)"
             }
@@ -136,14 +202,16 @@ function Install-HfSnapshot {
     $repo = [string]$Snapshot.repo
     $revision = [string]$Snapshot.revision
     if (-not $revision) { $revision = "main" }
-    $destRoot = Join-Path $script:InstallRoot ([string]$Snapshot.destination)
+    $destRoot = Join-InstallPath -RelativePath ([string]$Snapshot.destination)
 
     if (-not $repo) { throw "hf_snapshot.repo is missing" }
     if (-not $Snapshot.destination) { throw "hf_snapshot.destination is missing" }
 
     $apiUrl = "https://huggingface.co/api/models/$repo/revision/$revision`?blobs=true"
     Write-Log "Reading Hugging Face snapshot $repo@$revision"
-    $meta = Invoke-RestMethod -UseBasicParsing -Uri $apiUrl
+    $meta = Invoke-WithRetry -Operation "Read Hugging Face snapshot $repo@$revision" -Script {
+        Invoke-RestMethod -UseBasicParsing -Uri $apiUrl -TimeoutSec 120
+    }
     if (-not $meta.siblings) { throw "No files found in Hugging Face snapshot $repo@$revision" }
 
     New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
@@ -152,7 +220,8 @@ function Install-HfSnapshot {
         if (-not $rel -or $rel.EndsWith("/")) { continue }
         if ($rel -eq ".gitattributes" -or $rel -like "*.md") { continue }
 
-        $target = Join-Path $destRoot $rel
+        $destRelRoot = ([string]$Snapshot.destination).TrimEnd([char[]]@('\','/'))
+        $target = Join-InstallPath -RelativePath (Join-Path $destRelRoot $rel)
         $urlRel = [System.Uri]::EscapeDataString($rel).Replace("%2F", "/")
         $url = "https://huggingface.co/$repo/resolve/$revision/$urlRel"
         $sha = ""
@@ -190,8 +259,9 @@ function Write-PackStamp {
         dependencies = $deps
         installed_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     }
-    $stampPath = Join-Path $script:InstallRoot ("installed-" + $Pack.id + ".json")
-    $stamp | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $stampPath -Encoding UTF8
+    $stampName = ("installed-" + ([string]$Pack.id -replace '[\\/:*?"<>|]', '_') + ".json")
+    $stampPath = Join-InstallPath -RelativePath $stampName
+    Write-Utf8NoBom -Path $stampPath -Content ($stamp | ConvertTo-Json -Depth 4)
 }
 
 function Install-Pack {
@@ -215,7 +285,7 @@ function Install-Pack {
 
     if ($pack.files) {
         foreach ($file in $pack.files) {
-            $dest = Join-Path $script:InstallRoot ([string]$file.destination)
+            $dest = Join-InstallPath -RelativePath ([string]$file.destination)
             Download-VerifiedFile -Url ([string]$file.url) -Destination $dest -Sha256 ([string]$file.sha256)
             if ($file.extract) {
                 Extract-ZipEntries -ZipPath $dest -Entries $file.extract
@@ -270,10 +340,10 @@ function Uninstall-Pack {
 
     if ($Pack.files) {
         foreach ($file in $Pack.files) {
-            $dest = Join-Path $script:InstallRoot ([string]$file.destination)
+            $dest = Join-InstallPath -RelativePath ([string]$file.destination)
             if ($file.extract) {
                 foreach ($entry in $file.extract) {
-                    $to = Join-Path $script:InstallRoot ([string]$entry.to)
+                    $to = Join-InstallPath -RelativePath ([string]$entry.to)
                     Remove-PathIfPresent -Path $to
                     Remove-EmptyParents -Path $to
                 }
@@ -284,12 +354,13 @@ function Uninstall-Pack {
     }
 
     if ($Pack.hf_snapshot -and $Pack.hf_snapshot.destination) {
-        $destRoot = Join-Path $script:InstallRoot ([string]$Pack.hf_snapshot.destination)
+        $destRoot = Join-InstallPath -RelativePath ([string]$Pack.hf_snapshot.destination)
         Remove-PathIfPresent -Path $destRoot
         Remove-EmptyParents -Path $destRoot
     }
 
-    $stampPath = Join-Path $script:InstallRoot ("installed-" + $Pack.id + ".json")
+    $stampName = ("installed-" + ([string]$Pack.id -replace '[\\/:*?"<>|]', '_') + ".json")
+    $stampPath = Join-InstallPath -RelativePath $stampName
     Remove-PathIfPresent -Path $stampPath
 
     if ($RemoveDependencies -and $Pack.dependencies) {

@@ -42,6 +42,7 @@ function Send-Text {
 # Resolve fixture paths once up front so each request is cheap.
 $CaptionsDir = Join-Path $FixturesRoot 'captions'
 $RegistryDir = Join-Path $FixturesRoot 'registry'
+$RequestCounts = @{}
 
 $listener = New-Object System.Net.HttpListener
 $prefix = "http://127.0.0.1:$Port/"
@@ -69,6 +70,18 @@ try {
 			$forcedStatus = 0
 			if ($query -match '[\?&]status=(\d+)') {
 				$forcedStatus = [int]$Matches[1]
+			}
+			if ($query -match '[\?&]flaky=(\d+)') {
+				$failCount = [int]$Matches[1]
+				$key = $path + $query
+				if (-not $RequestCounts.ContainsKey($key)) {
+					$RequestCounts[$key] = 0
+				}
+				$RequestCounts[$key] = [int]$RequestCounts[$key] + 1
+				if ([int]$RequestCounts[$key] -le $failCount) {
+					Send-Text $response 503 "flaky failure $($RequestCounts[$key])/$failCount"
+					continue
+				}
 			}
 			if ($forcedStatus -ge 400) {
 				Send-Text $response $forcedStatus "forced status $forcedStatus"

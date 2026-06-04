@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 using namespace oscrouter;
 
@@ -248,47 +249,56 @@ TEST(OscRouterStatsShmem, WriteReadRoundtrip)
 // Publish pipe wire format
 // ---------------------------------------------------------------------------
 
-TEST(OscWire, PubPipeFrameFormat)
+TEST(OscWire, PubPipeConnectionSourceThenMultipleFrames)
 {
-	// Verify the wire format: 32-byte source-id, 4-byte LE length, N bytes OSC.
-	OscPacket<256> pkt;
-	pkt.Begin("/chatbox/input", ",s");
-	pkt.WriteStr("Hello");
-	ASSERT_TRUE(pkt.Ok());
+	// Verify the wire format: one 32-byte source-id per connection, followed
+	// by any number of 4-byte LE length + raw OSC frames.
+	OscPacket<256> pkt1;
+	pkt1.Begin("/chatbox/input", ",s");
+	pkt1.WriteStr("Hello");
+	ASSERT_TRUE(pkt1.Ok());
 
-	uint8_t wire[32 + 4 + 256];
-	size_t wirePos = 0;
+	OscPacket<256> pkt2;
+	pkt2.Begin("/chatbox/input", ",s");
+	pkt2.WriteStr("Again");
+	ASSERT_TRUE(pkt2.Ok());
+
+	std::vector<uint8_t> wire;
+	wire.resize(32);
 
 	// Write 32-byte source-id (NUL-padded).
 	const char* srcId = "translator";
-	memset(wire + wirePos, 0, 32);
-	memcpy(wire + wirePos, srcId, std::min<size_t>(strlen(srcId), 31));
-	wirePos += 32;
+	memcpy(wire.data(), srcId, std::min<size_t>(strlen(srcId), 31));
 
-	// Write 4-byte LE length.
-	uint32_t len = static_cast<uint32_t>(pkt.Size());
-	wire[wirePos++] = (uint8_t)(len);
-	wire[wirePos++] = (uint8_t)(len >> 8);
-	wire[wirePos++] = (uint8_t)(len >> 16);
-	wire[wirePos++] = (uint8_t)(len >> 24);
-
-	// Write OSC frame.
-	memcpy(wire + wirePos, pkt.Data(), pkt.Size());
-	wirePos += pkt.Size();
+	auto appendFrame = [&](const OscPacket<256>& pkt) {
+		uint32_t len = static_cast<uint32_t>(pkt.Size());
+		wire.push_back((uint8_t)(len));
+		wire.push_back((uint8_t)(len >> 8));
+		wire.push_back((uint8_t)(len >> 16));
+		wire.push_back((uint8_t)(len >> 24));
+		wire.insert(wire.end(), pkt.Data(), pkt.Data() + pkt.Size());
+	};
+	appendFrame(pkt1);
+	appendFrame(pkt2);
 
 	// Parse back: read source-id.
 	char parsedSrc[33] = {};
-	memcpy(parsedSrc, wire, 32);
+	memcpy(parsedSrc, wire.data(), 32);
 	EXPECT_STREQ(parsedSrc, "translator");
 
-	// Read LE length.
-	uint32_t parsedLen =
-	    (uint32_t)wire[32] | ((uint32_t)wire[33] << 8) | ((uint32_t)wire[34] << 16) | ((uint32_t)wire[35] << 24);
-	EXPECT_EQ(parsedLen, pkt.Size());
+	size_t offset = 32;
+	for (int i = 0; i < 2; ++i) {
+		ASSERT_LE(offset + 4, wire.size());
+		uint32_t parsedLen = (uint32_t)wire[offset] | ((uint32_t)wire[offset + 1] << 8) |
+		                     ((uint32_t)wire[offset + 2] << 16) | ((uint32_t)wire[offset + 3] << 24);
+		offset += 4;
+		ASSERT_LE(offset + parsedLen, wire.size());
 
-	// Parse the OSC frame.
-	OscMessage msg = OscParseMessage(wire + 36, parsedLen);
-	ASSERT_TRUE(msg.valid);
-	EXPECT_STREQ(msg.address, "/chatbox/input");
-	EXPECT_STREQ(msg.typetag, ",s");
+		OscMessage msg = OscParseMessage(wire.data() + offset, parsedLen);
+		ASSERT_TRUE(msg.valid);
+		EXPECT_STREQ(msg.address, "/chatbox/input");
+		EXPECT_STREQ(msg.typetag, ",s");
+		offset += parsedLen;
+	}
+	EXPECT_EQ(offset, wire.size());
 }

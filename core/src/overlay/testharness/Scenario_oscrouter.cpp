@@ -20,19 +20,24 @@ namespace openvr_pair::overlay::testharness {
 
 namespace {
 
-// Write a single fire-and-forget datagram to the OSC publish pipe in the
-// format the driver expects (per Protocol.h kOscRouterPubPipe comments):
-//   [ 32 bytes: source-id, NUL-padded ]
-//   [  4 bytes: LE uint32 frame length ]
-//   [  N bytes: raw OSC packet ]
-bool WriteOscPublishDatagram(HANDLE pipe, const char* source_id, const void* osc_bytes, uint32_t osc_len)
+bool WriteOscPublishSource(HANDLE pipe, const char* source_id)
 {
 	char source[32]{};
 	std::snprintf(source, sizeof(source), "%s", source_id ? source_id : "");
 	if (!pipe || pipe == INVALID_HANDLE_VALUE) return false;
 
 	DWORD written = 0;
-	if (!::WriteFile(pipe, source, sizeof(source), &written, nullptr) || written != sizeof(source)) return false;
+	return ::WriteFile(pipe, source, sizeof(source), &written, nullptr) && written == sizeof(source);
+}
+
+// Write one fire-and-forget frame after the connection-level source header:
+//   [  4 bytes: LE uint32 frame length ]
+//   [  N bytes: raw OSC packet ]
+bool WriteOscPublishDatagram(HANDLE pipe, const void* osc_bytes, uint32_t osc_len)
+{
+	if (!pipe || pipe == INVALID_HANDLE_VALUE) return false;
+
+	DWORD written = 0;
 	if (!::WriteFile(pipe, &osc_len, sizeof(osc_len), &written, nullptr) || written != sizeof(osc_len)) return false;
 	if (osc_len > 0) {
 		if (!::WriteFile(pipe, osc_bytes, osc_len, &written, nullptr) || written != osc_len) return false;
@@ -117,9 +122,13 @@ ScenarioResult RunScenario_oscrouter(ScenarioContext& ctx)
 	}
 	DWORD mode = PIPE_READMODE_MESSAGE;
 	::SetNamedPipeHandleState(pub, &mode, nullptr, nullptr);
+	if (!WriteOscPublishSource(pub, "harness-osc-source-id-padded-12")) {
+		::CloseHandle(pub);
+		return Fail("oscrouter", duration_now(), "could not write OscRouterPub source id");
+	}
 	int published = 0;
 	for (int i = 0; i < 5; ++i) {
-		if (WriteOscPublishDatagram(pub, "harness-osc-source-id-padded-12", &packet, sizeof(packet))) ++published;
+		if (WriteOscPublishDatagram(pub, &packet, sizeof(packet))) ++published;
 	}
 	::CloseHandle(pub);
 	if (published < 5) {

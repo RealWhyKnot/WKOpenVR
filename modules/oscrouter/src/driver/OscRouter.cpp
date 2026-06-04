@@ -519,7 +519,10 @@ void OscRouter::SendWorkerMain()
 // ---------------------------------------------------------------------------
 // Publish pipe server (\\.\pipe\WKOpenVR-OscRouterPub)
 //
-// Wire format per frame: [32-byte source-id][4-byte LE length][length bytes OSC]
+// Wire format per connection:
+//   [32-byte source-id]
+//   repeated frames: [4-byte LE length][length bytes OSC]
+//
 // Fire-and-forget; no response written. Multiple concurrent clients supported
 // via PIPE_UNLIMITED_INSTANCES + overlapped IO.
 // ---------------------------------------------------------------------------
@@ -578,19 +581,24 @@ void OscRouter::PubPipeWorkerMain()
 		}
 		CloseHandle(ov.hEvent);
 
-		// Read frames from this client until it disconnects or stop_.
 		char source_id[32];
 		PubPipeClientDiagnostics client;
 		OR_LOG("OscRouter pub-pipe client connected", 0);
-		while (!stop_.load(std::memory_order_acquire)) {
-			// Read 32-byte source identifier.
-			DWORD got = 0;
-			if (!ReadFile(pipe, source_id, 32, &got, nullptr) || got != 32) {
-				client.RecordReadBreak(pubPipeReadBreaks_);
-				break;
-			}
-			client.RememberSource(source_id);
 
+		// Read the source identifier once per connection. The packet stream
+		// that follows is length-prefixed; reading another source id per frame
+		// consumes the next frame's length and corrupts every subsequent packet
+		// from sidecars that keep the pipe open.
+		DWORD got = 0;
+		if (!ReadFile(pipe, source_id, 32, &got, nullptr) || got != 32) {
+			client.RecordReadBreak(pubPipeReadBreaks_);
+		}
+		else {
+			client.RememberSource(source_id);
+		}
+
+		// Read frames from this client until it disconnects or stop_.
+		while (!stop_.load(std::memory_order_acquire) && client.source_logged) {
 			// Read 4-byte LE frame length.
 			uint8_t lenBuf[4];
 			if (!ReadFile(pipe, lenBuf, 4, &got, nullptr) || got != 4) {
