@@ -465,7 +465,7 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (profileVersion > kProfileSchemaVersion) {
 		std::cerr << "Refusing to load profile: schema_version " << profileVersion
 		          << " is newer than this build supports (" << kProfileSchemaVersion << ")."
-		          << " Update WKOpenVR-SpaceCalibrator to use this profile." << std::endl;
+		          << " Update WKOpenVR-SpaceCalibrator to use this profile." << '\n';
 		ctx.validProfile = false;
 		return;
 	}
@@ -649,7 +649,7 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		// boundary). Better to skip the chaperone load and warn.
 		if (geometry.size() > 0 && (geometry.size() % 12) != 0) {
 			std::cerr << "Chaperone geometry length (" << geometry.size()
-			          << ") is not a multiple of 12 -- skipping chaperone load." << std::endl;
+			          << ") is not a multiple of 12 -- skipping chaperone load." << '\n';
 			g_chaperoneGeometrySizeMismatch = true;
 		}
 		else if (geometry.size() > 0) {
@@ -989,7 +989,7 @@ static void LogRegistryResult(LSTATUS result)
 	char* message;
 	FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER, 0, result, LANG_USER_DEFAULT,
 	               (LPSTR)&message, 0, nullptr);
-	std::cerr << "Opening registry key: " << message << std::endl;
+	std::cerr << "Opening registry key: " << message << '\n';
 }
 
 static const char* RegistryKey = "Software\\WKOpenVR-SpaceCalibrator";
@@ -1112,10 +1112,10 @@ void LoadProfile(CalibrationContext& ctx)
 			std::cerr << "LoadProfile: failed to read saved calibration from registry; "
 			             "running with empty profile. Check registry permissions at "
 			             "HKCU\\Software\\Classes\\Local Settings\\"
-			          << RegistryKey << std::endl;
+			          << RegistryKey << '\n';
 		}
 		else {
-			std::cout << "Profile is empty" << std::endl;
+			std::cout << "Profile is empty" << '\n';
 		}
 		ctx.Clear();
 		return;
@@ -1131,7 +1131,7 @@ void LoadProfile(CalibrationContext& ctx)
 		if (ctx.boundary.enabled && !ctx.boundary.vertices.empty()) {
 			ScheduleBoundaryStartupPush();
 		}
-		std::cout << "Loaded profile" << std::endl;
+		std::cout << "Loaded profile" << '\n';
 		// Capture the load event in the spacecal log so anyone reading the
 		// session can correlate any post-load behavior change with the
 		// load itself (rather than guessing whether the user re-applied a
@@ -1151,7 +1151,7 @@ void LoadProfile(CalibrationContext& ctx)
 		Metrics::WriteLogAnnotation(loadBuf);
 	}
 	catch (const std::runtime_error& e) {
-		std::cerr << "Error loading profile: " << e.what() << std::endl;
+		std::cerr << "Error loading profile: " << e.what() << '\n';
 		char errBuf[256];
 		snprintf(errBuf, sizeof errBuf, "profile_load_failed: bytes=%zu reason=%s", str.size(), e.what());
 		Metrics::WriteLogAnnotation(errBuf);
@@ -1198,7 +1198,7 @@ void SaveProfile(CalibrationContext& ctx)
 	}
 	s_lastSavedHash = hash;
 
-	std::cout << "Saving profile to registry" << std::endl;
+	std::cout << "Saving profile to registry" << '\n';
 	WriteRegistryKey(serialized);
 
 	// Annotate the save event so the log lets a reader correlate writes

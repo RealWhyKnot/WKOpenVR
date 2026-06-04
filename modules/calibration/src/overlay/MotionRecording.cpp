@@ -103,7 +103,7 @@ LoadedRecording LoadRecording(const std::string& path)
 	while (std::getline(in, line)) {
 		RTrim(line);
 		if (line.empty()) continue;
-		if (line.rfind("#", 0) == 0) {
+		if (line.rfind('#', 0) == 0) {
 			if (line.find("spacecal_log_v2") != std::string::npos) {
 				sawVersionBanner = true;
 				continue;
@@ -184,7 +184,7 @@ LoadedRecording LoadRecording(const std::string& path)
 	while (std::getline(in, line)) {
 		RTrim(line);
 		if (line.empty()) continue;
-		if (line.rfind("#", 0) == 0) continue;
+		if (line.rfind('#', 0) == 0) continue;
 
 		const auto fields = SplitCsv(line);
 		if ((int)fields.size() < (int)header.size()) {

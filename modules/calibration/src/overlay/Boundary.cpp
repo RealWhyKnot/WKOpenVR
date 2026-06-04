@@ -99,6 +99,7 @@ std::vector<size_t> SimplifyDouglasPeucker(const std::vector<BoundaryVertex>& pa
 	const size_t n = path.size();
 	if (n <= 2) {
 		std::vector<size_t> indices;
+		indices.reserve(n);
 		for (size_t i = 0; i < n; ++i)
 			indices.push_back(i);
 		return indices;

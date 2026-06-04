@@ -19,6 +19,28 @@ function Resolve-RequiredCommand {
 	return $command.Source
 }
 
+function Resolve-RunClangTidy {
+	param([Parameter(Mandatory=$true)][string]$ClangTidy)
+
+	$command = Get-Command "run-clang-tidy" -ErrorAction SilentlyContinue
+	if ($command) {
+		return $command.Source
+	}
+
+	$clangTidyDir = Split-Path -Parent $ClangTidy
+	$candidates = @(
+		(Join-Path $clangTidyDir "run-clang-tidy"),
+		(Join-Path $clangTidyDir "run-clang-tidy.py")
+	)
+	foreach ($candidate in $candidates) {
+		if (Test-Path -LiteralPath $candidate) {
+			return $candidate
+		}
+	}
+
+	throw "run-clang-tidy was not found. Install LLVM Python tools and make run-clang-tidy available next to clang-tidy or on PATH."
+}
+
 function Invoke-NativeQuiet {
 	param(
 		[Parameter(Mandatory=$true)][scriptblock]$Command,
@@ -94,6 +116,68 @@ function Invoke-ClangFormat {
 	}
 }
 
+function Invoke-ClangTidy {
+	param(
+		[Parameter(Mandatory=$true)][string]$CMake,
+		[Parameter(Mandatory=$true)][string]$Ninja,
+		[Parameter(Mandatory=$true)][string]$Python,
+		[Parameter(Mandatory=$true)][string]$RunClangTidy,
+		[Parameter(Mandatory=$true)][string]$ClangTidy,
+		[Parameter(Mandatory=$true)][string]$ClangApplyReplacements
+	)
+
+	$buildDir = Join-Path $PSScriptRoot "build\lint-tidy"
+	$cmakeArgs = @(
+		"-G", "Ninja",
+		"-B", $buildDir,
+		"-S", $PSScriptRoot,
+		"-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+		"-DWKOPENVR_CAPTIONS_CUDA=OFF",
+		"-DWKOPENVR_RELEASE_BUILD=OFF",
+		"-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+		"-DCMAKE_MAKE_PROGRAM=$Ninja",
+		"-Wno-dev"
+	)
+
+	Write-Host "clang-tidy: configuring compile database in $buildDir"
+	Invoke-NativeQuiet `
+		-Command { & $CMake @cmakeArgs } `
+		-FailureMessage "clang-tidy compile database configure failed"
+
+	$compileCommands = Join-Path $buildDir "compile_commands.json"
+	if (-not (Test-Path -LiteralPath $compileCommands)) {
+		throw "clang-tidy compile database was not created at $compileCommands"
+	}
+
+	$parallelJobs = [Math]::Max(1, [Math]::Min([Environment]::ProcessorCount, 8))
+	$sourceFilter = ".*WKOpenVR[/\\](core|modules|tests)[/\\].*\.(c|cc|cpp|cxx)$"
+	$headerFilter = ".*WKOpenVR[/\\](core|modules|tests)[/\\].*"
+	$excludeHeaderFilter = ".*WKOpenVR[/\\](lib|build)[/\\].*"
+	$tidyArgs = @(
+		$RunClangTidy,
+		"-p", $buildDir,
+		"-config-file", (Join-Path $PSScriptRoot ".clang-tidy"),
+		"-source-filter", $sourceFilter,
+		"-header-filter", $headerFilter,
+		"-exclude-header-filter", $excludeHeaderFilter,
+		"-clang-tidy-binary", $ClangTidy,
+		"-clang-apply-replacements-binary", $ClangApplyReplacements,
+		"-quiet",
+		"-hide-progress",
+		"-j", [string]$parallelJobs
+	)
+
+	if (-not $Check) {
+		$tidyArgs += @("-fix", "-format", "-style=file")
+	}
+
+	$label = if ($Check) { "checking" } else { "checking and applying available fixes to" }
+	Write-Host "clang-tidy: $label project C/C++ translation units."
+	Invoke-NativeQuiet `
+		-Command { & $Python @tidyArgs } `
+		-FailureMessage "clang-tidy found diagnostics"
+}
+
 function Invoke-DotNetFormatCommand {
 	param(
 		[Parameter(Mandatory=$true)][string]$DotNet,
@@ -145,10 +229,26 @@ function Invoke-DotNetFormat {
 }
 
 $clangFormat = Resolve-RequiredCommand "clang-format" "Install LLVM and make clang-format available on PATH."
+$clangTidy = Resolve-RequiredCommand "clang-tidy" "Install LLVM and make clang-tidy available on PATH."
+$clangApplyReplacements = Resolve-RequiredCommand "clang-apply-replacements" "Install LLVM and make clang-apply-replacements available on PATH."
+$cmake = Resolve-RequiredCommand "cmake" "Install CMake and make cmake available on PATH."
+$ninja = Resolve-RequiredCommand "ninja" "Install Ninja and make ninja available on PATH."
+$python = Resolve-RequiredCommand "python" "Install Python and make python available on PATH."
+$runClangTidy = Resolve-RunClangTidy -ClangTidy $clangTidy
 $dotnet = Resolve-RequiredCommand "dotnet" "Install the .NET SDK required by modules/facetracking/src/host/global.json."
 
 Invoke-ClangFormat -ClangFormat $clangFormat
 Invoke-DotNetFormat -DotNet $dotnet
+Invoke-ClangTidy `
+	-CMake $cmake `
+	-Ninja $ninja `
+	-Python $python `
+	-RunClangTidy $runClangTidy `
+	-ClangTidy $clangTidy `
+	-ClangApplyReplacements $clangApplyReplacements
+if (-not $Check) {
+	Invoke-ClangFormat -ClangFormat $clangFormat
+}
 
 if ($Check) {
 	Write-Host "Lint check passed."

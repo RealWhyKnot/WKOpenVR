@@ -73,7 +73,7 @@ void DrawPhaseBanner()
 
 void DrawTranslationTooltip()
 {
-	const Eigen::Vector3d r = Metrics::translationAxisRangesCm.last();
+	const Eigen::Vector3d& r = Metrics::translationAxisRangesCm.last();
 	int minIdx = 0;
 	double minR = r(0);
 	for (int i = 1; i < 3; ++i) {

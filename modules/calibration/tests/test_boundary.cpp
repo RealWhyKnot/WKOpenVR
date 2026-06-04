@@ -181,6 +181,7 @@ vr::HmdQuad_t MakeWallQuad(double ax, double az, double bx, double bz, double fl
 TEST(BoundaryDouglasPeuckerTest, SimplifiesCollinear)
 {
 	std::vector<BoundaryVertex> path;
+	path.reserve(100);
 	for (int i = 0; i < 100; ++i) {
 		path.push_back({(double)i * 0.1, 0.0, 0.0});
 	}

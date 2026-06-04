@@ -95,7 +95,7 @@ TEST(Solver, RejectsWithoutMotion)
 	s.Start();
 
 	Eigen::Affine3d hmd = MakePose(0.0, 0.0, 0.0, Eigen::Vector3d(0, 1.6, 0));
-	Eigen::Affine3d tracker = hmd;
+	const Eigen::Affine3d& tracker = hmd;
 
 	// Speed below threshold: sample must be rejected.
 	bool accepted = s.Tick(hmd, tracker, Solver::kMinHmdSpeedMps - 0.01);

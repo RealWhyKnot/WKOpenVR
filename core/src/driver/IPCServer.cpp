@@ -152,7 +152,7 @@ void IPCServer::RunThread(IPCServer* _this)
 			LOG("IPC[%s] client connected (our_protocol=%u)", _this->pipeName.c_str(), (unsigned)protocol::Version);
 
 			auto pipeInst = _this->CreatePipeInstance(nextPipe);
-			CompletedWriteCallback(0, sizeof protocol::Response, (LPOVERLAPPED)pipeInst);
+			CompletedWriteCallback(0, sizeof(protocol::Response), (LPOVERLAPPED)pipeInst);
 
 			connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
 		}
@@ -169,7 +169,7 @@ BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE& pipe)
 {
 	pipe = CreateNamedPipeA(pipeName.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
 	                        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT, PIPE_UNLIMITED_INSTANCES,
-	                        sizeof protocol::Request, sizeof protocol::Response, 1000, 0);
+	                        sizeof(protocol::Request), sizeof(protocol::Response), 1000, 0);
 
 	if (pipe == INVALID_HANDLE_VALUE) {
 		LOG("CreateNamedPipe(%s) failed. Error: %d", pipeName.c_str(), GetLastError());
@@ -206,9 +206,9 @@ void IPCServer::CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED o
 	PipeInstance* pipeInst = (PipeInstance*)overlap;
 	BOOL success = FALSE;
 
-	if (err == 0 && bytesRead == sizeof protocol::Request) {
+	if (err == 0 && bytesRead == sizeof(protocol::Request)) {
 		pipeInst->server->HandleRequest(pipeInst->request, pipeInst->response);
-		success = WriteFileEx(pipeInst->pipe, &pipeInst->response, sizeof protocol::Response, overlap,
+		success = WriteFileEx(pipeInst->pipe, &pipeInst->response, sizeof(protocol::Response), overlap,
 		                      (LPOVERLAPPED_COMPLETION_ROUTINE)CompletedWriteCallback);
 	}
 	else if (err == 0 && bytesRead > 0) {
@@ -217,7 +217,7 @@ void IPCServer::CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED o
 		// payloads and an unread tail would be uninitialized memory; dispatching
 		// HandleRequest in that state can do anything. Drop and disconnect.
 		LOG("IPC[%s] short read: got=%u expected=%zu, disconnecting client", pipeInst->server->pipeName.c_str(),
-		    bytesRead, sizeof protocol::Request);
+		    bytesRead, sizeof(protocol::Request));
 	}
 
 	if (!success) {
@@ -237,8 +237,8 @@ void IPCServer::CompletedWriteCallback(DWORD err, DWORD bytesWritten, LPOVERLAPP
 	PipeInstance* pipeInst = (PipeInstance*)overlap;
 	BOOL success = FALSE;
 
-	if (err == 0 && bytesWritten == sizeof protocol::Response) {
-		success = ReadFileEx(pipeInst->pipe, &pipeInst->request, sizeof protocol::Request, overlap,
+	if (err == 0 && bytesWritten == sizeof(protocol::Response)) {
+		success = ReadFileEx(pipeInst->pipe, &pipeInst->request, sizeof(protocol::Request), overlap,
 		                     (LPOVERLAPPED_COMPLETION_ROUTINE)CompletedReadCallback);
 	}
 

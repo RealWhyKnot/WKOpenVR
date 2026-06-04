@@ -808,7 +808,7 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 		}
 		const Eigen::Matrix2d cross = refPoints.transpose() * targetPoints;
 		const Eigen::JacobiSVD<Eigen::Matrix2d> svd(cross);
-		const auto values = svd.singularValues();
+		const auto& values = svd.singularValues();
 		report.rotationConditionRatio = SafeRatio(values.minCoeff(), values.maxCoeff());
 	}
 
@@ -844,7 +844,7 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 			}
 		}
 		const Eigen::BDCSVD<Eigen::MatrixXd> svd(coefficients);
-		const auto values = svd.singularValues();
+		const auto& values = svd.singularValues();
 		const double maxSv = values.size() ? values.maxCoeff() : 0.0;
 		const double rankCut = std::max(1e-9, maxSv * 1e-6);
 		int rank = 0;

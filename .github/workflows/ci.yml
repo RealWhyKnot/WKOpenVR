@@ -35,7 +35,7 @@ jobs:
   lint:
     name: lint
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -48,6 +48,11 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
       - name: Cache NuGet packages
         uses: actions/cache@v5
         with:
@@ -59,15 +64,57 @@ jobs:
       - name: Install LLVM tools
         shell: pwsh
         run: |
-          if (Get-Command clang-format -ErrorAction SilentlyContinue) {
-            Write-Host "clang-format already available."
-            exit 0
+          function Test-RunClangTidyAvailable {
+            $command = Get-Command run-clang-tidy -ErrorAction SilentlyContinue
+            if ($command) { return $true }
+
+            $clangTidy = Get-Command clang-tidy -ErrorAction SilentlyContinue
+            if (-not $clangTidy) { return $false }
+
+            $clangTidyDir = Split-Path -Parent $clangTidy.Source
+            $candidates = @(
+              (Join-Path $clangTidyDir 'run-clang-tidy'),
+              (Join-Path $clangTidyDir 'run-clang-tidy.py')
+            )
+            foreach ($candidate in $candidates) {
+              if (Test-Path -LiteralPath $candidate) { return $true }
+            }
+            return $false
           }
-          choco install llvm -y --no-progress
-          if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
-          $llvmBin = 'C:\Program Files\LLVM\bin'
-          if (Test-Path -LiteralPath $llvmBin) {
-            $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $llvmTools = @('clang-format', 'clang-tidy', 'clang-apply-replacements')
+          $missingLlvm = @()
+          foreach ($tool in $llvmTools) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              $missingLlvm += $tool
+            }
+          }
+
+          $missingLabels = @($missingLlvm)
+          $needsLlvm = ($missingLabels.Count -gt 0)
+          if (-not (Test-RunClangTidyAvailable)) {
+            $needsLlvm = $true
+            $missingLabels += 'run-clang-tidy'
+          }
+
+          if ($needsLlvm) {
+            Write-Host "Installing LLVM tools: $($missingLabels -join ', ')"
+            choco install llvm -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
+            $llvmBin = 'C:\Program Files\LLVM\bin'
+            if (Test-Path -LiteralPath $llvmBin) {
+              $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              $env:PATH = "$llvmBin;$env:PATH"
+            }
+          } else {
+            Write-Host "LLVM tools already available."
+          }
+
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install ninja -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Ninja install failed (exit $LASTEXITCODE)" }
+          } else {
+            Write-Host "Ninja already available."
           }
 
       - name: Run lint check

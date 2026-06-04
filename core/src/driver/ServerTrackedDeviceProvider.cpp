@@ -1421,7 +1421,7 @@ void ServerTrackedDeviceProvider::HandleApplyRandomOffset()
 	debugRotation = Eigen::Quaterniond::Identity();
 
 	std::ostringstream oss;
-	oss << "Applied random offset: " << posOffset << " from init " << init << std::endl;
+	oss << "Applied random offset: " << posOffset << " from init " << init << '\n';
 	LOG("%s", oss.str().c_str());
 }
 

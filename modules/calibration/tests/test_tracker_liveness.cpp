@@ -48,7 +48,7 @@ TEST(TrackerLivenessTest, HealthySession_HashChangesEveryTick_NeverFires)
 	TrackerLivenessState s{};
 	for (int i = 0; i < 1000; ++i) {
 		const double now = i * 0.05; // 50 ms tick (matches CalibrationTick gate)
-		const uint64_t hash = static_cast<uint64_t>(i + 1);
+		const uint64_t hash = static_cast<uint64_t>(i) + 1;
 		const auto in = MakeInput(hash, /*connected=*/true, /*hmd=*/0.30,
 		                          /*ema=*/now, now);
 		EXPECT_FALSE(TickTrackerLiveness(s, in)) << "tick " << i;
@@ -179,7 +179,7 @@ TEST(TrackerLivenessTest, OfflineToOnline_RequiresReconnectDebounce)
 	bool wentOnline = false;
 	for (int i = 0; i < 100; ++i) { // 5 s of healthy pose changes
 		const double now = 14.0 + i * 0.05;
-		const uint64_t hash = (uint64_t)(0x10000 + i);
+		const uint64_t hash = 0x10000ull + static_cast<uint64_t>(i);
 		const auto in = MakeInput(hash, true, 0.30, now, now);
 		EXPECT_FALSE(TickTrackerLiveness(s, in));
 		if (!IsOffline(s)) {

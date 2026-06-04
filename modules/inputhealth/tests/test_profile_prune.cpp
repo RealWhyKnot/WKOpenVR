@@ -27,7 +27,7 @@ std::wstring WriteTestProfile(uint64_t serial_hash)
 
 	char hashHex[32];
 	snprintf(hashHex, sizeof(hashHex), "%016llx", (unsigned long long)serial_hash);
-	const std::wstring path = dir + L"\\" + openvr_pair::common::Utf8ToWide(std::string(hashHex) + ".json");
+	std::wstring path = dir + L"\\" + openvr_pair::common::Utf8ToWide(std::string(hashHex) + ".json");
 
 	// Build JSON by hand to avoid pulling in picojson in the test.
 	const std::string body = std::string(R"({

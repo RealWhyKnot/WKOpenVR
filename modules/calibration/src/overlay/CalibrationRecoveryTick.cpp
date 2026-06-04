@@ -695,7 +695,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 					int n =
 					    snprintf(baseBuf + written, sizeof(baseBuf) - written,
 					             " {serial=%s prev=%.3f cur=%.3f jump=%.3f}", kv.first.c_str(), prev, kv.second, jump);
-					if (n <= 0 || (size_t)(written + n) >= sizeof baseBuf) break;
+					if (n <= 0 || static_cast<size_t>(written) + static_cast<size_t>(n) >= sizeof baseBuf) break;
 					written += n;
 				}
 				Metrics::WriteLogAnnotation(baseBuf);

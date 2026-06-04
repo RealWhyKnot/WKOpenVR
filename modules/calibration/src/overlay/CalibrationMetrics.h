@@ -47,7 +47,7 @@ public:
 
 	const T& last() const
 	{
-		static const T fallback;
+		static const T fallback{};
 		return Data.size() > 0 ? Data.back().second : fallback;
 	}
 
