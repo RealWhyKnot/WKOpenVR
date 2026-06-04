@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "inputhealth/PathClassifier.h"
+#include "inputhealth/PathPolicy.h"
 
 using namespace inputhealth;
 
@@ -30,28 +31,36 @@ TEST(PathClassifier, TriggerTouchIsButton)
 }
 
 // ---------------------------------------------------------------------------
-// Pressure-sensitive analog axes -- classify as Trigger so the
-// trigger-remap kernel applies (degraded peak / drifted floor correction).
+// Pressure-sensitive analog axes remain visible as coarse compensation-capable
+// paths, but policy treats them as capped idle-floor paths, not trigger remaps.
 // ---------------------------------------------------------------------------
 
 TEST(PathClassifier, GripForceAnalog)
 {
     EXPECT_EQ(ClassifyInputPath("/input/grip/force"), PathClass::Trigger);
+    EXPECT_EQ(ClassifyPathFamily("/input/grip/force"), PathFamily::ForceSensor);
+    EXPECT_FALSE(IsTriggerLikePath("/input/grip/force"));
 }
 
 TEST(PathClassifier, SqueezeValueAnalog)
 {
     EXPECT_EQ(ClassifyInputPath("/input/squeeze/value"), PathClass::Trigger);
+    EXPECT_EQ(ClassifyPathFamily("/input/squeeze/value"), PathFamily::GripValue);
+    EXPECT_FALSE(IsTriggerLikePath("/input/squeeze/value"));
 }
 
 TEST(PathClassifier, TrackpadForceAnalog)
 {
     EXPECT_EQ(ClassifyInputPath("/input/trackpad/force"), PathClass::Trigger);
+    EXPECT_EQ(ClassifyPathFamily("/input/trackpad/force"), PathFamily::ForceSensor);
+    EXPECT_FALSE(IsTriggerLikePath("/input/trackpad/force"));
 }
 
 TEST(PathClassifier, GenericPressureSuffix)
 {
     EXPECT_EQ(ClassifyInputPath("/input/somecontrol/pressure"), PathClass::Trigger);
+    EXPECT_EQ(ClassifyPathFamily("/input/somecontrol/pressure"), PathFamily::ForceSensor);
+    EXPECT_FALSE(IsTriggerLikePath("/input/somecontrol/pressure"));
 }
 
 TEST(PathClassifier, GripClickStaysButton)
@@ -77,16 +86,19 @@ TEST(PathClassifier, JoystickYAxis)
 TEST(PathClassifier, ThumbstickXAxis)
 {
     EXPECT_EQ(ClassifyInputPath("/input/thumbstick/x"), PathClass::StickAxis);
+    EXPECT_EQ(ClassifyPathFamily("/input/thumbstick/x"), PathFamily::ThumbstickAxis);
 }
 
 TEST(PathClassifier, TrackpadXAxis)
 {
-    EXPECT_EQ(ClassifyInputPath("/input/trackpad/x"), PathClass::StickAxis);
+    EXPECT_EQ(ClassifyInputPath("/input/trackpad/x"), PathClass::DiagnosticsOnly);
+    EXPECT_EQ(ClassifyPathFamily("/input/trackpad/x"), PathFamily::TrackpadAxis);
 }
 
 TEST(PathClassifier, TouchpadYAxis)
 {
-    EXPECT_EQ(ClassifyInputPath("/input/touchpad/y"), PathClass::StickAxis);
+    EXPECT_EQ(ClassifyInputPath("/input/touchpad/y"), PathClass::DiagnosticsOnly);
+    EXPECT_EQ(ClassifyPathFamily("/input/touchpad/y"), PathFamily::TrackpadAxis);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +111,8 @@ TEST(PathClassifier, GripValueAnalog)
     // analog 0..1 squeeze. Wand-style controllers only have /input/grip/click
     // (covered separately) so this classification is safe across both.
     EXPECT_EQ(ClassifyInputPath("/input/grip/value"), PathClass::Trigger);
+    EXPECT_EQ(ClassifyPathFamily("/input/grip/value"), PathFamily::GripValue);
+    EXPECT_FALSE(IsTriggerLikePath("/input/grip/value"));
 }
 
 TEST(PathClassifier, SystemClick)
@@ -128,6 +142,13 @@ TEST(PathClassifier, EyeOpenness)
 TEST(PathClassifier, FaceExpression)
 {
     EXPECT_EQ(ClassifyInputPath("/input/face/jaw_open"), PathClass::DiagnosticsOnly);
+}
+
+TEST(PathClassifier, FingerCapsense)
+{
+    EXPECT_EQ(ClassifyInputPath("/input/finger/index"), PathClass::DiagnosticsOnly);
+    EXPECT_EQ(ClassifyPathFamily("/input/finger/index"), PathFamily::FingerCapsense);
+    EXPECT_FALSE(AllowsDriverCompensation(ClassifyPathFamily("/input/finger/index")));
 }
 
 // ---------------------------------------------------------------------------

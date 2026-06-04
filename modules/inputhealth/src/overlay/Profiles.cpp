@@ -6,7 +6,7 @@
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
-#include "inputhealth/PathClassifier.h"
+#include "inputhealth/PathPolicy.h"
 #include "inputhealth/SerialHash.h"
 #include "picojson.h"
 
@@ -142,24 +142,37 @@ DeviceProfile Decode(const picojson::value &v)
 		p.serial_hash = inputhealth::Fnv1a64(p.serial);
 	}
 
-	// Drop records whose paths are unsupported by the current classifier.
-	// This prunes legacy eye/pupil entries that accumulated before the
-	// classifier was introduced and would otherwise persist forever.
+	// Drop records whose paths are unsafe for persistent compensation and
+	// sanitize legacy force/grip records so they are interpreted only as
+	// capped idle-floor offsets.
 	{
 		size_t before = p.learned_paths.size();
 		p.learned_paths.erase(
 			std::remove_if(p.learned_paths.begin(), p.learned_paths.end(),
 				[](const LearnedPathRecord &r) {
-					const inputhealth::PathClass cls =
-						inputhealth::ClassifyInputPath(r.path);
-					return cls == inputhealth::PathClass::Unsupported ||
-					       cls == inputhealth::PathClass::DiagnosticsOnly;
+					const inputhealth::PathFamily family =
+						inputhealth::ClassifyPathFamily(r.path);
+					return family == inputhealth::PathFamily::Unsupported ||
+						inputhealth::IsDiagnosticsOnlyFamily(family);
 				}),
 			p.learned_paths.end());
 		size_t after = p.learned_paths.size();
 		if (before != after) {
 			LOG("[profiles] pruned %zu legacy path record(s) from serial_hash=0x%016llx",
 				before - after, (unsigned long long)p.serial_hash);
+		}
+
+		for (auto &record : p.learned_paths) {
+			const inputhealth::PathFamily family =
+				inputhealth::ClassifyPathFamily(record.path);
+			if (!inputhealth::IsIdleFloorFamily(family)) continue;
+			record.kind = "scalar_single";
+			record.learned_rest_offset = std::max(0.0,
+				std::min(0.05, record.learned_rest_offset));
+			record.learned_trigger_min = 0.0;
+			record.learned_trigger_max = 0.0;
+			record.learned_deadzone_radius = 0.0;
+			record.learned_debounce_us = 0;
 		}
 	}
 
@@ -236,11 +249,22 @@ void ProfileStore::LoadAll()
 	LOG("[profiles] loaded %zu profile(s) from disk (checkpoint)", profiles_.size());
 }
 
-bool ProfileStore::Save(const DeviceProfile &profile)
+bool ProfileStore::Save(const DeviceProfile &profile, const char *reason)
 {
-	if (profile.serial_hash == 0) return false;
+	++stats_.attempted_saves;
+	if (reason && reason[0] != '\0') {
+		stats_.last_save_reason = reason;
+	}
+
+	if (profile.serial_hash == 0) {
+		++stats_.failed_writes;
+		return false;
+	}
 	std::wstring dir = ProfilesDir();
-	if (dir.empty()) return false;
+	if (dir.empty()) {
+		++stats_.failed_writes;
+		return false;
+	}
 
 	// Coalesce by content hash. Save is invoked on every input-state delta
 	// per device (~8 saves/sec in observed bursts, ~1100 saves/session) and
@@ -259,6 +283,7 @@ bool ProfileStore::Save(const DeviceProfile &profile)
 	static std::chrono::steady_clock::time_point s_lastSkipLog{};
 	auto it = s_lastSavedHashByDevice.find(profile.serial_hash);
 	if (it != s_lastSavedHashByDevice.end() && it->second == hash) {
+		++stats_.skipped_unchanged;
 		++s_skipCountByDevice[profile.serial_hash];
 		const auto nowTp = std::chrono::steady_clock::now();
 		if (nowTp - s_lastSkipLog >= std::chrono::seconds(30)) {
@@ -287,6 +312,7 @@ bool ProfileStore::Save(const DeviceProfile &profile)
 		FILE_ATTRIBUTE_NORMAL,
 		nullptr);
 	if (hFile == INVALID_HANDLE_VALUE) {
+		++stats_.failed_writes;
 		LOG("[profiles] failed to open tmp '%s' for write (err=%lu)",
 			openvr_pair::common::WideToUtf8(tmpPath).c_str(), GetLastError());
 		return false;
@@ -299,6 +325,7 @@ bool ProfileStore::Save(const DeviceProfile &profile)
 	CloseHandle(hFile);
 
 	if (!ok || written != static_cast<DWORD>(body.size())) {
+		++stats_.failed_writes;
 		LOG("[profiles] write/flush failed for tmp '%s' (err=%lu)",
 			openvr_pair::common::WideToUtf8(tmpPath).c_str(), GetLastError());
 		DeleteFileW(tmpPath.c_str());
@@ -307,6 +334,7 @@ bool ProfileStore::Save(const DeviceProfile &profile)
 
 	if (!MoveFileExW(tmpPath.c_str(), path.c_str(),
 			MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+		++stats_.failed_writes;
 		LOG("[profiles] atomic rename failed '%s' -> '%s' (err=%lu)",
 			openvr_pair::common::WideToUtf8(tmpPath).c_str(), openvr_pair::common::WideToUtf8(path).c_str(), GetLastError());
 		DeleteFileW(tmpPath.c_str());
@@ -315,9 +343,11 @@ bool ProfileStore::Save(const DeviceProfile &profile)
 
 	profiles_[profile.serial_hash] = profile;
 	s_lastSavedHashByDevice[profile.serial_hash] = hash;
-	LOG("[profiles] saved profile checkpoint: serial_hash=0x%016llx paths=%zu hash=0x%016llx",
+	++stats_.actual_writes;
+	LOG("[profiles] saved profile checkpoint: serial_hash=0x%016llx paths=%zu hash=0x%016llx reason=%s",
 		(unsigned long long)profile.serial_hash, profile.learned_paths.size(),
-		(unsigned long long)hash);
+		(unsigned long long)hash,
+		stats_.last_save_reason.empty() ? "unspecified" : stats_.last_save_reason.c_str());
 	return true;
 }
 

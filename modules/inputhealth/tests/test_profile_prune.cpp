@@ -91,6 +91,34 @@ std::wstring WriteTestProfile(uint64_t serial_hash)
       "learned_debounce_us": 0,
       "last_updated_unix": 1700000000,
       "drift_shift_resets": 0
+    },
+    {
+      "path": "/input/finger/index",
+      "kind": "scalar_single",
+      "sample_count": 512,
+      "ready": true,
+      "learned_rest_offset": 0.25,
+      "learned_stddev": 0.01,
+      "learned_trigger_min": 0.0,
+      "learned_trigger_max": 0.0,
+      "learned_deadzone_radius": 0.0,
+      "learned_debounce_us": 0,
+      "last_updated_unix": 1700000000,
+      "drift_shift_resets": 0
+    },
+    {
+      "path": "/input/trackpad/x",
+      "kind": "stick_x",
+      "sample_count": 512,
+      "ready": true,
+      "learned_rest_offset": 0.20,
+      "learned_stddev": 0.01,
+      "learned_trigger_min": 0.0,
+      "learned_trigger_max": 0.0,
+      "learned_deadzone_radius": 0.05,
+      "learned_debounce_us": 0,
+      "last_updated_unix": 1700000000,
+      "drift_shift_resets": 0
     }
   ]
 })";
@@ -119,6 +147,28 @@ TEST(DeviceProfileDefaults, RestRecenterIsOnByDefault)
         << "New profiles must default rest-recenter to on";
 }
 
+TEST(ProfileSaveScheduler, SampleCountOnlyChurnIsNotMaterial)
+{
+    LearnedPathRecord a;
+    a.path = "/input/trigger/value";
+    a.kind = "scalar_single";
+    a.sample_count = 1024;
+    a.ready = true;
+    a.learned_rest_offset = 0.02;
+    a.learned_stddev = 0.002;
+    a.learned_trigger_min = 0.02;
+    a.learned_trigger_max = 0.98;
+    a.last_updated_unix = 1700000000;
+
+    LearnedPathRecord b = a;
+    b.sample_count = 4096;
+
+    EXPECT_TRUE(LearnedPathMaterialEqual(a, b));
+
+    b.learned_trigger_min = 0.03;
+    EXPECT_FALSE(LearnedPathMaterialEqual(a, b));
+}
+
 // ---------------------------------------------------------------------------
 // After LoadAll, a profile with eye/pupil entries has those pruned.
 // Valid trigger and stick entries are preserved.
@@ -144,20 +194,26 @@ TEST(ProfilePrune, LegacyEyeAndPupilRecordsPruned)
     // The two valid records (trigger and stick) must be present.
     bool hasTrigger = false;
     bool hasStick   = false;
-    bool hasEye     = false;
-    bool hasPupil   = false;
+    bool hasEye      = false;
+    bool hasPupil    = false;
+    bool hasFinger   = false;
+    bool hasTrackpad = false;
 
     for (const auto &r : p.learned_paths) {
         if (r.path == "/input/trigger/value")       hasTrigger = true;
         if (r.path == "/input/joystick/x")          hasStick   = true;
         if (r.path == "/input/eye/left/openness")   hasEye     = true;
         if (r.path == "/input/pupil/left/dilation") hasPupil   = true;
+        if (r.path == "/input/finger/index")        hasFinger  = true;
+        if (r.path == "/input/trackpad/x")          hasTrackpad = true;
     }
 
     EXPECT_TRUE (hasTrigger) << "/input/trigger/value must survive prune";
     EXPECT_TRUE (hasStick)   << "/input/joystick/x must survive prune";
     EXPECT_FALSE(hasEye)     << "/input/eye/left/openness must be pruned (DiagnosticsOnly)";
     EXPECT_FALSE(hasPupil)   << "/input/pupil/left/dilation must be pruned (Unsupported)";
+    EXPECT_FALSE(hasFinger)  << "/input/finger/index must be pruned (FingerCapsense)";
+    EXPECT_FALSE(hasTrackpad) << "/input/trackpad/x must be pruned (TrackpadAxis)";
 
     // Total: only 2 records should remain.
     EXPECT_EQ(p.learned_paths.size(), 2u);
@@ -166,10 +222,10 @@ TEST(ProfilePrune, LegacyEyeAndPupilRecordsPruned)
 }
 
 // ---------------------------------------------------------------------------
-// A profile with only valid records is unmodified on load.
+// Force/grip records survive, but legacy trigger-range fields are removed.
 // ---------------------------------------------------------------------------
 
-TEST(ProfilePrune, ValidOnlyProfileUnchanged)
+TEST(ProfilePrune, ForceAndGripRecordsAreFloorOnlyOnLoad)
 {
     const uint64_t testHash = 0xCAFEBABEDEAD0001ULL;
 
@@ -193,12 +249,12 @@ TEST(ProfilePrune, ValidOnlyProfileUnchanged)
       "kind": "scalar_single",
       "sample_count": 1024,
       "ready": true,
-      "learned_rest_offset": 0.01,
+      "learned_rest_offset": 0.10,
       "learned_stddev": 0.002,
-      "learned_trigger_min": 0.0,
-      "learned_trigger_max": 0.0,
-      "learned_deadzone_radius": 0.0,
-      "learned_debounce_us": 0,
+      "learned_trigger_min": 0.10,
+      "learned_trigger_max": 0.80,
+      "learned_deadzone_radius": 0.05,
+      "learned_debounce_us": 1000,
       "last_updated_unix": 1700000001,
       "drift_shift_resets": 0
     }
@@ -221,6 +277,12 @@ TEST(ProfilePrune, ValidOnlyProfileUnchanged)
     ASSERT_NE(it, all.end());
     EXPECT_EQ(it->second.learned_paths.size(), 1u);
     EXPECT_EQ(it->second.learned_paths[0].path, "/input/grip/value");
+    EXPECT_EQ(it->second.learned_paths[0].kind, "scalar_single");
+    EXPECT_DOUBLE_EQ(it->second.learned_paths[0].learned_rest_offset, 0.05);
+    EXPECT_DOUBLE_EQ(it->second.learned_paths[0].learned_trigger_min, 0.0);
+    EXPECT_DOUBLE_EQ(it->second.learned_paths[0].learned_trigger_max, 0.0);
+    EXPECT_DOUBLE_EQ(it->second.learned_paths[0].learned_deadzone_radius, 0.0);
+    EXPECT_EQ(it->second.learned_paths[0].learned_debounce_us, 0u);
 
     DeleteFile(testFile);
 }

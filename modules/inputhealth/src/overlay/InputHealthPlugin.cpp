@@ -5,6 +5,7 @@
 #include "DebugTab.h"
 #include "DiagnosticsTab.h"
 #include "IPCClient.h"
+#include "InputHealthHealthSummary.h"
 #include "InputHealthUiLogic.h"
 #include "LearningEngine.h"
 #include "Logging.h"
@@ -68,11 +69,14 @@ void InputHealthPlugin::OnStart(openvr_pair::overlay::ShellContext &)
 	const auto now = Clock::now();
 	last_refresh_ = now;
 	last_connection_check_ = now;
+	last_health_summary_ = now;
+	WriteHealthSummary();
 }
 
 void InputHealthPlugin::OnShutdown(openvr_pair::overlay::ShellContext &)
 {
 	engine_.Flush();
+	WriteHealthSummary();
 	reader_.Close();
 	ipc_.Close();
 	LOG("WKOpenVR-InputHealth plugin shutting down");
@@ -91,6 +95,25 @@ void InputHealthPlugin::Tick(openvr_pair::overlay::ShellContext &)
 		engine_.Tick(reader_);
 		last_refresh_ = now;
 	}
+	if (now - last_health_summary_ >= std::chrono::seconds(30)) {
+		WriteHealthSummary();
+		last_health_summary_ = now;
+	}
+}
+
+void InputHealthPlugin::WriteHealthSummary()
+{
+	InputHealthHealthSummarySnapshot snapshot;
+	snapshot.overlay_started = true;
+	snapshot.ipc_connected = ipc_.IsConnected();
+	snapshot.shmem_opened = reader_.IsOpen();
+	snapshot.publish_tick = reader_.LastPublishTick();
+	snapshot.live_components = reader_.EntriesByHandle().size();
+	snapshot.profiles_loaded = profiles_.All().size();
+	snapshot.path_families = CountInputHealthPathFamilies(reader_.EntriesByHandle());
+	snapshot.learning = engine_.Stats();
+	snapshot.profile_io = profiles_.Stats();
+	WriteInputHealthHealthSummary(snapshot);
 }
 
 void InputHealthPlugin::PushConfigToDriver()

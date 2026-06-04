@@ -69,8 +69,10 @@ private:
 	uint64_t observed_ipc_generation_ = 0;
 	std::chrono::steady_clock::time_point last_refresh_{};
 	std::chrono::steady_clock::time_point last_connection_check_{};
+	std::chrono::steady_clock::time_point last_health_summary_{};
 
 	void MaintainDriverConnection();
+	void WriteHealthSummary();
 	void DrawStatusBanner(const openvr_pair::overlay::ShellContext &context);
 	void DrawDiagnosticsTab();
 	void DrawSettingsTab();

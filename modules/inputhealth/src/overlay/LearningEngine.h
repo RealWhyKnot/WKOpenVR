@@ -3,6 +3,7 @@
 #include "Profiles.h"
 #include "Protocol.h"
 #include "inputhealth/LearningRules.h"
+#include "inputhealth/PathPolicy.h"
 #include "inputhealth/WelfordAccumulator.h"
 
 #include <cstdint>
@@ -27,6 +28,23 @@ struct LearningPathView
 	uint64_t last_updated_unix = 0;
 };
 
+struct LearningEngineStats
+{
+	uint64_t diagnostic_only_samples = 0;
+	uint64_t drift_suppressed_policy = 0;
+	uint64_t drift_resets = 0;
+	uint64_t ready_transitions = 0;
+	uint64_t compensation_push_attempts = 0;
+	uint64_t compensation_push_success = 0;
+	uint64_t compensation_push_rejected = 0;
+	uint64_t compensation_push_failed = 0;
+	uint64_t profile_sync_attempts = 0;
+	uint64_t profile_sync_skipped_sample_churn = 0;
+	uint64_t profile_sync_skipped_periodic_throttle = 0;
+	std::string last_profile_save_reason;
+	std::unordered_map<std::string, uint64_t> diagnostic_path_counts;
+};
+
 class LearningEngine
 {
 public:
@@ -43,6 +61,7 @@ public:
 	void SetDeviceCorrectionsEnabled(uint64_t serial_hash, bool enabled);
 	void UnlearnPath(uint64_t serial_hash, const char *path);
 	void UnlearnDevice(uint64_t serial_hash);
+	const LearningEngineStats &Stats() const { return stats_; }
 
 private:
 	struct PathState
@@ -80,6 +99,8 @@ private:
 	bool rest_burst_active_ = false;
 	std::unordered_map<std::string, PathState> states_;
 	std::unordered_map<uint64_t, uint64_t> device_button_quiet_until_us_;
+	std::unordered_map<uint64_t, uint64_t> device_last_periodic_save_us_;
+	LearningEngineStats stats_;
 
 	// Paths the engine has already declared unsupported. The Tick loop runs
 	// at ~10 Hz and a single /proximity slot on each device produced ~7
@@ -90,9 +111,9 @@ private:
 
 	PathState &StateFor(uint64_t serial_hash, const std::string &path);
 	const PathState *FindState(uint64_t serial_hash, const std::string &path) const;
-	void SyncProfile(uint64_t serial_hash, PathState &state, bool immediate);
+	void SyncProfile(uint64_t serial_hash, PathState &state, bool immediate, const char *reason);
 	void PushCompensation(uint64_t serial_hash, const PathState &state, bool enabled);
 	void WarnUnsupportedOnce(const char *kind, const std::string &path);
 	// Wraps profiles_.Save() in try/catch; logs on failure and returns false.
-	bool TrySaveProfile(const DeviceProfile &profile);
+	bool TrySaveProfile(const DeviceProfile &profile, const char *reason);
 };

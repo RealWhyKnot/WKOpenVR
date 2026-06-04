@@ -1,20 +1,10 @@
 #include "InputHealthCompensation.h"
 
 #include "ServerTrackedDeviceProvider.h"
+#include "inputhealth/CompensationRules.h"
 #include "inputhealth/LearningRules.h"
-#include "inputhealth/PathClassifier.h"
 
 #include <algorithm>
-#include <cmath>
-
-namespace {
-
-float ClampFloat(float value, float lo, float hi)
-{
-	return std::max(lo, std::min(value, hi));
-}
-
-} // namespace
 
 namespace inputhealth {
 
@@ -27,50 +17,35 @@ float ApplyScalarCompensation(
 	bool hasPartner,
 	const std::string &partnerPath)
 {
-	const bool isStick = entry.kind == protocol::InputHealthCompStickX ||
-		entry.kind == protocol::InputHealthCompStickY;
-	const bool isTrigger = inputhealth::IsTriggerLikePath(stats.path);
-
-	if (!inputhealth::ScalarMetadataAllowsCompensation(
-			entry.kind, stats.path, stats.scalar_type, stats.scalar_units)) {
-		return rawValue;
-	}
-
-	if (isTrigger) {
-		// Trigger range remap: stretch [trigger_min, trigger_max] onto [0, 1].
-		// Do NOT subtract learned_rest_offset first -- trigger_min already
-		// encodes the resting floor, so double-subtracting it would push a
-		// released trigger below zero and saturate to negative clamp.
-		if (entry.learned_trigger_min > 0.0f || entry.learned_trigger_max > 0.0f) {
-			const float maxValue = entry.learned_trigger_max > 0.0f
-				? entry.learned_trigger_max : 1.0f;
-			const float range = std::max(0.001f, maxValue - entry.learned_trigger_min);
-			const float remapped = (rawValue - entry.learned_trigger_min) / range;
-			return ClampFloat(remapped, 0.0f, 1.0f);
-		}
-		return ClampFloat(rawValue, 0.0f, 1.0f);
-	}
-
-	// Sticks and generic scalars: subtract rest offset, then apply radial
-	// deadzone for paired stick axes.
-	float value = rawValue - entry.learned_rest_offset;
-
-	if (isStick && entry.learned_deadzone_radius > 0.0f) {
-		float radialPartner = partnerValue;
+	float partnerRestOffset = 0.0f;
+	bool hasPartnerRestOffset = false;
+	if (entry.kind == protocol::InputHealthCompStickX ||
+		entry.kind == protocol::InputHealthCompStickY)
+	{
 		if (hasPartner && stats.device_serial_hash != 0 && !partnerPath.empty()) {
 			protocol::InputHealthCompensationEntry partnerEntry{};
-			if (driver->LookupInputHealthCompensation(stats.device_serial_hash, partnerPath, partnerEntry)) {
-				radialPartner = partnerValue - partnerEntry.learned_rest_offset;
+			if (driver->LookupInputHealthCompensation(
+					stats.device_serial_hash, partnerPath, partnerEntry)) {
+				partnerRestOffset = partnerEntry.learned_rest_offset;
+				hasPartnerRestOffset = true;
 			}
 		}
-		const float radius = hasPartner
-			? std::sqrt(value * value + radialPartner * radialPartner)
-			: std::fabs(value);
-		if (radius < entry.learned_deadzone_radius) value = 0.0f;
 	}
 
-	if (isStick) return ClampFloat(value, -1.0f, 1.0f);
-	return value;
+	return inputhealth::ApplyScalarCompensationValue(
+		entry.kind,
+		stats.path,
+		stats.scalar_type,
+		stats.scalar_units,
+		rawValue,
+		entry.learned_rest_offset,
+		entry.learned_trigger_min,
+		entry.learned_trigger_max,
+		entry.learned_deadzone_radius,
+		partnerValue,
+		hasPartner,
+		partnerRestOffset,
+		hasPartnerRestOffset);
 }
 
 bool ShouldSwallowBooleanUpdate(
@@ -80,6 +55,7 @@ bool ShouldSwallowBooleanUpdate(
 	uint64_t nowUs)
 {
 	return entry.kind == protocol::InputHealthCompBoolean
+		&& !inputhealth::IsSystemButtonPath(stats.path)
 		&& entry.learned_debounce_us != 0
 		&& newValue != stats.last_boolean
 		&& stats.last_committed_us != 0

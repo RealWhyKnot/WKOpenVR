@@ -17,10 +17,12 @@ set(IH_DRIVER_SRC  "${CMAKE_SOURCE_DIR}/modules/inputhealth/src/driver")
 
 add_executable(inputhealth_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_path_classifier.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_compensation_rules.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_trigger_remap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_stick_deadzone.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_inputhealth_config_roundtrip.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_profile_prune.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_health_summary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_presence_counting.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_ui_logic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_learning_rules.cpp
@@ -31,6 +33,7 @@ add_executable(inputhealth_tests
     ${IH_OVERLAY_SRC}/Config.cpp
     # Profile prune tests compile Profiles.cpp directly.
     ${IH_OVERLAY_SRC}/Profiles.cpp
+    ${IH_OVERLAY_SRC}/InputHealthHealthSummary.cpp
     ${IH_DRIVER_SRC}/InputHealthObservation.cpp
 )
 

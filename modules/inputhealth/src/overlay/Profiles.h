@@ -34,6 +34,23 @@ struct LearnedPathRecord
 	uint32_t    drift_shift_resets = 0;
 };
 
+inline bool LearnedPathMaterialEqual(
+	const LearnedPathRecord &a,
+	const LearnedPathRecord &b)
+{
+	return a.path == b.path &&
+		a.kind == b.kind &&
+		a.ready == b.ready &&
+		a.learned_rest_offset == b.learned_rest_offset &&
+		a.learned_stddev == b.learned_stddev &&
+		a.learned_trigger_min == b.learned_trigger_min &&
+		a.learned_trigger_max == b.learned_trigger_max &&
+		a.learned_deadzone_radius == b.learned_deadzone_radius &&
+		a.learned_debounce_us == b.learned_debounce_us &&
+		a.last_updated_unix == b.last_updated_unix &&
+		a.drift_shift_resets == b.drift_shift_resets;
+}
+
 struct DeviceProfile
 {
 	std::string serial;       // empty if the profile is from a deleted device
@@ -56,6 +73,15 @@ struct DeviceProfile
 	std::vector<LearnedPathRecord> learned_paths;
 };
 
+struct ProfileIoStats
+{
+	uint64_t attempted_saves = 0;
+	uint64_t skipped_unchanged = 0;
+	uint64_t actual_writes = 0;
+	uint64_t failed_writes = 0;
+	std::string last_save_reason;
+};
+
 class ProfileStore
 {
 public:
@@ -67,7 +93,7 @@ public:
 	// missing. Returns true on success; on failure the in-memory copy is
 	// retained so the UI can show "unsaved" state instead of dropping the
 	// edit silently.
-	bool Save(const DeviceProfile &profile);
+	bool Save(const DeviceProfile &profile, const char *reason = nullptr);
 
 	// Return a profile by serial-hash. Creates a default-initialized
 	// profile if none exists, so the diagnostics tab can call this once
@@ -77,7 +103,9 @@ public:
 	// Read-only iteration. Useful when the wizard wants to enumerate
 	// every known device the user has previously calibrated.
 	const std::unordered_map<uint64_t, DeviceProfile> &All() const { return profiles_; }
+	const ProfileIoStats &Stats() const { return stats_; }
 
 private:
 	std::unordered_map<uint64_t, DeviceProfile> profiles_;
+	ProfileIoStats stats_;
 };

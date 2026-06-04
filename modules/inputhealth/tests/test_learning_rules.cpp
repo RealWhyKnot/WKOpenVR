@@ -42,6 +42,42 @@ TEST(InputHealthLearningRules, TriggerMetadataRequiresAbsoluteOneSided)
 		kOpenVrScalarUnitsNormalizedOneSided));
 }
 
+TEST(InputHealthLearningRules, TrackpadAxisDoesNotLearnAsStick)
+{
+	EXPECT_FALSE(ScalarMetadataAllowsCompensation(
+		protocol::InputHealthCompStickX,
+		"/input/trackpad/x",
+		kOpenVrScalarTypeAbsolute,
+		kOpenVrScalarUnitsNormalizedTwoSided));
+	EXPECT_FALSE(ScalarMetadataAllowsLearning(
+		PathFamily::TrackpadAxis,
+		"/input/trackpad/x",
+		protocol::InputHealthCompStickX,
+		kOpenVrScalarTypeAbsolute,
+		kOpenVrScalarUnitsNormalizedTwoSided));
+}
+
+TEST(InputHealthLearningRules, ForceAndGripAreOneSidedScalarOnly)
+{
+	EXPECT_TRUE(ScalarMetadataAllowsCompensation(
+		protocol::InputHealthCompScalarSingle,
+		"/input/grip/force",
+		kOpenVrScalarTypeAbsolute,
+		kOpenVrScalarUnitsNormalizedOneSided));
+	EXPECT_TRUE(ScalarMetadataAllowsCompensation(
+		protocol::InputHealthCompScalarSingle,
+		"/input/grip/value",
+		kOpenVrScalarTypeAbsolute,
+		kOpenVrScalarUnitsNormalizedOneSided));
+	EXPECT_FALSE(ScalarMetadataAllowsCompensation(
+		protocol::InputHealthCompStickX,
+		"/input/grip/force",
+		kOpenVrScalarTypeAbsolute,
+		kOpenVrScalarUnitsNormalizedOneSided));
+	EXPECT_FALSE(IsTriggerLikePath("/input/grip/force"));
+	EXPECT_FALSE(IsTriggerLikePath("/input/grip/value"));
+}
+
 TEST(InputHealthLearningRules, StableStickRestAcceptsDriftAboveStrictThreshold)
 {
 	StableRestWindow w;

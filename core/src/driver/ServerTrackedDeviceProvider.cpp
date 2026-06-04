@@ -9,7 +9,7 @@
 #include "PredictionSmoothingMath.h"
 #include "RuntimeHealthSummary.h"
 #include "ServerTrackedDeviceProviderConfigPacking.h"
-#include "inputhealth/PathClassifier.h"
+#include "inputhealth/PathPolicy.h"
 #include "inputhealth/SerialHash.h"
 #include "quash/QuashPose.h"
 
@@ -1603,15 +1603,6 @@ void ServerTrackedDeviceProvider::SetInputHealthCompensation(const protocol::Inp
 	const std::string path = InputHealthPathString(entry.path);
 	if (entry.device_serial_hash == 0 || path.empty()) return;
 
-	// Reject paths that should never carry compensation. The overlay's learning
-	// engine applies the same classifier so this is a belt-and-suspenders guard
-	// against stale entries arriving from an older overlay build.
-	if (!inputhealth::IsCompensationPath(inputhealth::ClassifyInputPath(path))) {
-		LOG("[inputhealth] SetInputHealthCompensation: rejected unsupported path serial_hash=0x%016llx path='%s'",
-			(unsigned long long)entry.device_serial_hash, path.c_str());
-		return;
-	}
-
 	std::unique_lock<std::shared_mutex> lk(inputHealthCompMutex);
 	auto serialIt = inputHealthComp.find(entry.device_serial_hash);
 	if (!entry.enabled) {
@@ -1620,6 +1611,16 @@ void ServerTrackedDeviceProvider::SetInputHealthCompensation(const protocol::Inp
 			if (serialIt->second.empty()) inputHealthComp.erase(serialIt);
 		}
 		LOG("[inputhealth] SetInputHealthCompensation: serial_hash=0x%016llx path='%s' enabled=0",
+			(unsigned long long)entry.device_serial_hash, path.c_str());
+		return;
+	}
+
+	// Reject paths that should never carry compensation. The overlay's learning
+	// engine applies the same policy so this is a belt-and-suspenders guard
+	// against stale entries arriving from an older overlay build.
+	if (!inputhealth::AllowsDriverCompensation(
+			inputhealth::ClassifyPathFamily(path))) {
+		LOG("[inputhealth] SetInputHealthCompensation: rejected unsupported path serial_hash=0x%016llx path='%s'",
 			(unsigned long long)entry.device_serial_hash, path.c_str());
 		return;
 	}

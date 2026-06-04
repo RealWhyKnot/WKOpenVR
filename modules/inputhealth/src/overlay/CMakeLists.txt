@@ -12,6 +12,8 @@ add_library(openvr_pair_feature_inputhealth_overlay STATIC
 	DiagnosticsTab.h
 	IPCClient.cpp
 	IPCClient.h
+	InputHealthHealthSummary.cpp
+	InputHealthHealthSummary.h
 	InputHealthPlugin.cpp
 	InputHealthPlugin.h
 	LearningEngine.cpp

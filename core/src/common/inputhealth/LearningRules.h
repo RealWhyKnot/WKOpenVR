@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 #include "inputhealth/PathClassifier.h"
+#include "inputhealth/PathPolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -49,14 +50,31 @@ inline bool ScalarMetadataAllowsCompensation(
 	uint8_t scalar_units)
 {
 	if (!IsAbsoluteScalar(scalar_type)) return false;
-	if (kind == protocol::InputHealthCompStickX ||
-		kind == protocol::InputHealthCompStickY) {
-		return IsTwoSidedScalar(scalar_units);
+
+	const PathFamily family = ClassifyPathFamily(path);
+	if (IsTriggerRemapFamily(family) || IsIdleFloorFamily(family)) {
+		return kind == protocol::InputHealthCompScalarSingle &&
+			IsOneSidedScalar(scalar_units);
 	}
-	if (inputhealth::IsTriggerLikePath(path)) {
-		return IsOneSidedScalar(scalar_units);
+
+	if (IsThumbstickAxisFamily(family)) {
+		return (kind == protocol::InputHealthCompStickX ||
+			kind == protocol::InputHealthCompStickY) &&
+			IsTwoSidedScalar(scalar_units);
 	}
-	return true;
+
+	return false;
+}
+
+inline bool ScalarMetadataAllowsLearning(
+	PathFamily family,
+	const std::string &path,
+	uint8_t kind,
+	uint8_t scalar_type,
+	uint8_t scalar_units)
+{
+	if (!AllowsPersistentScalarLearning(family)) return false;
+	return ScalarMetadataAllowsCompensation(kind, path, scalar_type, scalar_units);
 }
 
 inline bool ScalarMetadataAllowsLearning(
@@ -67,11 +85,8 @@ inline bool ScalarMetadataAllowsLearning(
 	uint8_t scalar_units)
 {
 	if (!IsCompensationPath(path_class)) return false;
-	if (inputhealth::IsTriggerLikePath(path)) {
-		return ScalarMetadataAllowsCompensation(kind, path, scalar_type, scalar_units);
-	}
-	return ScalarMetadataAllowsCompensation(kind, path, scalar_type, scalar_units) ||
-		(kind == protocol::InputHealthCompScalarSingle && IsAbsoluteScalar(scalar_type));
+	return ScalarMetadataAllowsLearning(
+		ClassifyPathFamily(path), path, kind, scalar_type, scalar_units);
 }
 
 inline bool IsStrictStickRest(float x, float y, bool buttons_quiet)
