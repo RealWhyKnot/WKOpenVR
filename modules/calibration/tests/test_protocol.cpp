@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 TEST(ProtocolTest, VersionPinnedToCurrent)
 {
-	EXPECT_EQ(protocol::Version, 28u) << "Protocol version changed without updating the test pin. If this is "
+	EXPECT_EQ(protocol::Version, 29u) << "Protocol version changed without updating the test pin. If this is "
 	                                     "intentional: bump the literal here and document the wire change.";
 }
 
@@ -196,8 +196,8 @@ TEST(ProtocolTest, SetTrackingSystemFallbackZeroInitDefault)
 }
 
 // ---------------------------------------------------------------------------
-// v25/v26: SetHeadMountConfig. The struct carries tracker identity, offset,
-// and DriverSynth timing values -- its size exceeds SetDeviceTransform
+// v25/v26/v29: SetHeadMountConfig. The struct carries tracker identity, offset,
+// DriverSynth timing values, and the raw-HMD fallback policy. Its size exceeds SetDeviceTransform
 // (intentional; the Request union grows). Verify the fields are accessible
 // and zero out correctly under value-init.
 // ---------------------------------------------------------------------------
@@ -212,6 +212,7 @@ TEST(ProtocolTest, SetHeadMountConfigLayout)
 	EXPECT_DOUBLE_EQ(hm.headFromTrackerRot[3], 0.0); // qw slot zero on POD init
 	EXPECT_FALSE(hm.hideTracker);
 	EXPECT_FALSE(hm.offsetCalibrated);
+	EXPECT_FALSE(hm.allowRawHmdFallback);
 	EXPECT_EQ(hm.driverSynthStaleLimitMs, 0u);
 	EXPECT_EQ(hm.driverSynthGraceHoldMs, 0u);
 	EXPECT_EQ(hm.driverSynthBlendToFallbackMs, 0u);

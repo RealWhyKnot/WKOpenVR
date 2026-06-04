@@ -645,7 +645,7 @@ struct PhantomSolverConfig
 	double virtual_min_confidence;
 };
 
-// POD payload for RequestSetHeadMountConfig (v25/v26). The overlay resolves
+// POD payload for RequestSetHeadMountConfig (v25/v26/v29). The overlay resolves
 // trackerSerial to a live deviceId before sending; deviceId == -1 means
 // the tracker is not currently present. mode encodes HeadMountMode;
 // headFromTrackerTrans and headFromTrackerRot (xyzw) carry the rigid
@@ -653,9 +653,10 @@ struct PhantomSolverConfig
 //
 // v26 adds DriverSynth timing values for stale detection and source
 // transition smoothing.
+// v29 adds allowRawHmdFallback for hard tracker lock.
 //
 // NOTE: this struct exceeds sizeof(SetDeviceTransform). sizeof(Request)
-// grows with this addition. See the v25/v26 version comments in Protocol.h.
+// grows with this addition. See the v25/v26/v29 version comments in Protocol.h.
 struct SetHeadMountConfig
 {
 	uint32_t mode;    // HeadMountMode value
@@ -666,12 +667,13 @@ struct SetHeadMountConfig
 	double headFromTrackerRot[4];   // quaternion xyzw
 	bool hideTracker;
 	bool offsetCalibrated;
+	bool allowRawHmdFallback;
 	uint16_t driverSynthStaleLimitMs;
 	uint16_t driverSynthGraceHoldMs;
 	uint16_t driverSynthBlendToFallbackMs;
 	uint16_t driverSynthStableBeforeSynthMs;
 	uint16_t driverSynthBlendToSynthMs;
-	uint8_t _pad[4];
+	uint8_t _pad[2];
 };
 
 struct Request

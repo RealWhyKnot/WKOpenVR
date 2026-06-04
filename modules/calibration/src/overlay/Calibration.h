@@ -81,7 +81,7 @@ struct AdditionalCalibration
 
 	// Per-extra lock + relative-pose state. Same semantics as the primary's
 	// lockRelativePositionMode and friends.
-	int lockMode = 2; // 0=OFF, 1=ON, 2=AUTO. int instead of LockMode to keep
+	int lockMode = 0; // 0=OFF, 1=ON, 2=legacy AUTO. int instead of LockMode to keep
 	                  // the forward-decl situation simple here.
 	Eigen::AffineCompact3d refToTargetPose = Eigen::AffineCompact3d::Identity();
 	bool relativePosCalibrated = false;
@@ -155,6 +155,14 @@ enum class HeadMountSampleSource : uint8_t
 	HeadProxy,
 };
 
+enum class TrackingStyle : uint8_t
+{
+	Manual = 0,
+	Continuous = 1,
+	LockedWithRecovery = 2,
+	HardTrackerLock = 3,
+};
+
 // Identity and calibration for a head-mounted tracker (e.g. a Vive tracker
 // zip-tied to a Quest headset). headFromTracker is the rigid offset from the
 // tracker's local frame to the HMD's local frame, solved by the offset
@@ -169,6 +177,7 @@ struct HeadMountConfig
 	bool hideTracker = true;
 	bool offsetCalibrated = false;
 	bool autoCorrectOffset = true;
+	bool allowRawHmdFallback = true;
 	wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming;
 	// Runtime-resolved OpenVR device ID; not persisted. -1 means unresolved.
 	// Set each AssignTargets() call by matching trackerSerial + trackerTrackingSystem.
@@ -259,6 +268,7 @@ struct CalibrationContext
 	bool quashTargetInContinuous = true;
 
 	// Head-mounted tracker configuration (Quest + lighthouse hybrid).
+	TrackingStyle trackingStyle = TrackingStyle::Manual;
 	HeadMountConfig headMount;
 	uint32_t headMountOffsetVersion = 0;
 	HeadMountSampleSource headMountLastSampleSource = HeadMountSampleSource::Unknown;
@@ -332,23 +342,18 @@ struct CalibrationContext
 	// target is rigidly attached to the reference (a tracker glued to your
 	// HMD, taped to a controller, etc).
 	//
-	// Tristate:
+	// Legacy-compatible enum:
 	//   OFF  -- never lock; continuous calibration is free to re-solve the
 	//           relative pose on every cycle.
 	//   ON   -- always lock once a relative pose has been recorded.
-	//   AUTO -- (default) detect rigid attachment from observed relative-pose
-	//           variance.  Starts unlocked; flips to "effectively locked"
-	//           once the relative pose has stayed stable (~5mm translation,
-	//           ~1deg rotation) for a sustained window of accepted samples.
-	//           Flips back to unlocked if the variance climbs again, e.g.
-	//           the user repositioned the tracker.
+	//   AUTO -- legacy profile value only. New UI and presets never select it.
 	enum class LockMode : int
 	{
 		OFF = 0,
 		ON = 1,
 		AUTO = 2
 	};
-	LockMode lockRelativePositionMode = LockMode::AUTO;
+	LockMode lockRelativePositionMode = LockMode::OFF;
 
 	// Resolved/effective lock state -- recomputed each tick from
 	// lockRelativePositionMode + the auto-lock detector's verdict.  Existing
@@ -647,9 +652,8 @@ struct CalibrationContext
 
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 
-		// Static recalibration: when Lock relative position has identified a
-		// rigid attachment (Lock=ON or Lock=AUTO and the auto-detector fired),
-		// snap to the locked relative pose if the live solver diverges from it.
+		// Static recalibration: when the selected tracking style has locked
+		// the relative pose, snap back if the live solver diverges from it.
 		// No-op for independent devices (no locked relative pose to snap to),
 		// so leaving it on by default is safe and accelerates recovery from
 		// brief tracking glitches on rigid setups. The user can still flip it

@@ -307,6 +307,47 @@ TEST(DriverSynthBlend, PersistentTrackerLossBlendsTowardFallback)
 	EXPECT_LT(out.vecPosition[0], 10.0);
 }
 
+TEST(DriverSynthBlend, HardLockTrackerLossMarksPoseInvalidAfterGrace)
+{
+	using ms = std::chrono::milliseconds;
+	const auto t0 = clk::now();
+	SourceBlendState blend{};
+	SourceBlendConfig cfg{};
+	cfg.graceHoldMs = 20;
+	vr::DriverPose_t out{};
+
+	const vr::DriverPose_t fallback = MakePose(10.0, 1.7, 0.0);
+	const vr::DriverPose_t synth = MakePose(0.0, 1.7, 0.0);
+
+	StepSourceBlend(blend, fallback, &synth, true, t0, out, cfg, false);
+	auto r = StepSourceBlend(blend, fallback, nullptr, false, t0 + ms(5), out, cfg, false);
+	EXPECT_EQ(r.phase, SourceBlendPhase::GraceHold);
+	EXPECT_TRUE(out.poseIsValid);
+	EXPECT_NEAR(out.vecPosition[0], 0.0, 1e-9);
+
+	r = StepSourceBlend(blend, fallback, nullptr, false, t0 + ms(25), out, cfg, false);
+	EXPECT_EQ(r.phase, SourceBlendPhase::FallbackStable);
+	EXPECT_FALSE(out.poseIsValid);
+	EXPECT_EQ(out.result, vr::TrackingResult_Running_OutOfRange);
+	EXPECT_NEAR(out.vecPosition[0], 0.0, 1e-9);
+}
+
+TEST(DriverSynthBlend, HardLockStartsInvalidWhenTrackerUnavailable)
+{
+	using ms = std::chrono::milliseconds;
+	const auto t0 = clk::now();
+	SourceBlendState blend{};
+	vr::DriverPose_t out{};
+
+	const vr::DriverPose_t fallback = MakePose(10.0, 1.7, 0.0);
+
+	auto r = StepSourceBlend(blend, fallback, nullptr, false, t0 + ms(1), out, {}, false);
+
+	EXPECT_EQ(r.phase, SourceBlendPhase::FallbackStable);
+	EXPECT_FALSE(out.poseIsValid);
+	EXPECT_EQ(out.result, vr::TrackingResult_Running_OutOfRange);
+}
+
 TEST(DriverSynthBlend, RecoveredTrackerWaitsThenBlendsBackToSynth)
 {
 	using ms = std::chrono::milliseconds;

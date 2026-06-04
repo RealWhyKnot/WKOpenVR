@@ -420,7 +420,7 @@ const struct GraphInfo graphs[] = {
      "the most recent sample. Mostly useful for sanity-checking the input stream."},
     {"Offset: By Rel Pose", G_PosOffset_ByRelPose,
      "Position offset (mm) implied by the locked reference->target relative pose, when\n"
-     "Lock relative position is on or AUTO has detected a rigid attachment.\n"
+     "the selected tracking style keeps the reference and target rigidly locked.\n"
      "Stays flat for rigid setups; diverges from Current Calibration when the live solver\n"
      "is fighting the lock."},
     {"Processing time", G_ComputationTime,

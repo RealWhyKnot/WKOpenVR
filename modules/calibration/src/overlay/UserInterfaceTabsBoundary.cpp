@@ -9,6 +9,7 @@
 #include "BoundaryFloorCapture.h"
 #include "BoundaryPreview.h"
 #include "BoundaryRePush.h"
+#include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
 #include "UiHelpers.h"
 
@@ -1374,24 +1375,20 @@ void DrawBoundarySection(ImVec2 panelSize)
 				ImGui::SameLine();
 				const bool hasFloorOffset = std::fabs(CalCtx.floorOffsetMetersY) > 1e-6;
 				if (hasFloorOffset) {
-					bool floorOn = CalCtx.floorEnabled;
-					if (ImGui::Checkbox("Floor height applied", &floorOn)) {
-						if (floorOn) {
+					ImGui::TextDisabled("%s", CalCtx.floorEnabled ? "Floor applied" : "Floor saved");
+					if (!CalCtx.floorEnabled) {
+						ImGui::SameLine();
+						if (ImGui::Button("Apply saved floor")) {
 							vr::HmdMatrix34_t committedZero;
 							if (AdjustStandingZeroFloorY(CalCtx.floorOffsetMetersY, &committedZero)) {
 								wkopenvr::boundary::SetFloorStandingZeroTarget(committedZero);
+								CalCtx.floorEnabled = true;
+								SaveProfile(CalCtx);
 							}
 						}
-						else {
-							AdjustStandingZeroFloorY(-CalCtx.floorOffsetMetersY);
-							wkopenvr::boundary::ClearFloorStandingZeroTarget();
-						}
-						CalCtx.floorEnabled = floorOn;
-						SaveProfile(CalCtx);
 					}
 					if (ImGui::IsItemHovered()) {
-						ImGui::SetTooltip("Lower the rig to the headset floor, or turn it off to lift "
-						                  "back without losing the saved height. Reset clears it.");
+						ImGui::SetTooltip("Apply the saved floor height. Reset clears it.");
 					}
 				}
 				if (!hasFloorOffset) ImGui::BeginDisabled();
@@ -1439,14 +1436,6 @@ void DrawBoundarySection(ImVec2 panelSize)
 
 			ImGui::Spacing();
 
-			ImGui::Checkbox("Draw only while trigger is held", &s_captureRequireTrigger);
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("On matches Quest-style drawing. Turn it off if the dashboard is not reporting "
-				                  "controller trigger input.");
-			}
-
-			ImGui::Spacing();
-
 			if (!hasVerts) {
 				if (s_floorCapture.active() || !controllerReady) ImGui::BeginDisabled();
 				if (ImGui::Button("Draw boundary")) {
@@ -1480,22 +1469,29 @@ void DrawBoundarySection(ImVec2 panelSize)
 				ImGui::TextColored(CalCtx.boundary.enabled ? ImVec4(0.0f, 0.85f, 0.45f, 1.0f) : pal.statusWarn,
 				                   CalCtx.boundary.enabled ? "applied" : "not applied");
 
-				bool boundaryOn = CalCtx.boundary.enabled;
-				if (ImGui::Checkbox("Boundary enabled", &boundaryOn)) {
-					CalCtx.boundary.enabled = boundaryOn;
-					if (boundaryOn) {
+				if (!CalCtx.boundary.enabled) {
+					if (ImGui::Button("Apply boundary")) {
+						CalCtx.boundary.enabled = true;
 						ScheduleBoundaryStartupPush();
 						std::string pushError;
 						PushTargetBoundaryToChaperone(pushError);
+						SaveProfile(CalCtx);
 					}
-					else if (CalCtx.boundary.priorChaperoneCaptured) {
-						wkopenvr::boundary::RestoreChaperoneFromSnapshot(CalCtx.boundary.priorChaperone);
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("Push the drawn safety boundary to SteamVR.");
 					}
-					SaveProfile(CalCtx);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Turn the drawn safety boundary off or back on without "
-					                  "redrawing it. Off restores your previous room boundary.");
+				else {
+					if (ImGui::Button("Restore original boundary")) {
+						CalCtx.boundary.enabled = false;
+						if (CalCtx.boundary.priorChaperoneCaptured) {
+							wkopenvr::boundary::RestoreChaperoneFromSnapshot(CalCtx.boundary.priorChaperone);
+						}
+						SaveProfile(CalCtx);
+					}
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("Turn off the drawn safety boundary and restore the previous room boundary.");
+					}
 				}
 
 				DrawPolygonPreview(CalCtx.boundary.vertices);
@@ -2010,12 +2006,16 @@ void CCal_DrawBoundaryTab()
 	// Top-level framing: this tab is one continuous story, not three
 	// independent feature islands. Each step depends on the previous one,
 	// and the disabled-state copy nudges the user forward.
-	ImGui::TextDisabled("Continuous-mode headset tracker, lighthouse boundary, and Quest App handoff.");
+	ImGui::TextDisabled(TrackingStyleShowsBoundarySetup(CalCtx.trackingStyle)
+	                        ? "Headset tracker, safety boundary, and Quest App handoff."
+	                        : "Headset tracker setup.");
 	ImGui::Spacing();
 
 	CCal_DrawHeadMountSection(panelSize);
-	ImGui::Spacing();
-	DrawBoundarySection(panelSize);
-	ImGui::Spacing();
-	DrawQuestAppPointerSection(panelSize);
+	if (TrackingStyleShowsBoundarySetup(CalCtx.trackingStyle)) {
+		ImGui::Spacing();
+		DrawBoundarySection(panelSize);
+		ImGui::Spacing();
+		DrawQuestAppPointerSection(panelSize);
+	}
 }

@@ -1,8 +1,6 @@
 #include "Calibration.h"
 #include "Configuration.h"
 #include "VRState.h"
-#include "CalibrationMetrics.h"
-#include "AutoLockHysteresis.h"
 #include "UiHelpers.h"
 
 #include <string>
@@ -212,101 +210,6 @@ void CCal_BasicInfo()
 		    // profile / Recalibrate) visually grouped with the rest of the
 		    // session-control buttons above.
 		    DrawProfileMismatchBanner();
-	    },
-	    panelSize);
-
-	// === Common settings ===================================================
-	// The handful of settings most users actually touch.  Two-column table
-	// inside the panel so labels and sliders/checkboxes line up cleanly --
-	// the previous Text + SameLine + Slider layout was readable but the
-	// columns wandered with label width.
-	openvr_pair::overlay::ui::DrawPanel(
-	    "Common settings",
-	    [&] {
-		    // Two-column grid: label on the left, control on the right. Lets each row
-		    // have a consistent baseline regardless of label length, instead of the
-		    // previous Text + SameLine + Slider layout where columns wandered.
-		    if (ImGui::BeginTable("##common_settings_grid", 2,
-		                          ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody)) {
-			    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 230.0f);
-			    ImGui::TableSetupColumn("##control", ImGuiTableColumnFlags_WidthStretch);
-
-			    // (Jitter threshold and Recalibration threshold moved to the Advanced
-			    // tab -- they're rarely-touched knobs and were padding the Basic
-			    // settings table without justifying their space here.)
-
-			    // --- Lock relative position (tristate) ---
-			    ImGui::TableNextRow();
-			    ImGui::TableSetColumnIndex(0);
-			    ImGui::AlignTextToFramePadding();
-			    ImGui::TextUnformatted("Lock relative position");
-			    ImGui::TableSetColumnIndex(1);
-			    ImGui::PushID("basic_lock_mode");
-			    const char* lockLabels[] = {"Off", "On", "Auto"};
-			    const CalibrationContext::LockMode lockModes[] = {CalibrationContext::LockMode::OFF,
-			                                                      CalibrationContext::LockMode::ON,
-			                                                      CalibrationContext::LockMode::AUTO};
-			    for (int i = 0; i < 3; ++i) {
-				    if (i > 0) ImGui::SameLine();
-				    if (ImGui::RadioButton(lockLabels[i], CalCtx.lockRelativePositionMode == lockModes[i])) {
-					    const auto prev = CalCtx.lockRelativePositionMode;
-					    CalCtx.lockRelativePositionMode = lockModes[i];
-					    SaveProfile(CalCtx);
-					    // Force-resolve so a deliberate UI action takes effect this frame.
-					    CalCtx.ResolveLockMode();
-					    char lmbuf[200];
-					    snprintf(lmbuf, sizeof lmbuf,
-					             "lock_mode_ui_write: site=basic prev=%d now=%d resolved_lockRel=%d", (int)prev,
-					             (int)CalCtx.lockRelativePositionMode, (int)CalCtx.lockRelativePosition);
-					    Metrics::WriteLogAnnotation(lmbuf);
-				    }
-			    }
-			    if (ImGui::IsItemHovered()) {
-				    ImGui::SetTooltip("Off:  the math is free to re-solve the relative pose every cycle. Right for\n"
-				                      "      independent devices (HMD on head + body tracker on hip).\n"
-				                      "On:   freeze the relative pose once calibrated. Right for rigid setups\n"
-				                      "      (tracker glued to HMD, taped to a controller).\n"
-				                      "Auto: detect rigid attachment from observed motion. Recommended -- starts\n"
-				                      "      unlocked, then locks once the relative pose has been stable for ~15s.");
-			    }
-			    // Resolved-state caption directly below the radios so the user sees
-			    // what AUTO decided. Disabled-text colour keeps it visually subordinate.
-			    if (CalCtx.lockRelativePositionMode == CalibrationContext::LockMode::AUTO) {
-				    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-				    if (CalCtx.autoLockEffectivelyLocked) {
-					    ImGui::TextWrapped("Auto: locked (detected as rigidly attached, %d samples)",
-					                       (int)CalCtx.autoLockHistory.size());
-				    }
-				    else if (CalCtx.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
-					    ImGui::TextWrapped("Auto: collecting motion data (%d/%d samples)",
-					                       (int)CalCtx.autoLockHistory.size(), (int)spacecal::autolock::kSamplesNeeded);
-				    }
-				    else {
-					    ImGui::TextWrapped("Auto: unlocked (devices move independently)");
-				    }
-				    ImGui::PopStyleColor();
-			    }
-			    ImGui::PopID();
-
-			    // --- Require trigger press ---
-			    ImGui::TableNextRow();
-			    ImGui::TableSetColumnIndex(0);
-			    ImGui::AlignTextToFramePadding();
-			    ImGui::TextUnformatted("Require trigger press");
-			    ImGui::TableSetColumnIndex(1);
-			    if (ImGui::Checkbox("##basic_require_trigger", &CalCtx.requireTriggerPressToApply)) {
-				    SaveProfile(CalCtx);
-			    }
-			    if (ImGui::IsItemHovered()) {
-				    ImGui::SetTooltip("If on, only apply the calibrated offset while a controller trigger is held.\n"
-				                      "Useful for verifying the result before committing.");
-			    }
-
-			    // (Enable debug logs toggle moved to the Logs tab where the user is
-			    // already managing log files. The checkbox here was redundant.)
-
-			    ImGui::EndTable();
-		    }
 	    },
 	    panelSize);
 

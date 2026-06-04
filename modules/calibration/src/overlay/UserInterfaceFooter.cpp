@@ -131,7 +131,7 @@ void GetModeStatus(const char*& label, const char*& tooltip, ImVec4& accent)
 	if (!validProfile) {
 		label = "no profile";
 		tooltip = "No saved calibration profile is loaded.\n"
-		          "Hit \"Start Calibration\" or \"Continuous Calibration\" below to create one.";
+		          "Choose a tracking style, then use the setup action below.";
 		accent = pal.statusIdle;
 	}
 	else if (state == CalibrationState::ContinuousStandby) {

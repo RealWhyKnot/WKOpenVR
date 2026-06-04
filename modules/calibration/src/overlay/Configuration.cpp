@@ -2,6 +2,7 @@
 #include "BoundaryRePush.h"     // ScheduleBoundaryStartupPush -- startup push on load.
 #include "CalibrationMetrics.h" // WriteLogAnnotation -- profile_loaded_calibration
                                 // diagnostic line on launch.
+#include "TrackingStyle.h"
 #include "WedgeDetector.h"      // kMaxPlausibleCalibrationMagnitudeCm -- shared
                                 // with the runtime wedge detector in Calibration.cpp.
 
@@ -56,12 +57,14 @@
 //   5 - Splits the single "calibration_speed" setting into one-shot and
 //       continuous settings. One-shot defaults to FAST; continuous defaults
 //       to AUTO. The legacy key remains readable for migration only.
+//   6 - Adds tracking_style and head_mount.allow_raw_hmd_fallback. Legacy
+//       AUTO relative lock values migrate to explicit OFF.
 //
 // When you change the schema:
 //   1. Bump kProfileSchemaVersion below.
 //   2. Add a step inside MigrateProfile() for the new bump.
 //   3. Keep the load path tolerant of missing keys for any new field.
-static const int kProfileSchemaVersion = 5;
+static const int kProfileSchemaVersion = 6;
 
 static const char* HeadMountSampleSourceName(HeadMountSampleSource source)
 {
@@ -144,6 +147,61 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 				double v = (double)continuous;
 				profile["continuous_calibration_speed"].set<double>(v);
 			}
+		}
+	}
+
+	if (from_version < 6) {
+		int style = (int)TrackingStyle::Manual;
+		auto styleIt = profile.find("tracking_style");
+		const bool hasTrackingStyle = styleIt != profile.end() && styleIt->second.is<double>();
+		if (hasTrackingStyle) {
+			style = (int)TrackingStyleFromRaw((int)styleIt->second.get<double>());
+		}
+		else {
+			auto hmIt = profile.find("head_mount");
+			if (hmIt != profile.end() && hmIt->second.is<picojson::object>()) {
+				auto& hmObj = hmIt->second.get<picojson::object>();
+				const bool driverSynth = hmObj["mode"].is<double>() && (int)hmObj["mode"].get<double>() == 3;
+				const bool allowFallback =
+				    !hmObj["allow_raw_hmd_fallback"].is<bool>() || hmObj["allow_raw_hmd_fallback"].get<bool>();
+				if (driverSynth) {
+					style = allowFallback ? (int)TrackingStyle::LockedWithRecovery : (int)TrackingStyle::HardTrackerLock;
+				}
+			}
+			auto autostartIt = profile.find("autostart_continuous_calibration");
+			if (style == (int)TrackingStyle::Manual && autostartIt != profile.end() &&
+			    autostartIt->second.is<bool>() && autostartIt->second.get<bool>()) {
+				style = (int)TrackingStyle::Continuous;
+			}
+		}
+		double styleValue = (double)style;
+		profile["tracking_style"].set<double>(styleValue);
+
+		const bool lockedStyle =
+		    style == (int)TrackingStyle::LockedWithRecovery || style == (int)TrackingStyle::HardTrackerLock;
+		double lockMode = lockedStyle ? (double)(int)CalibrationContext::LockMode::ON
+		                              : (double)(int)CalibrationContext::LockMode::OFF;
+		profile["lock_relative_position_mode"].set<double>(lockMode);
+
+		if (auto extrasIt = profile.find("additional_calibrations");
+		    extrasIt != profile.end() && extrasIt->second.is<picojson::array>()) {
+			for (auto& entry : extrasIt->second.get<picojson::array>()) {
+				if (!entry.is<picojson::object>()) continue;
+				auto& extraObj = entry.get<picojson::object>();
+				int raw = 0;
+				if (extraObj["lock_mode"].is<double>()) {
+					raw = (int)extraObj["lock_mode"].get<double>();
+				}
+				double explicitLock = raw == 1 ? 1.0 : 0.0;
+				extraObj["lock_mode"].set<double>(explicitLock);
+			}
+		}
+
+		auto hmIt = profile.find("head_mount");
+		if (hmIt != profile.end() && hmIt->second.is<picojson::object>()) {
+			auto& hmObj = hmIt->second.get<picojson::object>();
+			bool allowFallback = style != (int)TrackingStyle::HardTrackerLock;
+			hmObj["allow_raw_hmd_fallback"].set<bool>(allowFallback);
 		}
 	}
 }
@@ -292,6 +350,7 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 	if (obj["hide_tracker"].is<bool>()) hm.hideTracker = obj["hide_tracker"].get<bool>();
 	if (obj["offset_calibrated"].is<bool>()) hm.offsetCalibrated = obj["offset_calibrated"].get<bool>();
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
+	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
 	if (obj["driver_synth_stale_limit_ms"].is<double>())
 		hm.driverSynthTiming.staleLimitMs = (int)obj["driver_synth_stale_limit_ms"].get<double>();
 	if (obj["driver_synth_grace_hold_ms"].is<double>())
@@ -345,9 +404,11 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool hide = hm.hideTracker;
 	bool offcal = hm.offsetCalibrated;
 	bool autoCorrect = hm.autoCorrectOffset;
+	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
+	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	double staleMs = (double)timing.staleLimitMs;
 	double graceMs = (double)timing.graceHoldMs;
@@ -472,6 +533,12 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 
 	if (profileVersion < kProfileSchemaVersion) {
 		MigrateProfile(profileVersion, obj);
+	}
+
+	bool loadedTrackingStyle = false;
+	if (auto styleIt = obj.find("tracking_style"); styleIt != obj.end() && styleIt->second.is<double>()) {
+		ctx.trackingStyle = TrackingStyleFromRaw((int)styleIt->second.get<double>());
+		loadedTrackingStyle = true;
 	}
 
 	LoadAlignmentParams(ctx, obj["alignment_params"]);
@@ -662,19 +729,17 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (obj["relative_pos_calibrated"].is<bool>()) {
 		ctx.relativePosCalibrated = obj["relative_pos_calibrated"].get<bool>();
 	}
-	// Lock-mode tristate. New schema (v3+) stores "lock_relative_position_mode"
-	// as a 0/1/2 int (OFF/ON/AUTO).  Legacy schemas stored a bool
-	// "lock_relative_position" -- map true -> ON, false -> AUTO (was the old
-	// implicit behaviour when locked).  No write of the legacy key in v3+.
+	// Lock-mode remains loadable for old profiles, but AUTO is no longer an
+	// active user-facing behavior. New presets only write OFF or ON.
 	if (obj["lock_relative_position_mode"].is<double>()) {
 		const int raw = (int)obj["lock_relative_position_mode"].get<double>();
 		if (raw >= 0 && raw <= 2) {
-			ctx.lockRelativePositionMode = (CalibrationContext::LockMode)raw;
+			ctx.lockRelativePositionMode = ExplicitLockModeFromRaw(raw);
 		}
 	}
 	else if (obj["lock_relative_position"].is<bool>()) {
 		ctx.lockRelativePositionMode = obj["lock_relative_position"].get<bool>() ? CalibrationContext::LockMode::ON
-		                                                                         : CalibrationContext::LockMode::AUTO;
+		                                                                         : CalibrationContext::LockMode::OFF;
 	}
 	if (obj["relative_transform"].is<picojson::object>()) {
 		auto relTransform = obj["relative_transform"].get<picojson::object>();
@@ -740,8 +805,7 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 			if (extraObj["scale"].is<double>()) extra.calibratedScale = extraObj["scale"].get<double>();
 			if (extraObj["lock_mode"].is<double>()) {
 				int raw = (int)extraObj["lock_mode"].get<double>();
-				if (raw < 0 || raw > 2) raw = 2;
-				extra.lockMode = raw;
+				extra.lockMode = raw == 1 ? 1 : 0;
 			}
 			if (extraObj["valid"].is<bool>()) extra.valid = extraObj["valid"].get<bool>();
 			if (extraObj["enabled"].is<bool>()) extra.enabled = extraObj["enabled"].get<bool>();
@@ -757,6 +821,10 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	// are optional (skip-if-absent); absent means default (disabled).
 	if (obj["head_mount"].is<picojson::object>()) LoadHeadMount(ctx.headMount, obj["head_mount"]);
 	if (obj["boundary"].is<picojson::object>()) LoadBoundary(ctx.boundary, obj["boundary"]);
+	if (!loadedTrackingStyle) {
+		ctx.trackingStyle = InferTrackingStyleFromConfig(ctx);
+	}
+	ApplyTrackingStylePreset(ctx, ctx.trackingStyle);
 
 	// Load-time wedge guard, completion. The relative-pose state and
 	// refToTargetPose are read further down in ParseProfile, so we can only
@@ -795,6 +863,8 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// stored in a local before being passed.
 	double schemaVersionDouble = (double)kProfileSchemaVersion;
 	profile["schema_version"].set<double>(schemaVersionDouble);
+	double trackingStyle = (double)(int)ctx.trackingStyle;
+	profile["tracking_style"].set<double>(trackingStyle);
 
 	// "Defaults" reference -- a freshly-constructed CalibrationContext.  Settings
 	// fields that match this reference are NOT written to the JSON: the loader
@@ -916,8 +986,11 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// "no rel-pose data" and "rel-pose data, freshly initialised". The lock mode
 	// is a setting; skip-if-default applies.
 	profile["relative_pos_calibrated"].set<bool>(ctx.relativePosCalibrated);
-	if (ctx.lockRelativePositionMode != defaults.lockRelativePositionMode) {
-		double lockMode = (double)(int)ctx.lockRelativePositionMode;
+	const auto explicitLockMode = ctx.lockRelativePositionMode == CalibrationContext::LockMode::ON
+	                                  ? CalibrationContext::LockMode::ON
+	                                  : CalibrationContext::LockMode::OFF;
+	if (explicitLockMode != defaults.lockRelativePositionMode) {
+		double lockMode = (double)(int)explicitLockMode;
 		profile["lock_relative_position_mode"].set<double>(lockMode);
 	}
 	profile["relative_transform"].set<picojson::object>(refToTarget);
@@ -940,7 +1013,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 			e["y"].set<double>(extra.calibratedTranslation(1));
 			e["z"].set<double>(extra.calibratedTranslation(2));
 			e["scale"].set<double>(extra.calibratedScale);
-			double lockMode = (double)extra.lockMode;
+			double lockMode = extra.lockMode == 1 ? 1.0 : 0.0;
 			e["lock_mode"].set<double>(lockMode);
 			bool eValid = extra.valid;
 			bool eEnabled = extra.enabled;
@@ -965,7 +1038,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// boundary data present) so profiles for the typical no-Quest setup
 	// remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
-	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset ||
+	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}

@@ -13,6 +13,7 @@
 #include "UserInterfaceBanners.h"
 #include "UserInterfaceCalibrationProgress.h"
 #include "HeadMountOffsetModal.h"
+#include "TrackingStyle.h"
 #include "UiHelpers.h"
 
 #include <thread>
@@ -45,6 +46,7 @@ static const ImGuiWindowFlags bareWindowFlags = ImGuiWindowFlags_NoTitleBar | Im
 void BuildContinuousCalDisplay();
 static void BuildMainWindowContents(bool runningInOverlay_);
 void BuildMenu(bool runningInOverlay);
+static void BuildTrackingStyleSetup(bool continuousCalibration);
 
 // Forward decls for the tab content called from both modes. CCal_BasicInfo /
 // CCal_DrawSettings were declared near the continuous-mode tab bar; the
@@ -77,6 +79,7 @@ static void SendHeadMountConfigFromCalCtx()
 	p.deviceId = hm.deviceID;
 	p.hideTracker = hm.hideTracker;
 	p.offsetCalibrated = hm.offsetCalibrated;
+	p.allowRawHmdFallback = hm.allowRawHmdFallback;
 	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	p.driverSynthStaleLimitMs = static_cast<uint16_t>(timing.staleLimitMs);
 	p.driverSynthGraceHoldMs = static_cast<uint16_t>(timing.graceHoldMs);
@@ -240,6 +243,7 @@ static void BuildMainWindowContents(bool runningInOverlay_)
 		BuildSystemSelection(state);
 		BuildDeviceSelections(state);
 		ImGui::EndDisabled();
+		BuildTrackingStyleSetup(false);
 		BuildMenu(runningInOverlay);
 
 		// Non-continuous tabbed surface. Mirrors the depth of access
@@ -319,6 +323,7 @@ void BuildContinuousCalDisplay()
 
 	// (Mode pill moved to the global footer alongside the driver-status dot;
 	// no longer takes a row above the tab bar.)
+	BuildTrackingStyleSetup(true);
 
 	// Tab bar layout. User-facing categories:
 	//   - Basic:     the currently-running calibration -- device status, action
@@ -336,7 +341,7 @@ void BuildContinuousCalDisplay()
 			ImGui::EndTabItem();
 		}
 
-		if (ImGui::BeginTabItem("Play Space")) {
+		if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) && ImGui::BeginTabItem("Setup")) {
 			CCal_DrawBoundaryTab();
 			ImGui::EndTabItem();
 		}
@@ -449,13 +454,8 @@ static void OneShot_DrawSettings()
 		// (Jitter threshold moved to the Advanced tab -- it's a rarely-touched
 		// knob, surfaced there alongside the rest of the deeper math settings.)
 
-		// (Lock relative position and Recalibrate on movement moved to the
-		// continuous-cal Basic tab. Both knobs only behave during continuous
-		// refinement -- Lock gates the relative-pose constraint inside
-		// ComputeIncremental, and Recalibrate-on-movement gates per-frame
-		// transform blending. Rendering them on the one-shot Settings tab
-		// created the impression they affect the one-shot solve, which they
-		// do not.)
+		// (Continuous calibration behavior is selected by the top-level tracking
+		// style. Expert-only repair/tuning controls live in Advanced.)
 
 		// (Hide tracker controls moved out of one-shot Settings. The
 		// calibration-target hide lives on the Advanced tab (continuous-only).
@@ -624,6 +624,105 @@ static std::string CalibrationBlockedMessage()
 	return "Waiting for SteamVR. Calibration controls enable when tracking is live.";
 }
 
+static void ApplySelectedTrackingStyle(TrackingStyle style)
+{
+	if (CalCtx.trackingStyle == style) return;
+	const TrackingStyle prev = CalCtx.trackingStyle;
+	ApplyTrackingStylePreset(CalCtx, style);
+	CalCtx.ResolveLockMode();
+	SaveProfile(CalCtx);
+	SendHeadMountConfigFromCalCtx();
+	char buf[160];
+	snprintf(buf, sizeof buf, "tracking_style_ui_write: prev=%d now=%d lockMode=%d headMountMode=%d fallback=%d",
+	         (int)prev, (int)CalCtx.trackingStyle, (int)CalCtx.lockRelativePositionMode, (int)CalCtx.headMount.mode,
+	         (int)CalCtx.headMount.allowRawHmdFallback);
+	Metrics::WriteLogAnnotation(buf);
+}
+
+static const char* PrimaryActionLabel()
+{
+	switch (CalCtx.trackingStyle) {
+		case TrackingStyle::Manual:
+			return "Calibrate now";
+		case TrackingStyle::Continuous:
+			return "Start continuous calibration";
+		case TrackingStyle::LockedWithRecovery:
+			return "Start locked headset setup";
+		case TrackingStyle::HardTrackerLock:
+			return CalCtx.headMount.offsetCalibrated ? "Apply hard tracker lock" : "Start hard-lock setup";
+	}
+	return "Calibrate now";
+}
+
+static void RunPrimaryTrackingAction()
+{
+	ApplyTrackingStylePreset(CalCtx, CalCtx.trackingStyle);
+	CalCtx.ResolveLockMode();
+	SaveProfile(CalCtx);
+	SendHeadMountConfigFromCalCtx();
+
+	switch (CalCtx.trackingStyle) {
+		case TrackingStyle::Manual:
+			ImGui::OpenPopup("Calibration Progress");
+			StartCalibration("ui_tracking_style_manual");
+			break;
+		case TrackingStyle::Continuous:
+		case TrackingStyle::LockedWithRecovery:
+			StartContinuousCalibration("ui_tracking_style_continuous");
+			break;
+		case TrackingStyle::HardTrackerLock:
+			if (CalCtx.headMount.offsetCalibrated) {
+				SendHeadMountConfigFromCalCtx();
+			}
+			else {
+				StartContinuousCalibration("ui_tracking_style_hard_setup");
+			}
+			break;
+	}
+}
+
+static void BuildTrackingStyleSetup(bool continuousCalibration)
+{
+	ImVec2 panelSize{ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0};
+	ImGui::BeginGroupPanel("Tracking style", panelSize);
+
+	const TrackingStyle styles[] = {TrackingStyle::Manual, TrackingStyle::Continuous, TrackingStyle::LockedWithRecovery,
+	                                TrackingStyle::HardTrackerLock};
+	for (const TrackingStyle style : styles) {
+		ImGui::PushID((int)style);
+		if (ImGui::RadioButton(TrackingStyleLabel(style), CalCtx.trackingStyle == style)) {
+			ApplySelectedTrackingStyle(style);
+		}
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("%s", TrackingStyleSummary(style));
+		}
+		ImGui::PopID();
+	}
+
+	ImGui::Spacing();
+	const bool needsOffset = TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) && !CalCtx.headMount.offsetCalibrated;
+	ImGui::TextDisabled("Status: %s | %s%s", continuousCalibration ? "running" : "stopped",
+	                    TrackingStyleSummary(CalCtx.trackingStyle), needsOffset ? " | offset needed" : "");
+
+	if (continuousCalibration && CalCtx.trackingStyle == TrackingStyle::HardTrackerLock) {
+		ImGui::Spacing();
+		ImGui::BeginDisabled(!CalCtx.headMount.offsetCalibrated);
+		if (ImGui::Button("Finish hard-lock setup")) {
+			EndContinuousCalibration();
+			ApplyTrackingStylePreset(CalCtx, TrackingStyle::HardTrackerLock);
+			CalCtx.ResolveLockMode();
+			SaveProfile(CalCtx);
+			SendHeadMountConfigFromCalCtx();
+		}
+		ImGui::EndDisabled();
+		if (!CalCtx.headMount.offsetCalibrated && ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Calibrate the tracker-to-headset offset before finishing setup.");
+		}
+	}
+
+	ImGui::EndGroupPanel();
+}
+
 void BuildMenu(bool runningInOverlay)
 {
 	auto& io = ImGui::GetIO();
@@ -639,27 +738,16 @@ void BuildMenu(bool runningInOverlay)
 		float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
 		if (CalCtx.validProfile) {
 			width -= style.FramePadding.x * 4.0f;
-			scale = 1.0f / 4.0f;
+			scale = 1.0f / 3.0f;
 		}
 
-		// Start / Continuous Calibration both need a live VR stack to enumerate
-		// devices and collect samples. Edit / Clear are pure-memory operations
+		// Calibration setup needs a live VR stack to enumerate devices and
+		// collect samples. Edit / Clear are pure-memory operations
 		// on the saved profile and stay enabled even without SteamVR running.
 		const std::string blockedMessage = CalibrationBlockedMessage();
 		ImGui::BeginDisabled(!IsVRReady());
-		if (ImGui::Button("Start Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-			ImGui::OpenPopup("Calibration Progress");
-			StartCalibration("ui_start_button");
-		}
-		ImGui::EndDisabled();
-		if (!IsVRReady() && ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("%s", blockedMessage.c_str());
-		}
-
-		ImGui::SameLine();
-		ImGui::BeginDisabled(!IsVRReady());
-		if (ImGui::Button("Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-			StartContinuousCalibration("ui_continuous_button");
+		if (ImGui::Button(PrimaryActionLabel(), ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+			RunPrimaryTrackingAction();
 		}
 		ImGui::EndDisabled();
 		if (!IsVRReady() && ImGui::IsItemHovered()) {

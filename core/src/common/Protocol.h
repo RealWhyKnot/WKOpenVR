@@ -245,7 +245,12 @@ namespace protocol {
 // Phantom body-completion calibration. The payload is smaller than
 // SetDeviceTransform, so sizeof(Request) is unchanged; the bump forces
 // paired overlay+driver install.
-const uint32_t Version = 28;
+//
+// v29 (2026-06-04): SetHeadMountConfig carries allowRawHmdFallback so
+// DriverSynth can distinguish recovery mode from hard tracker lock. The
+// field uses existing payload padding, but the semantic change still
+// requires paired overlay+driver install.
+const uint32_t Version = 29;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -392,9 +397,8 @@ public:
 		std::atomic<uint64_t> fallback_apply_count;
 		std::atomic<uint64_t> per_id_apply_count;
 		std::atomic<uint64_t> quash_apply_count;
-		// Number of times DriverSynth fell back to the upstream HMD pose
-		// because the head-mounted tracker was invalid, stale, or the
-		// synthesized position exceeded the 1 m sanity gate.
+		// Number of times DriverSynth could not use a synthesized HMD pose
+		// because the head-mounted tracker was invalid, stale, or unavailable.
 		std::atomic<uint64_t> driver_synth_fallback_count;
 		std::atomic<uint64_t> reserved[4];
 	};

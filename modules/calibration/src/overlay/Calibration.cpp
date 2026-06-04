@@ -989,7 +989,7 @@ void CalibrationContext::ResolveLockMode()
 			lockRelativePosition = true;
 			break;
 		case LockMode::AUTO:
-			lockRelativePosition = autoLockEffectivelyLocked;
+			lockRelativePosition = false;
 			break;
 	}
 	// Diagnostic: annotate every resolved-value change. The UI-side toggle of
@@ -2868,7 +2868,7 @@ void CalibrationTick(double time)
 					extra.lockRelativePosition = true;
 					break;
 				default:
-					extra.lockRelativePosition = extra.autoLockEffectivelyLocked;
+					extra.lockRelativePosition = false;
 					break;
 			}
 

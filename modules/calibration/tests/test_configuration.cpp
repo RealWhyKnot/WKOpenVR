@@ -25,6 +25,7 @@
 
 #include "Configuration.h"
 #include "Calibration.h"
+#include "TrackingStyle.h"
 
 namespace {
 
@@ -74,6 +75,7 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	src.continuousCalibrationThreshold = 2.5f;
 	src.oneShotCalibrationSpeed = CalibrationContext::SLOW; // non-default; must round-trip
 	src.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
+	ApplyTrackingStylePreset(src, TrackingStyle::LockedWithRecovery);
 	src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
 	src.floorOffsetMetersY = -0.4375; // non-default; must round-trip
 	src.validProfile = true;
@@ -96,6 +98,7 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_FLOAT_EQ(dst.continuousCalibrationThreshold, 2.5f);
 	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::SLOW);
 	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
+	EXPECT_EQ(dst.trackingStyle, TrackingStyle::LockedWithRecovery);
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
 	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, -0.4375);
 }
@@ -143,7 +146,9 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
 	EXPECT_FLOAT_EQ(dst.jitterThreshold, 3.0f);
 	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::FAST);
 	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::AUTO);
-	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
+	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+	EXPECT_EQ(dst.trackingStyle, TrackingStyle::Manual);
+	EXPECT_TRUE(dst.headMount.allowRawHmdFallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +247,61 @@ TEST(ConfigurationTest, MigrateV4VerySlowSpeedPreservesSlowContinuousChoice)
 	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
 }
 
+TEST(ConfigurationTest, MigrateV5AutoLockBecomesContinuousStyleWithExplicitOffLock)
+{
+	std::string v5Json = MakeMinimalProfile(
+	    /*schemaVersion=*/5,
+	    "\"autostart_continuous_calibration\":true,"
+	    "\"lock_relative_position_mode\":2,"
+	    "\"additional_calibrations\":[{\"target_tracking_system\":\"vive\",\"lock_mode\":2}]");
+
+	CalibrationContext ctx;
+	std::stringstream io(v5Json);
+	ParseProfile(ctx, io);
+
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Continuous);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+	ASSERT_EQ(ctx.additionalCalibrations.size(), 1u);
+	EXPECT_EQ(ctx.additionalCalibrations[0].lockMode, 0);
+}
+
+TEST(ConfigurationTest, MigrateV5DriverSynthNoFallbackBecomesHardTrackerLock)
+{
+	std::string v5Json = MakeMinimalProfile(
+	    /*schemaVersion=*/5,
+	    "\"head_mount\":{\"mode\":3,\"tracker_serial\":\"LHR-HMD\",\"tracker_tracking_system\":\"lighthouse\","
+	    "\"offset_calibrated\":true,\"allow_raw_hmd_fallback\":false},"
+	    "\"lock_relative_position_mode\":2");
+
+	CalibrationContext ctx;
+	std::stringstream io(v5Json);
+	ParseProfile(ctx, io);
+
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::HardTrackerLock);
+	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::DriverSynth);
+	EXPECT_FALSE(ctx.headMount.allowRawHmdFallback);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+}
+
+TEST(ConfigurationTest, MigrateV5ExplicitRecoveryStyleRestoresRawHmdFallback)
+{
+	std::string v5Json = MakeMinimalProfile(
+	    /*schemaVersion=*/5,
+	    "\"tracking_style\":2,"
+	    "\"head_mount\":{\"mode\":3,\"tracker_serial\":\"LHR-HMD\",\"tracker_tracking_system\":\"lighthouse\","
+	    "\"offset_calibrated\":true,\"allow_raw_hmd_fallback\":false},"
+	    "\"lock_relative_position_mode\":2");
+
+	CalibrationContext ctx;
+	std::stringstream io(v5Json);
+	ParseProfile(ctx, io);
+
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::LockedWithRecovery);
+	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::DriverSynth);
+	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+}
+
 TEST(ConfigurationTest, ResolvedSpeedUsesContinuousSettingOnlyInContinuousMode)
 {
 	CalibrationContext ctx;
@@ -313,7 +373,9 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned)
 	EXPECT_FLOAT_EQ(ctx.maxRelativeErrorThreshold, 0.005f);
 	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST) << "One-shot default speed is FAST.";
 	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO) << "Continuous default speed is AUTO.";
-	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
+	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);
 	EXPECT_DOUBLE_EQ(ctx.calibratedScale, 1.0);
 	EXPECT_DOUBLE_EQ(ctx.floorOffsetMetersY, 0.0)
 	    << "Floor adjustment defaults to 0 (no vertical nudge until the user sets the floor).";
@@ -543,6 +605,8 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_TRUE(ctx.headMount.trackerSerial.empty()) << "v3 profile must default head_mount.trackerSerial to empty";
 	EXPECT_FALSE(ctx.headMount.offsetCalibrated) << "v3 profile must default head_mount.offsetCalibrated to false";
 	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
+	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback) << "v3 profile must default raw HMD fallback to true";
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
 	    << "v3 profile must default DriverSynth timing";
 	EXPECT_FALSE(ctx.boundary.enabled) << "v3 profile must default boundary.enabled to false";
@@ -558,11 +622,10 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.referenceTrackingSystem = "lighthouse";
 	src.targetTrackingSystem = "oculus";
 	src.validProfile = true;
+	ApplyTrackingStylePreset(src, TrackingStyle::HardTrackerLock);
 
-	src.headMount.mode = HeadMountMode::Corroborate;
 	src.headMount.trackerSerial = "LHR-AABBCCDD";
 	src.headMount.trackerTrackingSystem = "lighthouse";
-	src.headMount.hideTracker = false;
 	src.headMount.offsetCalibrated = true;
 	src.headMount.autoCorrectOffset = false;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
@@ -592,12 +655,14 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	ParseProfile(dst, io2);
 
 	EXPECT_TRUE(dst.validProfile);
-	EXPECT_EQ(dst.headMount.mode, HeadMountMode::Corroborate);
+	EXPECT_EQ(dst.trackingStyle, TrackingStyle::HardTrackerLock);
+	EXPECT_EQ(dst.headMount.mode, HeadMountMode::DriverSynth);
 	EXPECT_EQ(dst.headMount.trackerSerial, "LHR-AABBCCDD");
 	EXPECT_EQ(dst.headMount.trackerTrackingSystem, "lighthouse");
-	EXPECT_FALSE(dst.headMount.hideTracker);
+	EXPECT_TRUE(dst.headMount.hideTracker);
 	EXPECT_TRUE(dst.headMount.offsetCalibrated);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
+	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.staleLimitMs, 120);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.graceHoldMs, 1400);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.blendToFallbackMs, 900);

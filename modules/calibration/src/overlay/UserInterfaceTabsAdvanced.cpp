@@ -2,7 +2,6 @@
 #include "CalibrationAutoSpeed.h"
 #include "Configuration.h"
 #include "CalibrationMetrics.h"
-#include "HeadMountTargetBinding.h"
 #include "Wizard.h"
 #include "UiHelpers.h"
 
@@ -182,30 +181,10 @@ void CCal_DrawSettings()
 		DrawDiagnosticsPanel(panel_size);
 	}
 
-	// Hide tracker + Ignore outliers. Both gate on continuous mode in the
-	// apply path (CalibrationProfileApply.cpp), so they're meaningful only
-	// while a continuous-cal run is active.
+	// Diagnostic sample rejection. Style presets own tracker hiding and
+	// head-mount behavior; this panel keeps only the solver diagnostic toggle.
 	if (kInContinuous) {
-		ImGui::BeginGroupPanel("Toggles", panel_size);
-		const bool headMountOwnsTargetHide = CalCtx.headMount.mode >= HeadMountMode::AutoPaired &&
-		                                     wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx);
-		if (headMountOwnsTargetHide) {
-			ImGui::TextDisabled("Tracker visibility is controlled on the Play Space tab.");
-		}
-		else {
-			if (ImGui::Checkbox("Hide calibration target tracker in OpenVR", &CalCtx.quashTargetInContinuous)) {
-				if (wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx)) {
-					CalCtx.headMount.hideTracker = CalCtx.quashTargetInContinuous;
-				}
-				SaveProfile(CalCtx);
-			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip(
-				    "Suppress the calibration target tracker's pose in OpenVR while continuous calibration runs.\n"
-				    "Use when the target tracker would otherwise show up as a duplicate of the reference.");
-			}
-		}
-		ImGui::SameLine();
+		ImGui::BeginGroupPanel("Diagnostics", panel_size);
 		ImGui::Checkbox("Ignore outliers", &CalCtx.ignoreOutliers);
 		if (ImGui::IsItemHovered()) {
 			ImGui::SetTooltip(

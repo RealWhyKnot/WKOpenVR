@@ -32,6 +32,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_auto_speed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_configuration.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_tracking_style.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_wedge_detector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_stall_decisions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tracker_liveness.cpp

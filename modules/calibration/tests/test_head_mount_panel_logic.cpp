@@ -95,6 +95,7 @@ TEST(HeadMountPanelLogic, DefaultConfigHasOffModeAndNoOffset)
 	EXPECT_EQ(HeadMountMode::Off, hm.mode);
 	EXPECT_FALSE(hm.offsetCalibrated);
 	EXPECT_TRUE(hm.autoCorrectOffset);
+	EXPECT_TRUE(hm.allowRawHmdFallback);
 	EXPECT_TRUE(hm.trackerSerial.empty());
 	EXPECT_EQ(-1, hm.deviceID);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(hm.driverSynthTiming));

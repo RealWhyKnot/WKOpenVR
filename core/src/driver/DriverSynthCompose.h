@@ -283,10 +283,17 @@ inline void SetPhase(SourceBlendState& state, SourceBlendPhase phase, std::chron
 	}
 }
 
+inline void MarkPoseOutOfRange(vr::DriverPose_t& pose)
+{
+	pose.poseIsValid = false;
+	pose.result = vr::TrackingResult_Running_OutOfRange;
+	pose.deviceIsConnected = true;
+}
+
 inline SourceBlendResult StepSourceBlend(SourceBlendState& state, const vr::DriverPose_t& fallbackPose,
                                          const vr::DriverPose_t* synthPose, bool synthAvailable,
                                          std::chrono::steady_clock::time_point now, vr::DriverPose_t& out,
-                                         const SourceBlendConfig& config = {})
+                                         const SourceBlendConfig& config = {}, bool allowFallback = true)
 {
 	const SourceBlendConfig timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(config);
 	const SourceBlendPhase previous = state.phase;
@@ -307,6 +314,9 @@ inline SourceBlendResult StepSourceBlend(SourceBlendState& state, const vr::Driv
 			return finish(state.phase, 1.0);
 		}
 		out = fallbackPose;
+		if (!allowFallback) {
+			MarkPoseOutOfRange(out);
+		}
 		state.hasStableSynthSince = false;
 		SetPhase(state, SourceBlendPhase::FallbackStable, now);
 		return finish(state.phase, 0.0);
@@ -362,6 +372,26 @@ inline SourceBlendResult StepSourceBlend(SourceBlendState& state, const vr::Driv
 	}
 
 	state.hasStableSynthSince = false;
+
+	if (!allowFallback) {
+		if (state.phase == SourceBlendPhase::SynthStable) {
+			state.blendStartPose = state.hasLastGoodSynthPose ? state.lastGoodSynthPose : state.currentPose;
+			SetPhase(state, SourceBlendPhase::GraceHold, now);
+		}
+
+		if (state.phase == SourceBlendPhase::GraceHold) {
+			const double alpha = DurationAlpha(state.phaseStartedAt, now, timing.graceHoldMs);
+			if (alpha < 1.0) {
+				out = state.blendStartPose;
+				return finish(state.phase, alpha);
+			}
+		}
+
+		out = state.hasLastGoodSynthPose ? state.lastGoodSynthPose : state.currentPose;
+		MarkPoseOutOfRange(out);
+		SetPhase(state, SourceBlendPhase::FallbackStable, now);
+		return finish(state.phase, 1.0);
+	}
 
 	if (state.phase == SourceBlendPhase::SynthStable) {
 		state.blendStartPose = state.hasLastGoodSynthPose ? state.lastGoodSynthPose : state.currentPose;

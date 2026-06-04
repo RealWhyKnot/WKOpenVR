@@ -2,7 +2,6 @@
 
 #include "Calibration.h"
 #include "CalibrationMetrics.h"
-#include "CalibrationProfileApply.h"
 #include "Configuration.h"
 #include "HeadMountOffsetModal.h"
 #include "HeadMountOffsetPreflight.h"
@@ -10,6 +9,7 @@
 #include "HeadMountTargetBinding.h"
 #include "IPCClient.h"
 #include "Protocol.h"
+#include "TrackingStyle.h"
 #include "UiHelpers.h"
 
 #include <openvr.h>
@@ -25,7 +25,6 @@ extern CalibrationContext CalCtx;
 
 void SaveProfile(CalibrationContext& ctx);
 std::string LabelString(const StandbyDevice& device);
-void CCal_InvalidateBoundaryFloorSourceCache();
 
 void CCal_SendHeadMountConfig()
 {
@@ -36,6 +35,7 @@ void CCal_SendHeadMountConfig()
 	p.deviceId = hm.deviceID;
 	p.hideTracker = hm.hideTracker;
 	p.offsetCalibrated = hm.offsetCalibrated;
+	p.allowRawHmdFallback = hm.allowRawHmdFallback;
 	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	p.driverSynthStaleLimitMs = static_cast<uint16_t>(timing.staleLimitMs);
 	p.driverSynthGraceHoldMs = static_cast<uint16_t>(timing.graceHoldMs);
@@ -77,84 +77,6 @@ void CCal_SendHeadMountConfig()
 namespace {
 
 bool s_offsetSlidersOpen = false;
-
-bool DrawDriverSynthTimingControl(const char* label, int& value, int minValue, int maxValue, const char* tooltip)
-{
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextUnformatted(label);
-	ImGui::TableSetColumnIndex(1);
-	ImGui::PushItemWidth(-1.0f);
-	const bool changed = ImGui::SliderInt("##value", &value, minValue, maxValue, "%d ms");
-	ImGui::PopItemWidth();
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("%s", tooltip);
-	}
-	return changed;
-}
-
-void DrawDriverSynthTimingPanel(HeadMountConfig& hm)
-{
-	if (hm.mode != HeadMountMode::DriverSynth) return;
-
-	ImGui::Spacing();
-	ImGui::SetNextItemOpen(false, ImGuiCond_FirstUseEver);
-	if (!ImGui::CollapsingHeader("Advanced fallback timing")) return;
-
-	ImGui::Indent();
-	if (ImGui::BeginTable("driver_synth_timing", 2,
-	                      ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
-		auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
-		bool changed = false;
-		ImGui::PushID("stale_limit");
-		changed |= DrawDriverSynthTimingControl(
-		    "Tracker stale limit", timing.staleLimitMs, wkopenvr::headmount::kDriverSynthStaleLimitMsMin,
-		    wkopenvr::headmount::kDriverSynthStaleLimitMsMax,
-		    "How old the last tracker pose can be before it is treated as missing.");
-		ImGui::PopID();
-		ImGui::PushID("grace_hold");
-		changed |= DrawDriverSynthTimingControl(
-		    "Grace hold", timing.graceHoldMs, wkopenvr::headmount::kDriverSynthTransitionMsMin,
-		    wkopenvr::headmount::kDriverSynthTransitionMsMax,
-		    "How long to keep the last tracker-synth pose before fading to headset tracking.");
-		ImGui::PopID();
-		ImGui::PushID("blend_out");
-		changed |= DrawDriverSynthTimingControl(
-		    "Blend to fallback", timing.blendToFallbackMs, wkopenvr::headmount::kDriverSynthTransitionMsMin,
-		    wkopenvr::headmount::kDriverSynthTransitionMsMax,
-		    "Fade duration from tracker-synth pose to headset tracking after grace expires.");
-		ImGui::PopID();
-		ImGui::PushID("stable_return");
-		changed |= DrawDriverSynthTimingControl(
-		    "Stable before return", timing.stableBeforeSynthMs, wkopenvr::headmount::kDriverSynthTransitionMsMin,
-		    wkopenvr::headmount::kDriverSynthTransitionMsMax,
-		    "How long the tracker must be good again before WKOpenVR blends back to it.");
-		ImGui::PopID();
-		ImGui::PushID("blend_in");
-		changed |= DrawDriverSynthTimingControl("Blend back to tracker", timing.blendToSynthMs,
-		                                        wkopenvr::headmount::kDriverSynthTransitionMsMin,
-		                                        wkopenvr::headmount::kDriverSynthTransitionMsMax,
-		                                        "Fade duration from headset tracking back to tracker-synth pose.");
-		ImGui::PopID();
-		ImGui::EndTable();
-
-		if (changed) {
-			hm.driverSynthTiming = timing;
-			SaveProfile(CalCtx);
-			CCal_SendHeadMountConfig();
-		}
-	}
-	if (ImGui::Button("Reset DriverSynth timing")) {
-		hm.driverSynthTiming = {};
-		SaveProfile(CalCtx);
-		CCal_SendHeadMountConfig();
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Restore the default DriverSynth fallback timing values.");
-	}
-	ImGui::Unindent();
-}
 
 } // namespace
 
@@ -250,81 +172,12 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 		}
 
 		ImGui::Spacing();
-		ImGui::TextUnformatted("3. Choose what the tracker does for continuous calibration");
-		{
-			openvr_pair::overlay::ui::DisabledSection ds(
-			    !hasTracker, "Start continuous calibration with the headset-mounted tracker as the target first.");
-
-			struct ModeOpt
-			{
-				HeadMountMode value;
-				const char* label;
-				const char* tip;
-				bool requiresOffset;
-			};
-			const ModeOpt opts[] = {
-			    {HeadMountMode::Off, "Off", "No head-mount features. Body trackers drift with SLAM as before.", false},
-			    {HeadMountMode::AutoPaired, "Stabilize continuous calibration",
-			     "The continuous target becomes a constant paired observation from the headset-mounted tracker.\n"
-			     "Drift correction stays smooth across long sessions. Requires the offset to be calibrated.",
-			     true},
-			    {HeadMountMode::Corroborate, "Block SLAM re-localization jumps",
-			     "When Quest re-localizes (passthrough, room scan), the headset pose jumps.\n"
-			     "With this on, the head-tracker provides an independent witness so those\n"
-			     "jumps don't trigger recovery or feed bad samples into the solver.\n"
-			     "Requires the offset to be calibrated.",
-			     true},
-			    {HeadMountMode::DriverSynth, "Synthesize headset pose from tracker",
-			     "The driver uses the head-mounted tracker as the primary headset pose source\n"
-			     "while it is fresh, then blends back to headset tracking if the tracker drops out.\n"
-			     "Requires the offset to be calibrated.",
-			     true},
-			};
-
-			for (const auto& opt : opts) {
-				const bool needsOffset = opt.requiresOffset && !offsetOk;
-				openvr_pair::overlay::ui::DisabledSection inner(
-				    needsOffset, "Calibrate the offset (step 2) before using this mode.");
-				const bool selected = (hm.mode == opt.value);
-				ImGui::PushID(static_cast<int>(opt.value));
-				if (ImGui::RadioButton(opt.label, selected)) {
-					if (hm.mode != opt.value) {
-						hm.mode = opt.value;
-						// The floor offset only applies under DriverSynth, so switching
-						// modes adds or removes it. Re-push transforms now rather than
-						// waiting for the next calibration tick.
-						InvalidateAllTransformCaches();
-						ScanAndApplyProfile(CalCtx);
-						CCal_InvalidateBoundaryFloorSourceCache();
-						SaveProfile(CalCtx);
-						CCal_SendHeadMountConfig();
-					}
-				}
-				ImGui::PopID();
-				inner.AttachReasonTooltip();
-				if (ImGui::IsItemHovered() && !needsOffset) {
-					ImGui::SetTooltip("%s", opt.tip);
-				}
-			}
-			ds.AttachReasonTooltip();
-		}
-		DrawDriverSynthTimingPanel(hm);
-
-		ImGui::Spacing();
-		{
-			openvr_pair::overlay::ui::DisabledSection ds(
-			    !hasTracker, "Start continuous calibration with the headset-mounted tracker as the target first.");
-			if (ImGui::Checkbox("Hide this tracker from games", &hm.hideTracker)) {
-				CalCtx.quashTargetInContinuous = hm.hideTracker;
-				SaveProfile(CalCtx);
-				CCal_SendHeadMountConfig();
-			}
-			ds.AttachReasonTooltip();
-		}
-		if (ImGui::IsItemHovered() && hasTracker) {
-			ImGui::SetTooltip(
-			    "Suppress the head-tracker's pose in OpenVR so it doesn't appear as a\n"
-			    "floating tracker in-headset. The continuous calibration math still uses its pose internally.");
+		ImGui::TextUnformatted("3. Tracking style");
+		ImGui::TextDisabled("%s", TrackingStyleLabel(CalCtx.trackingStyle));
+		ImGui::TextDisabled("Headset synthesis: %s",
+		                    TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) ? "on" : "off");
+		if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle)) {
+			ImGui::TextDisabled("Raw HMD fallback: %s", hm.allowRawHmdFallback ? "on" : "off");
 		}
 
 		// Auto-correct headset tracker offset is demoted to shadow-log-only: the
@@ -374,7 +227,7 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 			}
 			else if (hm.mode == HeadMountMode::Off) {
 				openvr_pair::overlay::ui::DrawStatusDot(pal.dotPending);
-				ImGui::TextColored(pal.statusWarn, "Ready. Pick a mode above to activate.");
+				ImGui::TextColored(pal.statusWarn, "Headset synthesis is off for this style.");
 			}
 			else {
 				const double residualMm =

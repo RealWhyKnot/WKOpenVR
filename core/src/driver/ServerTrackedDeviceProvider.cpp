@@ -1044,6 +1044,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	const char* driverSynthFallbackReason = "inactive";
 	int64_t driverSynthTrackerAgeMs = -1;
 	auto driverSynthNow = std::chrono::steady_clock::now();
+	bool driverSynthAllowRawFallback = true;
 	wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming{};
 	vr::DriverPose_t driverSynthPose{};
 	{
@@ -1085,6 +1086,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			memcpy(synthState.headFromTrackerTrans, hmState.headFromTrackerTrans,
 			       sizeof synthState.headFromTrackerTrans);
 			memcpy(synthState.headFromTrackerRot, hmState.headFromTrackerRot, sizeof synthState.headFromTrackerRot);
+			driverSynthAllowRawFallback = hmState.allowRawHmdFallback;
 			driverSynthTiming = hmState.driverSynthTiming;
 
 			driverSynthNow = std::chrono::steady_clock::now();
@@ -1143,7 +1145,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 					bit = R_UNKNOWN;
 				}
 				if (markReasonLogged(s_loggedReasons, bit)) {
-					LOG("[driver-synth] fallback: reason='%s'", reason);
+					LOG("[driver-synth] synth_unavailable: reason='%s'", reason);
 				}
 				driverSynthFallbackReason = reason;
 				shmem.IncrementTelemetry(protocol::DriverPoseShmem::TELEMETRY_DRIVER_SYNTH_FALLBACK);
@@ -1352,7 +1354,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		vr::DriverPose_t blendedPose{};
 		const auto blendResult = driver_synth::StepSourceBlend(
 		    m_driverSynthBlendState, pose, driverSynthComposeOk ? &driverSynthPose : nullptr, driverSynthComposeOk,
-		    driverSynthNow, blendedPose, driverSynthTiming);
+		    driverSynthNow, blendedPose, driverSynthTiming, driverSynthAllowRawFallback);
 		pose = blendedPose;
 		if (blendResult.phaseChanged) {
 			LOG("[driver-synth] source_blend phase=%s prev=%s reason='%s' alpha=%.3f tracker_age_ms=%lld",
@@ -1436,6 +1438,7 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 	next.deviceId = cfg.deviceId;
 	next.hideTracker = cfg.hideTracker;
 	next.offsetCalibrated = cfg.offsetCalibrated;
+	next.allowRawHmdFallback = cfg.allowRawHmdFallback;
 	next.driverSynthTiming = wkopenvr::headmount::ClampDriverSynthTimingConfig({
 	    (int)cfg.driverSynthStaleLimitMs,
 	    (int)cfg.driverSynthGraceHoldMs,
@@ -1466,6 +1469,7 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		sourceChanged =
 		    next.mode != prev.mode || next.deviceId != prev.deviceId || next.hideTracker != prev.hideTracker ||
 		    next.offsetCalibrated != prev.offsetCalibrated ||
+		    next.allowRawHmdFallback != prev.allowRawHmdFallback ||
 		    memcmp(next.trackerSerial, prev.trackerSerial, sizeof next.trackerSerial) != 0 ||
 		    memcmp(next.trackerTrackingSystem, prev.trackerTrackingSystem, sizeof next.trackerTrackingSystem) != 0 ||
 		    memcmp(next.headFromTrackerTrans, prev.headFromTrackerTrans, sizeof next.headFromTrackerTrans) != 0 ||
@@ -1479,10 +1483,12 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		// the same config on every AssignTargets scan.
 		if (stateChanged) {
 			LOG("[driver-head-mount] config: mode=%d deviceID=%d offsetCalibrated=%d"
+			    " allow_raw_hmd_fallback=%d"
 			    " synth_stale_ms=%d grace_ms=%d blend_fallback_ms=%d"
 			    " stable_synth_ms=%d blend_synth_ms=%d",
-			    next.mode, next.deviceId, (int)next.offsetCalibrated, next.driverSynthTiming.staleLimitMs,
-			    next.driverSynthTiming.graceHoldMs, next.driverSynthTiming.blendToFallbackMs,
+			    next.mode, next.deviceId, (int)next.offsetCalibrated, (int)next.allowRawHmdFallback,
+			    next.driverSynthTiming.staleLimitMs, next.driverSynthTiming.graceHoldMs,
+			    next.driverSynthTiming.blendToFallbackMs,
 			    next.driverSynthTiming.stableBeforeSynthMs, next.driverSynthTiming.blendToSynthMs);
 		}
 	}
