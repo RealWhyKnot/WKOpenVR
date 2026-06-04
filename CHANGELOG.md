@@ -21,6 +21,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **smoothing:** Speed-adaptive one-euro position filter as base (9e435aa)
 - **calibration:** Permanent DriverSynth, filled boundary, gated floor (2c9629a)
 - **boundary:** On/off toggles for floor and boundary; lighter preview draw (efa0605)
+- **driver:** Add module safety backoff (8395ac2)
+- **phantom:** Add in-process body completion (998ec69)
+- **facetracking:** Gate expression corrections (22c222c)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -44,6 +47,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - diag(smoothing): make smart-smoothing shadow a selectable A/B testbed (3fb2afb)
 - **calibration:** Remove headset tracker auto-pick (6867472)
 - **facetracking:** Remove custom module bridge (4e9271a)
+- **logging:** Clean face and osc diagnostics (d965f52)
+- **modules:** Centralize module metadata (e89e52f)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -113,6 +118,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Harden sidecar router lifecycle (028ee3c)
 - **facetracking:** Mirror VRCFT SDK assembly identity (f80c3b0)
 - **facetracking:** Recognize legacy VRCFT bridge manifests (3923ce6)
+- **tracking:** Stabilize face and phantom modules (5a367b4)
+- **overlay:** Wait for SteamVR before module sync (0a76cd7)
+- **phantom:** Target vrchat tracker roles (095c119)
+- **facetracking:** Process canonical signal output (617d09a)
 
 ---
 
