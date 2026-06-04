@@ -24,6 +24,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **driver:** Add module safety backoff (8395ac2)
 - **phantom:** Add in-process body completion (998ec69)
 - **facetracking:** Gate expression corrections (22c222c)
+- **calibration:** Simplify tracking style setup (9bc21c2)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
