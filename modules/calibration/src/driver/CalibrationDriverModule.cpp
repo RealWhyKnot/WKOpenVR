@@ -1,6 +1,7 @@
 #include "DriverModule.h"
 #include "FeatureFlags.h"
 #include "Logging.h"
+#include "ModuleRegistry.h"
 #include "ServerTrackedDeviceProvider.h"
 
 namespace calibration {
@@ -11,7 +12,7 @@ class CalibrationDriverModule final : public DriverModule
 public:
 	const char *Name() const override { return "Space Calibrator"; }
 	uint32_t FeatureMask() const override { return pairdriver::kFeatureCalibration; }
-	const char *PipeName() const override { return OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME; }
+	const char *PipeName() const override { return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::Calibration); }
 
 	bool Init(DriverModuleContext &context) override
 	{

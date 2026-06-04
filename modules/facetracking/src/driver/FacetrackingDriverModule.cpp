@@ -12,6 +12,7 @@
 #include "DriverModule.h"
 #include "DebugLogging.h"
 #include "FeatureFlags.h"
+#include "ModuleRegistry.h"
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
 #include "Win32Paths.h"
@@ -180,7 +181,7 @@ class FacetrackingDriverModule final : public DriverModule
 public:
     const char *Name()        const override { return "FaceTracking"; }
     uint32_t    FeatureMask() const override { return pairdriver::kFeatureFaceTracking; }
-    const char *PipeName()    const override { return OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME; }
+    const char *PipeName()    const override { return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::FaceTracking); }
 
     bool Init(DriverModuleContext &context) override
     {

@@ -15,6 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(driver_safety_tests
+	test_module_registry.cpp
 	test_module_safety.cpp)
 
 target_include_directories(driver_safety_tests PRIVATE

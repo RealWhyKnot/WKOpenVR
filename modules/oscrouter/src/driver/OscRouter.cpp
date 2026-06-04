@@ -6,6 +6,7 @@
 #include "OscWire.h"
 #include "Logging.h"
 #include "FeatureFlags.h"
+#include "ModuleRegistry.h"
 #include "Protocol.h"
 
 #include <chrono>
@@ -52,7 +53,7 @@ uint32_t OscRouter::FeatureMask() const
 
 const char *OscRouter::PipeName() const
 {
-    return OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME;
+    return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::OscRouter);
 }
 
 bool OscRouter::Init(DriverModuleContext &ctx)

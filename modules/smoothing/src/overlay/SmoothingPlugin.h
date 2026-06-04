@@ -11,9 +11,9 @@
 class SmoothingPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
 public:
-	const char *Name() const override { return "Smoothing"; }
-	const char *FlagFileName() const override { return "enable_smoothing.flag"; }
-	const char *PipeName() const override { return OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME; }
+	const char *Name() const override { return ModuleName(ModuleId::Smoothing); }
+	const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::Smoothing); }
+	const char *PipeName() const override { return ModulePipeName(ModuleId::Smoothing); }
 
 	void OnStart(openvr_pair::overlay::ShellContext &context) override;
 	void Tick(openvr_pair::overlay::ShellContext &context) override;

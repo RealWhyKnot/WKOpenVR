@@ -14,9 +14,9 @@ class OscRouterPlugin final : public openvr_pair::overlay::FeaturePlugin
 public:
     OscRouterPlugin() = default;
 
-    const char *Name()         const override { return "OSC Router"; }
-    const char *FlagFileName() const override { return "enable_oscrouter.flag"; }
-    const char *PipeName()     const override { return OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME; }
+    const char *Name()         const override { return ModuleName(ModuleId::OscRouter); }
+    const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::OscRouter); }
+    const char *PipeName()     const override { return ModulePipeName(ModuleId::OscRouter); }
     openvr_pair::overlay::FeaturePluginChannel Channel() const override
     {
         return openvr_pair::overlay::FeaturePluginChannel::Development;

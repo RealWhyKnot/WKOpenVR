@@ -13,9 +13,9 @@
 class QuestAppPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
 public:
-    const char* Name() const override { return "Quest App"; }
-    const char* FlagFileName() const override { return "enable_questapp.flag"; }
-    const char* PipeName() const override { return ""; }
+    const char* Name() const override { return ModuleName(ModuleId::QuestApp); }
+    const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::QuestApp); }
+    const char* PipeName() const override { return ModulePipeName(ModuleId::QuestApp); }
 
     void OnStart(openvr_pair::overlay::ShellContext& context) override;
     void DrawTab(openvr_pair::overlay::ShellContext& context) override;

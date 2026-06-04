@@ -29,9 +29,9 @@ class FacetrackingPlugin final : public openvr_pair::overlay::FeaturePlugin
 public:
     FacetrackingPlugin();
 
-    const char *Name()         const override { return "Face Tracking"; }
-    const char *FlagFileName() const override { return "enable_facetracking.flag"; }
-    const char *PipeName()     const override { return OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME; }
+    const char *Name()         const override { return ModuleName(ModuleId::FaceTracking); }
+    const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::FaceTracking); }
+    const char *PipeName()     const override { return ModulePipeName(ModuleId::FaceTracking); }
     openvr_pair::overlay::FeaturePluginChannel Channel() const override
     {
         return openvr_pair::overlay::FeaturePluginChannel::Development;

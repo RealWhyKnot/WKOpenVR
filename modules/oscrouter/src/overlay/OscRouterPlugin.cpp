@@ -5,9 +5,10 @@
 
 bool OscRouterPlugin::IsInstalled(openvr_pair::overlay::ShellContext &ctx) const
 {
-    return ctx.IsFlagPresent("enable_oscrouter.flag")
-        || ctx.IsFlagPresent("enable_facetracking.flag")
-        || ctx.IsFlagPresent("enable_captions.flag");
+    namespace module_registry = openvr_pair::common::modules;
+    return ctx.IsFlagPresent(module_registry::FlagFileName(module_registry::ModuleId::OscRouter))
+        || ctx.IsFlagPresent(module_registry::FlagFileName(module_registry::ModuleId::FaceTracking))
+        || ctx.IsFlagPresent(module_registry::FlagFileName(module_registry::ModuleId::Captions));
 }
 
 void OscRouterPlugin::Tick(openvr_pair::overlay::ShellContext &ctx)

@@ -1,6 +1,7 @@
 #include "DriverModule.h"
 #include "FeatureFlags.h"
 #include "Logging.h"
+#include "ModuleRegistry.h"
 #include "ServerTrackedDeviceProvider.h"
 #include "SkeletalHookInjector.h"
 
@@ -15,7 +16,7 @@ class SmoothingDriverModule final : public DriverModule
 public:
 	const char *Name() const override { return "Smoothing"; }
 	uint32_t FeatureMask() const override { return pairdriver::kFeatureSmoothing; }
-	const char *PipeName() const override { return OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME; }
+	const char *PipeName() const override { return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::Smoothing); }
 
 	bool Init(DriverModuleContext &context) override
 	{

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ModuleRegistry.h"
+
 namespace openvr_pair::overlay {
 
 struct ShellContext;
@@ -42,6 +44,24 @@ public:
 	virtual void DrawDevTools(ShellContext &) {}
 
 	virtual bool IsInstalled(ShellContext &) const;
+
+protected:
+	using ModuleId = openvr_pair::common::modules::ModuleId;
+
+	static const char *ModuleName(ModuleId id)
+	{
+		return openvr_pair::common::modules::DisplayName(id);
+	}
+
+	static const char *ModuleFlagFileName(ModuleId id)
+	{
+		return openvr_pair::common::modules::FlagFileName(id);
+	}
+
+	static const char *ModulePipeName(ModuleId id)
+	{
+		return openvr_pair::common::modules::PipeName(id);
+	}
 };
 
 inline bool ShouldShowInModulesTab(FeaturePluginChannel channel)

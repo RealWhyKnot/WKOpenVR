@@ -5,6 +5,7 @@
 
 #include "FeatureFlags.h"
 #include "Logging.h"
+#include "ModuleRegistry.h"
 #include "ModuleSafety.h"
 
 #include <string>
@@ -12,6 +13,8 @@
 namespace pairdriver {
 
 namespace {
+
+namespace module_registry = openvr_pair::common::modules;
 
 // Returns the absolute path of <root>\resources, where <root> is the driver
 // folder SteamVR loaded the DLL from. We resolve our own DLL path with
@@ -51,6 +54,12 @@ bool FlagFileExists(const std::wstring &resourcesDir, const wchar_t *flagName)
 	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+bool ModuleFlagFileExists(const std::wstring &resourcesDir, const module_registry::ModuleInfo &module)
+{
+	if (FlagFileExists(resourcesDir, module.flag_file_wide)) return true;
+	return module.legacy_flag_file_wide && FlagFileExists(resourcesDir, module.legacy_flag_file_wide);
+}
+
 constexpr unsigned kActiveOnlyAutoDisableThreshold = 3;
 
 struct SafetyGateResult
@@ -60,11 +69,11 @@ struct SafetyGateResult
 	openvr_pair::common::module_safety::LaunchAssessment assessment;
 };
 
-SafetyGateResult ApplySafetyGate(bool &enabled, const char *flagFileName)
+SafetyGateResult ApplySafetyGate(bool &enabled, const module_registry::ModuleInfo &module)
 {
 	SafetyGateResult result{&enabled, nullptr, {}};
 	if (!enabled) return result;
-	const auto *spec = openvr_pair::common::module_safety::FindByFlagFileName(flagFileName);
+	const auto *spec = openvr_pair::common::module_safety::FindById(module.id);
 	result.spec = spec;
 	if (!spec) return result;
 
@@ -128,18 +137,25 @@ uint32_t DetectFeatureFlags()
 		return 0;
 	}
 
-	const bool calOn = FlagFileExists(dir, L"enable_calibration.flag");
-	const bool smoOn = FlagFileExists(dir, L"enable_smoothing.flag");
-	const bool ihOn  = FlagFileExists(dir, L"enable_inputhealth.flag");
-	const bool ftOn  = FlagFileExists(dir, L"enable_facetracking.flag");
-	const bool orOn  = FlagFileExists(dir, L"enable_oscrouter.flag");
+	const module_registry::ModuleInfo &calibration = module_registry::Get(module_registry::ModuleId::Calibration);
+	const module_registry::ModuleInfo &smoothing = module_registry::Get(module_registry::ModuleId::Smoothing);
+	const module_registry::ModuleInfo &inputHealth = module_registry::Get(module_registry::ModuleId::InputHealth);
+	const module_registry::ModuleInfo &faceTracking = module_registry::Get(module_registry::ModuleId::FaceTracking);
+	const module_registry::ModuleInfo &oscRouter = module_registry::Get(module_registry::ModuleId::OscRouter);
+	const module_registry::ModuleInfo &captions = module_registry::Get(module_registry::ModuleId::Captions);
+	const module_registry::ModuleInfo &phantom = module_registry::Get(module_registry::ModuleId::Phantom);
+
+	const bool calOn = ModuleFlagFileExists(dir, calibration);
+	const bool smoOn = ModuleFlagFileExists(dir, smoothing);
+	const bool ihOn  = ModuleFlagFileExists(dir, inputHealth);
+	const bool ftOn  = ModuleFlagFileExists(dir, faceTracking);
+	const bool orOn  = ModuleFlagFileExists(dir, oscRouter);
 	// Legacy alias: pre-rename installs dropped enable_translator.flag. Treat
 	// either name as the same signal so an upgrade-in-place keeps the feature
 	// enabled without forcing the user to re-toggle. Future release can drop
 	// the legacy name.
-	const bool capOn = FlagFileExists(dir, L"enable_captions.flag")
-		|| FlagFileExists(dir, L"enable_translator.flag");
-	const bool phOn  = FlagFileExists(dir, L"enable_phantom.flag");
+	const bool capOn = ModuleFlagFileExists(dir, captions);
+	const bool phOn  = ModuleFlagFileExists(dir, phantom);
 
 	bool calSafe = calOn;
 	bool smoSafe = smoOn;
@@ -147,15 +163,15 @@ uint32_t DetectFeatureFlags()
 	bool ftSafe = ftOn;
 	bool capSafe = capOn;
 	bool phSafe = phOn;
-	SafetyGateResult calGate = ApplySafetyGate(calSafe, "enable_calibration.flag");
-	SafetyGateResult smoGate = ApplySafetyGate(smoSafe, "enable_smoothing.flag");
-	SafetyGateResult ihGate = ApplySafetyGate(ihSafe, "enable_inputhealth.flag");
-	SafetyGateResult ftGate = ApplySafetyGate(ftSafe, "enable_facetracking.flag");
-	SafetyGateResult capGate = ApplySafetyGate(capSafe, "enable_captions.flag");
-	SafetyGateResult phGate = ApplySafetyGate(phSafe, "enable_phantom.flag");
+	SafetyGateResult calGate = ApplySafetyGate(calSafe, calibration);
+	SafetyGateResult smoGate = ApplySafetyGate(smoSafe, smoothing);
+	SafetyGateResult ihGate = ApplySafetyGate(ihSafe, inputHealth);
+	SafetyGateResult ftGate = ApplySafetyGate(ftSafe, faceTracking);
+	SafetyGateResult capGate = ApplySafetyGate(capSafe, captions);
+	SafetyGateResult phGate = ApplySafetyGate(phSafe, phantom);
 
 	bool orSafe = orOn || ftSafe || capSafe;
-	SafetyGateResult orGate = ApplySafetyGate(orSafe, "enable_oscrouter.flag");
+	SafetyGateResult orGate = ApplySafetyGate(orSafe, oscRouter);
 	SafetyGateResult gates[] = {
 		calGate,
 		smoGate,

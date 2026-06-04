@@ -1,17 +1,14 @@
 #pragma once
 
+#include "ModuleRegistry.h"
+
 #include <cstddef>
 #include <string>
 #include <string_view>
 
 namespace openvr_pair::common::module_safety {
 
-struct ModuleSpec
-{
-	const char *slug;
-	const char *flag_file;
-	const char *display_name;
-};
+using ModuleSpec = openvr_pair::common::modules::ModuleInfo;
 
 struct LaunchAssessment
 {
@@ -24,6 +21,7 @@ struct LaunchAssessment
 };
 
 const ModuleSpec *Specs(size_t *count = nullptr);
+const ModuleSpec *FindById(openvr_pair::common::modules::ModuleId id);
 const ModuleSpec *FindBySlug(std::string_view slug);
 const ModuleSpec *FindByFlagFileName(std::string_view flagFileName);
 

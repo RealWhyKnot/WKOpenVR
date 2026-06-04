@@ -7,7 +7,6 @@
 #endif
 #include <windows.h>
 
-#include <algorithm>
 #include <string>
 
 namespace openvr_pair::common::module_safety {
@@ -15,29 +14,11 @@ namespace {
 
 constexpr unsigned kActiveOnlyAutoDisableThreshold = 3;
 
-const ModuleSpec kSpecs[] = {
-	{ "calibration",  "enable_calibration.flag",  "Space Calibrator" },
-	{ "smoothing",    "enable_smoothing.flag",    "Smoothing" },
-	{ "inputhealth",  "enable_inputhealth.flag",  "Input Health" },
-	{ "facetracking", "enable_facetracking.flag", "Face Tracking" },
-	{ "oscrouter",    "enable_oscrouter.flag",    "OSC Router" },
-	{ "captions",     "enable_captions.flag",     "Captions" },
-	{ "phantom",      "enable_phantom.flag",      "Phantom Trackers" },
-};
-
 struct CrashCounters
 {
 	unsigned active_unclean = 0;
 	unsigned suspect_unclean = 0;
 };
-
-bool EqualAscii(std::string_view a, std::string_view b)
-{
-	return a.size() == b.size()
-		&& std::equal(a.begin(), a.end(), b.begin(), [](char left, char right) {
-			return left == right;
-		});
-}
 
 std::wstring WidenAscii(std::string_view value)
 {
@@ -224,24 +205,25 @@ void ClearRuntimeMarkers(const ModuleSpec &spec)
 
 const ModuleSpec *Specs(size_t *count)
 {
-	if (count) *count = sizeof(kSpecs) / sizeof(kSpecs[0]);
-	return kSpecs;
+	return openvr_pair::common::modules::DriverSafetyModules(count);
+}
+
+const ModuleSpec *FindById(openvr_pair::common::modules::ModuleId id)
+{
+	const ModuleSpec *spec = openvr_pair::common::modules::FindById(id);
+	return spec && spec->participates_in_driver_safety ? spec : nullptr;
 }
 
 const ModuleSpec *FindBySlug(std::string_view slug)
 {
-	for (const auto &spec : kSpecs) {
-		if (EqualAscii(slug, spec.slug)) return &spec;
-	}
-	return nullptr;
+	const ModuleSpec *spec = openvr_pair::common::modules::FindBySlug(slug);
+	return spec && spec->participates_in_driver_safety ? spec : nullptr;
 }
 
 const ModuleSpec *FindByFlagFileName(std::string_view flagFileName)
 {
-	for (const auto &spec : kSpecs) {
-		if (EqualAscii(flagFileName, spec.flag_file)) return &spec;
-	}
-	return nullptr;
+	const ModuleSpec *spec = openvr_pair::common::modules::FindByFlagFileName(flagFileName);
+	return spec && spec->participates_in_driver_safety ? spec : nullptr;
 }
 
 std::wstring RootPath(bool create)

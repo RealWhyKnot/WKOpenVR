@@ -7,9 +7,9 @@
 class SpaceCalibratorPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
 public:
-	const char *Name() const override { return "Space Calibrator"; }
-	const char *FlagFileName() const override { return "enable_calibration.flag"; }
-	const char *PipeName() const override { return OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME; }
+	const char *Name() const override { return ModuleName(ModuleId::Calibration); }
+	const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::Calibration); }
+	const char *PipeName() const override { return ModulePipeName(ModuleId::Calibration); }
 
 	void OnStart(openvr_pair::overlay::ShellContext &context) override;
 	void OnShutdown(openvr_pair::overlay::ShellContext &context) override;

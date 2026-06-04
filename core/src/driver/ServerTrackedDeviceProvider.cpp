@@ -4,6 +4,7 @@
 #include "InterfaceHookInjector.h"
 #include "IsometryTransform.h"
 #include "Logging.h"
+#include "ModuleRegistry.h"
 #include "ProcessPerfLog.h"
 #include "PredictionSmoothingMath.h"
 #include "RuntimeHealthSummary.h"
@@ -58,6 +59,7 @@ namespace skeletal { void MarkFingersNeedReseed(uint16_t fingerBits); }
 
 namespace {
 
+namespace module_registry = openvr_pair::common::modules;
 namespace module_safety = openvr_pair::common::module_safety;
 
 std::string InputHealthPathString(const char *path)
@@ -71,19 +73,19 @@ const module_safety::ModuleSpec *SafetySpecForFeatureMask(uint32_t featureMask)
 {
 	switch (featureMask) {
 	case pairdriver::kFeatureCalibration:
-		return module_safety::FindByFlagFileName("enable_calibration.flag");
+		return module_safety::FindById(module_registry::ModuleId::Calibration);
 	case pairdriver::kFeatureSmoothing:
-		return module_safety::FindByFlagFileName("enable_smoothing.flag");
+		return module_safety::FindById(module_registry::ModuleId::Smoothing);
 	case pairdriver::kFeatureInputHealth:
-		return module_safety::FindByFlagFileName("enable_inputhealth.flag");
+		return module_safety::FindById(module_registry::ModuleId::InputHealth);
 	case pairdriver::kFeatureFaceTracking:
-		return module_safety::FindByFlagFileName("enable_facetracking.flag");
+		return module_safety::FindById(module_registry::ModuleId::FaceTracking);
 	case pairdriver::kFeatureOscRouter:
-		return module_safety::FindByFlagFileName("enable_oscrouter.flag");
+		return module_safety::FindById(module_registry::ModuleId::OscRouter);
 	case pairdriver::kFeatureCaptions:
-		return module_safety::FindByFlagFileName("enable_captions.flag");
+		return module_safety::FindById(module_registry::ModuleId::Captions);
 	case pairdriver::kFeaturePhantom:
-		return module_safety::FindByFlagFileName("enable_phantom.flag");
+		return module_safety::FindById(module_registry::ModuleId::Phantom);
 	default:
 		return nullptr;
 	}
@@ -151,6 +153,13 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		activeModules.clear();
 	}
 	DriverModuleContext moduleContext{this, pDriverContext, featureFlags};
+	const char *calibrationPipe = module_registry::PipeName(module_registry::ModuleId::Calibration);
+	const char *smoothingPipe = module_registry::PipeName(module_registry::ModuleId::Smoothing);
+	const char *inputHealthPipe = module_registry::PipeName(module_registry::ModuleId::InputHealth);
+	const char *faceTrackingPipe = module_registry::PipeName(module_registry::ModuleId::FaceTracking);
+	const char *oscRouterPipe = module_registry::PipeName(module_registry::ModuleId::OscRouter);
+	const char *captionsPipe = module_registry::PipeName(module_registry::ModuleId::Captions);
+	const char *phantomPipe = module_registry::PipeName(module_registry::ModuleId::Phantom);
 	auto activateModule = [&](std::unique_ptr<DriverModule> module) {
 		if (!module) {
 			LOG("Driver module factory returned null");
@@ -265,63 +274,63 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 
 		calibrationServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME,
+			calibrationPipe,
 			pairdriver::kFeatureCalibration);
-		LOG("Starting calibration IPC server pipe=%s", OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME);
+		LOG("Starting calibration IPC server pipe=%s", calibrationPipe);
 		calibrationServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureSmoothing) {
 		smoothingServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME,
+			smoothingPipe,
 			pairdriver::kFeatureSmoothing);
-		LOG("Starting smoothing IPC server pipe=%s", OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME);
+		LOG("Starting smoothing IPC server pipe=%s", smoothingPipe);
 		smoothingServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureInputHealth) {
 		inputHealthServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME,
+			inputHealthPipe,
 			pairdriver::kFeatureInputHealth);
-		LOG("Starting inputhealth IPC server pipe=%s", OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME);
+		LOG("Starting inputhealth IPC server pipe=%s", inputHealthPipe);
 		inputHealthServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureFaceTracking) {
 		faceTrackingServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME,
+			faceTrackingPipe,
 			pairdriver::kFeatureFaceTracking);
-		LOG("Starting facetracking IPC server pipe=%s", OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME);
+		LOG("Starting facetracking IPC server pipe=%s", faceTrackingPipe);
 		faceTrackingServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureOscRouter) {
 		oscRouterServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME,
+			oscRouterPipe,
 			pairdriver::kFeatureOscRouter);
-		LOG("Starting oscrouter IPC server pipe=%s", OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME);
+		LOG("Starting oscrouter IPC server pipe=%s", oscRouterPipe);
 		oscRouterServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureCaptions) {
 		captionsServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME,
+			captionsPipe,
 			pairdriver::kFeatureCaptions);
-		LOG("Starting captions IPC server pipe=%s", OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME);
+		LOG("Starting captions IPC server pipe=%s", captionsPipe);
 		captionsServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeaturePhantom) {
 		phantomServer = std::make_unique<IPCServer>(
 			this,
-			OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME,
+			phantomPipe,
 			pairdriver::kFeaturePhantom);
-		LOG("Starting phantom IPC server pipe=%s", OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME);
+		LOG("Starting phantom IPC server pipe=%s", phantomPipe);
 		phantomServer->Run();
 	}
 

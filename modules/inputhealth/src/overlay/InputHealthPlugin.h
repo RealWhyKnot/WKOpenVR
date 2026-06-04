@@ -25,9 +25,9 @@ class InputHealthPlugin final : public openvr_pair::overlay::FeaturePlugin
 public:
 	InputHealthPlugin();
 
-	const char *Name() const override { return "Input Health"; }
-	const char *FlagFileName() const override { return "enable_inputhealth.flag"; }
-	const char *PipeName() const override { return OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME; }
+	const char *Name() const override { return ModuleName(ModuleId::InputHealth); }
+	const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::InputHealth); }
+	const char *PipeName() const override { return ModulePipeName(ModuleId::InputHealth); }
 
 	void OnStart(openvr_pair::overlay::ShellContext &context) override;
 	void OnShutdown(openvr_pair::overlay::ShellContext &context) override;

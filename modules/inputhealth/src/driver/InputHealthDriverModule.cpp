@@ -4,6 +4,7 @@
 #include "InputHealthSnapshotPublisher.h"
 #include "InputHealthSnapshotStaging.h"
 #include "Logging.h"
+#include "ModuleRegistry.h"
 #include "ServerTrackedDeviceProvider.h"
 
 #include <cstring>
@@ -17,7 +18,7 @@ class InputHealthDriverModule final : public DriverModule
 public:
 	const char *Name() const override { return "Input Health"; }
 	uint32_t FeatureMask() const override { return pairdriver::kFeatureInputHealth; }
-	const char *PipeName() const override { return OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME; }
+	const char *PipeName() const override { return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::InputHealth); }
 
 	bool Init(DriverModuleContext &context) override
 	{

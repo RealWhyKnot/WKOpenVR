@@ -4,6 +4,7 @@
 
 #include "DriverModule.h"
 #include "FeatureFlags.h"
+#include "ModuleRegistry.h"
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
 
@@ -59,7 +60,7 @@ class CaptionsDriverModule final : public DriverModule
 public:
     const char *Name()        const override { return "Captions"; }
     uint32_t    FeatureMask() const override { return pairdriver::kFeatureCaptions; }
-    const char *PipeName()    const override { return OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME; }
+    const char *PipeName()    const override { return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::Captions); }
 
     bool Init(DriverModuleContext &) override
     {

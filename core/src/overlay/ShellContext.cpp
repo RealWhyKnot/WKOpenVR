@@ -1,6 +1,7 @@
 #include "ShellContext.h"
 
 #include "DiagnosticsLog.h"
+#include "ModuleRegistry.h"
 #include "ModuleSafety.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
@@ -22,6 +23,8 @@
 namespace openvr_pair::overlay {
 namespace {
 
+namespace module_registry = openvr_pair::common::modules;
+
 struct PendingToggle
 {
 	std::string flagFileName;
@@ -31,7 +34,10 @@ struct PendingToggle
 
 std::vector<PendingToggle> g_pendingToggles;
 constexpr const char *kDesktopDefaultModuleSetting = "desktop_default_module";
-constexpr const char *kFallbackDesktopDefaultModule = "enable_questapp.flag";
+const char *FallbackDesktopDefaultModule()
+{
+	return module_registry::FlagFileName(module_registry::ModuleId::QuestApp);
+}
 
 double ShellNowSeconds()
 {
@@ -246,7 +252,7 @@ bool IsValidModuleFlagFileName(const std::string &value)
 std::string NormalizeDesktopDefaultModuleFlag(std::string value)
 {
 	value = TrimAscii(std::move(value));
-	return IsValidModuleFlagFileName(value) ? value : kFallbackDesktopDefaultModule;
+	return IsValidModuleFlagFileName(value) ? value : FallbackDesktopDefaultModule();
 }
 
 std::string AutoDisabledReasonLabel(const std::string &reason)
@@ -282,7 +288,7 @@ ShellContext CreateShellContext()
 	ctx.profileRoot = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
 	ctx.logRoot = openvr_pair::common::WkOpenVrLogsPath(true);
 	ctx.desktopDefaultModuleFlagFileName = NormalizeDesktopDefaultModuleFlag(
-		ReadShellSetting(ctx.profileRoot, kDesktopDefaultModuleSetting, kFallbackDesktopDefaultModule));
+		ReadShellSetting(ctx.profileRoot, kDesktopDefaultModuleSetting, FallbackDesktopDefaultModule()));
 
 	// --- Driver resources dir: discover SteamVR via registry + libraryfolders.vdf.
 	// Fall back to the hard-coded path if any step fails so that known-good
@@ -313,7 +319,7 @@ ShellContext CreateShellContext()
 std::string ShellContext::DesktopDefaultModuleFlagFileName() const
 {
 	return desktopDefaultModuleFlagFileName.empty()
-		? std::string(kFallbackDesktopDefaultModule)
+		? std::string(FallbackDesktopDefaultModule())
 		: desktopDefaultModuleFlagFileName;
 }
 
@@ -367,54 +373,21 @@ std::string ShellContext::ModuleAutoDisabledReason(const char *flagFileName) con
 }
 
 // Maps an enable_<feature>.flag filename to the user-facing label used in
-// the matching Start Menu shortcut filename + description. The shortcuts
-// land in the all-users Start Menu next to the umbrella shortcut so that
-// Windows search returns WKOpenVR when the user types the feature name.
-// Flag files outside this table simply skip the shortcut step -- the
-// behaviour is identical to the pre-shortcut version of SetFlagPresent.
+// the matching Start Menu shortcut filename + description.
 const wchar_t *ShortcutLabelFor(const char *flagFileName)
 {
 	if (!flagFileName) return nullptr;
-	struct Entry { const char *flag; const wchar_t *label; };
-	static const Entry kEntries[] = {
-		{ "enable_calibration.flag",  L"Space Calibrator" },
-		{ "enable_smoothing.flag",    L"Smoothing"        },
-		{ "enable_inputhealth.flag",  L"Input Health"     },
-		{ "enable_facetracking.flag", L"Face Tracking"    },
-		{ "enable_oscrouter.flag",    L"OSC Router"       },
-		{ "enable_captions.flag",     L"Captions"         },
-		{ "enable_phantom.flag",      L"Phantom Trackers" },
-		{ "enable_questapp.flag",     L"Quest App"        },
-	};
-	for (const auto &e : kEntries) {
-		if (strcmp(e.flag, flagFileName) == 0) return e.label;
-	}
-	return nullptr;
+	const module_registry::ModuleInfo *module = module_registry::FindByFlagFileName(flagFileName);
+	return module ? module->shortcut_label : nullptr;
 }
 
 // Per-feature CLI arg attached to the shortcut. Windows Search dedupes
-// Start-Menu entries by the exact (target + arguments) tuple, so without
-// distinct arg strings only one .lnk would surface when the user types a
-// feature name. WKOpenVR.exe ignores unknown args today, so this is a
-// search-discoverability change with no runtime cost.
+// Start-Menu entries by the exact (target + arguments) tuple.
 const wchar_t *ShortcutArgFor(const char *flagFileName)
 {
 	if (!flagFileName) return L"";
-	struct Entry { const char *flag; const wchar_t *arg; };
-	static const Entry kEntries[] = {
-		{ "enable_calibration.flag",  L"--launch=calibration"  },
-		{ "enable_smoothing.flag",    L"--launch=smoothing"    },
-		{ "enable_inputhealth.flag",  L"--launch=inputhealth"  },
-		{ "enable_facetracking.flag", L"--launch=facetracking" },
-		{ "enable_oscrouter.flag",    L"--launch=oscrouter"    },
-		{ "enable_captions.flag",     L"--launch=captions"     },
-		{ "enable_phantom.flag",      L"--launch=phantom"      },
-		{ "enable_questapp.flag",     L"--launch=questapp"     },
-	};
-	for (const auto &e : kEntries) {
-		if (strcmp(e.flag, flagFileName) == 0) return e.arg;
-	}
-	return L"";
+	const module_registry::ModuleInfo *module = module_registry::FindByFlagFileName(flagFileName);
+	return module ? module->shortcut_argument : L"";
 }
 
 bool ShellContext::SetFlagPresent(const char *flagFileName, bool present)

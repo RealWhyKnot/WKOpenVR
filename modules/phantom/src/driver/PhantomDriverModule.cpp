@@ -6,6 +6,7 @@
 #include "DriverModule.h"
 #include "FeatureFlags.h"
 #include "Logging.h"
+#include "ModuleRegistry.h"
 #include "PhantomStateShmem.h"
 
 #include "BlendController.h"
@@ -217,7 +218,7 @@ class PhantomModule final : public DriverModule
 public:
     const char* Name() const override          { return "Phantom"; }
     uint32_t    FeatureMask() const override   { return pairdriver::kFeaturePhantom; }
-    const char* PipeName() const override      { return OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME; }
+    const char* PipeName() const override      { return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::Phantom); }
 
     bool Init(DriverModuleContext& context) override;
     void Shutdown() override;

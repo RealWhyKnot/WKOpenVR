@@ -19,9 +19,9 @@ class CaptionsPlugin final : public openvr_pair::overlay::FeaturePlugin
 public:
     CaptionsPlugin();
 
-    const char *Name()         const override { return "Captions"; }
-    const char *FlagFileName() const override { return "enable_captions.flag"; }
-    const char *PipeName()     const override { return OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME; }
+    const char *Name()         const override { return ModuleName(ModuleId::Captions); }
+    const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::Captions); }
+    const char *PipeName()     const override { return ModulePipeName(ModuleId::Captions); }
     openvr_pair::overlay::FeaturePluginChannel Channel() const override
     {
         return openvr_pair::overlay::FeaturePluginChannel::Development;

@@ -1,5 +1,6 @@
 #include "ModuleToggleUi.h"
 
+#include "ModuleRegistry.h"
 #include "UiCore.h"
 
 #include <imgui.h>
@@ -10,7 +11,17 @@
 namespace openvr_pair::overlay {
 namespace {
 
+namespace module_registry = openvr_pair::common::modules;
+
 std::map<std::string, bool> g_wantedModuleStates;
+
+bool IsEffectiveModuleEnabled(
+	ShellContext &context,
+	const module_registry::ModuleInfo &module)
+{
+	return context.IsFlagPresent(module.flag_file) &&
+		!context.IsModuleAutoDisabled(module.flag_file);
+}
 
 } // namespace
 
@@ -40,11 +51,12 @@ void DrawModuleToggleTable(
 		if (!plugin) continue;
 		const bool installed = plugin->IsInstalled(context);
 		const std::string key = plugin->FlagFileName();
+		const module_registry::ModuleInfo *module = module_registry::FindByFlagFileName(key);
 		const bool isPending = context.IsTogglePending(key.c_str());
 		const bool autoDisabled = context.IsModuleAutoDisabled(key.c_str());
 		const bool blockedByRouterSafety =
-			(key == "enable_facetracking.flag" || key == "enable_captions.flag") &&
-			context.IsModuleAutoDisabled("enable_oscrouter.flag");
+			module && module->requires_osc_router &&
+			context.IsModuleAutoDisabled(module_registry::FlagFileName(module_registry::ModuleId::OscRouter));
 
 		auto it = g_wantedModuleStates.find(key);
 		if (!isPending && it != g_wantedModuleStates.end()) {
@@ -83,13 +95,13 @@ void DrawModuleToggleTable(
 
 		ui::NextColumn();
 		ImGui::AlignTextToFramePadding();
-		const bool isRouterRow = (key == "enable_oscrouter.flag");
-		const bool faceTrackingEffective =
-			context.IsFlagPresent("enable_facetracking.flag") &&
-			!context.IsModuleAutoDisabled("enable_facetracking.flag");
-		const bool captionsEffective =
-			context.IsFlagPresent("enable_captions.flag") &&
-			!context.IsModuleAutoDisabled("enable_captions.flag");
+		const bool isRouterRow = module && module->id == module_registry::ModuleId::OscRouter;
+		const bool faceTrackingEffective = IsEffectiveModuleEnabled(
+			context,
+			module_registry::Get(module_registry::ModuleId::FaceTracking));
+		const bool captionsEffective = IsEffectiveModuleEnabled(
+			context,
+			module_registry::Get(module_registry::ModuleId::Captions));
 		const bool routerRequired = isRouterRow &&
 			(faceTrackingEffective || captionsEffective);
 		std::string statusStorage;
@@ -108,7 +120,8 @@ void DrawModuleToggleTable(
 		} else if (blockedByRouterSafety) {
 			statusText = "Blocked by OSC Router";
 			statusTone = ui::StatusTone::Warn;
-		} else if (routerRequired && !context.IsFlagPresent("enable_oscrouter.flag")) {
+		} else if (routerRequired &&
+			!context.IsFlagPresent(module_registry::FlagFileName(module_registry::ModuleId::OscRouter))) {
 			statusText = "Enabled by OSC module";
 			statusTone = ui::StatusTone::Ok;
 		} else if (effectiveInstalled) {
