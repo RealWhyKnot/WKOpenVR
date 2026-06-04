@@ -5,6 +5,7 @@
 // Copyright (c) benaclejames and contributors. Licensed under Apache 2.0.
 // Modifications: namespace renamed to WKOpenVR.FaceModuleProcess.
 // ----------------------------------------------------------------------------
+using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -29,7 +30,7 @@ public class ModuleProcessMain
     public static VrcftSandboxClient Client;
     public static CancellationTokenSource cts = new();
 
-    private static Queue<IpcPacket> _packetsToSend = new ();
+    private static readonly ConcurrentQueue<IpcPacket> _packetsToSend = new();
     private static Timer? _connectionTimer;
 
     private static object _callbackLock = new ();
@@ -84,8 +85,7 @@ public class ModuleProcessMain
                 var modulePath = parseResult.GetValue(modulePathOption);
                 var port = parseResult.GetValue(portOption);
                 var parentPid = parseResult.GetValue(parentPidOption);
-                VrcftMain(modulePath!, port ?? 0, parentPid);
-                return 0;
+                return VrcftMain(modulePath!, port ?? 0, parentPid);
             });
 
             return rootCommand.Parse(args).Invoke();
@@ -130,10 +130,16 @@ public class ModuleProcessMain
 
         LoggerFactory = serviceProvider.GetService<ILoggerFactory>();
         Logger = LoggerFactory.CreateLogger<ModuleProcessMain>();
+        Logger.LogInformation(
+            "Module process starting. modulePath={modulePath} serverPort={serverPort} parentPid={parentPid}",
+            modulePath,
+            serverPortNumber,
+            parentPid?.ToString() ?? "(none)");
 
         // Separate watchdog thread independent of module code to ensure module shutdown
         if (parentPid.HasValue)
         {
+            Logger.LogInformation("Parent watchdog starting for pid={parentPid}", parentPid.Value);
             var watchdogThread = new Thread(() =>
             {
                 try
@@ -170,6 +176,7 @@ public class ModuleProcessMain
 
         // A module process will connect to a given port number first. We try connecting to the server for 30 seconds, then give up, returning an error code in the process.
         Client = new VrcftSandboxClient(serverPortNumber, LoggerFactory);
+        Logger.LogInformation("Sandbox client created for port={serverPort}", serverPortNumber);
 
         // Bind the log function so that we can forward log messages to VRCFT's main process
         ProxyLogger.OnLog += (level, msg) =>
@@ -186,6 +193,9 @@ public class ModuleProcessMain
             Logger.LogError("Module failed to load: {modulePath}", modulePath);
             return ModuleProcessExitCodes.EXCEPTION_CRASH;
         }
+        Logger.LogInformation("Module loaded: assembly={assembly} module={moduleName}",
+            DefModuleAssembly.Assembly?.FullName ?? "(unknown)",
+            DefModuleAssembly.TrackingModule.ModuleInformation.Name);
 
         // Initialise to invalid state
         UnifiedTracking.Data = new() {
@@ -223,6 +233,10 @@ public class ModuleProcessMain
                 case IpcPacket.PacketType.EventGetSupported:
                     {
                         var result = DefModuleAssembly.TrackingModule.Supported;
+                        Logger.LogInformation(
+                            "Replying supported streams: eye={eye} expression={expression}",
+                            result.SupportsEye,
+                            result.SupportsExpression);
                         var pkt = new ReplySupportedPacket()
                         {
                             eyeAvailable        = result.SupportsEye,
@@ -249,13 +263,35 @@ public class ModuleProcessMain
                             Logger.LogError("Exception initializing {module}. Skipping. {e}", DefModuleAssembly.GetType().Name, e);
                             return;
                         }
+                        Logger.LogInformation(
+                            "Module initialize result: requestedEye={requestedEye} requestedExpression={requestedExpression} eyeSuccess={eyeSuccess} expressionSuccess={expressionSuccess}",
+                            pkt.eyeAvailable,
+                            pkt.expressionAvailable,
+                            eyeSuccess,
+                            expressionSuccess);
 
                         DefModuleAssembly._updateCts = new CancellationTokenSource();
                         var thread = new Thread(() =>
                         {
-                            while (!DefModuleAssembly._updateCts.IsCancellationRequested)
+                            Logger.LogInformation("Module update thread started.");
+                            try
                             {
-                                DefModuleAssembly.TrackingModule.Update();
+                                while (!DefModuleAssembly._updateCts.IsCancellationRequested)
+                                {
+                                    DefModuleAssembly.TrackingModule.Update();
+                                }
+                                Logger.LogInformation("Module update thread stopped.");
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.LogCritical(ex, "Module Update threw; terminating module process.");
+                                try
+                                {
+                                    Client.SendData(new EventLogPacket(LogLevel.Critical,
+                                        $"Module Update threw: {ex.GetType().Name} {ex.Message}"));
+                                }
+                                catch { }
+                                Environment.Exit(ModuleProcessExitCodes.EXCEPTION_CRASH);
                             }
                         });
                         // Background thread as to not prevent the CLR from terminating if stuck in native code (looking at you vive)
@@ -324,6 +360,7 @@ public class ModuleProcessMain
         }
 
         // Start the connection
+        Logger.LogInformation("Connecting sandbox client.");
         Client.Connect(modulePath);
         Logger.LogInformation("Initializing {module}", DefModuleAssembly.Assembly.ToString());
 
@@ -339,7 +376,6 @@ public class ModuleProcessMain
             // Send packets in loop
             while (_packetsToSend.TryDequeue(out IpcPacket pkt))
             {
-                if (pkt == null) continue;  // Ignore your IDE. This can and will be null at some point as we're not locking
                 Client.SendData(pkt);
             }
 

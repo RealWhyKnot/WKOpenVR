@@ -57,6 +57,7 @@ public sealed class HostStatusWriter(
                 InstalledModules   = [],
                 ModulesInstallDir  = options.ModulesInstallDir,
                 FramesWritten      = 0,
+                FramesWithData     = 0,
                 FramesRead         = 0,
                 OscMessagesSent    = 0,
                 LastExitCode       = 0,
@@ -100,6 +101,7 @@ public sealed class HostStatusWriter(
                 InstalledModules   = [],
                 ModulesInstallDir  = options.ModulesInstallDir,
                 FramesWritten      = framesWritten,
+                FramesWithData     = 0,
                 FramesRead         = 0,
                 OscMessagesSent    = 0,
                 LastExitCode       = 0,
@@ -174,6 +176,7 @@ public sealed class HostStatusWriter(
             ActiveModuleUuid    = loader.Active?.Uuid ?? "",
             ActiveModuleName    = loader.Active?.Manifest.Name ?? "",
             FramesWritten       = runtime.FramesWritten,
+            FramesWithData      = runtime.FramesWithData,
             FramesRead          = 0,
             OscMessagesSent     = 0,
             LastExitCode        = runtime.LastExitCode,
@@ -268,6 +271,7 @@ public sealed class HostStatus
     [JsonPropertyName("active_module_uuid")] public string   ActiveModuleUuid  { get; init; } = "";
     [JsonPropertyName("active_module_name")] public string   ActiveModuleName  { get; init; } = "";
     [JsonPropertyName("frames_written")]    public long      FramesWritten     { get; init; }
+    [JsonPropertyName("frames_with_data")]  public long      FramesWithData    { get; init; }
     [JsonPropertyName("frames_read")]       public long      FramesRead        { get; init; }
     [JsonPropertyName("osc_messages_sent")] public long      OscMessagesSent   { get; init; }
     [JsonPropertyName("last_exit_code")]    public int       LastExitCode      { get; init; }

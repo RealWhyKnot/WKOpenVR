@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -44,24 +45,28 @@ static std::wstring ResolveTelemetryDir()
 }
 
 // Atomically write `content` to `final_path` via a .tmp rename.
-static void AtomicWriteFile(const std::wstring &final_path, const std::string &content)
+static bool AtomicWriteFile(const std::wstring &final_path, const std::string &content)
 {
     std::wstring tmp_path = final_path + L".tmp";
 
     HANDLE h = CreateFileW(tmp_path.c_str(),
         GENERIC_WRITE, 0, nullptr,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return false;
 
     DWORD written = 0;
-    WriteFile(h, content.data(), static_cast<DWORD>(content.size()), &written, nullptr);
+    const BOOL write_ok = WriteFile(h, content.data(), static_cast<DWORD>(content.size()), &written, nullptr);
     CloseHandle(h);
 
-    if (written == static_cast<DWORD>(content.size())) {
-        MoveFileExW(tmp_path.c_str(), final_path.c_str(), MOVEFILE_REPLACE_EXISTING);
-    } else {
+    if (!write_ok || written != static_cast<DWORD>(content.size())) {
         DeleteFileW(tmp_path.c_str());
+        return false;
     }
+    if (!MoveFileExW(tmp_path.c_str(), final_path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(tmp_path.c_str());
+        return false;
+    }
+    return true;
 }
 
 // Build driver_telemetry.json from current state.
@@ -122,6 +127,27 @@ static std::string BuildTelemetryJson(
     o << "]\n";
     o << "}\n";
     return o.str();
+}
+
+static const char *FaceCalibrationOpName(protocol::FaceCalibrationOp op)
+{
+    switch (op) {
+    case protocol::FaceCalibBegin:     return "begin";
+    case protocol::FaceCalibEnd:       return "end";
+    case protocol::FaceCalibSave:      return "save";
+    case protocol::FaceCalibResetAll:  return "reset-all";
+    case protocol::FaceCalibResetEye:  return "reset-eye";
+    case protocol::FaceCalibResetExpr: return "reset-expr";
+    default:                           return "unknown";
+    }
+}
+
+static std::string FixedString(const char *value, size_t capacity)
+{
+    if (!value || capacity == 0) return {};
+    size_t n = 0;
+    while (n < capacity && value[n] != '\0') ++n;
+    return std::string(value, n);
 }
 
 // -----------------------------------------------------------------------
@@ -264,10 +290,49 @@ public:
         switch (req.type) {
         case protocol::RequestSetFaceTrackingConfig: {
             std::lock_guard<std::mutex> lk(config_mutex_);
+            const protocol::FaceTrackingConfig old = config_;
             config_ = req.setFaceTrackingConfig;
+            const std::string old_uuid = FixedString(
+                old.active_module_uuid, protocol::FACETRACKING_MODULE_UUID_LEN);
+            const std::string new_uuid = FixedString(
+                config_.active_module_uuid, protocol::FACETRACKING_MODULE_UUID_LEN);
+            FT_LOG_DRV("[module] config update: master=%u->%u osc=%u->%u native=%u->%u "
+                       "module='%s'->'%s' calib=%u->%u eyelid=%u/%u->%u/%u "
+                       "vergence=%u/%u->%u/%u smooth(gaze=%u->%u open=%u->%u) "
+                       "corr=0x%02x->0x%02x corr_strengths=0x%04x->0x%04x osc_port=%u->%u",
+                       (unsigned)old.master_enabled,
+                       (unsigned)config_.master_enabled,
+                       (unsigned)old.output_osc_enabled,
+                       (unsigned)config_.output_osc_enabled,
+                       (unsigned)old._reserved_native,
+                       (unsigned)config_._reserved_native,
+                       old_uuid.c_str(),
+                       new_uuid.c_str(),
+                       (unsigned)old.continuous_calib_mode,
+                       (unsigned)config_.continuous_calib_mode,
+                       (unsigned)old.eyelid_sync_enabled,
+                       (unsigned)old.eyelid_sync_strength,
+                       (unsigned)config_.eyelid_sync_enabled,
+                       (unsigned)config_.eyelid_sync_strength,
+                       (unsigned)old.vergence_lock_enabled,
+                       (unsigned)old.vergence_lock_strength,
+                       (unsigned)config_.vergence_lock_enabled,
+                       (unsigned)config_.vergence_lock_strength,
+                       (unsigned)old.gaze_smoothing,
+                       (unsigned)config_.gaze_smoothing,
+                       (unsigned)old.openness_smoothing,
+                       (unsigned)config_.openness_smoothing,
+                       (unsigned)old.expression_correction_flags,
+                       (unsigned)config_.expression_correction_flags,
+                       (unsigned)old.expression_correction_strengths,
+                       (unsigned)config_.expression_correction_strengths,
+                       (unsigned)old.osc_port,
+                       (unsigned)config_.osc_port);
             // Forward active module selection to supervisor.
             if (supervisor_) {
                 supervisor_->SetActiveModuleUuid(config_.active_module_uuid);
+            } else {
+                FT_LOG_DRV("[module] config update could not reach host supervisor: supervisor unavailable", 0);
             }
             resp.type = protocol::ResponseSuccess;
             return true;
@@ -276,20 +341,31 @@ public:
             const protocol::FaceCalibrationOp op =
                 (protocol::FaceCalibrationOp)req.setFaceCalibrationCommand.op;
             std::lock_guard<std::mutex> lk(config_mutex_);
+            FT_LOG_DRV("[module] calibration command op=%s(%u)",
+                FaceCalibrationOpName(op), (unsigned)op);
             calib_.Reset(op);
             resp.type = protocol::ResponseSuccess;
             return true;
         }
         case protocol::RequestSetFaceActiveModule: {
+            const std::string uuid = FixedString(
+                req.setFaceActiveModule.uuid, protocol::FACETRACKING_MODULE_UUID_LEN);
+            FT_LOG_DRV("[module] active module request uuid='%s'", uuid.c_str());
             if (supervisor_) {
                 supervisor_->SetActiveModuleUuid(req.setFaceActiveModule.uuid);
+            } else {
+                FT_LOG_DRV("[module] active module request could not reach host supervisor: supervisor unavailable", 0);
             }
             resp.type = protocol::ResponseSuccess;
             return true;
         }
         case protocol::RequestFaceHostRestart: {
             FT_LOG_DRV("[module] host restart requested by overlay", 0);
-            if (supervisor_) supervisor_->Restart();
+            if (supervisor_) {
+                supervisor_->Restart();
+            } else {
+                FT_LOG_DRV("[module] host restart ignored: supervisor unavailable", 0);
+            }
             resp.type = protocol::ResponseSuccess;
             return true;
         }
@@ -327,6 +403,7 @@ private:
     uint64_t osc_messages_sent_ = 0;
     uint64_t osc_messages_dropped_ = 0;
     FaceOscAddressFilter osc_filter_;
+    bool telemetry_write_failed_ = false;
 
     // Diagnostics state: OSC output transition tracking.
     bool     osc_was_enabled_     = false;
@@ -340,8 +417,13 @@ private:
     uint64_t diag_eye_valid_ = 0;
     uint64_t diag_expr_valid_ = 0;
     uint64_t diag_zero_expr_ = 0;
+    uint64_t diag_read_failures_ = 0;
+    uint64_t diag_osc_attempted_ = 0;
     uint64_t diag_osc_sent_ = 0;
     uint64_t diag_osc_dropped_ = 0;
+    uint64_t diag_osc_filtered_ = 0;
+    uint64_t diag_osc_deduped_ = 0;
+    uint64_t diag_osc_remapped_ = 0;
 
     // -----------------------------------------------------------------------
     // Worker thread: polls shmem, runs the filter pipeline, publishes.
@@ -352,6 +434,8 @@ private:
 
         uint64_t last_idx = 0;
         const DWORD self_pid = GetCurrentProcessId();
+        uint64_t same_index_polls = 0;
+        auto last_no_frame_log = std::chrono::steady_clock::time_point{};
 
         // Wedge-detector: rising edge bookkeeping so the warning logs only
         // once per wedge episode and the restart fires only once per
@@ -414,6 +498,24 @@ private:
 
             uint64_t idx = reader_.LastPublishIndex();
             if (idx == last_idx) {
+                ++same_index_polls;
+                const auto no_frame_now = std::chrono::steady_clock::now();
+                const bool host_is_fresh =
+                    hb_age_ms != UINT64_MAX && hb_age_ms <= wedge_threshold_ms;
+                const bool should_log_no_frame =
+                    host_state == protocol::HostStatePublishing &&
+                    host_is_fresh &&
+                    (last_no_frame_log == std::chrono::steady_clock::time_point{} ||
+                     no_frame_now - last_no_frame_log >= std::chrono::seconds(5));
+                if (should_log_no_frame) {
+                    FT_LOG_DRV("[worker][diag] no new frame index while host is publishing: "
+                               "publish_index=%llu same_index_polls=%llu host_state=%u hb_age_ms=%llu",
+                               static_cast<unsigned long long>(idx),
+                               static_cast<unsigned long long>(same_index_polls),
+                               host_state,
+                               static_cast<unsigned long long>(hb_age_ms));
+                    last_no_frame_log = no_frame_now;
+                }
                 // No new frame; sleep briefly so we don't busy-spin.
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
@@ -423,9 +525,21 @@ private:
                 continue;
             }
             last_idx = idx;
+            same_index_polls = 0;
 
             protocol::FaceTrackingFrameBody frame{};
-            if (!reader_.TryRead(frame)) continue;
+            if (!reader_.TryRead(frame)) {
+                const uint64_t failures = ++diag_read_failures_;
+                if (failures == 1 || (failures % 256) == 0) {
+                    FT_LOG_DRV("[worker][diag] frame read failed after publish_index advanced: "
+                               "publish_index=%llu failures=%llu host_state=%u hb_age_ms=%llu",
+                               static_cast<unsigned long long>(idx),
+                               static_cast<unsigned long long>(failures),
+                               host_state,
+                               static_cast<unsigned long long>(hb_age_ms));
+                }
+                continue;
+            }
             ++frames_read_;
             const uint32_t input_flags = frame.flags;
             const float input_jaw_open = frame.upstream_expressions[22]; // UnifiedExpressions.JawOpen
@@ -511,7 +625,8 @@ private:
                 }
 
                 if (osc_filter_.ReloadIfChanged()) {
-                    FT_LOG_DRV("[facetracking] avatar OSC allowlist loaded: %u addresses",
+                    FT_LOG_DRV("[facetracking] avatar OSC allowlist status=%s addresses=%u",
+                        FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()),
                         (unsigned)osc_filter_.AllowedCount());
                 }
 
@@ -519,9 +634,15 @@ private:
                 osc_messages_sent_ += counts.sent;
                 osc_messages_dropped_ += counts.dropped;
 
-                if (!osc_first_publish_ && counts.sent > 0) {
-                    FT_LOG_DRV("[facetracking] first OSC publish: sent=%u JawOpen=%.3f LeftEyeLid=%.3f flags=0x%x",
+                if (!osc_first_publish_ && counts.attempted > 0) {
+                    FT_LOG_DRV("[facetracking] first OSC publish: attempted=%u sent=%u drop=%u "
+                               "filtered=%u deduped=%u remapped=%u JawOpen=%.3f LeftEyeLid=%.3f flags=0x%x",
+                        (unsigned)counts.attempted,
                         (unsigned)counts.sent,
+                        (unsigned)counts.dropped,
+                        (unsigned)counts.filtered,
+                        (unsigned)counts.deduped,
+                        (unsigned)counts.remapped,
                         frame.expressions[26], // index 26 = JawOpen
                         frame.eye_openness_l,
                         (unsigned)frame.flags);
@@ -534,8 +655,12 @@ private:
                 if (eye_valid) ++diag_eye_valid_;
                 if (expr_valid) ++diag_expr_valid_;
                 if (expr_valid && !expr_nonzero) ++diag_zero_expr_;
+                diag_osc_attempted_ += counts.attempted;
                 diag_osc_sent_ += counts.sent;
                 diag_osc_dropped_ += counts.dropped;
+                diag_osc_filtered_ += counts.filtered;
+                diag_osc_deduped_ += counts.deduped;
+                diag_osc_remapped_ += counts.remapped;
 
                 if (!first_frame_diag_logged_) {
                     first_frame_diag_logged_ = true;
@@ -544,7 +669,7 @@ private:
                                "eyelid=%u/%u vergence=%u/%u corr=0x%02x smooth(gaze=%u open=%u) "
                                "jaw(raw=%.3f out=%.3f mouthClosedRaw=%.3f) "
                                "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) "
-                               "pupil=(%.3f,%.3f) rawEyeWideL=%.3f allowlist=%u",
+                               "pupil=(%.3f,%.3f) rawEyeWideL=%.3f allowlist=%u allowlist_status=%s",
                                (unsigned)input_flags,
                                (unsigned)frame.flags,
                                host_state,
@@ -570,7 +695,8 @@ private:
                                frame.pupil_dilation_l,
                                frame.pupil_dilation_r,
                                input_eye_wide_l,
-                               (unsigned)osc_filter_.AllowedCount());
+                               (unsigned)osc_filter_.AllowedCount(),
+                               FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
                 }
 
                 const auto diag_now = std::chrono::steady_clock::now();
@@ -579,8 +705,9 @@ private:
                 } else if (diag_now - last_diag_log_ >= std::chrono::seconds(5)) {
                     FT_LOG_DRV("[facetracking][diag] period frames=%llu eye_valid=%llu expr_valid=%llu "
                                "zero_expr=%llu host_state=%u hb_age_ms=%llu module='%s' "
-                               "osc=%u osc_delta=(sent=%llu drop=%llu) total_osc=(sent=%llu drop=%llu) "
-                               "allowlist=%u calib=%u eyelid=%u vergence=%u corr=0x%02x "
+                               "osc=%u osc_delta=(attempt=%llu sent=%llu drop=%llu filtered=%llu deduped=%llu remapped=%llu) "
+                               "total_osc=(sent=%llu drop=%llu) allowlist=%u allowlist_status=%s read_fail=%llu "
+                               "calib=%u eyelid=%u vergence=%u corr=0x%02x "
                                "last_jaw=%.3f last_eye=(%.3f,%.3f) last_pupil=(%.3f,%.3f)",
                                static_cast<unsigned long long>(diag_frames_),
                                static_cast<unsigned long long>(diag_eye_valid_),
@@ -590,11 +717,17 @@ private:
                                static_cast<unsigned long long>(hb_age_ms),
                                cfg.active_module_uuid,
                                (unsigned)cfg.output_osc_enabled,
+                               static_cast<unsigned long long>(diag_osc_attempted_),
                                static_cast<unsigned long long>(diag_osc_sent_),
                                static_cast<unsigned long long>(diag_osc_dropped_),
+                               static_cast<unsigned long long>(diag_osc_filtered_),
+                               static_cast<unsigned long long>(diag_osc_deduped_),
+                               static_cast<unsigned long long>(diag_osc_remapped_),
                                static_cast<unsigned long long>(osc_messages_sent_),
                                static_cast<unsigned long long>(osc_messages_dropped_),
                                (unsigned)osc_filter_.AllowedCount(),
+                               FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()),
+                               static_cast<unsigned long long>(diag_read_failures_),
                                (unsigned)cfg.continuous_calib_mode,
                                (unsigned)cfg.eyelid_sync_enabled,
                                (unsigned)cfg.vergence_lock_enabled,
@@ -608,8 +741,13 @@ private:
                     diag_eye_valid_ = 0;
                     diag_expr_valid_ = 0;
                     diag_zero_expr_ = 0;
+                    diag_read_failures_ = 0;
+                    diag_osc_attempted_ = 0;
                     diag_osc_sent_ = 0;
                     diag_osc_dropped_ = 0;
+                    diag_osc_filtered_ = 0;
+                    diag_osc_deduped_ = 0;
+                    diag_osc_remapped_ = 0;
                     last_diag_log_ = diag_now;
                 }
             }
@@ -646,7 +784,15 @@ private:
             verg_enabled, focus_m, ipd_m,
             calib_);
 
-        AtomicWriteFile(telemetry_path_, json);
+        if (!AtomicWriteFile(telemetry_path_, json)) {
+            if (!telemetry_write_failed_) {
+                FT_LOG_DRV("[worker][diag] driver telemetry write failed", 0);
+                telemetry_write_failed_ = true;
+            }
+        } else if (telemetry_write_failed_) {
+            FT_LOG_DRV("[worker][diag] driver telemetry write recovered", 0);
+            telemetry_write_failed_ = false;
+        }
     }
 };
 

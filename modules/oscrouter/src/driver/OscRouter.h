@@ -85,6 +85,15 @@ private:
     std::atomic<uint64_t>   droppedCount_   {0};
     std::atomic<uint64_t>   packetsSent_    {0};
     std::atomic<uint64_t>   bytesSent_      {0};
+    std::atomic<uint64_t>   packetsQueued_  {0};
+    std::atomic<uint64_t>   oversizedPackets_{0};
+    std::atomic<uint64_t>   unmatchedRoutes_{0};
+    std::atomic<uint64_t>   sendFailures_   {0};
+    std::atomic<uint64_t>   socketClosedDrops_{0};
+    std::atomic<uint64_t>   pubPipeFrames_  {0};
+    std::atomic<uint64_t>   pubPipeInvalidFrames_{0};
+    std::atomic<uint64_t>   pubPipeQueueDrops_{0};
+    std::atomic<uint64_t>   pubPipeReadBreaks_{0};
 
     std::atomic<bool>       stop_           {false};
     std::thread             sendWorker_;

@@ -35,6 +35,7 @@ public:
 private:
     SOCKET          sock_    = INVALID_SOCKET;
     sockaddr_in     target_  {};
+    uint64_t        sendErrorCount_ = 0;
     static bool     wsaInit_;
 };
 

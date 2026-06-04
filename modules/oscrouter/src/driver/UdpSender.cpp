@@ -54,7 +54,13 @@ int UdpSender::Send(const void *data, size_t len)
         reinterpret_cast<const sockaddr*>(&target_),
         sizeof(target_));
     if (sent == SOCKET_ERROR) {
-        OR_LOG("UdpSender::Send sendto failed: %d", WSAGetLastError());
+        const int err = WSAGetLastError();
+        ++sendErrorCount_;
+        if (sendErrorCount_ == 1 || (sendErrorCount_ % 1024) == 0) {
+            OR_LOG("UdpSender::Send sendto failed: err=%d total=%llu",
+                err,
+                static_cast<unsigned long long>(sendErrorCount_));
+        }
         return -1;
     }
     return sent;
@@ -66,6 +72,7 @@ void UdpSender::Close()
         closesocket(sock_);
         sock_ = INVALID_SOCKET;
     }
+    sendErrorCount_ = 0;
 }
 
 } // namespace oscrouter

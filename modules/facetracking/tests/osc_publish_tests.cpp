@@ -168,6 +168,10 @@ TEST(FaceOscAddressFilter, MissingFileBlocksWhenActive)
     EXPECT_TRUE(filter.ReloadIfChanged());
     EXPECT_TRUE(filter.Active());
     EXPECT_EQ(filter.AllowedCount(), 0u);
+    EXPECT_EQ(filter.LastLoadStatus(), facetracking::FaceOscAddressFilterLoadStatus::Missing);
+    EXPECT_STREQ(
+        facetracking::FaceOscAddressFilterLoadStatusName(filter.LastLoadStatus()),
+        "missing");
     EXPECT_FALSE(filter.Allows("/avatar/parameters/JawOpen"));
 }
 
@@ -181,6 +185,7 @@ TEST(FaceOscAddressFilter, LoadsAndReloadsAddresses)
     facetracking::FaceOscAddressFilter filter(path);
     EXPECT_TRUE(filter.ReloadIfChanged());
     EXPECT_EQ(filter.AllowedCount(), 2u);
+    EXPECT_EQ(filter.LastLoadStatus(), facetracking::FaceOscAddressFilterLoadStatus::Loaded);
     EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/JawOpen"));
     EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/EyeLidLeft"));
     EXPECT_FALSE(filter.Allows("/avatar/parameters/v2/SmileFrownLeft"));
@@ -190,6 +195,7 @@ TEST(FaceOscAddressFilter, LoadsAndReloadsAddresses)
         "/avatar/parameters/v2/SmileFrownLeft\n");
     EXPECT_TRUE(filter.ReloadIfChanged());
     EXPECT_EQ(filter.AllowedCount(), 2u);
+    EXPECT_EQ(filter.LastLoadStatus(), facetracking::FaceOscAddressFilterLoadStatus::Loaded);
     EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/SmileFrownLeft"));
     EXPECT_FALSE(filter.Allows("/avatar/parameters/v2/EyeLidLeft"));
 
@@ -222,6 +228,28 @@ TEST(FaceOscAddressFilter, ResolvesPrefixedVrcftV2Addresses)
     EXPECT_EQ(filter.CompatibleAddress("/avatar/parameters/v2/MouthOpen"), nullptr);
 
     DeleteFileW(path.c_str());
+}
+
+TEST(FaceOscPublishCounts, AddPreservesDiagnosticFields)
+{
+    facetracking::FaceOscPublishCounts total{};
+    facetracking::FaceOscPublishCounts delta{};
+    delta.attempted = 10;
+    delta.sent = 4;
+    delta.dropped = 1;
+    delta.filtered = 3;
+    delta.deduped = 2;
+    delta.remapped = 5;
+
+    total.Add(delta);
+    total.Add(delta);
+
+    EXPECT_EQ(total.attempted, 20u);
+    EXPECT_EQ(total.sent, 8u);
+    EXPECT_EQ(total.dropped, 2u);
+    EXPECT_EQ(total.filtered, 6u);
+    EXPECT_EQ(total.deduped, 4u);
+    EXPECT_EQ(total.remapped, 10u);
 }
 
 // ---------------------------------------------------------------------------

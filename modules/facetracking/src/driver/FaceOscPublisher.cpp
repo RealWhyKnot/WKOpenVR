@@ -17,33 +17,47 @@ namespace {
 
 struct OscCounts
 {
+    uint32_t attempted = 0;
     uint32_t sent = 0;
     uint32_t dropped = 0;
+    uint32_t filtered = 0;
+    uint32_t deduped = 0;
+    uint32_t remapped = 0;
 
-    void Add(int result)
+    void Add(const OscCounts &other)
     {
-        if (result > 0) ++sent;
-        else if (result < 0) ++dropped;
+        attempted += other.attempted;
+        sent += other.sent;
+        dropped += other.dropped;
+        filtered += other.filtered;
+        deduped += other.deduped;
+        remapped += other.remapped;
     }
 
     FaceOscPublishCounts Public() const
     {
-        return FaceOscPublishCounts{ sent, dropped };
+        return FaceOscPublishCounts{ attempted, sent, dropped, filtered, deduped, remapped };
     }
 };
 
 static thread_local const FaceOscAddressFilter *t_addressFilter = nullptr;
 static thread_local std::unordered_set<std::string> *t_filteredDestinations = nullptr;
 
-static inline int OscPublishFloat(const char *address, float value)
+static inline void OscPublishFloat(OscCounts &counts, const char *address, float value)
 {
+    ++counts.attempted;
     if (t_addressFilter && t_addressFilter->Active()) {
         const std::string *compatibleAddress = t_addressFilter->CompatibleAddress(address);
-        if (!compatibleAddress) return 0;
+        if (!compatibleAddress) {
+            ++counts.filtered;
+            return;
+        }
         if (t_filteredDestinations &&
             !t_filteredDestinations->insert(*compatibleAddress).second) {
-            return 0;
+            ++counts.deduped;
+            return;
         }
+        if (*compatibleAddress != address) ++counts.remapped;
         address = compatibleAddress->c_str();
     }
 
@@ -55,8 +69,12 @@ static inline int OscPublishFloat(const char *address, float value)
         static_cast<uint8_t>(bits >>  8),
         static_cast<uint8_t>(bits        ),
     };
-    return pairdriver::oscrouter::PublishOsc(
-        "facetracking", address, ",f", arg_bytes, 4) ? 1 : -1;
+    if (pairdriver::oscrouter::PublishOsc(
+        "facetracking", address, ",f", arg_bytes, 4)) {
+        ++counts.sent;
+    } else {
+        ++counts.dropped;
+    }
 }
 
 static const char *const kExprParamNames[protocol::FACETRACKING_EXPRESSION_COUNT] = {
@@ -378,7 +396,7 @@ static bool PublishFtV2Float(OscCounts &counts, const char *name, float value)
     char address[96];
     int written = std::snprintf(address, sizeof(address), "%s%s", kPrefix, name);
     if (written <= 0 || static_cast<size_t>(written) >= sizeof(address)) return false;
-    counts.Add(OscPublishFloat(address, value));
+    OscPublishFloat(counts, address, value);
     return true;
 }
 
@@ -442,21 +460,21 @@ static OscCounts PublishEye(const protocol::FaceTrackingFrameBody &frame)
     const float pupil  = (FiniteOrZero(frame.pupil_dilation_l) +
                           FiniteOrZero(frame.pupil_dilation_r)) * 0.5f;
 
-    counts.Add(OscPublishFloat("/avatar/parameters/LeftEyeX",     gx_l));
-    counts.Add(OscPublishFloat("/avatar/parameters/LeftEyeY",     gy_l));
-    counts.Add(OscPublishFloat("/avatar/parameters/RightEyeX",    gx_r));
-    counts.Add(OscPublishFloat("/avatar/parameters/RightEyeY",    gy_r));
-    counts.Add(OscPublishFloat("/avatar/parameters/LeftEyeLid",   open_l));
-    counts.Add(OscPublishFloat("/avatar/parameters/RightEyeLid",  open_r));
-    counts.Add(OscPublishFloat("/avatar/parameters/EyesDilation", pupil));
+    OscPublishFloat(counts, "/avatar/parameters/LeftEyeX",     gx_l);
+    OscPublishFloat(counts, "/avatar/parameters/LeftEyeY",     gy_l);
+    OscPublishFloat(counts, "/avatar/parameters/RightEyeX",    gx_r);
+    OscPublishFloat(counts, "/avatar/parameters/RightEyeY",    gy_r);
+    OscPublishFloat(counts, "/avatar/parameters/LeftEyeLid",   open_l);
+    OscPublishFloat(counts, "/avatar/parameters/RightEyeLid",  open_r);
+    OscPublishFloat(counts, "/avatar/parameters/EyesDilation", pupil);
 
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/EyeLeftX",      gx_l));
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/EyeLeftY",      gy_l));
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/EyeRightX",     gx_r));
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/EyeRightY",     gy_r));
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/EyeOpenLeft",   open_l));
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/EyeOpenRight",  open_r));
-    counts.Add(OscPublishFloat("/avatar/parameters/v2/PupilDilation", pupil));
+    OscPublishFloat(counts, "/avatar/parameters/v2/EyeLeftX",      gx_l);
+    OscPublishFloat(counts, "/avatar/parameters/v2/EyeLeftY",      gy_l);
+    OscPublishFloat(counts, "/avatar/parameters/v2/EyeRightX",     gx_r);
+    OscPublishFloat(counts, "/avatar/parameters/v2/EyeRightY",     gy_r);
+    OscPublishFloat(counts, "/avatar/parameters/v2/EyeOpenLeft",   open_l);
+    OscPublishFloat(counts, "/avatar/parameters/v2/EyeOpenRight",  open_r);
+    OscPublishFloat(counts, "/avatar/parameters/v2/PupilDilation", pupil);
     return counts;
 }
 
@@ -480,8 +498,8 @@ static OscCounts PublishExpressions(const protocol::FaceTrackingFrameBody &frame
         std::memcpy(legacy + kLegacyPrefixLen, name, nameLen + 1);
         std::memcpy(v2addr, kV2Prefix, kV2PrefixLen);
         std::memcpy(v2addr + kV2PrefixLen, name, nameLen + 1);
-        counts.Add(OscPublishFloat(legacy, value));
-        counts.Add(OscPublishFloat(v2addr, value));
+        OscPublishFloat(counts, legacy, value);
+        OscPublishFloat(counts, v2addr, value);
     };
 
     for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {

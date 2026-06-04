@@ -1,5 +1,6 @@
 #include "RouteTable.h"
 #include "OscWire.h"
+#include "Logging.h"
 
 #include <cstring>
 
@@ -25,11 +26,23 @@ bool RouteTable::Subscribe(protocol::OscSubscriberId id,
                            const char *pattern,
                            const char *label)
 {
+    char loggedPattern[protocol::OSC_ROUTE_ADDR_LEN] = {};
+    if (pattern) {
+        size_t n = 0;
+        for (; n < sizeof(loggedPattern) - 1 && pattern[n]; ++n) loggedPattern[n] = pattern[n];
+        loggedPattern[n] = '\0';
+    }
     std::lock_guard<std::mutex> lk(mutex_);
     int slot = FindSlot(id);
+    const bool update = slot >= 0;
     if (slot < 0) {
         slot = FindFreeSlot();
-        if (slot < 0) return false; // table full
+        if (slot < 0) {
+            OR_LOG("[OscRouter] route table full; rejected subscriber=%u pattern='%s'",
+                (unsigned)id,
+                loggedPattern);
+            return false;
+        }
     }
     RouteEntry &e = entries_[slot];
     e.subscriber_id = id;
@@ -47,6 +60,12 @@ bool RouteTable::Subscribe(protocol::OscSubscriberId id,
     e.drop_count.store(0,  std::memory_order_relaxed);
     e.last_match_tick.store(0, std::memory_order_relaxed);
     e.active = true;
+    OR_LOG("[OscRouter] route %s slot=%d subscriber=%u pattern='%s' label='%s'",
+        update ? "updated" : "added",
+        slot,
+        (unsigned)id,
+        e.pattern,
+        e.subscriber_label);
     return true;
 }
 
@@ -54,7 +73,12 @@ void RouteTable::Unsubscribe(protocol::OscSubscriberId id)
 {
     std::lock_guard<std::mutex> lk(mutex_);
     int slot = FindSlot(id);
-    if (slot >= 0) entries_[slot].active = false;
+    if (slot >= 0) {
+        entries_[slot].active = false;
+        OR_LOG("[OscRouter] route removed slot=%d subscriber=%u", slot, (unsigned)id);
+    } else {
+        OR_LOG("[OscRouter] route remove ignored; subscriber=%u not found", (unsigned)id);
+    }
 }
 
 void RouteTable::Dispatch(const char *address, uint64_t qpc_tick, bool &matched_out)

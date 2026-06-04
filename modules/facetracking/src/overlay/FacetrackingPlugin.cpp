@@ -156,6 +156,7 @@ void FacetrackingPlugin::PushConfigToDriver()
 {
     if (!ipc_.IsConnected()) {
         last_error_ = "Not connected to the FaceTracking driver. Is SteamVR running?";
+        FT_LOG_OVL("[ipc] config push skipped: driver IPC not connected");
         return;
     }
     try {
@@ -221,9 +222,20 @@ void FacetrackingPlugin::PushConfigToDriver()
             return;
         }
         last_error_.clear();
-        FT_LOG_OVL("[ipc] config pushed: osc_enabled=%d eyelid=%d vergence=%d calib_mode=%d",
-            (int)cfg.output_osc_enabled, (int)cfg.eyelid_sync_enabled,
-            (int)cfg.vergence_lock_enabled, (int)cfg.continuous_calib_mode);
+        FT_LOG_OVL("[ipc] config pushed: osc_enabled=%d active_module='%s' eyelid=%d/%d "
+                   "vergence=%d/%d calib_mode=%d corr=0x%02x corr_strengths=0x%04x "
+                   "smooth(gaze=%d open=%d)",
+            (int)cfg.output_osc_enabled,
+            cfg.active_module_uuid,
+            (int)cfg.eyelid_sync_enabled,
+            (int)cfg.eyelid_sync_strength,
+            (int)cfg.vergence_lock_enabled,
+            (int)cfg.vergence_lock_strength,
+            (int)cfg.continuous_calib_mode,
+            (int)cfg.expression_correction_flags,
+            (int)cfg.expression_correction_strengths,
+            (int)cfg.gaze_smoothing,
+            (int)cfg.openness_smoothing);
     } catch (const std::exception &e) {
         last_error_ = std::string("IPC error: ") + e.what();
         FT_LOG_OVL("[ipc] PushConfigToDriver failed: %s", e.what());

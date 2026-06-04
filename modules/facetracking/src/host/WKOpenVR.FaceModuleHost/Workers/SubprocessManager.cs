@@ -486,6 +486,10 @@ public sealed class SubprocessManager : IDisposable
 
     private ReplyUpdatePacket? _latestUpdate;
     private int _activePort;
+    private long _replyUpdatesReceived;
+    private long _sendDroppedNoPort;
+    private DateTime _lastNoPortSendLog = DateTime.MinValue;
+    private string _lastLoggedPhase = "";
 
     private void OnServerPacket(in IpcPacket packet, in int port)
     {
@@ -512,6 +516,7 @@ public sealed class SubprocessManager : IDisposable
             case IpcPacket.PacketType.ReplyUpdate:
                 // High-frequency (120 Hz): do not log; just snapshot the latest.
                 _latestUpdate = (ReplyUpdatePacket)packet;
+                Interlocked.Increment(ref _replyUpdatesReceived);
                 break;
 
             case IpcPacket.PacketType.ReplyTeardown:
@@ -558,6 +563,9 @@ public sealed class SubprocessManager : IDisposable
         _initTcs       = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _teardownTcs   = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _latestUpdate  = null;
+        _activePort = 0;
+        Interlocked.Exchange(ref _replyUpdatesReceived, 0);
+        Interlocked.Exchange(ref _sendDroppedNoPort, 0);
 
         // Re-verify exe on disk just before spawn (could have been deleted after startup check).
         if (!File.Exists(_subprocessExePath))
@@ -664,6 +672,10 @@ public sealed class SubprocessManager : IDisposable
                 _logger.Error($"[ftp/ipc] {msg}");
                 return;
             }
+            if (!supportedReply.eyeAvailable && !supportedReply.expressionAvailable)
+            {
+                _logger.Warn($"[ftp/ipc] module reports no supported streams: module={module.Manifest.Name} pid={proc.Id}");
+            }
 
             // Init
             _logger.Info($"[ftp/ipc] SEND EventInit(eye=true,expr=true) -> port={_activePort}");
@@ -682,6 +694,11 @@ public sealed class SubprocessManager : IDisposable
                 SetPhase("module-init-timeout", msg);
                 _logger.Error($"[ftp/ipc] {msg}");
                 return;
+            }
+            if (!initReply.eyeSuccess && !initReply.expressionSuccess)
+            {
+                _logger.Warn($"[ftp/ipc] module init returned no active streams: module={module.Manifest.Name} " +
+                             $"supported_eye={supportedReply.eyeAvailable} supported_expr={supportedReply.expressionAvailable}");
             }
 
             // Tell module to start sampling hardware.
@@ -711,7 +728,18 @@ public sealed class SubprocessManager : IDisposable
             long invalidExprSignalsInPeriod = 0;
             long invalidEyeSignalsInPeriod  = 0;
             long clampedSignalsInPeriod     = 0;
+            long staleUpdateReusesInPeriod   = 0;
+            long replyUpdatesAtPeriodStart   = Interlocked.Read(ref _replyUpdatesReceived);
+            int lastValidExprSignals = 0;
+            int lastValidEyeSignals = 0;
+            int lastNonZeroShapes = 0;
+            float lastLeftEyeLid = 0f;
+            float lastRightEyeLid = 0f;
+            Vector3 lastLeftGaze = default;
+            float lastPupilLeft = 0f;
+            float lastPupilRight = 0f;
             var  lastUpdateTime   = DateTime.UtcNow;
+            ReplyUpdatePacket? lastProcessedUpdate = null;
 
             _logger.Info($"[ftp/data] pull loop started for {module.Manifest.Name} PID={proc.Id}");
             SetPhase("publishing-frames");
@@ -752,6 +780,9 @@ public sealed class SubprocessManager : IDisposable
                     continue;
                 }
                 lastUpdateTime = DateTime.UtcNow;
+                if (ReferenceEquals(snap, lastProcessedUpdate))
+                    staleUpdateReusesInPeriod++;
+                lastProcessedUpdate = snap;
 
                 var decoded = snap.DecodedData;
                 float[]? shapes = decoded.GetExpressionShapes();
@@ -901,8 +932,19 @@ public sealed class SubprocessManager : IDisposable
                     ? s[kUpstreamJawOpenIndex]
                     : 0f;
                 lastJawOpen = jawOpen;
+                lastValidExprSignals = validExprSignals;
+                lastValidEyeSignals = validEyeSignals;
+                lastNonZeroShapes = nonZero;
+                lastLeftEyeLid = eyeSink.LeftOpenness;
+                lastRightEyeLid = eyeSink.RightOpenness;
+                lastLeftGaze = eyeSink.Left.DirHmd;
+                lastPupilLeft = eyeSink.PupilDilationLeft;
+                lastPupilRight = eyeSink.PupilDilationRight;
 
-                if (nonZero > 0 || sawEyeData)
+                bool currentFrameHasEyeData = validEyeSignals > 0;
+                bool currentFrameHasData = nonZero > 0 || currentFrameHasEyeData;
+
+                if (currentFrameHasData)
                     Interlocked.Increment(ref _framesWithData);
 
                 if (nonZero > 0 && !firstNonZero)
@@ -913,7 +955,7 @@ public sealed class SubprocessManager : IDisposable
                                  $"jawOpen={jawOpen:F3} leftEyeLid={eyeSink.LeftOpenness:F3}");
                 }
 
-                if (nonZero == 0 && !sawEyeData)
+                if (!currentFrameHasData)
                 {
                     noDataRun++;
                     zeroRunFrames++;
@@ -926,30 +968,30 @@ public sealed class SubprocessManager : IDisposable
                     noDataRun = 0;
                 }
 
-                if (frameNum % 60 == 0)
-                {
-                    _logger.Info($"[ftp/data] heartbeat module={module.Manifest.Name} " +
-                                 $"frame={frameNum} jawOpen={jawOpen:F3} " +
-                                 $"leftEyeLid={eyeSink.LeftOpenness:F3} rightEyeLid={eyeSink.RightOpenness:F3} " +
-                                 $"gazeL=({eyeSink.Left.DirHmd.X:F3},{eyeSink.Left.DirHmd.Y:F3}) " +
-                                 $"pupil=({eyeSink.PupilDilationLeft:F3},{eyeSink.PupilDilationRight:F3}) " +
-                                 $"nonZeroShapes={nonZero}/{s.Length} validExprSignals={validExprSignals} " +
-                                 $"validEyeSignals={validEyeSignals}");
-                }
-
                 // 5-second throughput report.
                 if (dataPeriodSw.Elapsed.TotalSeconds >= 5.0)
                 {
+                    long replyUpdatesNow = Interlocked.Read(ref _replyUpdatesReceived);
+                    long replyUpdatesInPeriod = replyUpdatesNow - replyUpdatesAtPeriodStart;
+                    long noPortDrops = Interlocked.Read(ref _sendDroppedNoPort);
                     _logger.Info($"[ftp/data] period: published {framesInPeriod} frames in last " +
                                  $"{dataPeriodSw.Elapsed.TotalSeconds:F1}s; lastJawOpen={lastJawOpen:F3}; " +
                                  $"consecutive_zero_frames={zeroRunFrames}; " +
                                  $"invalid_expr={invalidExprSignalsInPeriod}; invalid_eye={invalidEyeSignalsInPeriod}; " +
-                                 $"clamped={clampedSignalsInPeriod}");
+                                 $"clamped={clampedSignalsInPeriod}; reply_updates={replyUpdatesInPeriod}; " +
+                                 $"stale_reuses={staleUpdateReusesInPeriod}; no_port_drops_total={noPortDrops}; " +
+                                 $"last_nonzero={lastNonZeroShapes}/{s.Length}; " +
+                                 $"last_valid_expr={lastValidExprSignals}; last_valid_eye={lastValidEyeSignals}; " +
+                                 $"last_eye=({lastLeftEyeLid:F3},{lastRightEyeLid:F3}); " +
+                                 $"last_gazeL=({lastLeftGaze.X:F3},{lastLeftGaze.Y:F3}); " +
+                                 $"last_pupil=({lastPupilLeft:F3},{lastPupilRight:F3})");
                     framesInPeriod = 0;
                     zeroRunFrames  = 0;
                     invalidExprSignalsInPeriod = 0;
                     invalidEyeSignalsInPeriod = 0;
                     clampedSignalsInPeriod = 0;
+                    staleUpdateReusesInPeriod = 0;
+                    replyUpdatesAtPeriodStart = replyUpdatesNow;
                     dataPeriodSw.Restart();
                 }
 
@@ -1076,8 +1118,10 @@ public sealed class SubprocessManager : IDisposable
 
     private void SetPhase(string phase, string? error = null)
     {
+        string previous;
         lock (_statusLock)
         {
+            previous = _phase;
             _phase = phase;
             if (error is not null) _lastError = error;
             else if (!phase.EndsWith("failed", StringComparison.OrdinalIgnoreCase) &&
@@ -1092,7 +1136,15 @@ public sealed class SubprocessManager : IDisposable
         // driver can decide whether stalled publish_index is a wedge or
         // legitimate idle. Keep this outside the status lock; Volatile.Write
         // is itself atomic and SetHostStateDraining races on the same field.
-        Volatile.Write(ref _hostState, (int)MapPhaseToHostState(phase));
+        uint hostState = MapPhaseToHostState(phase);
+        Volatile.Write(ref _hostState, (int)hostState);
+        if (!string.Equals(previous, phase, StringComparison.Ordinal) ||
+            !string.Equals(_lastLoggedPhase, phase, StringComparison.Ordinal))
+        {
+            _lastLoggedPhase = phase;
+            _logger.Info($"[host/status] phase {previous} -> {phase} host_state={hostState} " +
+                         $"error={(string.IsNullOrEmpty(error) ? "" : error)}");
+        }
     }
 
     /// <summary>
@@ -1120,7 +1172,19 @@ public sealed class SubprocessManager : IDisposable
 
     private void SendToSubprocess(IpcPacket packet)
     {
-        if (_activePort == 0) return;
+        if (_activePort == 0)
+        {
+            long dropped = Interlocked.Increment(ref _sendDroppedNoPort);
+            var type = packet.GetPacketType();
+            var now = DateTime.UtcNow;
+            if (type != IpcPacket.PacketType.EventUpdate ||
+                (now - _lastNoPortSendLog) >= TimeSpan.FromSeconds(5))
+            {
+                _lastNoPortSendLog = now;
+                _logger.Warn($"[ftp/ipc] drop SEND {type}: no active subprocess port total={dropped}");
+            }
+            return;
+        }
         // EventUpdate is sent at ~120 Hz; log only non-update traffic to avoid flooding.
         if (packet.GetPacketType() != IpcPacket.PacketType.EventUpdate)
             _logger.Info($"[ftp/ipc] SEND {packet.GetPacketType()} -> port={_activePort}");

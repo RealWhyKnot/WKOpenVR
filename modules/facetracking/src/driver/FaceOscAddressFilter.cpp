@@ -108,9 +108,23 @@ FaceOscAddressFilter::FaceOscAddressFilter(std::wstring path)
 {
 }
 
+const char *FaceOscAddressFilterLoadStatusName(FaceOscAddressFilterLoadStatus status)
+{
+    switch (status) {
+    case FaceOscAddressFilterLoadStatus::NotConfigured: return "not-configured";
+    case FaceOscAddressFilterLoadStatus::Missing:       return "missing";
+    case FaceOscAddressFilterLoadStatus::ReadFailed:    return "read-failed";
+    case FaceOscAddressFilterLoadStatus::Loaded:        return "loaded";
+    default:                                            return "unknown";
+    }
+}
+
 bool FaceOscAddressFilter::ReloadIfChanged()
 {
-    if (path_.empty()) return false;
+    if (path_.empty()) {
+        load_status_ = FaceOscAddressFilterLoadStatus::NotConfigured;
+        return false;
+    }
 
     const uint64_t stamp = AllowListStamp(path_);
     if (loaded_ && stamp == file_stamp_) return false;
@@ -121,7 +135,14 @@ bool FaceOscAddressFilter::ReloadIfChanged()
     compatible_.clear();
 
     std::string body;
-    if (stamp == 0 || !ReadWholeFile(path_, body)) return true;
+    if (stamp == 0) {
+        load_status_ = FaceOscAddressFilterLoadStatus::Missing;
+        return true;
+    }
+    if (!ReadWholeFile(path_, body)) {
+        load_status_ = FaceOscAddressFilterLoadStatus::ReadFailed;
+        return true;
+    }
 
     size_t offset = 0;
     while (offset <= body.size()) {
@@ -136,6 +157,7 @@ bool FaceOscAddressFilter::ReloadIfChanged()
         offset = newline + 1;
     }
 
+    load_status_ = FaceOscAddressFilterLoadStatus::Loaded;
     return true;
 }
 

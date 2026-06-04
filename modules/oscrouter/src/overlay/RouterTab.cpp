@@ -5,11 +5,13 @@
 #include "JsonUtil.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
+#include "DiagnosticsLog.h"
 
 #include <imgui.h>
 #include <cstring>
 #include <cstdio>
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <sstream>
 
@@ -25,20 +27,41 @@
 static int ReadProfileSendPort()
 {
     std::wstring profileDir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", false);
-    if (profileDir.empty()) return 9000;
+    if (profileDir.empty()) {
+        openvr_pair::common::DiagnosticLog("oscrouter", "profile read default: profile dir unavailable");
+        return 9000;
+    }
     std::wstring path = profileDir + L"\\oscrouter.json";
 
     std::ifstream in(path);
-    if (!in) return 9000;
+    if (!in) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "profile read default: oscrouter.json missing path='%s'",
+            openvr_pair::common::WideToUtf8(path).c_str());
+        return 9000;
+    }
 
     std::stringstream ss;
     ss << in.rdbuf();
 
     picojson::value root;
-    if (!openvr_pair::common::json::ParseObject(root, ss.str())) return 9000;
+    if (!openvr_pair::common::json::ParseObject(root, ss.str())) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "profile read default: parse failed path='%s'",
+            openvr_pair::common::WideToUtf8(path).c_str());
+        return 9000;
+    }
 
     int port = openvr_pair::common::json::IntAt(root, "send_port", 9000);
-    return (port > 0 && port <= 65535) ? port : 9000;
+    if (port <= 0 || port > 65535) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "profile read default: invalid send_port=%d path='%s'",
+            port,
+            openvr_pair::common::WideToUtf8(path).c_str());
+        return 9000;
+    }
+    openvr_pair::common::DiagnosticLog("oscrouter", "profile read send_port=%d", port);
+    return port;
 }
 
 // Atomic write of send_port to %LocalAppDataLow%\WKOpenVR\profiles\
@@ -48,7 +71,10 @@ static int ReadProfileSendPort()
 static bool WriteProfileSendPort(int port)
 {
     std::wstring profileDir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
-    if (profileDir.empty()) return false;
+    if (profileDir.empty()) {
+        openvr_pair::common::DiagnosticLog("oscrouter", "profile write failed: profile dir unavailable");
+        return false;
+    }
     std::wstring path = profileDir + L"\\oscrouter.json";
 
     picojson::object obj;
@@ -60,6 +86,10 @@ static bool WriteProfileSendPort(int port)
             picojson::value root;
             if (openvr_pair::common::json::ParseObject(root, ss.str())) {
                 obj = root.get<picojson::object>();
+            } else {
+                openvr_pair::common::DiagnosticLog(
+                    "oscrouter", "profile write continuing with new object: existing parse failed path='%s'",
+                    openvr_pair::common::WideToUtf8(path).c_str());
             }
         }
     }
@@ -69,15 +99,36 @@ static bool WriteProfileSendPort(int port)
     std::wstring tmpPath = path + L".tmp";
     HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
+    if (h == INVALID_HANDLE_VALUE) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "profile write failed: CreateFile err=%lu path='%s'",
+            GetLastError(),
+            openvr_pair::common::WideToUtf8(tmpPath).c_str());
+        return false;
+    }
     DWORD written = 0;
     BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
     CloseHandle(h);
     if (!ok || written != (DWORD)body.size()) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "profile write failed: WriteFile ok=%d written=%lu expected=%zu path='%s'",
+            ok ? 1 : 0,
+            written,
+            body.size(),
+            openvr_pair::common::WideToUtf8(tmpPath).c_str());
         DeleteFileW(tmpPath.c_str());
         return false;
     }
-    return MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    if (!MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "profile write failed: MoveFileEx err=%lu path='%s'",
+            GetLastError(),
+            openvr_pair::common::WideToUtf8(path).c_str());
+        DeleteFileW(tmpPath.c_str());
+        return false;
+    }
+    openvr_pair::common::DiagnosticLog("oscrouter", "profile write send_port=%d", port);
+    return true;
 }
 
 bool RouterTab::EnsureIpc(openvr_pair::overlay::ShellContext &ctx)
@@ -315,9 +366,29 @@ bool RouterTab::PushLivePortConfig(int newPort)
     req.setOscRouterConfig.send_port = (uint16_t)newPort;
     for (int i = 0; i < 6; ++i) req.setOscRouterConfig._reserved[i] = 0;
     try {
-        ipc_.SendBlocking(req);
+        protocol::Response resp = ipc_.SendBlocking(req);
+        if (resp.type != protocol::ResponseSuccess) {
+            openvr_pair::common::DiagnosticLog(
+                "oscrouter", "live port push rejected send_port=%d response=%u",
+                newPort,
+                (unsigned)resp.type);
+            return false;
+        }
+        openvr_pair::common::DiagnosticLog("oscrouter", "live port push ok send_port=%d", newPort);
         return true;
+    } catch (const std::exception &e) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "live port push failed send_port=%d error='%s'",
+            newPort,
+            e.what());
+        ipc_.Close();
+        nextIpcConnectAttempt_ = {};
+        portPushedToDriver_ = false;
+        return false;
     } catch (...) {
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "live port push failed send_port=%d error='unknown'",
+            newPort);
         ipc_.Close();
         nextIpcConnectAttempt_ = {};
         portPushedToDriver_ = false;
@@ -331,7 +402,10 @@ void RouterTab::SendPortChanged(openvr_pair::overlay::ShellContext &ctx, int new
     // trips. WriteProfileSendPort is best-effort -- a write failure leaves
     // the existing oscrouter.json intact and the UI keeps the new value in
     // memory so the next edit will retry the write.
-    WriteProfileSendPort(newPort);
+    const bool profileOk = WriteProfileSendPort(newPort);
+    if (!profileOk) {
+        openvr_pair::common::DiagnosticLog("oscrouter", "send port profile write failed for port=%d", newPort);
+    }
 
     // Push live if the IPC pipe is open. When the driver isn't running yet,
     // the on-disk write above is sufficient -- the driver reads send_port
@@ -339,6 +413,10 @@ void RouterTab::SendPortChanged(openvr_pair::overlay::ShellContext &ctx, int new
     EnsureIpc(ctx);
     if (!ipc_.IsConnected()) {
         portPushedToDriver_ = false;
+        openvr_pair::common::DiagnosticLog(
+            "oscrouter", "send port live push deferred port=%d vr_connected=%d",
+            newPort,
+            ctx.vrConnected ? 1 : 0);
         return;
     }
     portPushedToDriver_ = PushLivePortConfig(newPort);

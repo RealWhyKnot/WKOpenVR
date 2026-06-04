@@ -85,6 +85,8 @@ public sealed class HostControlPipeServer(
         const int kPerMessageTimeoutMs = 30_000;
 
         byte[] lenBuf = new byte[4];
+        int messages = 0;
+        string disconnectReason = "peer-disconnected";
         while (!ct.IsCancellationRequested && pipe.IsConnected)
         {
             using var messageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -93,28 +95,40 @@ public sealed class HostControlPipeServer(
             try
             {
                 int read = await ReadExactAsync(pipe, lenBuf, 4, messageCts.Token);
-                if (read < 4) break;
+                if (read < 4)
+                {
+                    disconnectReason = $"short-length-read({read})";
+                    break;
+                }
 
                 uint msgLen = BitConverter.ToUInt32(lenBuf, 0);
                 if (msgLen == 0 || msgLen > 65536)
                 {
                     logger.Warn($"Control pipe: invalid message length {msgLen}; dropping connection.");
+                    disconnectReason = $"invalid-length({msgLen})";
                     break;
                 }
 
                 byte[] msgBuf = new byte[msgLen];
                 read = await ReadExactAsync(pipe, msgBuf, (int)msgLen, messageCts.Token);
-                if (read < (int)msgLen) break;
+                if (read < (int)msgLen)
+                {
+                    disconnectReason = $"short-message-read({read}/{msgLen})";
+                    break;
+                }
 
                 try   { DispatchMessage(msgBuf); }
                 catch (Exception ex) { logger.Warn($"Control pipe: message dispatch error: {ex.Message}"); }
+                messages++;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 logger.Warn($"Control pipe: peer stalled for more than {kPerMessageTimeoutMs / 1000}s mid-message; dropping connection.");
+                disconnectReason = "message-timeout";
                 break;
             }
         }
+        logger.Info($"Control pipe disconnected: messages={messages} reason={disconnectReason} connected={pipe.IsConnected}");
     }
 
     private void DispatchMessage(byte[] data)
@@ -141,6 +155,7 @@ public sealed class HostControlPipeServer(
         switch (msgType)
         {
             case MsgSelectModule when uuid is not null:
+                logger.Info($"Control pipe: SelectModule uuid={uuid}");
                 loader.SelectActive(uuid);
                 break;
 
