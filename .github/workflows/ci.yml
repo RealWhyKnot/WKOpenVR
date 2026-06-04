@@ -82,32 +82,27 @@ jobs:
             return $false
           }
 
+          $llvmVersion = '22.1.0'
+          Write-Host "Installing LLVM package $llvmVersion."
+          choco install llvm --version $llvmVersion -y --no-progress --force
+          if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
+
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path -LiteralPath $llvmBin)) {
+            throw "LLVM bin directory missing at $llvmBin"
+          }
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:PATH = "$llvmBin;$env:PATH"
+
           $llvmTools = @('clang-format', 'clang-tidy', 'clang-apply-replacements')
-          $missingLlvm = @()
           foreach ($tool in $llvmTools) {
             if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              $missingLlvm += $tool
+              throw "$tool was not found after installing LLVM."
             }
           }
 
-          $missingLabels = @($missingLlvm)
-          $needsLlvm = ($missingLabels.Count -gt 0)
           if (-not (Test-RunClangTidyAvailable)) {
-            $needsLlvm = $true
-            $missingLabels += 'run-clang-tidy'
-          }
-
-          if ($needsLlvm) {
-            Write-Host "Installing LLVM tools: $($missingLabels -join ', ')"
-            choco install llvm -y --no-progress
-            if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
-            $llvmBin = 'C:\Program Files\LLVM\bin'
-            if (Test-Path -LiteralPath $llvmBin) {
-              $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-              $env:PATH = "$llvmBin;$env:PATH"
-            }
-          } else {
-            Write-Host "LLVM tools already available."
+            throw "run-clang-tidy was not found after installing LLVM."
           }
 
           if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
