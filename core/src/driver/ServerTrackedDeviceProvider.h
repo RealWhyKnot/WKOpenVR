@@ -6,6 +6,7 @@
 #include "DriverModule.h"
 #include "DriverSynthCompose.h"
 #include "IPCServer.h"
+#include "ModuleSafety.h"
 #include "Protocol.h"
 #include "IsometryTransform.h"
 #include "SmartSmoothingShadowMath.h"
@@ -17,6 +18,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -99,6 +101,16 @@ public:
 	void ClearInputHealthCompensation(uint64_t serial_hash);
 
 private:
+	struct ActiveDriverModule
+	{
+		std::unique_ptr<DriverModule> module;
+		const openvr_pair::common::module_safety::ModuleSpec *safety = nullptr;
+	};
+
+	void DisableActiveModuleAt(size_t index, const char *reason);
+	bool DisableActiveModuleByMask(uint32_t featureMask, const char *reason);
+	void DisableDetachedModule(ActiveDriverModule entry, const char *reason);
+
 	// Per-feature IPC servers, allocated only when the matching enable_*.flag
 	// is detected at Init. Any may be null in feature-disabled builds; the
 	// pose-update path doesn't touch them.
@@ -109,7 +121,8 @@ private:
 	std::unique_ptr<IPCServer> oscRouterServer;
 	std::unique_ptr<IPCServer> captionsServer;
 	std::unique_ptr<IPCServer> phantomServer;
-	std::vector<std::unique_ptr<DriverModule>> activeModules;
+	std::mutex activeModulesMutex;
+	std::vector<ActiveDriverModule> activeModules;
 
 	// Pose telemetry shmem, only created when calibration is enabled. The
 	// calibration overlay opens this segment to read driver-side pose

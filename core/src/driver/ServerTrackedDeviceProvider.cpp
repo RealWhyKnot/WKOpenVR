@@ -23,7 +23,9 @@ namespace skeletal { void MarkFingersNeedReseed(uint16_t fingerBits); }
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
+#include <exception>
 #include <random>
 
 #ifndef OPENVR_PAIR_HAS_CALIBRATION_DRIVER
@@ -56,6 +58,8 @@ namespace skeletal { void MarkFingersNeedReseed(uint16_t fingerBits); }
 
 namespace {
 
+namespace module_safety = openvr_pair::common::module_safety;
+
 std::string InputHealthPathString(const char *path)
 {
 	size_t n = 0;
@@ -63,6 +67,58 @@ std::string InputHealthPathString(const char *path)
 	return std::string(path, path + n);
 }
 
+const module_safety::ModuleSpec *SafetySpecForFeatureMask(uint32_t featureMask)
+{
+	switch (featureMask) {
+	case pairdriver::kFeatureCalibration:
+		return module_safety::FindByFlagFileName("enable_calibration.flag");
+	case pairdriver::kFeatureSmoothing:
+		return module_safety::FindByFlagFileName("enable_smoothing.flag");
+	case pairdriver::kFeatureInputHealth:
+		return module_safety::FindByFlagFileName("enable_inputhealth.flag");
+	case pairdriver::kFeatureFaceTracking:
+		return module_safety::FindByFlagFileName("enable_facetracking.flag");
+	case pairdriver::kFeatureOscRouter:
+		return module_safety::FindByFlagFileName("enable_oscrouter.flag");
+	case pairdriver::kFeatureCaptions:
+		return module_safety::FindByFlagFileName("enable_captions.flag");
+	case pairdriver::kFeaturePhantom:
+		return module_safety::FindByFlagFileName("enable_phantom.flag");
+	default:
+		return nullptr;
+	}
+}
+
+const char *ModuleDisableReason(const char *reason)
+{
+	return (reason && reason[0]) ? reason : "module_fault";
+}
+
+class ModuleSafetyScope
+{
+public:
+	ModuleSafetyScope(const module_safety::ModuleSpec *spec, const char *reason)
+		: spec_(spec)
+	{
+		if (spec_) {
+			active_ = module_safety::MarkSuspect(*spec_, ModuleDisableReason(reason));
+		}
+	}
+
+	~ModuleSafetyScope()
+	{
+		if (active_ && spec_) {
+			module_safety::ClearSuspect(*spec_);
+		}
+	}
+
+	ModuleSafetyScope(const ModuleSafetyScope &) = delete;
+	ModuleSafetyScope &operator=(const ModuleSafetyScope &) = delete;
+
+private:
+	const module_safety::ModuleSpec *spec_ = nullptr;
+	bool active_ = false;
+};
 
 } // namespace
 
@@ -90,24 +146,69 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	featureFlags = pairdriver::DetectFeatureFlags();
 	LOG("Driver feature mask detected: 0x%08x", (unsigned)featureFlags);
 
-	activeModules.clear();
+	{
+		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+		activeModules.clear();
+	}
 	DriverModuleContext moduleContext{this, pDriverContext, featureFlags};
 	auto activateModule = [&](std::unique_ptr<DriverModule> module) {
 		if (!module) {
 			LOG("Driver module factory returned null");
 			return;
 		}
-		if ((featureFlags & module->FeatureMask()) == 0) {
+		const uint32_t moduleMask = module->FeatureMask();
+		const char *moduleName = module->Name();
+		if ((featureFlags & moduleMask) == 0) {
 			LOG("Driver module '%s' skipped; module_mask=0x%08x featureFlags=0x%08x",
-				module->Name(), (unsigned)module->FeatureMask(), (unsigned)featureFlags);
+				moduleName, (unsigned)moduleMask, (unsigned)featureFlags);
 			return;
 		}
-		if (!module->Init(moduleContext)) {
-			LOG("Driver module '%s' failed to initialize", module->Name());
+		const module_safety::ModuleSpec *safety = SafetySpecForFeatureMask(moduleMask);
+		if (safety && module_safety::HasAutoDisabledMarker(*safety)) {
+			featureFlags &= ~moduleMask;
+			LOG("Driver module '%s' skipped by safety gate; module_mask=0x%08x",
+				moduleName, (unsigned)moduleMask);
 			return;
 		}
-		LOG("Driver module '%s' initialized", module->Name());
-		activeModules.push_back(std::move(module));
+		if (safety && !module_safety::MarkActive(*safety)) {
+			LOG("Driver module '%s' safety marker could not be written", moduleName);
+		}
+		moduleContext.featureFlags = featureFlags;
+		bool initialized = false;
+		try {
+			ModuleSafetyScope safetyScope(safety, "init");
+			initialized = module->Init(moduleContext);
+		} catch (const std::exception &ex) {
+			LOG("Driver module '%s' init threw: %s", moduleName, ex.what());
+			if (safety) module_safety::MarkFault(*safety, "init_exception");
+			try {
+				module->Shutdown();
+			} catch (...) {
+				LOG("Driver module '%s' shutdown after init exception also threw", moduleName);
+			}
+			featureFlags &= ~moduleMask;
+			return;
+		} catch (...) {
+			LOG("Driver module '%s' init threw an unknown exception", moduleName);
+			if (safety) module_safety::MarkFault(*safety, "init_exception");
+			try {
+				module->Shutdown();
+			} catch (...) {
+				LOG("Driver module '%s' shutdown after init exception also threw", moduleName);
+			}
+			featureFlags &= ~moduleMask;
+			return;
+		}
+		if (!initialized) {
+			LOG("Driver module '%s' failed to initialize", moduleName);
+			if (safety) module_safety::MarkClean(*safety);
+			return;
+		}
+		LOG("Driver module '%s' initialized", moduleName);
+		{
+			std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+			activeModules.push_back({std::move(module), safety});
+		}
 	};
 
 	// OscRouter must be first: other modules may call PublishOsc during Init.
@@ -241,6 +342,33 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		if (oscRouterServer) oscRouterServer->Stop();
 		if (captionsServer) captionsServer->Stop();
 		if (phantomServer) phantomServer->Stop();
+		std::vector<ActiveDriverModule> modules;
+		{
+			std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+			modules = std::move(activeModules);
+			activeModules.clear();
+		}
+		for (size_t i = modules.size(); i > 0; --i) {
+			ActiveDriverModule &entry = modules[i - 1];
+			bool clean = true;
+			if (entry.module) {
+				try {
+					ModuleSafetyScope safetyScope(entry.safety, "shutdown");
+					entry.module->Shutdown();
+				} catch (const std::exception &ex) {
+					clean = false;
+					LOG("Driver module '%s' shutdown during init failure threw: %s",
+						entry.module->Name(), ex.what());
+				} catch (...) {
+					clean = false;
+					LOG("Driver module shutdown during init failure threw an unknown exception");
+				}
+			}
+			if (entry.safety) {
+				if (clean) module_safety::MarkClean(*entry.safety);
+				else module_safety::MarkFault(*entry.safety, "shutdown_exception");
+			}
+		}
 		shmem.Close();
 		VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 		return vr::VRInitError_Driver_Failed;
@@ -249,8 +377,13 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	debugTransform = Eigen::Vector3d::Zero();
 	debugRotation = Eigen::Quaterniond::Identity();
 
+	size_t activeModuleCount = 0;
+	{
+		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+		activeModuleCount = activeModules.size();
+	}
 	LOG("ServerTrackedDeviceProvider::Init complete active_modules=%zu featureFlags=0x%08x",
-		activeModules.size(), (unsigned)featureFlags);
+		activeModuleCount, (unsigned)featureFlags);
 	return vr::VRInitError_None;
 }
 
@@ -274,11 +407,78 @@ void ServerTrackedDeviceProvider::RunFrame()
 		L"runtime_health_driver_host.json");
 }
 
+void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry, const char *reason)
+{
+	const char *disableReason = ModuleDisableReason(reason);
+	const char *name = entry.module ? entry.module->Name() : "(unknown)";
+	LOG("Driver module '%s' disabled by safety gate reason=%s", name, disableReason);
+	if (entry.safety) {
+		module_safety::MarkFault(*entry.safety, disableReason);
+	}
+	if (entry.module) {
+		try {
+			ModuleSafetyScope safetyScope(entry.safety, "fault_shutdown");
+			entry.module->Shutdown();
+		} catch (const std::exception &ex) {
+			LOG("Driver module '%s' shutdown after fault threw: %s", name, ex.what());
+		} catch (...) {
+			LOG("Driver module '%s' shutdown after fault threw an unknown exception", name);
+		}
+	}
+}
+
+void ServerTrackedDeviceProvider::DisableActiveModuleAt(size_t index, const char *reason)
+{
+	ActiveDriverModule entry;
+	{
+		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+		if (index >= activeModules.size()) return;
+		entry = std::move(activeModules[index]);
+		activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
+		if (entry.module) featureFlags &= ~entry.module->FeatureMask();
+	}
+	DisableDetachedModule(std::move(entry), reason);
+}
+
+bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask, const char *reason)
+{
+	ActiveDriverModule entry;
+	bool found = false;
+	{
+		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+		for (size_t i = 0; i < activeModules.size(); ++i) {
+			if (!activeModules[i].module) continue;
+			if ((activeModules[i].module->FeatureMask() & featureMask) == 0) continue;
+			entry = std::move(activeModules[i]);
+			activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(i));
+			featureFlags &= ~featureMask;
+			found = true;
+			break;
+		}
+	}
+	if (found) {
+		DisableDetachedModule(std::move(entry), reason);
+		return true;
+	}
+
+	const module_safety::ModuleSpec *safety = SafetySpecForFeatureMask(featureMask);
+	if (safety) {
+		module_safety::MarkFault(*safety, ModuleDisableReason(reason));
+	}
+	featureFlags &= ~featureMask;
+	return false;
+}
+
 void ServerTrackedDeviceProvider::Cleanup()
 {
 	TRACE("ServerTrackedDeviceProvider::Cleanup()");
+	size_t activeModuleCount = 0;
+	{
+		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+		activeModuleCount = activeModules.size();
+	}
 	LOG("ServerTrackedDeviceProvider::Cleanup begin active_modules=%zu featureFlags=0x%08x",
-		activeModules.size(), (unsigned)featureFlags);
+		activeModuleCount, (unsigned)featureFlags);
 
 	// Order matters. The previous order (server.Stop -> shmem.Close ->
 	// DisableHooks -> VR_CLEANUP) had a fatal race: DisableHooks removes
@@ -297,10 +497,35 @@ void ServerTrackedDeviceProvider::Cleanup()
 	//   3. shmem.Close -- safe now because no detour can read it.
 	//   4. VR_CLEANUP_SERVER_DRIVER_CONTEXT -- finalize.
 	DisableHooks();
-	for (auto it = activeModules.rbegin(); it != activeModules.rend(); ++it) {
-		(*it)->Shutdown();
+	std::vector<ActiveDriverModule> modules;
+	{
+		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
+		modules = std::move(activeModules);
+		activeModules.clear();
 	}
-	activeModules.clear();
+	for (size_t i = modules.size(); i > 0; --i) {
+		ActiveDriverModule &entry = modules[i - 1];
+		bool clean = true;
+		if (entry.module) {
+			try {
+				ModuleSafetyScope safetyScope(entry.safety, "shutdown");
+				entry.module->Shutdown();
+			} catch (const std::exception &ex) {
+				clean = false;
+				LOG("Driver module '%s' shutdown threw: %s", entry.module->Name(), ex.what());
+			} catch (...) {
+				clean = false;
+				LOG("Driver module shutdown threw an unknown exception");
+			}
+		}
+		if (entry.safety) {
+			if (clean) {
+				module_safety::MarkClean(*entry.safety);
+			} else {
+				module_safety::MarkFault(*entry.safety, "shutdown_exception");
+			}
+		}
+	}
 	if (phantomServer) phantomServer->Stop();
 	if (captionsServer) captionsServer->Stop();
 	if (oscRouterServer) oscRouterServer->Stop();
@@ -324,9 +549,44 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(
 		return true;
 	}
 
-	for (auto &module : activeModules) {
-		if ((module->FeatureMask() & featureMask) == 0) continue;
-		if (module->HandleRequest(request, response)) return true;
+	size_t index = 0;
+	for (;;) {
+		ActiveDriverModule faulted;
+		bool disableFaulted = false;
+		{
+			std::unique_lock<std::mutex> activeLock(activeModulesMutex);
+			if (index >= activeModules.size()) break;
+			ActiveDriverModule &entry = activeModules[index];
+			if (!entry.module || (entry.module->FeatureMask() & featureMask) == 0) {
+				++index;
+				continue;
+			}
+
+			try {
+				ModuleSafetyScope safetyScope(entry.safety, "request");
+				if (entry.module->HandleRequest(request, response)) return true;
+				++index;
+			} catch (const std::exception &ex) {
+				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
+				LOG("Driver module '%s' request threw: %s", name, ex.what());
+				featureFlags &= ~moduleMask;
+				faulted = std::move(entry);
+				activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
+				disableFaulted = true;
+			} catch (...) {
+				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
+				LOG("Driver module '%s' request threw an unknown exception", name);
+				featureFlags &= ~moduleMask;
+				faulted = std::move(entry);
+				activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
+				disableFaulted = true;
+			}
+		}
+		if (disableFaulted) {
+			DisableDetachedModule(std::move(faulted), "request_exception");
+		}
 	}
 
 	return false;
@@ -334,8 +594,43 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(
 
 void ServerTrackedDeviceProvider::OnGetGenericInterface(const char *pchInterface, void *iface)
 {
-	for (auto &module : activeModules) {
-		module->OnGetGenericInterface(pchInterface, iface);
+	size_t index = 0;
+	for (;;) {
+		ActiveDriverModule faulted;
+		bool disableFaulted = false;
+		{
+			std::unique_lock<std::mutex> activeLock(activeModulesMutex);
+			if (index >= activeModules.size()) break;
+			ActiveDriverModule &entry = activeModules[index];
+			if (!entry.module) {
+				++index;
+				continue;
+			}
+			try {
+				ModuleSafetyScope safetyScope(entry.safety, "interface");
+				entry.module->OnGetGenericInterface(pchInterface, iface);
+				++index;
+			} catch (const std::exception &ex) {
+				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
+				LOG("Driver module '%s' interface hook threw: %s", name, ex.what());
+				featureFlags &= ~moduleMask;
+				faulted = std::move(entry);
+				activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
+				disableFaulted = true;
+			} catch (...) {
+				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
+				LOG("Driver module '%s' interface hook threw an unknown exception", name);
+				featureFlags &= ~moduleMask;
+				faulted = std::move(entry);
+				activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
+				disableFaulted = true;
+			}
+		}
+		if (disableFaulted) {
+			DisableDetachedModule(std::move(faulted), "interface_exception");
+		}
 	}
 }
 
@@ -1090,11 +1385,30 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	// dropouts on visible trackers, not babysitting an intentionally-hidden
 	// one.
 	if ((featureFlags & pairdriver::kFeaturePhantom) && !tf.quash) {
-		LARGE_INTEGER qpcNow{};
-		QueryPerformanceCounter(&qpcNow);
-		phantom::OnRealPoseObserved(openVRID, qpcNow.QuadPart, pose);
-		if (!phantom::MaybeOverridePose(openVRID, qpcNow.QuadPart, qpcFreq.QuadPart, pose)) {
-			return false;
+		try {
+			static std::atomic<bool> s_phantomPoseSafetyMarked{false};
+			if (!s_phantomPoseSafetyMarked.exchange(true, std::memory_order_relaxed)) {
+				if (const module_safety::ModuleSpec *safety =
+						SafetySpecForFeatureMask(pairdriver::kFeaturePhantom)) {
+					module_safety::MarkSuspect(*safety, "pose_pipeline");
+				}
+			}
+			LARGE_INTEGER qpcNow{};
+			QueryPerformanceCounter(&qpcNow);
+			phantom::OnRealPoseObserved(openVRID, qpcNow.QuadPart, pose);
+			if (!phantom::MaybeOverridePose(openVRID, qpcNow.QuadPart, qpcFreq.QuadPart, pose)) {
+				return false;
+			}
+		} catch (const std::exception &ex) {
+			LOG("Phantom pose pipeline threw: %s", ex.what());
+			lock.unlock();
+			DisableActiveModuleByMask(pairdriver::kFeaturePhantom, "pose_exception");
+			return true;
+		} catch (...) {
+			LOG("Phantom pose pipeline threw an unknown exception");
+			lock.unlock();
+			DisableActiveModuleByMask(pairdriver::kFeaturePhantom, "pose_exception");
+			return true;
 		}
 	}
 #endif

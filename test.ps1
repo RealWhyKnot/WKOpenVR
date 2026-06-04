@@ -53,6 +53,7 @@ function Invoke-NativeQuiet {
 $KnownTestSpecs = @(
 	@{ Suite = "calibration"; Binary = "spacecal_tests.exe"; Target = "spacecal_tests" },
 	@{ Suite = "captions"; Binary = "captions_tests.exe"; Target = "captions_tests" },
+	@{ Suite = "driver"; Binary = "driver_safety_tests.exe"; Target = "driver_safety_tests" },
 	@{ Suite = "e2e"; Binary = "e2e_tests.exe"; Target = "e2e_tests" },
 	@{ Suite = "facetracking"; Binary = "facetracking_tests.exe"; Target = "facetracking_tests" },
 	@{ Suite = "inputhealth"; Binary = "inputhealth_tests.exe"; Target = "inputhealth_tests" },

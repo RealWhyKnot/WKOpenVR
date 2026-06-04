@@ -41,13 +41,18 @@ void DrawModuleToggleTable(
 		const bool installed = plugin->IsInstalled(context);
 		const std::string key = plugin->FlagFileName();
 		const bool isPending = context.IsTogglePending(key.c_str());
+		const bool autoDisabled = context.IsModuleAutoDisabled(key.c_str());
+		const bool blockedByRouterSafety =
+			(key == "enable_facetracking.flag" || key == "enable_captions.flag") &&
+			context.IsModuleAutoDisabled("enable_oscrouter.flag");
 
 		auto it = g_wantedModuleStates.find(key);
 		if (!isPending && it != g_wantedModuleStates.end()) {
 			g_wantedModuleStates.erase(it);
 			it = g_wantedModuleStates.end();
 		}
-		const bool displayState = (it != g_wantedModuleStates.end()) ? it->second : installed;
+		const bool effectiveInstalled = installed && !autoDisabled && !blockedByRouterSafety;
+		const bool displayState = (it != g_wantedModuleStates.end()) ? it->second : effectiveInstalled;
 
 		ui::NextRow();
 
@@ -79,9 +84,15 @@ void DrawModuleToggleTable(
 		ui::NextColumn();
 		ImGui::AlignTextToFramePadding();
 		const bool isRouterRow = (key == "enable_oscrouter.flag");
+		const bool faceTrackingEffective =
+			context.IsFlagPresent("enable_facetracking.flag") &&
+			!context.IsModuleAutoDisabled("enable_facetracking.flag");
+		const bool captionsEffective =
+			context.IsFlagPresent("enable_captions.flag") &&
+			!context.IsModuleAutoDisabled("enable_captions.flag");
 		const bool routerRequired = isRouterRow &&
-			(context.IsFlagPresent("enable_facetracking.flag") ||
-			 context.IsFlagPresent("enable_captions.flag"));
+			(faceTrackingEffective || captionsEffective);
+		std::string statusStorage;
 		const char *statusText = nullptr;
 		ui::StatusTone statusTone = ui::StatusTone::Idle;
 		if (isPending) {
@@ -89,10 +100,18 @@ void DrawModuleToggleTable(
 				? "Enabling -- takes effect on next SteamVR launch"
 				: "Disabling -- takes effect on next SteamVR launch";
 			statusTone = ui::StatusTone::Pending;
+		} else if (autoDisabled) {
+			statusStorage = std::string("Auto-disabled: ") +
+				context.ModuleAutoDisabledReason(key.c_str());
+			statusText = statusStorage.c_str();
+			statusTone = ui::StatusTone::Warn;
+		} else if (blockedByRouterSafety) {
+			statusText = "Blocked by OSC Router";
+			statusTone = ui::StatusTone::Warn;
 		} else if (routerRequired && !context.IsFlagPresent("enable_oscrouter.flag")) {
 			statusText = "Enabled by OSC module";
 			statusTone = ui::StatusTone::Ok;
-		} else if (installed) {
+		} else if (effectiveInstalled) {
 			statusText = "Enabled";
 			statusTone = ui::StatusTone::Ok;
 		} else {

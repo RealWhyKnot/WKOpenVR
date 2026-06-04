@@ -21,6 +21,8 @@ struct ShellContext
 	bool SetDesktopDefaultModuleFlagFileName(const char *flagFileName);
 	std::wstring FlagPath(const char *flagFileName) const;
 	bool IsFlagPresent(const char *flagFileName) const;
+	bool IsModuleAutoDisabled(const char *flagFileName) const;
+	std::string ModuleAutoDisabledReason(const char *flagFileName) const;
 	bool SetFlagPresent(const char *flagFileName, bool present);
 	bool IsTogglePending(const char *flagFileName) const;
 	void TickToggles();

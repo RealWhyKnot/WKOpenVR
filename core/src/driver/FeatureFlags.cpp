@@ -5,6 +5,7 @@
 
 #include "FeatureFlags.h"
 #include "Logging.h"
+#include "ModuleSafety.h"
 
 #include <string>
 
@@ -50,6 +51,73 @@ bool FlagFileExists(const std::wstring &resourcesDir, const wchar_t *flagName)
 	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+constexpr unsigned kActiveOnlyAutoDisableThreshold = 3;
+
+struct SafetyGateResult
+{
+	bool *enabled = nullptr;
+	const openvr_pair::common::module_safety::ModuleSpec *spec = nullptr;
+	openvr_pair::common::module_safety::LaunchAssessment assessment;
+};
+
+SafetyGateResult ApplySafetyGate(bool &enabled, const char *flagFileName)
+{
+	SafetyGateResult result{&enabled, nullptr, {}};
+	if (!enabled) return result;
+	const auto *spec = openvr_pair::common::module_safety::FindByFlagFileName(flagFileName);
+	result.spec = spec;
+	if (!spec) return result;
+
+	const auto assessment = openvr_pair::common::module_safety::AssessLaunch(*spec);
+	result.assessment = assessment;
+	if (assessment.had_stale_suspect) {
+		LOG("Module safety: stale guarded-operation marker for '%s' suspect_count=%u auto_disabled=%d",
+			spec->slug,
+			assessment.suspect_unclean_count,
+			assessment.auto_disabled ? 1 : 0);
+	} else if (assessment.had_stale_active) {
+		LOG("Module safety: stale active marker for '%s' active_count=%u auto_disabled=%d",
+			spec->slug,
+			assessment.active_unclean_count,
+			assessment.auto_disabled ? 1 : 0);
+	}
+	if (openvr_pair::common::module_safety::HasAutoDisabledMarker(*spec)) {
+		enabled = false;
+		LOG("Module safety: '%s' masked off by auto-disable marker", spec->slug);
+	}
+	return result;
+}
+
+void ApplyRepeatedActiveOnlyBackoff(SafetyGateResult *gates, size_t gateCount)
+{
+	SafetyGateResult *candidate = nullptr;
+	size_t candidates = 0;
+	for (size_t i = 0; i < gateCount; ++i) {
+		SafetyGateResult &gate = gates[i];
+		if (!gate.enabled || !*gate.enabled || !gate.spec) continue;
+		const auto &assessment = gate.assessment;
+		if (!assessment.had_stale_active || assessment.had_stale_suspect ||
+			assessment.auto_disabled ||
+			assessment.active_unclean_count < kActiveOnlyAutoDisableThreshold) {
+			continue;
+		}
+		candidate = &gate;
+		++candidates;
+	}
+
+	if (candidates == 1 && candidate && candidate->enabled && candidate->spec) {
+		openvr_pair::common::module_safety::MarkFault(
+			*candidate->spec,
+			"repeated_unclean_driver_exit");
+		*candidate->enabled = false;
+		LOG("Module safety: '%s' auto-disabled after repeated isolated unclean exits",
+			candidate->spec->slug);
+	} else if (candidates > 1) {
+		LOG("Module safety: repeated active-only unclean exits touched %zu modules; leaving modules enabled until a suspect marker isolates the fault",
+			candidates);
+	}
+}
+
 } // namespace
 
 uint32_t DetectFeatureFlags()
@@ -72,7 +140,39 @@ uint32_t DetectFeatureFlags()
 	const bool capOn = FlagFileExists(dir, L"enable_captions.flag")
 		|| FlagFileExists(dir, L"enable_translator.flag");
 	const bool phOn  = FlagFileExists(dir, L"enable_phantom.flag");
-	uint32_t flags = ComposeFeatureFlags(calOn, smoOn, ihOn, ftOn, orOn, capOn, phOn);
+
+	bool calSafe = calOn;
+	bool smoSafe = smoOn;
+	bool ihSafe = ihOn;
+	bool ftSafe = ftOn;
+	bool capSafe = capOn;
+	bool phSafe = phOn;
+	SafetyGateResult calGate = ApplySafetyGate(calSafe, "enable_calibration.flag");
+	SafetyGateResult smoGate = ApplySafetyGate(smoSafe, "enable_smoothing.flag");
+	SafetyGateResult ihGate = ApplySafetyGate(ihSafe, "enable_inputhealth.flag");
+	SafetyGateResult ftGate = ApplySafetyGate(ftSafe, "enable_facetracking.flag");
+	SafetyGateResult capGate = ApplySafetyGate(capSafe, "enable_captions.flag");
+	SafetyGateResult phGate = ApplySafetyGate(phSafe, "enable_phantom.flag");
+
+	bool orSafe = orOn || ftSafe || capSafe;
+	SafetyGateResult orGate = ApplySafetyGate(orSafe, "enable_oscrouter.flag");
+	SafetyGateResult gates[] = {
+		calGate,
+		smoGate,
+		ihGate,
+		ftGate,
+		capGate,
+		phGate,
+		orGate,
+	};
+	ApplyRepeatedActiveOnlyBackoff(gates, sizeof(gates) / sizeof(gates[0]));
+	if (!orSafe && (ftSafe || capSafe)) {
+		LOG("Module safety: disabling OSC-dependent modules because oscrouter is auto-disabled");
+		ftSafe = false;
+		capSafe = false;
+	}
+
+	uint32_t flags = ComposeFeatureFlags(calSafe, smoSafe, ihSafe, ftSafe, orSafe, capSafe, phSafe);
 	const bool orEffective = (flags & kFeatureOscRouter) != 0;
 	if (orEffective && !orOn) {
 		LOG("DetectFeatureFlags: enabling oscrouter because a module requires centralized OSC routing");
@@ -80,8 +180,17 @@ uint32_t DetectFeatureFlags()
 
 	// %ls expects wide string on MSVC's CRT. Cap the printed length so a
 	// pathological install path doesn't blow the log line.
-	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d smoothing=%d inputhealth=%d facetracking=%d oscrouter_flag=%d oscrouter_effective=%d captions=%d phantom=%d (mask=0x%x)",
-		dir.c_str(), (int)calOn, (int)smoOn, (int)ihOn, (int)ftOn, (int)orOn, (int)orEffective, (int)capOn, (int)phOn, (unsigned)flags);
+	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d/%d smoothing=%d/%d inputhealth=%d/%d facetracking=%d/%d oscrouter_flag=%d/%d oscrouter_effective=%d captions=%d/%d phantom=%d/%d (mask=0x%x)",
+		dir.c_str(),
+		(int)calOn, (int)calSafe,
+		(int)smoOn, (int)smoSafe,
+		(int)ihOn, (int)ihSafe,
+		(int)ftOn, (int)ftSafe,
+		(int)orOn, (int)orSafe,
+		(int)orEffective,
+		(int)capOn, (int)capSafe,
+		(int)phOn, (int)phSafe,
+		(unsigned)flags);
 	return flags;
 }
 

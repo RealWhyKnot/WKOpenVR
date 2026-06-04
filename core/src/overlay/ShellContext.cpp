@@ -1,6 +1,7 @@
 #include "ShellContext.h"
 
 #include "DiagnosticsLog.h"
+#include "ModuleSafety.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
 #include "Win32Paths.h"
@@ -248,6 +249,19 @@ std::string NormalizeDesktopDefaultModuleFlag(std::string value)
 	return IsValidModuleFlagFileName(value) ? value : kFallbackDesktopDefaultModule;
 }
 
+std::string AutoDisabledReasonLabel(const std::string &reason)
+{
+	if (reason == "init_exception") return "Init fault";
+	if (reason == "request_exception") return "Request fault";
+	if (reason == "interface_exception") return "Interface fault";
+	if (reason == "pose_exception") return "Pose fault";
+	if (reason == "shutdown_exception") return "Shutdown fault";
+	if (reason == "unclean_exit_during_module_operation") return "Crash during module operation";
+	if (reason == "repeated_unclean_driver_exit") return "Repeated unclean exits";
+	if (reason == "pose_pipeline") return "Pose pipeline";
+	return reason.empty() ? std::string("Crash safety") : reason;
+}
+
 } // namespace
 
 std::string Narrow(const std::wstring &value)
@@ -335,6 +349,21 @@ bool ShellContext::IsFlagPresent(const char *flagFileName) const
 		if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) return true;
 	}
 	return false;
+}
+
+bool ShellContext::IsModuleAutoDisabled(const char *flagFileName) const
+{
+	const auto *spec = openvr_pair::common::module_safety::FindByFlagFileName(
+		flagFileName ? flagFileName : "");
+	return spec ? openvr_pair::common::module_safety::HasAutoDisabledMarker(*spec) : false;
+}
+
+std::string ShellContext::ModuleAutoDisabledReason(const char *flagFileName) const
+{
+	const auto *spec = openvr_pair::common::module_safety::FindByFlagFileName(
+		flagFileName ? flagFileName : "");
+	if (!spec || !openvr_pair::common::module_safety::HasAutoDisabledMarker(*spec)) return {};
+	return AutoDisabledReasonLabel(openvr_pair::common::module_safety::AutoDisabledReason(*spec));
 }
 
 // Maps an enable_<feature>.flag filename to the user-facing label used in
@@ -543,6 +572,16 @@ void ShellContext::TickToggles()
 			present ? 1 : 0,
 			static_cast<unsigned long>(exitCode));
 		if (exitCode == 0 && present == it->wantPresent) {
+			const bool wasAutoDisabled = it->wantPresent &&
+				IsModuleAutoDisabled(it->flagFileName.c_str());
+			if (it->wantPresent &&
+				openvr_pair::common::module_safety::ClearAutoDisabledForFlag(it->flagFileName)) {
+				if (wasAutoDisabled) {
+					openvr_pair::common::DiagnosticLog(
+						"shell", "module_safety_reenable flag='%s'",
+						it->flagFileName.c_str());
+				}
+			}
 			SetStatus("Module change applied. SteamVR will pick up the new state the next time it loads the driver.");
 		} else if (present == it->wantPresent) {
 			std::ostringstream oss;

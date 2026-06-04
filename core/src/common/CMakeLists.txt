@@ -34,6 +34,8 @@ add_library(openvr_pair_common STATIC
 	JsonUtil.h
 	LogPaths.cpp
 	LogPaths.h
+	ModuleSafety.cpp
+	ModuleSafety.h
 	ProcessPerfLog.cpp
 	ProcessPerfLog.h
 	RuntimeHealthSummary.cpp
