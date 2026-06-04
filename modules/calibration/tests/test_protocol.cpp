@@ -24,8 +24,7 @@
 TEST(ProtocolTest, VersionPinnedToCurrent) {
     EXPECT_EQ(protocol::Version, 28u)
         << "Protocol version changed without updating the test pin. If this is "
-           "intentional: bump the literal here and update wiki/Protocol.md "
-           "with the new version.";
+           "intentional: bump the literal here and document the wire change.";
 }
 
 // v23 added `updateQuash` to SetDeviceTransform. The wire-layout gate is the

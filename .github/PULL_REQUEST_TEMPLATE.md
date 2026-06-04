@@ -7,7 +7,7 @@
 ## Checklist
 
 - [ ] Run powershell -ExecutionPolicy Bypass -File build.ps1 where applicable.
-- [ ] Updated README, CHANGELOG, or wiki pages if behavior/setup changed.
+- [ ] Updated README or CHANGELOG if behavior/setup changed.
 - [ ] Added or updated tests where the change is risky or user-facing.
 - [ ] No unrelated formatting, generated files, or local-only output included.
 

@@ -61,10 +61,6 @@ Plus the shmem segment `WKOpenVRInputHealthMemoryV1` for the input-health snapsh
 
 Wire format is defined in [core/src/common/Protocol.h](core/src/common/Protocol.h). Each overlay sends only its own request types; the driver routes by request type and rejects messages on the wrong pipe. The handshake fails fast on version skew so a mismatched pair is caught at startup rather than misrouting bytes.
 
-## Documentation
-
-See the [wiki](https://github.com/RealWhyKnot/WKOpenVR/wiki) for architecture overview, per-module deep-dives, protocol reference, build environment notes, and the release pipeline.
-
 ## In development
 
 These modules live under `modules/` and build in dev (`./build.ps1` with no `-Release` flag), but are excluded from published release artifacts via `modules/<slug>/disabled-in-release.flag`. They are exercised in the test suite but are not yet stable enough to ship. Removing the flag re-enables the matching release artifact on the next tag.
