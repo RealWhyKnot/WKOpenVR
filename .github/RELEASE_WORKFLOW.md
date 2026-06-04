@@ -129,8 +129,8 @@ Escape hatch: `-AllowEmpty` for the very first release.
 ## Extras file
 
 For content that the auto-generator can't capture -- coordination notes
-for paired releases with consumer overlays, migration instructions,
-links to a long-form wiki page -- create a markdown file at
+for paired releases with consumer overlays or migration instructions --
+create a markdown file at
 `.github/release-extras/<tag>.md` BEFORE pushing the tag.
 
 ```
@@ -154,10 +154,9 @@ release edit`, re-run the retry loop, fail loud if it still differs.
 
 ## Promote-back to main
 
-The workflow pushes the promoted `CHANGELOG.md` and `wiki/Changelog.md`
-back to `main` via the GraphQL `createCommitOnBranch` mutation. The
-resulting commit is signed server-side with GitHub's bot key, so it
-lands as verified=true.
+The workflow pushes the promoted `CHANGELOG.md` back to `main` via the
+GraphQL `createCommitOnBranch` mutation. The resulting commit is signed
+server-side with GitHub's bot key, so it lands as verified=true.
 
 ## Failure modes + remediations
 

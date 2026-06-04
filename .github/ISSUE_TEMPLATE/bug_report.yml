@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, check the README and wiki: https://github.com/RealWhyKnot/WKOpenVR/wiki
+        Before filing, check the README.
         If WKOpenVR can open, turn on **Enable debug logging**, reproduce the issue, then use **Report bug**. It prepares a sanitized report text file from recent logs and opens this form.
 
   - type: textarea

@@ -69,6 +69,7 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
+          ./.github/scripts/Test-UpdateChangelog.ps1
 
       - name: Test release notes generator
         shell: pwsh
@@ -80,9 +81,8 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version '${{ github.ref_name }}'
-          New-Item -ItemType Directory -Force -Path .changelog-stash/wiki | Out-Null
-          Copy-Item CHANGELOG.md       .changelog-stash/CHANGELOG.md       -Force
-          Copy-Item wiki/Changelog.md  .changelog-stash/wiki/Changelog.md  -Force
+          New-Item -ItemType Directory -Force -Path .changelog-stash | Out-Null
+          Copy-Item CHANGELOG.md .changelog-stash/CHANGELOG.md -Force
 
       - name: Set up .NET 10 SDK
         # FaceModuleHost is a .NET 10 sidecar (pinned by
@@ -700,21 +700,20 @@ jobs:
           set -euo pipefail
 
           git fetch origin main
-          if cmp -s .changelog-stash/CHANGELOG.md <(git show origin/main:CHANGELOG.md) \
-             && cmp -s .changelog-stash/wiki/Changelog.md <(git show origin/main:wiki/Changelog.md); then
+          if cmp -s .changelog-stash/CHANGELOG.md <(git show origin/main:CHANGELOG.md); then
             echo "Nothing to promote -- main already carries the promoted bytes."
             exit 0
           fi
 
           # Build the GraphQL payload in Python so neither bash nor jq
           # ever sees the base64-encoded CHANGELOG bytes as argv. The
-          # earlier `jq -n --arg changelog "$changelog_b64" --arg wiki
-          # "$wiki_b64"` form hit /c/ProgramData/Chocolatey/bin/jq:
+          # earlier `jq -n --arg changelog "$changelog_b64"` form hit
+          # /c/ProgramData/Chocolatey/bin/jq:
           # Argument list too long on a v2026.5.17.0 attempt when
-          # CHANGELOG.md + wiki/Changelog.md exceeded Git Bash's Win32
-          # argv ceiling. Python reads each file, base64-encodes, dumps
-          # the JSON to a temp file, then `gh api graphql --input <file>`
-          # so the payload never travels through argv.
+          # CHANGELOG.md exceeded Git Bash's Win32 argv ceiling. Python reads
+          # the file, base64-encodes, dumps the JSON to a temp file, then
+          # `gh api graphql --input <file>` so the payload never travels
+          # through argv.
           python3 - <<'PY' > "$RUNNER_TEMP/changelog-payload.json"
           import base64, json, os, subprocess, sys
 
@@ -729,9 +728,8 @@ jobs:
                   return base64.b64encode(f.read()).decode("ascii")
 
           changelog_b64 = b64(".changelog-stash/CHANGELOG.md")
-          wiki_b64      = b64(".changelog-stash/wiki/Changelog.md")
           print(
-              f"payload sizes (base64 chars): changelog={len(changelog_b64)} wiki={len(wiki_b64)}",
+              f"payload size (base64 chars): changelog={len(changelog_b64)}",
               file=sys.stderr,
           )
 
@@ -753,8 +751,7 @@ jobs:
                       },
                       "fileChanges": {
                           "additions": [
-                              {"path": "CHANGELOG.md",      "contents": changelog_b64},
-                              {"path": "wiki/Changelog.md", "contents": wiki_b64},
+                              {"path": "CHANGELOG.md", "contents": changelog_b64},
                           ],
                       },
                       "expectedHeadOid": expected_oid,

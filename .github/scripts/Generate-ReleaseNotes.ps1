@@ -496,10 +496,10 @@ foreach ($name in $templateOrder) {
 
 # Optional extras append. Free-form prose for the rare case where a release
 # needs to communicate something that isn't captured by commit subjects --
-# server-side coordination notes, migration steps, a wiki link, etc. The
-# file is read verbatim so the author has full markdown control; the same
-# ASCII scrub runs on the final composed body so non-ASCII characters in
-# the extras fail the workflow just as if they were in commit subjects.
+# server-side coordination notes, migration steps, etc. The file is read
+# verbatim so the author has full markdown control; the same ASCII scrub runs
+# on the final composed body so non-ASCII characters in the extras fail the
+# workflow just as if they were in commit subjects.
 if (Test-Path -LiteralPath $Extras) {
     $extrasContent = (Get-Content -LiteralPath $Extras -Raw -Encoding UTF8).Trim()
     if ($extrasContent) {

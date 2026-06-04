@@ -6,10 +6,9 @@
 # `## Additional notes` heading.
 #
 # Use only for content that genuinely cannot be captured in commit subjects:
-# coordination notes for paired releases with the consumer overlays, migration
-# instructions, links to a wiki page with long-form details. Anything that IS
-# a code change should land as a conventional-commit subject and let the
-# auto-generator pick it up.
+# coordination notes for paired releases with the consumer overlays or
+# migration instructions. Anything that IS a code change should land as a
+# conventional-commit subject and let the auto-generator pick it up.
 #
 # The same scrub gates (ASCII normalisation, voice + internal-only-vocabulary
 # check) run on the composed body, so non-ASCII or marketing-puffery vocabulary

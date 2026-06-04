@@ -22,7 +22,7 @@ Tokens that the resolver could not compute render as the literal token string. A
 
 ## Optional release-specific extras
 
-Templates here are evergreen content, the same on every release. For one-off prose tied to a single release (a coordination note, a migration step, a wiki link), put a markdown file at `.github/release-extras/<tag>.md`. The composer appends its content verbatim below the templated sections, separated by `---` and an `## Additional notes` heading.
+Templates here are evergreen content, the same on every release. For one-off prose tied to a single release, put a markdown file at `.github/release-extras/<tag>.md`. The composer appends its content verbatim below the templated sections, separated by `---` and an `## Additional notes` heading.
 
 ## Editing existing templates
 
