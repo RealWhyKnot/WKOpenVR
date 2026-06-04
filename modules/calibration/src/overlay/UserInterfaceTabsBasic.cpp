@@ -135,12 +135,10 @@ void CCal_BasicInfo()
 	    panelSize);
 
 	// --- Actions panel -----------------------------------------------------
-	// Three-way grid (Cancel | Restart sampling | Pause) inside a group panel
-	// so it visually matches the rest of Basic.
 	openvr_pair::overlay::ui::DrawPanel(
 	    "Actions",
 	    [&] {
-		    float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
+		    float width = ImGui::GetWindowContentRegionWidth();
 
 		    // (Removed 2026-05-04: "Recalibrate from scratch" button. The wedge case
 		    // it served as escape-hatch for is now handled silently by the load-time
@@ -151,18 +149,9 @@ void CCal_BasicInfo()
 		    // from the user via that same broken tracking -- auto-detect + auto-fix
 		    // is the only correct shape.)
 
-		    if (ImGui::BeginTable("##CCal_Cancel", 3, 0, ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+		    if (ImGui::BeginTable("##CCal_Actions", 2, 0, ImVec2(width, ImGui::GetTextLineHeight() * 2))) {
 			    ImGui::TableNextRow();
 			    ImGui::TableSetColumnIndex(0);
-			    if (ImGui::Button("Cancel Continuous Calibration", ImVec2(-FLT_MIN, 0.0f))) {
-				    EndContinuousCalibration();
-			    }
-			    if (ImGui::IsItemHovered()) {
-				    ImGui::SetTooltip("Stop continuous calibration. The last applied offset stays in place\n"
-				                      "as a fixed offset until you start calibration again.");
-			    }
-
-			    ImGui::TableSetColumnIndex(1);
 			    // User-facing rename of the old "Debug: Force break calibration"
 			    // button. Same underlying call -- pushing a random offset forces the
 			    // solver to re-search from samples instead of trusting the current
@@ -177,7 +166,7 @@ void CCal_BasicInfo()
 				                      "nudging from the current estimate.");
 			    }
 
-			    ImGui::TableSetColumnIndex(2);
+			    ImGui::TableSetColumnIndex(1);
 			    // Toggle button: while paused, the calibration tick is expected to
 			    // skip ComputeIncremental so the live offset stays put. The flag
 			    // itself lives on CalibrationContext (see Calibration.h); the gate

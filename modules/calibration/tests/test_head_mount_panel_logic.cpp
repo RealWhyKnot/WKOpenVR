@@ -8,6 +8,7 @@
 #include "Calibration.h" // HeadMountMode, HeadMountConfig
 #include "HeadMountOffsetPreflight.h"
 #include "HeadMountTargetBinding.h"
+#include "TrackingStyleActions.h"
 
 // ---------------------------------------------------------------------------
 // Pure helpers mirroring the panel's radio-enable gate
@@ -48,6 +49,19 @@ CalibrationContext ReadyOffsetCalibrationContext()
 	wkopenvr::headmount::BindHeadMountToContinuousTarget(ctx);
 	ctx.headMount.mode = HeadMountMode::Off;
 	return ctx;
+}
+
+wkopenvr::tracking_style_ui::ActionInputs TrackingStyleAction(TrackingStyle style,
+                                                              CalibrationState state = CalibrationState::None)
+{
+	wkopenvr::tracking_style_ui::ActionInputs in;
+	in.style = style;
+	in.state = state;
+	in.vrReady = true;
+	in.validProfile = true;
+	in.offsetPreflightReady = true;
+	in.targetMatches = true;
+	return in;
 }
 
 } // namespace
@@ -101,6 +115,89 @@ TEST(HeadMountPanelLogic, DefaultConfigHasOffModeAndNoOffset)
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(hm.driverSynthTiming));
 }
 
+TEST(HeadMountPanelLogic, TrackingStyleActionLabelsManualAndContinuous)
+{
+	using namespace wkopenvr::tracking_style_ui;
+
+	auto manualRunning = TrackingStyleAction(TrackingStyle::Manual, CalibrationState::Continuous);
+	EXPECT_STREQ("Calibrate now", PrimaryActionLabel(manualRunning));
+	EXPECT_TRUE(PrimaryActionEnabled(manualRunning));
+
+	auto continuousStopped = TrackingStyleAction(TrackingStyle::Continuous, CalibrationState::None);
+	EXPECT_STREQ("Start continuous calibration", PrimaryActionLabel(continuousStopped));
+
+	auto continuousRunning = TrackingStyleAction(TrackingStyle::Continuous, CalibrationState::Continuous);
+	EXPECT_STREQ("Restart continuous calibration", PrimaryActionLabel(continuousRunning));
+	EXPECT_TRUE(PrimaryActionEnabled(continuousRunning));
+}
+
+TEST(HeadMountPanelLogic, TrackingStyleActionLabelsLockedRecoverySetup)
+{
+	using namespace wkopenvr::tracking_style_ui;
+
+	auto action = TrackingStyleAction(TrackingStyle::LockedWithRecovery, CalibrationState::None);
+	EXPECT_STREQ("Start setup", PrimaryActionLabel(action));
+
+	action.state = CalibrationState::Continuous;
+	EXPECT_STREQ("Calibrate headset tracker", PrimaryActionLabel(action));
+
+	action.offsetCalibrated = true;
+	EXPECT_STREQ("Lock headset tracker", PrimaryActionLabel(action));
+
+	action.relativePosCalibrated = true;
+	EXPECT_STREQ("Re-calibrate headset tracker", PrimaryActionLabel(action));
+}
+
+TEST(HeadMountPanelLogic, TrackingStyleActionLabelsHardLockSetup)
+{
+	using namespace wkopenvr::tracking_style_ui;
+
+	auto action = TrackingStyleAction(TrackingStyle::HardTrackerLock, CalibrationState::None);
+	EXPECT_STREQ("Start setup", PrimaryActionLabel(action));
+
+	action.state = CalibrationState::Continuous;
+	EXPECT_STREQ("Calibrate headset tracker", PrimaryActionLabel(action));
+
+	action.offsetCalibrated = true;
+	EXPECT_STREQ("Lock headset tracker", PrimaryActionLabel(action));
+
+	action.relativePosCalibrated = true;
+	EXPECT_STREQ("Finish setup", PrimaryActionLabel(action));
+	EXPECT_TRUE(PrimaryActionEnabled(action));
+}
+
+TEST(HeadMountPanelLogic, TrackingStyleActionDisablesFinishedHardLockInsteadOfApply)
+{
+	using namespace wkopenvr::tracking_style_ui;
+
+	auto action = TrackingStyleAction(TrackingStyle::HardTrackerLock, CalibrationState::None);
+	action.offsetCalibrated = true;
+	action.relativePosCalibrated = true;
+
+	std::string reason;
+	EXPECT_STREQ("Hard tracker lock active", PrimaryActionLabel(action));
+	EXPECT_FALSE(PrimaryActionEnabled(action, &reason));
+	EXPECT_EQ("Hard tracker lock is active. Select another tracking style to change modes.", reason);
+}
+
+TEST(HeadMountPanelLogic, TrackingStyleActionRequiresProfileAndTargetBeforeLocking)
+{
+	using namespace wkopenvr::tracking_style_ui;
+
+	auto action = TrackingStyleAction(TrackingStyle::HardTrackerLock, CalibrationState::Continuous);
+	action.offsetCalibrated = true;
+	action.validProfile = false;
+	std::string reason;
+	EXPECT_FALSE(PrimaryActionEnabled(action, &reason));
+	EXPECT_EQ("Save or create a calibration profile before locking the headset tracker.", reason);
+
+	action.validProfile = true;
+	action.targetMatches = false;
+	reason.clear();
+	EXPECT_FALSE(PrimaryActionEnabled(action, &reason));
+	EXPECT_EQ("Restart setup with the selected headset tracker.", reason);
+}
+
 TEST(HeadMountPanelLogic, OffsetPreflightAllowsStableContinuousWithModeOff)
 {
 	CalibrationContext ctx = ReadyOffsetCalibrationContext();
@@ -133,35 +230,35 @@ TEST(HeadMountPanelLogic, OffsetPreflightRequiresValidProfile)
 	EXPECT_STREQ("profile_not_ready", result.reason);
 }
 
-TEST(HeadMountPanelLogic, OffsetPreflightRequiresRelativePoseLock)
+TEST(HeadMountPanelLogic, OffsetPreflightAllowsMissingRelativePoseLock)
 {
 	CalibrationContext ctx = ReadyOffsetCalibrationContext();
 	ctx.relativePosCalibrated = false;
 
 	const auto result = wkopenvr::headmount::EvaluateOffsetCalibrationPreflight(ctx);
 
-	EXPECT_FALSE(result.ready);
-	EXPECT_STREQ("relative_pose_not_ready", result.reason);
+	EXPECT_TRUE(result.ready);
+	EXPECT_STREQ("ready", result.reason);
 }
 
-TEST(HeadMountPanelLogic, OffsetPreflightBlocksModesThatUseSolvedOffset)
+TEST(HeadMountPanelLogic, OffsetPreflightAllowsStyleOwnedHeadMountModes)
 {
 	CalibrationContext ctx = ReadyOffsetCalibrationContext();
 
 	ctx.headMount.mode = HeadMountMode::AutoPaired;
 	auto result = wkopenvr::headmount::EvaluateOffsetCalibrationPreflight(ctx);
-	EXPECT_FALSE(result.ready);
-	EXPECT_STREQ("head_mount_mode_active", result.reason);
+	EXPECT_TRUE(result.ready);
+	EXPECT_STREQ("ready", result.reason);
 
 	ctx.headMount.mode = HeadMountMode::Corroborate;
 	result = wkopenvr::headmount::EvaluateOffsetCalibrationPreflight(ctx);
-	EXPECT_FALSE(result.ready);
-	EXPECT_STREQ("head_mount_mode_active", result.reason);
+	EXPECT_TRUE(result.ready);
+	EXPECT_STREQ("ready", result.reason);
 
 	ctx.headMount.mode = HeadMountMode::DriverSynth;
 	result = wkopenvr::headmount::EvaluateOffsetCalibrationPreflight(ctx);
-	EXPECT_FALSE(result.ready);
-	EXPECT_STREQ("head_mount_mode_active", result.reason);
+	EXPECT_TRUE(result.ready);
+	EXPECT_STREQ("ready", result.reason);
 }
 
 TEST(HeadMountPanelLogic, CorroborateWithoutOffsetShouldBeDisabled)

@@ -28,6 +28,7 @@
 #include "HeadMountShadowOffset.h"
 #include "HeadMountSourceGuard.h"
 #include "HeadMountTargetBinding.h"
+#include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
 
 // Boundary capture session tick (defined in UserInterfaceTabsBoundary.cpp).
@@ -425,6 +426,44 @@ static void UpdateHeadMountSourceFingerprint(CalibrationContext& ctx, HeadMountS
 	ctx.headMountLastSourceDeviceID = ctx.headMount.deviceID;
 	ctx.headMountLastSourceTargetSerial = ctx.targetStandby.serial;
 	ctx.headMountLastSourceTargetSystem = ctx.targetStandby.trackingSystem;
+}
+
+bool CCal_SeedHeadMountProxyRelativeLock(const char* reason)
+{
+	if (!TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle)) {
+		return false;
+	}
+	ApplyTrackingStylePreset(CalCtx, CalCtx.trackingStyle);
+	if (!CalCtx.headMount.offsetCalibrated || !CalCtx.validProfile ||
+	    !wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx)) {
+		return false;
+	}
+
+	const HeadMountSampleSource source = CurrentHeadMountSampleSource(CalCtx);
+	if (source != HeadMountSampleSource::HeadProxy) {
+		return false;
+	}
+
+	CalCtx.refToTargetPose = Eigen::AffineCompact3d::Identity();
+	CalCtx.relativePosCalibrated = true;
+	CalCtx.headMountNeedsFreshRelativePose = false;
+	CalCtx.ResolveLockMode();
+	calibration.setRelativeTransformation(CalCtx.refToTargetPose, true);
+	calibration.lockRelativePosition = CalCtx.lockRelativePosition;
+	UpdateHeadMountSourceFingerprint(CalCtx, source);
+	if (CalCtx.state == CalibrationState::Continuous) {
+		g_snapNextProfileApply = true;
+	}
+
+	char buf[320];
+	std::snprintf(buf, sizeof buf,
+	              "head_mount_relative_lock_seeded: reason=%s style=%d mode=%d"
+	              " lockRel=%d offset_version=%u target_serial='%s'",
+	              (reason && reason[0]) ? reason : "unknown", (int)CalCtx.trackingStyle, (int)CalCtx.headMount.mode,
+	              (int)CalCtx.lockRelativePosition, (unsigned)CalCtx.headMountOffsetVersion,
+	              CalCtx.targetStandby.serial.c_str());
+	Metrics::WriteLogAnnotation(buf);
+	return true;
 }
 
 static void TickHeadMountSourceTransitionGuard(CalibrationContext& ctx, double time)

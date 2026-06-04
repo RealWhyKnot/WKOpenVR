@@ -55,12 +55,6 @@ inline OffsetCalibrationPreflight EvaluateOffsetCalibrationPreflight(const Calib
 	if (!ctx.validProfile) {
 		return {false, "profile_not_ready", "Waiting for a valid continuous calibration profile."};
 	}
-	if (!ctx.relativePosCalibrated) {
-		return {false, "relative_pose_not_ready", "Waiting for continuous calibration to lock the relative pose."};
-	}
-	if (HeadMountModeUsesOffsetInContinuous(hm.mode)) {
-		return {false, "head_mount_mode_active", "Turn the head-mounted tracker mode Off before solving this offset."};
-	}
 
 	return {true, "ready", "Ready to solve the headset tracker offset."};
 }

@@ -19,6 +19,7 @@
 // SaveProfile is defined in Calibration.cpp; expose via forward declaration
 // matching the pattern used by Wizard.cpp.
 void SaveProfile(CalibrationContext& ctx);
+bool CCal_SeedHeadMountProxyRelativeLock(const char* reason = "unknown");
 
 namespace wkopenvr::headmount {
 
@@ -385,6 +386,7 @@ bool DrawOffsetModal()
 					CalCtx.headMount.headFromTracker = s.lastResult.headFromTracker;
 					CalCtx.headMount.offsetCalibrated = true;
 					CalCtx.NoteHeadMountOffsetChanged();
+					const bool seededRelativeLock = CCal_SeedHeadMountProxyRelativeLock("offset_save");
 					SaveProfile(CalCtx);
 					if (CalCtx.state == CalibrationState::Continuous) {
 						g_snapNextProfileApply = true;
@@ -398,8 +400,8 @@ bool DrawOffsetModal()
 						char sbuf[192];
 						snprintf(sbuf, sizeof sbuf,
 						         "[head-mount-modal] offset saved:"
-						         " trans=(%.2f,%.2f,%.2f)cm rpy=(%.2f,%.2f,%.2f)deg",
-						         tcm.x(), tcm.y(), tcm.z(), rpy(0), rpy(1), rpy(2));
+						         " trans=(%.2f,%.2f,%.2f)cm rpy=(%.2f,%.2f,%.2f)deg rel_lock_seeded=%d",
+						         tcm.x(), tcm.y(), tcm.z(), rpy(0), rpy(1), rpy(2), seededRelativeLock ? 1 : 0);
 						Metrics::WriteLogAnnotation(sbuf);
 					}
 					savedOffset = true;

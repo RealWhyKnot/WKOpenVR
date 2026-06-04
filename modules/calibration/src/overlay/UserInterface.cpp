@@ -13,7 +13,9 @@
 #include "UserInterfaceBanners.h"
 #include "UserInterfaceCalibrationProgress.h"
 #include "HeadMountOffsetModal.h"
+#include "HeadMountOffsetPreflight.h"
 #include "TrackingStyle.h"
+#include "TrackingStyleActions.h"
 #include "UiHelpers.h"
 
 #include <thread>
@@ -29,6 +31,7 @@
 #include "imgui_extensions.h"
 
 extern SCIPCClient Driver;
+bool CCal_SeedHeadMountProxyRelativeLock(const char* reason = "unknown");
 
 void TextWithWidth(const char* label, const char* text, float width);
 void DrawVectorElement(const std::string id, const char* text, double* value, int defaultValue = 0,
@@ -439,7 +442,7 @@ inline const char* GetPrettyTrackingSystemName(const std::string& value)
 //
 // The reasoning for having both this AND CCal_BasicInfo's Common settings
 // rather than one shared function: the surrounding contexts differ -- the
-// continuous Basic tab has device-status table + Cancel/Restart/Pause action
+// continuous Basic tab has device-status table plus restart/pause action
 // buttons above, this one is just the settings.
 static void OneShot_DrawSettings()
 {
@@ -624,10 +627,19 @@ static std::string CalibrationBlockedMessage()
 	return "Waiting for SteamVR. Calibration controls enable when tracking is live.";
 }
 
+static bool ContinuousCalibrationIsRunning()
+{
+	return wkopenvr::tracking_style_ui::ContinuousCalibrationIsRunning(CalCtx.state);
+}
+
 static void ApplySelectedTrackingStyle(TrackingStyle style)
 {
-	if (CalCtx.trackingStyle == style) return;
 	const TrackingStyle prev = CalCtx.trackingStyle;
+	const bool shouldEndContinuous = style == TrackingStyle::Manual && ContinuousCalibrationIsRunning();
+	if (prev == style && !shouldEndContinuous) return;
+	if (shouldEndContinuous) {
+		EndContinuousCalibration();
+	}
 	ApplyTrackingStylePreset(CalCtx, style);
 	CalCtx.ResolveLockMode();
 	SaveProfile(CalCtx);
@@ -639,19 +651,56 @@ static void ApplySelectedTrackingStyle(TrackingStyle style)
 	Metrics::WriteLogAnnotation(buf);
 }
 
-static const char* PrimaryActionLabel()
+static void SeedSavedHeadsetTrackerLockFromUi(const char* reason)
 {
-	switch (CalCtx.trackingStyle) {
-		case TrackingStyle::Manual:
-			return "Calibrate now";
-		case TrackingStyle::Continuous:
-			return "Start continuous calibration";
-		case TrackingStyle::LockedWithRecovery:
-			return "Start locked headset setup";
-		case TrackingStyle::HardTrackerLock:
-			return CalCtx.headMount.offsetCalibrated ? "Apply hard tracker lock" : "Start hard-lock setup";
+	if (CCal_SeedHeadMountProxyRelativeLock(reason)) {
+		SaveProfile(CalCtx);
+		SendHeadMountConfigFromCalCtx();
 	}
-	return "Calibrate now";
+	else {
+		Metrics::WriteLogAnnotation("head_mount_relative_lock_seed_failed: reason=ui_requested");
+	}
+}
+
+static bool FinishHardTrackerLockSetup()
+{
+	if (!CalCtx.headMount.offsetCalibrated) return false;
+	if (!CalCtx.relativePosCalibrated && !CCal_SeedHeadMountProxyRelativeLock("ui_finish_hard_lock")) {
+		Metrics::WriteLogAnnotation("head_mount_relative_lock_seed_failed: reason=ui_finish_hard_lock");
+		return false;
+	}
+	if (ContinuousCalibrationIsRunning()) {
+		EndContinuousCalibration();
+	}
+	ApplyTrackingStylePreset(CalCtx, TrackingStyle::HardTrackerLock);
+	if (!CalCtx.relativePosCalibrated && !CCal_SeedHeadMountProxyRelativeLock("ui_finish_hard_lock_after_end")) {
+		Metrics::WriteLogAnnotation("head_mount_relative_lock_seed_failed: reason=ui_finish_hard_lock_after_end");
+		return false;
+	}
+	CalCtx.ResolveLockMode();
+	SaveProfile(CalCtx);
+	SendHeadMountConfigFromCalCtx();
+	return true;
+}
+
+static wkopenvr::tracking_style_ui::ActionInputs BuildTrackingStyleActionInputs()
+{
+	wkopenvr::tracking_style_ui::ActionInputs in;
+	in.style = CalCtx.trackingStyle;
+	in.state = CalCtx.state;
+	in.vrReady = IsVRReady();
+	in.validProfile = CalCtx.validProfile;
+	in.offsetCalibrated = CalCtx.headMount.offsetCalibrated;
+	in.relativePosCalibrated = CalCtx.relativePosCalibrated;
+	in.targetMatches = wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx);
+	in.vrBlockedMessage = CalibrationBlockedMessage();
+
+	if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) && ContinuousCalibrationIsRunning()) {
+		const auto preflight = wkopenvr::headmount::EvaluateOffsetCalibrationPreflight(CalCtx);
+		in.offsetPreflightReady = preflight.ready;
+		in.offsetPreflightMessage = preflight.message;
+	}
+	return in;
 }
 
 static void RunPrimaryTrackingAction()
@@ -663,19 +712,45 @@ static void RunPrimaryTrackingAction()
 
 	switch (CalCtx.trackingStyle) {
 		case TrackingStyle::Manual:
+			if (ContinuousCalibrationIsRunning()) {
+				EndContinuousCalibration();
+				ApplyTrackingStylePreset(CalCtx, TrackingStyle::Manual);
+				CalCtx.ResolveLockMode();
+				SaveProfile(CalCtx);
+				SendHeadMountConfigFromCalCtx();
+			}
 			ImGui::OpenPopup("Calibration Progress");
 			StartCalibration("ui_tracking_style_manual");
 			break;
 		case TrackingStyle::Continuous:
-		case TrackingStyle::LockedWithRecovery:
 			StartContinuousCalibration("ui_tracking_style_continuous");
 			break;
-		case TrackingStyle::HardTrackerLock:
-			if (CalCtx.headMount.offsetCalibrated) {
-				SendHeadMountConfigFromCalCtx();
+		case TrackingStyle::LockedWithRecovery:
+			if (!ContinuousCalibrationIsRunning()) {
+				StartContinuousCalibration("ui_tracking_style_locked_recovery");
+			}
+			else if (!CalCtx.headMount.offsetCalibrated) {
+				wkopenvr::headmount::OpenOffsetModal();
+			}
+			else if (!CalCtx.relativePosCalibrated) {
+				SeedSavedHeadsetTrackerLockFromUi("ui_lock_recovery");
 			}
 			else {
+				wkopenvr::headmount::OpenOffsetModal();
+			}
+			break;
+		case TrackingStyle::HardTrackerLock:
+			if (!ContinuousCalibrationIsRunning()) {
 				StartContinuousCalibration("ui_tracking_style_hard_setup");
+			}
+			else if (!CalCtx.headMount.offsetCalibrated) {
+				wkopenvr::headmount::OpenOffsetModal();
+			}
+			else if (!CalCtx.relativePosCalibrated) {
+				SeedSavedHeadsetTrackerLockFromUi("ui_lock_hard");
+			}
+			else {
+				FinishHardTrackerLockSetup();
 			}
 			break;
 	}
@@ -700,24 +775,28 @@ static void BuildTrackingStyleSetup(bool continuousCalibration)
 	}
 
 	ImGui::Spacing();
-	const bool needsOffset = TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) && !CalCtx.headMount.offsetCalibrated;
+	const bool headsetStyle = TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle);
+	const bool needsOffset = headsetStyle && !CalCtx.headMount.offsetCalibrated;
+	const bool needsRelativeLock = headsetStyle && CalCtx.headMount.offsetCalibrated && !CalCtx.relativePosCalibrated;
+	const char* setupSuffix = needsOffset ? " | offset needed" : (needsRelativeLock ? " | lock needed" : "");
 	ImGui::TextDisabled("Status: %s | %s%s", continuousCalibration ? "running" : "stopped",
-	                    TrackingStyleSummary(CalCtx.trackingStyle), needsOffset ? " | offset needed" : "");
+	                    TrackingStyleSummary(CalCtx.trackingStyle), setupSuffix);
 
-	if (continuousCalibration && CalCtx.trackingStyle == TrackingStyle::HardTrackerLock) {
-		ImGui::Spacing();
-		ImGui::BeginDisabled(!CalCtx.headMount.offsetCalibrated);
-		if (ImGui::Button("Finish hard-lock setup")) {
-			EndContinuousCalibration();
-			ApplyTrackingStylePreset(CalCtx, TrackingStyle::HardTrackerLock);
-			CalCtx.ResolveLockMode();
-			SaveProfile(CalCtx);
-			SendHeadMountConfigFromCalCtx();
+	ImGui::Spacing();
+	std::string disabledReason;
+	const auto actionInputs = BuildTrackingStyleActionInputs();
+	const bool actionEnabled = wkopenvr::tracking_style_ui::PrimaryActionEnabled(actionInputs, &disabledReason);
+	const char* actionLabel = wkopenvr::tracking_style_ui::PrimaryActionLabel(actionInputs);
+	ImGui::BeginDisabled(!actionEnabled);
+	if (ImGui::Button(actionLabel, ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 2.0f))) {
+		RunPrimaryTrackingAction();
+	}
+	ImGui::EndDisabled();
+	if (!disabledReason.empty()) {
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("%s", disabledReason.c_str());
 		}
-		ImGui::EndDisabled();
-		if (!CalCtx.headMount.offsetCalibrated && ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Calibrate the tracker-to-headset offset before finishing setup.");
-		}
+		ImGui::TextDisabled("%s", disabledReason.c_str());
 	}
 
 	ImGui::EndGroupPanel();
@@ -730,32 +809,11 @@ void BuildMenu(bool runningInOverlay)
 	ImGui::Text("");
 
 	if (CalCtx.state == CalibrationState::None) {
-		// (Profile-mismatch banner moved below the action buttons -- it used
-		// to push the Start / Continuous / Edit / Clear row down with a
-		// multi-line warning. The buttons are what the user is actually
-		// reaching for; surface them first.)
-
-		float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
-		if (CalCtx.validProfile) {
-			width -= style.FramePadding.x * 4.0f;
-			scale = 1.0f / 3.0f;
-		}
-
-		// Calibration setup needs a live VR stack to enumerate devices and
-		// collect samples. Edit / Clear are pure-memory operations
-		// on the saved profile and stay enabled even without SteamVR running.
 		const std::string blockedMessage = CalibrationBlockedMessage();
-		ImGui::BeginDisabled(!IsVRReady());
-		if (ImGui::Button(PrimaryActionLabel(), ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-			RunPrimaryTrackingAction();
-		}
-		ImGui::EndDisabled();
-		if (!IsVRReady() && ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("%s", blockedMessage.c_str());
-		}
 
 		if (CalCtx.validProfile) {
-			ImGui::SameLine();
+			float width = ImGui::GetWindowContentRegionWidth() - style.FramePadding.x * 2.0f;
+			const float scale = 0.5f;
 			if (ImGui::Button("Edit Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
 				CalCtx.state = CalibrationState::Editing;
 			}
@@ -765,10 +823,6 @@ void BuildMenu(bool runningInOverlay)
 				CalCtx.Clear();
 				SaveProfile(CalCtx);
 			}
-		}
-		if (!blockedMessage.empty()) {
-			ImGui::Spacing();
-			ImGui::TextDisabled("%s", blockedMessage.c_str());
 		}
 
 		// Profile-mismatch banner (relocated): renders only when the saved
