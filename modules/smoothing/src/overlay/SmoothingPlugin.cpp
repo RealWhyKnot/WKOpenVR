@@ -30,23 +30,23 @@
 #include <set>
 #include <string>
 
-void SmoothingPlugin::OnStart(openvr_pair::overlay::ShellContext &)
+void SmoothingPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 {
 	smoothing::logging::OpenLogFile();
 	SM_LOG("WKOpenVR-Smoothing plugin starting (protocol=v%u)", (unsigned)protocol::Version);
 	const bool connectedNow = ConnectIfNeeded();
 	if (ipc_.IsConnected()) {
 		SM_LOG("[ipc] connected on first try (new=%d)", connectedNow ? 1 : 0);
-	} else if (!connectError_.empty()) {
+	}
+	else if (!connectError_.empty()) {
 		SM_LOG("[ipc] initial connect failed: %s", connectError_.c_str());
 	}
 	SendConfig();
-	SM_LOG("[config] pushed: smoothness=%d finger_mask=0x%04x",
-		cfg_.smoothness, (unsigned)cfg_.finger_mask);
+	SM_LOG("[config] pushed: smoothness=%d finger_mask=0x%04x", cfg_.smoothness, (unsigned)cfg_.finger_mask);
 	ReplayDevicePredictions("startup");
 }
 
-void SmoothingPlugin::Tick(openvr_pair::overlay::ShellContext &)
+void SmoothingPlugin::Tick(openvr_pair::overlay::ShellContext&)
 {
 	if (!ipc_.IsConnected() && ConnectIfNeeded()) {
 		SM_LOG("[ipc] connected; replaying smoothing state");
@@ -75,7 +75,8 @@ bool SmoothingPlugin::ConnectIfNeeded()
 		connectError_.clear();
 		nextConnectAttempt_ = {};
 		return true;
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		// Only log the message the first time it changes to avoid per-tick spam
 		// while the driver is unavailable.
 		if (connectError_ != e.what()) {
@@ -110,7 +111,8 @@ void SmoothingPlugin::SendConfig()
 	try {
 		ipc_.SendBlocking(req);
 		connectError_.clear();
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		connectError_ = e.what();
 	}
 }
@@ -132,14 +134,15 @@ void SmoothingPlugin::SendDevicePrediction(uint32_t openVRID, int smoothness)
 	try {
 		ipc_.SendBlocking(req);
 		connectError_.clear();
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		connectError_ = e.what();
 	}
 }
 
 static std::string BuildPredictionDeviceSignature()
 {
-	auto *vrSystem = vr::VRSystem();
+	auto* vrSystem = vr::VRSystem();
 	if (!vrSystem) return {};
 
 	std::ostringstream sig;
@@ -155,13 +158,13 @@ static std::string BuildPredictionDeviceSignature()
 	return sig.str();
 }
 
-void SmoothingPlugin::ReplayDevicePredictions(const char *reason)
+void SmoothingPlugin::ReplayDevicePredictions(const char* reason)
 {
 	// On startup / reconnect, walk the saved tracker_smoothness map and push
 	// each entry to the driver. Without this, restored values would sit on
 	// disk until the user happened to wiggle the slider for that device.
 	if (!ipc_.IsConnected()) return;
-	auto *vrSystem = vr::VRSystem();
+	auto* vrSystem = vr::VRSystem();
 	if (!vrSystem) return;
 
 	int restored = 0;
@@ -180,14 +183,14 @@ void SmoothingPlugin::ReplayDevicePredictions(const char *reason)
 		std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
 		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof buffer, &err);
 		std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
-		if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(
-				deviceClass, serial, model, trackingSystem)) {
+		if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(deviceClass, serial, model, trackingSystem)) {
 			if (cfg_.trackerSmoothness.find(serial) != cfg_.trackerSmoothness.end()) {
 				SendDevicePrediction(id, 0);
 				SM_LOG("[prediction] replay reason=%s id=%u serial='%s' value=0 hidden/internal",
-					reason ? reason : "unknown", id, serial.c_str());
+				       reason ? reason : "unknown", id, serial.c_str());
 				++cleared;
-			} else {
+			}
+			else {
 				++skipped;
 			}
 			continue;
@@ -196,9 +199,10 @@ void SmoothingPlugin::ReplayDevicePredictions(const char *reason)
 			if (cfg_.trackerSmoothness.find(serial) != cfg_.trackerSmoothness.end()) {
 				SendDevicePrediction(id, 0);
 				SM_LOG("[prediction] replay reason=%s id=%u serial='%s' value=0 hmd-locked",
-					reason ? reason : "unknown", id, serial.c_str());
+				       reason ? reason : "unknown", id, serial.c_str());
 				++cleared;
-			} else {
+			}
+			else {
 				++skipped;
 			}
 			continue;
@@ -209,9 +213,10 @@ void SmoothingPlugin::ReplayDevicePredictions(const char *reason)
 			if (cfg_.trackerSmoothness.find(serial) != cfg_.trackerSmoothness.end()) {
 				SendDevicePrediction(id, 0);
 				SM_LOG("[prediction] replay reason=%s id=%u serial='%s' value=0 calibration-locked",
-					reason ? reason : "unknown", id, serial.c_str());
+				       reason ? reason : "unknown", id, serial.c_str());
 				++cleared;
-			} else {
+			}
+			else {
 				++skipped;
 			}
 			continue;
@@ -223,12 +228,12 @@ void SmoothingPlugin::ReplayDevicePredictions(const char *reason)
 			continue;
 		}
 		SendDevicePrediction(id, it->second);
-		SM_LOG("[prediction] replay reason=%s id=%u serial='%s' value=%d",
-			reason ? reason : "unknown", id, serial.c_str(), it->second);
+		SM_LOG("[prediction] replay reason=%s id=%u serial='%s' value=%d", reason ? reason : "unknown", id,
+		       serial.c_str(), it->second);
 		++restored;
 	}
 	SM_LOG("[prediction] replay complete reason=%s restored=%d cleared=%d skipped=%d saved=%zu",
-		reason ? reason : "unknown", restored, cleared, skipped, cfg_.trackerSmoothness.size());
+	       reason ? reason : "unknown", restored, cleared, skipped, cfg_.trackerSmoothness.size());
 }
 
 void SmoothingPlugin::TickPredictionRestore()
@@ -255,7 +260,7 @@ void SmoothingPlugin::TickCalibrationLockClear()
 {
 	std::set<std::string> locks;
 
-	for (const auto &kv : cfg_.trackerSmoothness) {
+	for (const auto& kv : cfg_.trackerSmoothness) {
 		openvr_pair::overlay::CalibrationDeviceLockKind lockKind{};
 		if (openvr_pair::overlay::TryGetCalibrationDeviceLockKind(kv.first, lockKind)) {
 			locks.insert(kv.first);
@@ -263,7 +268,7 @@ void SmoothingPlugin::TickCalibrationLockClear()
 	}
 	if (locks == lastKnownCalibrationLocks_) return;
 
-	auto *vrSystem = vr::VRSystem();
+	auto* vrSystem = vr::VRSystem();
 	if (!vrSystem || !ipc_.IsConnected()) return;
 
 	char buffer[vr::k_unMaxPropertyStringSize];
@@ -275,14 +280,15 @@ void SmoothingPlugin::TickCalibrationLockClear()
 		std::string serial = buffer;
 		if (locks.find(serial) == locks.end()) continue;
 		if (lastKnownCalibrationLocks_.find(serial) != lastKnownCalibrationLocks_.end()) continue;
-		SM_LOG("[smoothing] tracker %s is used by continuous calibration; smoothing disabled while locked", serial.c_str());
+		SM_LOG("[smoothing] tracker %s is used by continuous calibration; smoothing disabled while locked",
+		       serial.c_str());
 		SendDevicePrediction(id, 0);
 	}
 
 	lastKnownCalibrationLocks_ = std::move(locks);
 }
 
-void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
+void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 {
 	openvr_pair::overlay::ui::TabBarScope tabs("smoothing_tabs");
 	if (tabs) {
@@ -308,25 +314,25 @@ void SmoothingPlugin::DrawSettingsTab()
 {
 #if WKOPENVR_BUILD_IS_DEV
 	bool smart = cfg_.smart_smoothing;
-	openvr_pair::overlay::ui::DrawSettingTable("smoothing_general_settings", 160.0f,
-		[&](openvr_pair::overlay::ui::SettingTableScope &table) {
-			openvr_pair::overlay::ui::SettingRow(table, "Rotation smoothing preview", [&] {
-				if (openvr_pair::overlay::ui::CheckboxWithTooltip(
-						"##smart_smoothing", &smart,
-						"Filters tracker rotation in dev builds while the one-euro\n"
-						"position filter remains the baseline for every nonzero\n"
-						"prediction smoothness value. Release builds keep raw rotation.\n"
-						"Finger smoothing is unchanged.")) {
-					cfg_.smart_smoothing = smart;
-					SaveConfig(cfg_);
-					// Push the dev rotation-preview flag down to every device that
-					// already has a saved per-tracker value. Devices without a saved
-					// value pick up the flag the first time the user touches their slider.
-					ReplayDevicePredictions(smart ? "smart-toggle-on" : "smart-toggle-off");
-					SM_LOG("[smart] rotation preview set to %s", smart ? "on" : "off");
-				}
-			});
-		});
+	openvr_pair::overlay::ui::DrawSettingTable(
+	    "smoothing_general_settings", 160.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+		    openvr_pair::overlay::ui::SettingRow(table, "Rotation smoothing preview", [&] {
+			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+			            "##smart_smoothing", &smart,
+			            "Filters tracker rotation in dev builds while the one-euro\n"
+			            "position filter remains the baseline for every nonzero\n"
+			            "prediction smoothness value. Release builds keep raw rotation.\n"
+			            "Finger smoothing is unchanged.")) {
+				    cfg_.smart_smoothing = smart;
+				    SaveConfig(cfg_);
+				    // Push the dev rotation-preview flag down to every device that
+				    // already has a saved per-tracker value. Devices without a saved
+				    // value pick up the flag the first time the user touches their slider.
+				    ReplayDevicePredictions(smart ? "smart-toggle-on" : "smart-toggle-off");
+				    SM_LOG("[smart] rotation preview set to %s", smart ? "on" : "off");
+			    }
+		    });
+	    });
 	ImGui::Spacing();
 #endif
 
@@ -339,9 +345,8 @@ void SmoothingPlugin::DrawSettingsTab()
 
 void SmoothingPlugin::DrawAdvancedTab()
 {
-	openvr_pair::overlay::ui::DrawTextWrapped(
-		"No advanced smoothing knobs yet. Prediction and finger-smoothing "
-		"controls live on Settings.");
+	openvr_pair::overlay::ui::DrawTextWrapped("No advanced smoothing knobs yet. Prediction and finger-smoothing "
+	                                          "controls live on Settings.");
 }
 
 void SmoothingPlugin::DrawLogsTab()
@@ -349,16 +354,15 @@ void SmoothingPlugin::DrawLogsTab()
 	openvr_pair::overlay::ui::DrawSectionHeading("File locations");
 	const bool debugLogging = openvr_pair::common::IsDebugLoggingEnabled();
 	openvr_pair::overlay::ui::DrawTextWrapped(
-		debugLogging
-			? "Debug logging is on. New Smoothing events append next to the umbrella's other logs."
-			: "Debug logging is off. Enable it at the top of this Logs tab before reproducing an issue.");
+	    debugLogging ? "Debug logging is on. New Smoothing events append next to the umbrella's other logs."
+	                 : "Debug logging is off. Enable it at the top of this Logs tab before reproducing an issue.");
 	ImGui::Spacing();
 	ImGui::TextWrapped("Overlay:  %%LocalAppDataLow%%\\WKOpenVR\\Logs\\smoothing_log.<ts>.txt");
 	ImGui::TextWrapped("Driver:   %%LocalAppDataLow%%\\WKOpenVR\\Logs\\driver_log.<ts>.txt");
 	ImGui::TextWrapped("Settings: %%LocalAppDataLow%%\\WKOpenVR\\profiles\\smoothing.txt");
 }
 
-void SmoothingPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext &)
+void SmoothingPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext&)
 {
 	// Same body as DrawLogsTab(); the umbrella's global Logs tab wraps this
 	// in a collapsing header so the section heading + file paths render

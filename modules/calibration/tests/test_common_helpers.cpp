@@ -30,13 +30,13 @@ std::wstring MakeTempDir()
 	return path;
 }
 
-void WriteFileText(const std::wstring &path)
+void WriteFileText(const std::wstring& path)
 {
 	std::ofstream out(path, std::ios::binary);
 	out << "x";
 }
 
-void SetFileAgeHours(const std::wstring &path, uint64_t hoursAgo)
+void SetFileAgeHours(const std::wstring& path, uint64_t hoursAgo)
 {
 	FILETIME now{};
 	GetSystemTimeAsFileTime(&now);
@@ -49,20 +49,15 @@ void SetFileAgeHours(const std::wstring &path, uint64_t hoursAgo)
 	ft.dwLowDateTime = stamp.LowPart;
 	ft.dwHighDateTime = stamp.HighPart;
 
-	HANDLE file = CreateFileW(
-		path.c_str(),
-		FILE_WRITE_ATTRIBUTES,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		nullptr,
-		OPEN_EXISTING,
-		FILE_ATTRIBUTE_NORMAL,
-		nullptr);
+	HANDLE file =
+	    CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	ASSERT_NE(file, INVALID_HANDLE_VALUE);
 	EXPECT_TRUE(SetFileTime(file, nullptr, nullptr, &ft));
 	CloseHandle(file);
 }
 
-bool Exists(const std::wstring &path)
+bool Exists(const std::wstring& path)
 {
 	return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
@@ -74,9 +69,8 @@ TEST(JsonUtil, ParsesBomPrefixedObjectsAndTypedFallbacks)
 	picojson::value root;
 	std::string err;
 	ASSERT_TRUE(openvr_pair::common::json::ParseObject(
-		root,
-		std::string("\xEF\xBB\xBF{\"name\":\"tracker\",\"enabled\":true,\"count\":7}"),
-		&err)) << err;
+	    root, std::string("\xEF\xBB\xBF{\"name\":\"tracker\",\"enabled\":true,\"count\":7}"), &err))
+	    << err;
 
 	EXPECT_EQ("tracker", openvr_pair::common::json::StringAt(root, "name"));
 	EXPECT_TRUE(openvr_pair::common::json::BoolAt(root, "enabled"));
@@ -96,9 +90,8 @@ TEST(LogPaths, BuildsStableTimestampedFileNames)
 	time.wMinute = 5;
 	time.wSecond = 6;
 
-	EXPECT_EQ(
-		L"spacecal_log.2026-05-13T04-05-06.txt",
-		openvr_pair::common::TimestampedLogFileName(L"spacecal_log", time));
+	EXPECT_EQ(L"spacecal_log.2026-05-13T04-05-06.txt",
+	          openvr_pair::common::TimestampedLogFileName(L"spacecal_log", time));
 }
 
 TEST(LogPaths, DeleteOldLogFilesOnlyDeletesMatchingPrefix)
@@ -151,18 +144,10 @@ TEST(ProcessPerfLog, CalculatesCpuPercentAgainstWholeCpu)
 {
 	constexpr uint64_t kOneSecond100ns = 10ULL * 1000ULL * 1000ULL;
 
-	EXPECT_DOUBLE_EQ(
-		100.0,
-		openvr_pair::common::CalculateProcessCpuPercentOneCore(kOneSecond100ns, 1000));
-	EXPECT_DOUBLE_EQ(
-		25.0,
-		openvr_pair::common::CalculateProcessCpuPercentTotal(kOneSecond100ns, 1000, 4));
-	EXPECT_DOUBLE_EQ(
-		100.0,
-		openvr_pair::common::CalculateProcessCpuPercentTotal(8 * kOneSecond100ns, 1000, 4));
-	EXPECT_DOUBLE_EQ(
-		0.0,
-		openvr_pair::common::CalculateProcessCpuPercentTotal(kOneSecond100ns, 0, 4));
+	EXPECT_DOUBLE_EQ(100.0, openvr_pair::common::CalculateProcessCpuPercentOneCore(kOneSecond100ns, 1000));
+	EXPECT_DOUBLE_EQ(25.0, openvr_pair::common::CalculateProcessCpuPercentTotal(kOneSecond100ns, 1000, 4));
+	EXPECT_DOUBLE_EQ(100.0, openvr_pair::common::CalculateProcessCpuPercentTotal(8 * kOneSecond100ns, 1000, 4));
+	EXPECT_DOUBLE_EQ(0.0, openvr_pair::common::CalculateProcessCpuPercentTotal(kOneSecond100ns, 0, 4));
 }
 
 TEST(ProcessPerfLog, ThrottlesBySampleInterval)

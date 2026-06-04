@@ -37,30 +37,34 @@ using spacecal::stall::ShouldDemoteOnHmdStall;
 // two stalls (56 ticks, 95 ticks) each caused 7-9 cm Z-shift in
 // posOffset_currentCal immediately post-recovery.
 // ---------------------------------------------------------------------------
-TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_ZeroStalls) {
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(0, 30));
+TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_ZeroStalls)
+{
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(0, 30));
 }
 
-TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_AtThreshold) {
-    // The original buggy code triggered exactly at consecutiveStalls == MaxHmdStalls.
-    // Pin: even at the original trigger point, we don't demote.
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(30, 30));
+TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_AtThreshold)
+{
+	// The original buggy code triggered exactly at consecutiveStalls == MaxHmdStalls.
+	// Pin: even at the original trigger point, we don't demote.
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(30, 30));
 }
 
-TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_FarPastThreshold) {
-    // The user's actual session had a 95-tick stall. Verify well past that.
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(95, 30));
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(1000, 30));
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(100000, 30));
+TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_FarPastThreshold)
+{
+	// The user's actual session had a 95-tick stall. Verify well past that.
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(95, 30));
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(1000, 30));
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(100000, 30));
 }
 
-TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_DegenerateInputs) {
-    // Negative or zero `maxStalls` — defensive: shouldn't crash, shouldn't
-    // suddenly start demoting.
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(0, 0));
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(50, 0));
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(-1, 30));
-    EXPECT_FALSE(ShouldDemoteOnHmdStall(0, -1));
+TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_DegenerateInputs)
+{
+	// Negative or zero `maxStalls` — defensive: shouldn't crash, shouldn't
+	// suddenly start demoting.
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(0, 0));
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(50, 0));
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(-1, 30));
+	EXPECT_FALSE(ShouldDemoteOnHmdStall(0, -1));
 }
 
 // ---------------------------------------------------------------------------
@@ -70,8 +74,8 @@ TEST(StallDecisionsTest, Regression_9d0ba0b_NeverDemoteOnHmdStall_DegenerateInpu
 // to a runtime form (or worse, returns true), the build itself breaks.
 // ---------------------------------------------------------------------------
 static_assert(!ShouldDemoteOnHmdStall(0, 30),
-    "ShouldDemoteOnHmdStall must always be false — see commit 9d0ba0b regression");
+              "ShouldDemoteOnHmdStall must always be false — see commit 9d0ba0b regression");
 static_assert(!ShouldDemoteOnHmdStall(30, 30),
-    "ShouldDemoteOnHmdStall must always be false at the legacy trigger point");
+              "ShouldDemoteOnHmdStall must always be false at the legacy trigger point");
 static_assert(!ShouldDemoteOnHmdStall(1000, 30),
-    "ShouldDemoteOnHmdStall must always be false even far past the legacy threshold");
+              "ShouldDemoteOnHmdStall must always be false even far past the legacy threshold");

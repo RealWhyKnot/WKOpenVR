@@ -30,7 +30,7 @@ TEST(InputHealthHealthSummary, JsonIsValidAndHasRequiredFields)
 	std::string err;
 	ASSERT_TRUE(openvr_pair::common::json::Parse(parsed, json, &err)) << err;
 	ASSERT_TRUE(parsed.is<picojson::object>());
-	const auto &root = parsed.get<picojson::object>();
+	const auto& root = parsed.get<picojson::object>();
 
 	EXPECT_NE(root.find("schema"), root.end());
 	EXPECT_NE(root.find("pipeline"), root.end());
@@ -38,13 +38,13 @@ TEST(InputHealthHealthSummary, JsonIsValidAndHasRequiredFields)
 	EXPECT_NE(root.find("learning"), root.end());
 	EXPECT_NE(root.find("profile_io"), root.end());
 
-	const auto &learning = root.at("learning").get<picojson::object>();
+	const auto& learning = root.at("learning").get<picojson::object>();
 	EXPECT_DOUBLE_EQ(learning.at("drift_suppressed_policy").get<double>(), 3.0);
 	EXPECT_DOUBLE_EQ(learning.at("compensation_push_success").get<double>(), 4.0);
 	EXPECT_DOUBLE_EQ(learning.at("compensation_push_rejected").get<double>(), 5.0);
 	EXPECT_TRUE(learning.at("top_drift_paths").is<picojson::array>());
 
-	const auto &profileIo = root.at("profile_io").get<picojson::object>();
+	const auto& profileIo = root.at("profile_io").get<picojson::object>();
 	EXPECT_DOUBLE_EQ(profileIo.at("attempted_saves").get<double>(), 8.0);
 	EXPECT_DOUBLE_EQ(profileIo.at("actual_writes").get<double>(), 10.0);
 	EXPECT_EQ(profileIo.at("last_save_reason").get<std::string>(), "ready_transition");

@@ -19,7 +19,7 @@ namespace openvr_pair::overlay {
 
 namespace {
 
-void DrawTransientStatus(ShellContext &context)
+void DrawTransientStatus(ShellContext& context)
 {
 	if (context.status.empty()) return;
 	ImGui::Separator();
@@ -34,9 +34,9 @@ void DrawTransientStatus(ShellContext &context)
 	ui::DrawTextWrapped(context.status.c_str());
 }
 
-FeaturePlugin *FindDefaultLogsPanelPlugin(std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+FeaturePlugin* FindDefaultLogsPanelPlugin(std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
-	for (auto &plugin : plugins) {
+	for (auto& plugin : plugins) {
 		if (plugin && IsDefaultLogsPanelPlugin(plugin->FlagFileName())) {
 			return plugin.get();
 		}
@@ -44,7 +44,7 @@ FeaturePlugin *FindDefaultLogsPanelPlugin(std::vector<std::unique_ptr<FeaturePlu
 	return nullptr;
 }
 
-void DrawFallbackLogsPanel(ShellContext &context)
+void DrawFallbackLogsPanel(ShellContext& context)
 {
 	ui::DrawSectionHeading("Debug logging");
 	const bool forced = common::IsDebugLoggingForcedOn();
@@ -52,9 +52,8 @@ void DrawFallbackLogsPanel(ShellContext &context)
 	if (forced) debugLogging = true;
 	{
 		ui::DisabledSection locked(forced, "Dev builds keep debug logging enabled.");
-		if (ui::CheckboxWithTooltip(
-				"Enable debug logging", &debugLogging,
-				"Write WKOpenVR diagnostics to %LocalAppDataLow%\\WKOpenVR\\Logs\\.")) {
+		if (ui::CheckboxWithTooltip("Enable debug logging", &debugLogging,
+		                            "Write WKOpenVR diagnostics to %LocalAppDataLow%\\WKOpenVR\\Logs\\.")) {
 			common::SetDebugLoggingEnabled(debugLogging);
 		}
 		locked.AttachReasonTooltip();
@@ -67,10 +66,10 @@ void DrawFallbackLogsPanel(ShellContext &context)
 	DrawBugReportButton(context);
 }
 
-void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
 	const bool effectiveDebugLogging = common::IsDebugLoggingEnabled();
-	for (auto &plugin : plugins) {
+	for (auto& plugin : plugins) {
 		if (plugin) {
 			plugin->OnDebugLoggingChanged(effectiveDebugLogging);
 		}
@@ -79,38 +78,36 @@ void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>> &plug
 
 } // namespace
 
-void DrawFeatureTab(ShellContext &context, FeaturePlugin &plugin, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
+void DrawFeatureTab(ShellContext& context, FeaturePlugin& plugin, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
 {
-	ui::DrawScrollableTabItem(plugin.Name(), [&] {
-		plugin.DrawTab(context);
-	}, flags);
+	ui::DrawScrollableTabItem(plugin.Name(), [&] { plugin.DrawTab(context); }, flags);
 }
 
-void DrawLogsTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+void DrawLogsTab(ShellContext& context, std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
-	if (FeaturePlugin *logsPlugin = FindDefaultLogsPanelPlugin(plugins)) {
+	if (FeaturePlugin* logsPlugin = FindDefaultLogsPanelPlugin(plugins)) {
 		logsPlugin->DrawLogsSection(context);
 		ImGui::Spacing();
 		ImGui::Separator();
 		ImGui::Spacing();
 		ui::DrawSectionHeading("Bug reports");
 		DrawBugReportButton(context);
-	} else {
+	}
+	else {
 		DrawFallbackLogsPanel(context);
 	}
 	NotifyDebugLoggingChanged(plugins);
 }
 
-void DrawModulesTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+void DrawModulesTab(ShellContext& context, std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
 	ImGui::TextUnformatted("Modules");
-	ui::DrawTextWrapped(
-		"Toggle features on or off. Each change pops a UAC prompt. "
-		"Changes take effect the next time SteamVR loads the driver.");
+	ui::DrawTextWrapped("Toggle features on or off. Each change pops a UAC prompt. "
+	                    "Changes take effect the next time SteamVR loads the driver.");
 	ImGui::Spacing();
 
-	std::vector<FeaturePlugin *> modules;
-	for (auto &plugin : plugins) {
+	std::vector<FeaturePlugin*> modules;
+	for (auto& plugin : plugins) {
 		if (ShouldShowInModulesTab(*plugin)) {
 			modules.push_back(plugin.get());
 		}
@@ -120,7 +117,7 @@ void DrawModulesTab(ShellContext &context, std::vector<std::unique_ptr<FeaturePl
 	DrawModuleToggleTable(context, modules, "modules", "No modules were compiled into this build.", options);
 }
 
-void DrawThemesTab(ShellContext &)
+void DrawThemesTab(ShellContext&)
 {
 	ui::DrawSectionHeading("Color theme");
 	ui::DrawTextWrapped("Choose a color theme. Changes apply immediately and persist across launches.");
@@ -140,54 +137,42 @@ void DrawThemesTab(ShellContext &)
 	}
 }
 
-void DrawShellWindow(ShellContext &context, std::vector<std::unique_ptr<FeaturePlugin>> &plugins)
+void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
 	static std::string desktopDefaultTabAppliedFor;
 	context.TickStatus();
 
-	const ImGuiViewport *vp = ImGui::GetMainViewport();
+	const ImGuiViewport* vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);
 	ImGui::SetNextWindowSize(vp->WorkSize);
-	const ImGuiWindowFlags flags =
-		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-		ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-		ImGuiWindowFlags_NoBringToFrontOnFocus |
-		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus |
+	                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
 	ImGui::Begin("WKOpenVR", nullptr, flags);
 
 	const bool hasStatus = !context.status.empty();
-	const float statusReserve = hasStatus
-		? ImGui::GetTextLineHeightWithSpacing() * 3.0f + ImGui::GetStyle().ItemSpacing.y
-		: 0.0f;
+	const float statusReserve =
+	    hasStatus ? ImGui::GetTextLineHeightWithSpacing() * 3.0f + ImGui::GetStyle().ItemSpacing.y : 0.0f;
 
-	if (ImGui::BeginChild("##shell_content", ImVec2(0.0f, hasStatus ? -statusReserve : 0.0f),
-			false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+	if (ImGui::BeginChild("##shell_content", ImVec2(0.0f, hasStatus ? -statusReserve : 0.0f), false,
+	                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 		ui::TabBarScope tabs("tabs");
 		if (tabs) {
 			const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
-			for (auto &plugin : plugins) {
+			for (auto& plugin : plugins) {
 				if (!plugin->IsInstalled(context)) continue;
 				ImGuiTabItemFlags tabFlags = ImGuiTabItemFlags_None;
-				if (ShouldSelectDesktopDefaultTab(
-						context.vrConnected,
-						plugin->FlagFileName(),
-						desktopDefaultFlag,
-						desktopDefaultTabAppliedFor)) {
+				if (ShouldSelectDesktopDefaultTab(context.vrConnected, plugin->FlagFileName(), desktopDefaultFlag,
+				                                  desktopDefaultTabAppliedFor)) {
 					tabFlags |= ImGuiTabItemFlags_SetSelected;
 					desktopDefaultTabAppliedFor = desktopDefaultFlag;
 				}
 				DrawFeatureTab(context, *plugin, tabFlags);
 			}
-			ui::DrawScrollableTabItem("Logs", [&] {
-				DrawLogsTab(context, plugins);
-			});
-			ui::DrawScrollableTabItem("Modules", [&] {
-				DrawModulesTab(context, plugins);
-			});
-			ui::DrawScrollableTabItem("Themes", [&] {
-				DrawThemesTab(context);
-			});
+			ui::DrawScrollableTabItem("Logs", [&] { DrawLogsTab(context, plugins); });
+			ui::DrawScrollableTabItem("Modules", [&] { DrawModulesTab(context, plugins); });
+			ui::DrawScrollableTabItem("Themes", [&] { DrawThemesTab(context); });
 		}
 	}
 	ImGui::EndChild();

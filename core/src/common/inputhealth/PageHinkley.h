@@ -36,31 +36,32 @@ namespace inputhealth {
 
 struct PageHinkleyState
 {
-	double mean        = 0.0;   // running EWMA reference
-	double ph_pos      = 0.0;   // positive drift accumulator
-	double ph_neg      = 0.0;   // negative drift accumulator
-	bool   initialized = false; // false until first sample seeds the mean
-	bool   triggered   = false; // latched until PageHinkleyReset is called
-	bool   triggered_positive = false; // direction of the latched trigger
+	double mean = 0.0;               // running EWMA reference
+	double ph_pos = 0.0;             // positive drift accumulator
+	double ph_neg = 0.0;             // negative drift accumulator
+	bool initialized = false;        // false until first sample seeds the mean
+	bool triggered = false;          // latched until PageHinkleyReset is called
+	bool triggered_positive = false; // direction of the latched trigger
 };
 
 struct PageHinkleyParams
 {
-	double alpha  = 0.05;     // EWMA forgetting; ~30s half-life at 250 Hz
-	double delta  = 0.002;    // slack
-	double lambda = 0.05;     // detection threshold
-	bool   one_sided_positive = false; // when true, ignore downward drift
+	double alpha = 0.05;             // EWMA forgetting; ~30s half-life at 250 Hz
+	double delta = 0.002;            // slack
+	double lambda = 0.05;            // detection threshold
+	bool one_sided_positive = false; // when true, ignore downward drift
 };
 
 // Streaming update. Returns true on the tick that first crosses the threshold;
 // the latched `triggered` flag stays set until PageHinkleyReset() so callers
 // don't have to debounce around the tick boundary.
-inline bool PageHinkleyUpdate(PageHinkleyState &s, const PageHinkleyParams &p, double x)
+inline bool PageHinkleyUpdate(PageHinkleyState& s, const PageHinkleyParams& p, double x)
 {
 	if (!s.initialized) {
 		s.mean = x;
 		s.initialized = true;
-	} else {
+	}
+	else {
 		s.mean = (1.0 - p.alpha) * s.mean + p.alpha * x;
 	}
 
@@ -88,7 +89,7 @@ inline bool PageHinkleyUpdate(PageHinkleyState &s, const PageHinkleyParams &p, d
 // Reset the state to "no observations yet". Use after a confirmed change so
 // the detector starts looking for the next one rather than re-firing on
 // every subsequent tick. Calibration-wizard "start fresh" also calls this.
-inline void PageHinkleyReset(PageHinkleyState &s)
+inline void PageHinkleyReset(PageHinkleyState& s)
 {
 	s.mean = 0.0;
 	s.ph_pos = 0.0;

@@ -15,7 +15,7 @@ namespace module_safety = openvr_pair::common::module_safety;
 
 namespace {
 
-std::wstring ReadEnvironmentVariable(const wchar_t *name, bool &present)
+std::wstring ReadEnvironmentVariable(const wchar_t* name, bool& present)
 {
 	present = false;
 	DWORD len = GetEnvironmentVariableW(name, nullptr, 0);
@@ -59,7 +59,7 @@ protected:
 		}
 	}
 
-	static constexpr const wchar_t *kRootEnv = L"WKOPENVR_MODULE_SAFETY_ROOT";
+	static constexpr const wchar_t* kRootEnv = L"WKOPENVR_MODULE_SAFETY_ROOT";
 	std::wstring root;
 	std::wstring previousRoot;
 	bool hadPreviousRoot = false;
@@ -69,8 +69,7 @@ protected:
 
 TEST_F(ModuleSafetyTest, StaleActiveMarkerRecordsConcernWithoutImmediateDisable)
 {
-	const module_safety::ModuleSpec *spec =
-		module_safety::FindByFlagFileName("enable_facetracking.flag");
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_facetracking.flag");
 	ASSERT_NE(spec, nullptr);
 
 	EXPECT_FALSE(module_safety::HasActiveMarker(*spec));
@@ -91,8 +90,7 @@ TEST_F(ModuleSafetyTest, StaleActiveMarkerRecordsConcernWithoutImmediateDisable)
 
 TEST_F(ModuleSafetyTest, StaleSuspectMarkerAutoDisablesModule)
 {
-	const module_safety::ModuleSpec *spec =
-		module_safety::FindByFlagFileName("enable_phantom.flag");
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_phantom.flag");
 	ASSERT_NE(spec, nullptr);
 
 	EXPECT_TRUE(module_safety::MarkActive(*spec));
@@ -112,8 +110,7 @@ TEST_F(ModuleSafetyTest, StaleSuspectMarkerAutoDisablesModule)
 
 TEST_F(ModuleSafetyTest, RepeatedStaleActiveMarkersAutoDisableAfterBackoff)
 {
-	const module_safety::ModuleSpec *spec =
-		module_safety::FindByFlagFileName("enable_inputhealth.flag");
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_inputhealth.flag");
 	ASSERT_NE(spec, nullptr);
 
 	for (unsigned i = 1; i <= 2; ++i) {
@@ -136,8 +133,7 @@ TEST_F(ModuleSafetyTest, RepeatedStaleActiveMarkersAutoDisableAfterBackoff)
 
 TEST_F(ModuleSafetyTest, CleanShutdownClearsRuntimeMarkersAndCounters)
 {
-	const module_safety::ModuleSpec *spec =
-		module_safety::FindByFlagFileName("enable_smoothing.flag");
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_smoothing.flag");
 	ASSERT_NE(spec, nullptr);
 
 	EXPECT_TRUE(module_safety::MarkActive(*spec));
@@ -158,8 +154,7 @@ TEST_F(ModuleSafetyTest, CleanShutdownClearsRuntimeMarkersAndCounters)
 
 TEST_F(ModuleSafetyTest, ClearAutoDisabledForFlagReenablesModule)
 {
-	const module_safety::ModuleSpec *spec =
-		module_safety::FindByFlagFileName("enable_phantom.flag");
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_phantom.flag");
 	ASSERT_NE(spec, nullptr);
 
 	EXPECT_TRUE(module_safety::MarkActive(*spec));
@@ -177,8 +172,7 @@ TEST_F(ModuleSafetyTest, ClearAutoDisabledForFlagReenablesModule)
 
 TEST_F(ModuleSafetyTest, UnknownFlagDoesNotClearKnownMarkers)
 {
-	const module_safety::ModuleSpec *spec =
-		module_safety::FindByFlagFileName("enable_smoothing.flag");
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_smoothing.flag");
 	ASSERT_NE(spec, nullptr);
 
 	EXPECT_TRUE(module_safety::MarkFault(*spec, "test_fault"));

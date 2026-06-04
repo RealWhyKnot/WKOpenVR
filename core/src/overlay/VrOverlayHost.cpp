@@ -23,8 +23,8 @@ namespace {
 // constant in ManifestRegistration.cpp. SteamVR keys overlays by app key,
 // so re-using the manifest key makes the dashboard tile and the autolaunch
 // registration point at the same entity.
-constexpr const char *kAppKey = "wk.wkopenvr";
-constexpr const char *kFriendlyName = "WKOpenVR";
+constexpr const char* kAppKey = "wk.wkopenvr";
+constexpr const char* kFriendlyName = "WKOpenVR";
 
 // Width of the dashboard panel in metres. SC used 3.0; same value
 // renders comfortably at typical viewing distance.
@@ -85,14 +85,11 @@ VrOverlayHost::VrOverlayHost() = default;
 
 VrOverlayHost::~VrOverlayHost()
 {
-	openvr_pair::common::DiagnosticLog(
-		"vr-overlay", "destroy overlay_created=%d vr_ready=%d main=%llu thumb=%llu",
-		overlayCreated_ ? 1 : 0,
-		vrReady_ ? 1 : 0,
-		(unsigned long long)mainHandle_,
-		(unsigned long long)thumbHandle_);
+	openvr_pair::common::DiagnosticLog("vr-overlay", "destroy overlay_created=%d vr_ready=%d main=%llu thumb=%llu",
+	                                   overlayCreated_ ? 1 : 0, vrReady_ ? 1 : 0, (unsigned long long)mainHandle_,
+	                                   (unsigned long long)thumbHandle_);
 	if (overlayCreated_ && vr::VROverlay()) {
-		if (mainHandle_)  vr::VROverlay()->DestroyOverlay(mainHandle_);
+		if (mainHandle_) vr::VROverlay()->DestroyOverlay(mainHandle_);
 		if (thumbHandle_) vr::VROverlay()->DestroyOverlay(thumbHandle_);
 	}
 	if (vrReady_) {
@@ -126,10 +123,8 @@ bool VrOverlayHost::TryInitVrStack()
 		static double s_lastBackgroundLog = -1e9;
 		const double now = NowSeconds();
 		if (err != s_lastBackgroundErr || now - s_lastBackgroundLog >= 30.0) {
-			openvr_pair::common::DiagnosticLog(
-				"vr-overlay", "vr_init_background_failed error=%d description='%s'",
-				(int)err,
-				vr::VR_GetVRInitErrorAsEnglishDescription(err));
+			openvr_pair::common::DiagnosticLog("vr-overlay", "vr_init_background_failed error=%d description='%s'",
+			                                   (int)err, vr::VR_GetVRInitErrorAsEnglishDescription(err));
 			s_lastBackgroundErr = err;
 			s_lastBackgroundLog = now;
 		}
@@ -144,19 +139,16 @@ bool VrOverlayHost::TryInitVrStack()
 	vr::VR_Init(&err, vr::VRApplication_Overlay);
 	if (err != vr::VRInitError_None) {
 		fprintf(stderr, "[VrOverlayHost] VR_Init(Overlay) failed: %s\n",
-			vr::VR_GetVRInitErrorAsEnglishDescription(err));
-		openvr_pair::common::DiagnosticLog(
-			"vr-overlay", "vr_init_overlay_failed error=%d description='%s'",
-			(int)err,
-			vr::VR_GetVRInitErrorAsEnglishDescription(err));
+		        vr::VR_GetVRInitErrorAsEnglishDescription(err));
+		openvr_pair::common::DiagnosticLog("vr-overlay", "vr_init_overlay_failed error=%d description='%s'", (int)err,
+		                                   vr::VR_GetVRInitErrorAsEnglishDescription(err));
 		return false;
 	}
 
-	if (!vr::VR_IsInterfaceVersionValid(vr::IVRSystem_Version)
-		|| !vr::VR_IsInterfaceVersionValid(vr::IVROverlay_Version))
-	{
+	if (!vr::VR_IsInterfaceVersionValid(vr::IVRSystem_Version) ||
+	    !vr::VR_IsInterfaceVersionValid(vr::IVROverlay_Version)) {
 		fprintf(stderr, "[VrOverlayHost] OpenVR interface version mismatch; "
-			"runtime DLL out of date.\n");
+		                "runtime DLL out of date.\n");
 		openvr_pair::common::DiagnosticLog("vr-overlay", "interface_version_mismatch");
 		vr::VR_Shutdown();
 		return false;
@@ -171,52 +163,45 @@ void VrOverlayHost::TryCreateOverlay()
 {
 	if (overlayCreated_ || !vr::VROverlay()) return;
 
-	const vr::EVROverlayError err = vr::VROverlay()->CreateDashboardOverlay(
-		kAppKey, kFriendlyName, &mainHandle_, &thumbHandle_);
+	const vr::EVROverlayError err =
+	    vr::VROverlay()->CreateDashboardOverlay(kAppKey, kFriendlyName, &mainHandle_, &thumbHandle_);
 
 	if (err == vr::VROverlayError_KeyInUse) {
 		// Another instance of the umbrella is already registered with
 		// vrserver. Log but don't crash -- the user can fix this by
 		// closing the other instance.
 		fprintf(stderr, "[VrOverlayHost] CreateDashboardOverlay: key in use "
-			"(another WKOpenVR instance is registered)\n");
+		                "(another WKOpenVR instance is registered)\n");
 		openvr_pair::common::DiagnosticLog("vr-overlay", "create_dashboard_overlay_key_in_use");
 		return;
 	}
 	if (err != vr::VROverlayError_None) {
 		fprintf(stderr, "[VrOverlayHost] CreateDashboardOverlay failed: %s\n",
-			vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
-		openvr_pair::common::DiagnosticLog(
-			"vr-overlay", "create_dashboard_overlay_failed error=%d name='%s'",
-			(int)err,
-			vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
+		        vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
+		openvr_pair::common::DiagnosticLog("vr-overlay", "create_dashboard_overlay_failed error=%d name='%s'", (int)err,
+		                                   vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
 		return;
 	}
 
 	vr::VROverlay()->SetOverlayWidthInMeters(mainHandle_, kOverlayWidthMeters);
-	vr::VROverlay()->SetOverlayInputMethod(mainHandle_,
-		vr::VROverlayInputMethod_Mouse);
-	vr::VROverlay()->SetOverlayFlag(mainHandle_,
-		vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
+	vr::VROverlay()->SetOverlayInputMethod(mainHandle_, vr::VROverlayInputMethod_Mouse);
+	vr::VROverlay()->SetOverlayFlag(mainHandle_, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
 
 	const std::string iconPath = ResolveIconPath();
 	if (!iconPath.empty() && std::filesystem::exists(iconPath)) {
 		vr::VROverlay()->SetOverlayFromFile(thumbHandle_, iconPath.c_str());
-		openvr_pair::common::DiagnosticLog(
-			"vr-overlay", "dashboard_icon_set path='%s'", iconPath.c_str());
-	} else {
-		openvr_pair::common::DiagnosticLog(
-			"vr-overlay", "dashboard_icon_missing path='%s'", iconPath.c_str());
+		openvr_pair::common::DiagnosticLog("vr-overlay", "dashboard_icon_set path='%s'", iconPath.c_str());
+	}
+	else {
+		openvr_pair::common::DiagnosticLog("vr-overlay", "dashboard_icon_missing path='%s'", iconPath.c_str());
 	}
 
 	overlayCreated_ = true;
 	fprintf(stderr, "[VrOverlayHost] dashboard overlay created (main=%llu thumb=%llu)\n",
-		(unsigned long long)mainHandle_, (unsigned long long)thumbHandle_);
-	openvr_pair::common::DiagnosticLog(
-		"vr-overlay", "dashboard_overlay_created main=%llu thumb=%llu width_m=%.2f",
-		(unsigned long long)mainHandle_,
-		(unsigned long long)thumbHandle_,
-		kOverlayWidthMeters);
+	        (unsigned long long)mainHandle_, (unsigned long long)thumbHandle_);
+	openvr_pair::common::DiagnosticLog("vr-overlay", "dashboard_overlay_created main=%llu thumb=%llu width_m=%.2f",
+	                                   (unsigned long long)mainHandle_, (unsigned long long)thumbHandle_,
+	                                   kOverlayWidthMeters);
 }
 
 bool VrOverlayHost::IsDashboardVisible() const
@@ -229,38 +214,33 @@ void VrOverlayHost::DrainOverlayEvents()
 {
 	if (!overlayCreated_ || !vr::VROverlay()) return;
 
-	ImGuiIO &io = ImGui::GetIO();
+	ImGuiIO& io = ImGui::GetIO();
 	vr::VREvent_t ev{};
-	while (vr::VROverlay()->PollNextOverlayEvent(mainHandle_, &ev, sizeof(ev)))
-	{
+	while (vr::VROverlay()->PollNextOverlayEvent(mainHandle_, &ev, sizeof(ev))) {
 		switch (ev.eventType) {
-		case vr::VREvent_MouseMove:
-			io.AddMousePosEvent(ev.data.mouse.x, ev.data.mouse.y);
-			break;
-		case vr::VREvent_MouseButtonDown:
-			io.AddMouseButtonEvent(
-				(ev.data.mouse.button & vr::VRMouseButton_Left) == vr::VRMouseButton_Left
-					? 0 : 1,
-				true);
-			break;
-		case vr::VREvent_MouseButtonUp:
-			io.AddMouseButtonEvent(
-				(ev.data.mouse.button & vr::VRMouseButton_Left) == vr::VRMouseButton_Left
-					? 0 : 1,
-				false);
-			break;
-		case vr::VREvent_ScrollDiscrete: {
-			const float x = ev.data.scroll.xdelta * kScrollScale;
-			const float y = ev.data.scroll.ydelta * kScrollScale;
-			io.AddMouseWheelEvent(x, y);
-			break;
-		}
-		case vr::VREvent_Quit:
-			quitRequested_ = true;
-			openvr_pair::common::DiagnosticLog("vr-overlay", "quit_event");
-			break;
-		default:
-			break;
+			case vr::VREvent_MouseMove:
+				io.AddMousePosEvent(ev.data.mouse.x, ev.data.mouse.y);
+				break;
+			case vr::VREvent_MouseButtonDown:
+				io.AddMouseButtonEvent(
+				    (ev.data.mouse.button & vr::VRMouseButton_Left) == vr::VRMouseButton_Left ? 0 : 1, true);
+				break;
+			case vr::VREvent_MouseButtonUp:
+				io.AddMouseButtonEvent(
+				    (ev.data.mouse.button & vr::VRMouseButton_Left) == vr::VRMouseButton_Left ? 0 : 1, false);
+				break;
+			case vr::VREvent_ScrollDiscrete: {
+				const float x = ev.data.scroll.xdelta * kScrollScale;
+				const float y = ev.data.scroll.ydelta * kScrollScale;
+				io.AddMouseWheelEvent(x, y);
+				break;
+			}
+			case vr::VREvent_Quit:
+				quitRequested_ = true;
+				openvr_pair::common::DiagnosticLog("vr-overlay", "quit_event");
+				break;
+			default:
+				break;
 		}
 	}
 }
@@ -299,7 +279,7 @@ void VrOverlayHost::SubmitTexture(unsigned int glTextureId, int width, int heigh
 	if (glTextureId == 0 || width <= 0 || height <= 0) return;
 
 	vr::Texture_t tex{};
-	tex.handle = reinterpret_cast<void *>(static_cast<uintptr_t>(glTextureId));
+	tex.handle = reinterpret_cast<void*>(static_cast<uintptr_t>(glTextureId));
 	tex.eType = vr::TextureType_OpenGL;
 	tex.eColorSpace = vr::ColorSpace_Auto;
 

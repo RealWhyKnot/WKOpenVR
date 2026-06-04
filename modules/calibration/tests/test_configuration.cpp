@@ -32,24 +32,25 @@ namespace {
 // production profiles have many more keys; for the migration tests we only
 // need the schema-version field plus enough valid scaffolding that
 // ParseProfile doesn't reject for missing required keys.
-std::string MakeMinimalProfile(int schemaVersion, const std::string& extraKeys = "") {
-    std::ostringstream o;
-    o << "[{";
-    if (schemaVersion >= 1) {
-        o << "\"schema_version\":" << schemaVersion << ",";
-    }
-    o << "\"reference_tracking_system\":\"lighthouse\",";
-    o << "\"target_tracking_system\":\"oculus\",";
-    o << "\"roll\":0.0,\"yaw\":0.0,\"pitch\":0.0,";
-    o << "\"x\":0.0,\"y\":0.0,\"z\":0.0,";
-    o << "\"continuous_calibration_target_offset_x\":0.0,";
-    o << "\"continuous_calibration_target_offset_y\":0.0,";
-    o << "\"continuous_calibration_target_offset_z\":0.0";
-    if (!extraKeys.empty()) {
-        o << "," << extraKeys;
-    }
-    o << "}]";
-    return o.str();
+std::string MakeMinimalProfile(int schemaVersion, const std::string& extraKeys = "")
+{
+	std::ostringstream o;
+	o << "[{";
+	if (schemaVersion >= 1) {
+		o << "\"schema_version\":" << schemaVersion << ",";
+	}
+	o << "\"reference_tracking_system\":\"lighthouse\",";
+	o << "\"target_tracking_system\":\"oculus\",";
+	o << "\"roll\":0.0,\"yaw\":0.0,\"pitch\":0.0,";
+	o << "\"x\":0.0,\"y\":0.0,\"z\":0.0,";
+	o << "\"continuous_calibration_target_offset_x\":0.0,";
+	o << "\"continuous_calibration_target_offset_y\":0.0,";
+	o << "\"continuous_calibration_target_offset_z\":0.0";
+	if (!extraKeys.empty()) {
+		o << "," << extraKeys;
+	}
+	o << "}]";
+	return o.str();
 }
 
 } // namespace
@@ -59,43 +60,44 @@ std::string MakeMinimalProfile(int schemaVersion, const std::string& extraKeys =
 // customised field survives. Acts as a contract test for "the profile
 // remembers what the user did" -- the most basic configuration test.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, RoundTripPreservesCustomFields) {
-    CalibrationContext src;
-    src.referenceTrackingSystem = "lighthouse";
-    src.targetTrackingSystem = "oculus";
-    src.calibratedTranslation = Eigen::Vector3d(12.5, 0.0, -7.25);
-    src.calibratedRotation = Eigen::Vector3d(0.0, 45.0, 0.0);
-    src.jitterThreshold = 5.5f;
-    src.recalibrateOnMovement = false;
-    src.baseStationDriftCorrectionEnabled = false;
-    src.ignoreOutliers = false;             // non-default; must be written
-    src.continuousCalibrationThreshold = 2.5f;
-    src.oneShotCalibrationSpeed = CalibrationContext::SLOW; // non-default; must round-trip
-    src.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
-    src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
-    src.floorOffsetMetersY = -0.4375; // non-default; must round-trip
-    src.validProfile = true;
+TEST(ConfigurationTest, RoundTripPreservesCustomFields)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.calibratedTranslation = Eigen::Vector3d(12.5, 0.0, -7.25);
+	src.calibratedRotation = Eigen::Vector3d(0.0, 45.0, 0.0);
+	src.jitterThreshold = 5.5f;
+	src.recalibrateOnMovement = false;
+	src.baseStationDriftCorrectionEnabled = false;
+	src.ignoreOutliers = false; // non-default; must be written
+	src.continuousCalibrationThreshold = 2.5f;
+	src.oneShotCalibrationSpeed = CalibrationContext::SLOW; // non-default; must round-trip
+	src.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
+	src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
+	src.floorOffsetMetersY = -0.4375; // non-default; must round-trip
+	src.validProfile = true;
 
-    std::stringstream io;
-    WriteProfile(src, io);
+	std::stringstream io;
+	WriteProfile(src, io);
 
-    CalibrationContext dst;
-    ParseProfile(dst, io);
+	CalibrationContext dst;
+	ParseProfile(dst, io);
 
-    EXPECT_EQ(dst.referenceTrackingSystem, "lighthouse");
-    EXPECT_EQ(dst.targetTrackingSystem, "oculus");
-    EXPECT_DOUBLE_EQ(dst.calibratedTranslation.x(), 12.5);
-    EXPECT_DOUBLE_EQ(dst.calibratedTranslation.z(), -7.25);
-    EXPECT_DOUBLE_EQ(dst.calibratedRotation.y(), 45.0);
-    EXPECT_FLOAT_EQ(dst.jitterThreshold, 5.5f);
-    EXPECT_FALSE(dst.recalibrateOnMovement);
-    EXPECT_FALSE(dst.baseStationDriftCorrectionEnabled);
-    EXPECT_FALSE(dst.ignoreOutliers);
-    EXPECT_FLOAT_EQ(dst.continuousCalibrationThreshold, 2.5f);
-    EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::SLOW);
-    EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
-    EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
-    EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, -0.4375);
+	EXPECT_EQ(dst.referenceTrackingSystem, "lighthouse");
+	EXPECT_EQ(dst.targetTrackingSystem, "oculus");
+	EXPECT_DOUBLE_EQ(dst.calibratedTranslation.x(), 12.5);
+	EXPECT_DOUBLE_EQ(dst.calibratedTranslation.z(), -7.25);
+	EXPECT_DOUBLE_EQ(dst.calibratedRotation.y(), 45.0);
+	EXPECT_FLOAT_EQ(dst.jitterThreshold, 5.5f);
+	EXPECT_FALSE(dst.recalibrateOnMovement);
+	EXPECT_FALSE(dst.baseStationDriftCorrectionEnabled);
+	EXPECT_FALSE(dst.ignoreOutliers);
+	EXPECT_FLOAT_EQ(dst.continuousCalibrationThreshold, 2.5f);
+	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::SLOW);
+	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
+	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, -0.4375);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,39 +109,41 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields) {
 // Clear() should reset the AUTO-Lock pending-flip queue along with the
 // detector state, so a profile-reload doesn't carry a stale committed-flip
 // intention across the boundary.
-TEST(ConfigurationTest, ClearResetsAutoLockPendingFlip) {
-    CalibrationContext ctx;
-    ctx.autoLockEffectivelyLocked = true;
-    ctx.autoLockHasPendingFlip = true;
-    ctx.autoLockPendingFlipTo = false;
+TEST(ConfigurationTest, ClearResetsAutoLockPendingFlip)
+{
+	CalibrationContext ctx;
+	ctx.autoLockEffectivelyLocked = true;
+	ctx.autoLockHasPendingFlip = true;
+	ctx.autoLockPendingFlipTo = false;
 
-    ctx.Clear();
+	ctx.Clear();
 
-    EXPECT_FALSE(ctx.autoLockEffectivelyLocked);
-    EXPECT_FALSE(ctx.autoLockHasPendingFlip);
-    EXPECT_FALSE(ctx.autoLockPendingFlipTo);
+	EXPECT_FALSE(ctx.autoLockEffectivelyLocked);
+	EXPECT_FALSE(ctx.autoLockHasPendingFlip);
+	EXPECT_FALSE(ctx.autoLockPendingFlipTo);
 }
 
-TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults) {
-    CalibrationContext src; // fresh defaults
-    src.referenceTrackingSystem = "lighthouse";
-    src.targetTrackingSystem = "oculus";
-    src.validProfile = true;
+TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
+{
+	CalibrationContext src; // fresh defaults
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
 
-    std::stringstream io;
-    WriteProfile(src, io);
+	std::stringstream io;
+	WriteProfile(src, io);
 
-    CalibrationContext dst;
-    ParseProfile(dst, io);
+	CalibrationContext dst;
+	ParseProfile(dst, io);
 
-    // The in-code defaults survive a no-customization round-trip.
-    EXPECT_TRUE(dst.recalibrateOnMovement);              // default true
-    EXPECT_TRUE(dst.enableStaticRecalibration);          // default true (flipped this session)
-    EXPECT_TRUE(dst.baseStationDriftCorrectionEnabled);  // default AUTO (no-op without base stations)
-    EXPECT_FLOAT_EQ(dst.jitterThreshold, 3.0f);
-    EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::FAST);
-    EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::AUTO);
-    EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
+	// The in-code defaults survive a no-customization round-trip.
+	EXPECT_TRUE(dst.recalibrateOnMovement);             // default true
+	EXPECT_TRUE(dst.enableStaticRecalibration);         // default true (flipped this session)
+	EXPECT_TRUE(dst.baseStationDriftCorrectionEnabled); // default AUTO (no-op without base stations)
+	EXPECT_FLOAT_EQ(dst.jitterThreshold, 3.0f);
+	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::FAST);
+	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::AUTO);
+	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,18 +152,18 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults) {
 // context by partially loading it. The guard sets validProfile=false and
 // returns early.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, RefusesProfileFromNewerSchema) {
-    // Pick a version far enough in the future that no near-term schema bump
-    // would accidentally make this test pass. 999 is symbolic.
-    std::string newerJson = MakeMinimalProfile(/*schemaVersion=*/999);
+TEST(ConfigurationTest, RefusesProfileFromNewerSchema)
+{
+	// Pick a version far enough in the future that no near-term schema bump
+	// would accidentally make this test pass. 999 is symbolic.
+	std::string newerJson = MakeMinimalProfile(/*schemaVersion=*/999);
 
-    CalibrationContext ctx;
-    ctx.validProfile = true; // pre-set, the guard should clear this
-    std::stringstream io(newerJson);
-    ParseProfile(ctx, io);
+	CalibrationContext ctx;
+	ctx.validProfile = true; // pre-set, the guard should clear this
+	std::stringstream io(newerJson);
+	ParseProfile(ctx, io);
 
-    EXPECT_FALSE(ctx.validProfile)
-        << "Refusing to load a newer-schema profile must leave validProfile=false";
+	EXPECT_FALSE(ctx.validProfile) << "Refusing to load a newer-schema profile must leave validProfile=false";
 }
 
 // ---------------------------------------------------------------------------
@@ -168,30 +172,30 @@ TEST(ConfigurationTest, RefusesProfileFromNewerSchema) {
 // run all forward-migration steps; specifically it must NOT keep
 // auto_suppress_on_external_tool around (dropped in v2's migration).
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly) {
-    // v0 had no schema_version key. Include the legacy auto-suppress key so
-    // we can verify the migration drops it. Add a SLOW calibration_speed so
-    // we can verify the v1->v2 step rewrites it to AUTO.
-    std::string v0Json = MakeMinimalProfile(
-        /*schemaVersion=*/0,
-        // calibration_speed=1 -> SLOW. Migration rewrites to 3 (AUTO).
-        "\"calibration_speed\":1,"
-        "\"auto_suppress_on_external_tool\":true");
+TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly)
+{
+	// v0 had no schema_version key. Include the legacy auto-suppress key so
+	// we can verify the migration drops it. Add a SLOW calibration_speed so
+	// we can verify the v1->v2 step rewrites it to AUTO.
+	std::string v0Json = MakeMinimalProfile(
+	    /*schemaVersion=*/0,
+	    // calibration_speed=1 -> SLOW. Migration rewrites to 3 (AUTO).
+	    "\"calibration_speed\":1,"
+	    "\"auto_suppress_on_external_tool\":true");
 
-    CalibrationContext ctx;
-    std::stringstream io(v0Json);
-    ParseProfile(ctx, io);
+	CalibrationContext ctx;
+	std::stringstream io(v0Json);
+	ParseProfile(ctx, io);
 
-    // Migration v1->v2 rewrites legacy SLOW (=1) to AUTO (=3) since SLOW was
-    // the old default that most users never customised.
-    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST)
-        << "legacy AUTO should become FAST for one-shot";
-    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO)
-        << "v1->v2 migration should still land continuous mode on AUTO";
+	// Migration v1->v2 rewrites legacy SLOW (=1) to AUTO (=3) since SLOW was
+	// the old default that most users never customised.
+	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST) << "legacy AUTO should become FAST for one-shot";
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO)
+	    << "v1->v2 migration should still land continuous mode on AUTO";
 
-    // Profile loaded; main fields populated.
-    EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
-    EXPECT_EQ(ctx.targetTrackingSystem, "oculus");
+	// Profile loaded; main fields populated.
+	EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
+	EXPECT_EQ(ctx.targetTrackingSystem, "oculus");
 }
 
 // ---------------------------------------------------------------------------
@@ -199,79 +203,82 @@ TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly) {
 // array (multi-ecosystem support added in v3). They must load as if extras
 // were an empty list.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, MigrateV2ProfileLoadsWithEmptyExtras) {
-    std::string v2Json = MakeMinimalProfile(/*schemaVersion=*/2);
+TEST(ConfigurationTest, MigrateV2ProfileLoadsWithEmptyExtras)
+{
+	std::string v2Json = MakeMinimalProfile(/*schemaVersion=*/2);
 
-    CalibrationContext ctx;
-    std::stringstream io(v2Json);
-    ParseProfile(ctx, io);
+	CalibrationContext ctx;
+	std::stringstream io(v2Json);
+	ParseProfile(ctx, io);
 
-    EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
-    EXPECT_TRUE(ctx.additionalCalibrations.empty())
-        << "v2 profile should load with no extras (additional_calibrations was added in v3)";
+	EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
+	EXPECT_TRUE(ctx.additionalCalibrations.empty())
+	    << "v2 profile should load with no extras (additional_calibrations was added in v3)";
 }
 
-TEST(ConfigurationTest, MigrateV4FastSpeedKeepsOneShotFastAndContinuousAuto) {
-    std::string v4Json = MakeMinimalProfile(
-        /*schemaVersion=*/4,
-        "\"calibration_speed\":0");
+TEST(ConfigurationTest, MigrateV4FastSpeedKeepsOneShotFastAndContinuousAuto)
+{
+	std::string v4Json = MakeMinimalProfile(
+	    /*schemaVersion=*/4, "\"calibration_speed\":0");
 
-    CalibrationContext ctx;
-    std::stringstream io(v4Json);
-    ParseProfile(ctx, io);
+	CalibrationContext ctx;
+	std::stringstream io(v4Json);
+	ParseProfile(ctx, io);
 
-    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST);
-    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO);
+	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST);
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO);
 }
 
-TEST(ConfigurationTest, MigrateV4VerySlowSpeedPreservesSlowContinuousChoice) {
-    std::string v4Json = MakeMinimalProfile(
-        /*schemaVersion=*/4,
-        "\"calibration_speed\":2");
+TEST(ConfigurationTest, MigrateV4VerySlowSpeedPreservesSlowContinuousChoice)
+{
+	std::string v4Json = MakeMinimalProfile(
+	    /*schemaVersion=*/4, "\"calibration_speed\":2");
 
-    CalibrationContext ctx;
-    std::stringstream io(v4Json);
-    ParseProfile(ctx, io);
+	CalibrationContext ctx;
+	std::stringstream io(v4Json);
+	ParseProfile(ctx, io);
 
-    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::VERY_SLOW);
-    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
+	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::VERY_SLOW);
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
 }
 
-TEST(ConfigurationTest, ResolvedSpeedUsesContinuousSettingOnlyInContinuousMode) {
-    CalibrationContext ctx;
-    ctx.oneShotCalibrationSpeed = CalibrationContext::FAST;
-    ctx.continuousCalibrationSpeed = CalibrationContext::AUTO;
+TEST(ConfigurationTest, ResolvedSpeedUsesContinuousSettingOnlyInContinuousMode)
+{
+	CalibrationContext ctx;
+	ctx.oneShotCalibrationSpeed = CalibrationContext::FAST;
+	ctx.continuousCalibrationSpeed = CalibrationContext::AUTO;
 
-    ctx.state = CalibrationState::None;
-    EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::FAST);
+	ctx.state = CalibrationState::None;
+	EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::FAST);
 
-    ctx.state = CalibrationState::Continuous;
-    EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::AUTO);
+	ctx.state = CalibrationState::Continuous;
+	EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::AUTO);
 }
 
-TEST(ConfigurationTest, ContinuousSnapshotRestoresRelativePoseMetadata) {
-    CalibrationContext ctx;
-    ctx.enabled = true;
-    ctx.validProfile = true;
-    ctx.referenceTrackingSystem = "lighthouse";
-    ctx.targetTrackingSystem = "oculus";
-    ctx.calibratedTranslation = Eigen::Vector3d(1.0, 2.0, 3.0);
-    ctx.calibratedRotation = Eigen::Vector3d(4.0, 5.0, 6.0);
-    ctx.calibratedScale = 1.25;
-    ctx.refToTargetPose.translation() = Eigen::Vector3d(0.1, 0.2, 0.3);
-    ctx.relativePosCalibrated = true;
+TEST(ConfigurationTest, ContinuousSnapshotRestoresRelativePoseMetadata)
+{
+	CalibrationContext ctx;
+	ctx.enabled = true;
+	ctx.validProfile = true;
+	ctx.referenceTrackingSystem = "lighthouse";
+	ctx.targetTrackingSystem = "oculus";
+	ctx.calibratedTranslation = Eigen::Vector3d(1.0, 2.0, 3.0);
+	ctx.calibratedRotation = Eigen::Vector3d(4.0, 5.0, 6.0);
+	ctx.calibratedScale = 1.25;
+	ctx.refToTargetPose.translation() = Eigen::Vector3d(0.1, 0.2, 0.3);
+	ctx.relativePosCalibrated = true;
 
-    const auto snap = ctx.CaptureProfileSnapshot();
-    ctx.calibratedTranslation = Eigen::Vector3d(99.0, 99.0, 99.0);
-    ctx.relativePosCalibrated = false;
-    ctx.validProfile = false;
+	const auto snap = ctx.CaptureProfileSnapshot();
+	ctx.calibratedTranslation = Eigen::Vector3d(99.0, 99.0, 99.0);
+	ctx.relativePosCalibrated = false;
+	ctx.validProfile = false;
 
-    ctx.RestoreProfileSnapshot(snap);
+	ctx.RestoreProfileSnapshot(snap);
 
-    EXPECT_TRUE(ctx.validProfile);
-    EXPECT_TRUE(ctx.relativePosCalibrated);
-    EXPECT_TRUE(ctx.calibratedTranslation.isApprox(Eigen::Vector3d(1.0, 2.0, 3.0)));
-    EXPECT_NEAR(ctx.refToTargetPose.translation().z(), 0.3, 1e-9);
+	EXPECT_TRUE(ctx.validProfile);
+	EXPECT_TRUE(ctx.relativePosCalibrated);
+	EXPECT_TRUE(ctx.calibratedTranslation.isApprox(Eigen::Vector3d(1.0, 2.0, 3.0)));
+	EXPECT_NEAR(ctx.refToTargetPose.translation().z(), 0.3, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -284,39 +291,32 @@ TEST(ConfigurationTest, ContinuousSnapshotRestoresRelativePoseMetadata) {
 // catch in code review. Forcing the test to be touched whenever a default
 // changes makes the change explicit and reviewable.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, InCodeDefaultsArePinned) {
-    CalibrationContext ctx;
+TEST(ConfigurationTest, InCodeDefaultsArePinned)
+{
+	CalibrationContext ctx;
 
-    EXPECT_FLOAT_EQ(ctx.jitterThreshold, 3.0f);
-    EXPECT_TRUE(ctx.recalibrateOnMovement)
-        << "recalibrateOnMovement default is ON: prevents phantom drift while still";
-    EXPECT_TRUE(ctx.enableStaticRecalibration)
-        << "enableStaticRecalibration default is ON: no-op when not locked, "
-           "accelerates rigid-attachment recovery; flipped on this fork";
-    EXPECT_TRUE(ctx.baseStationDriftCorrectionEnabled)
-        << "baseStationDriftCorrectionEnabled default is AUTO (true): "
-           "no-op when no base stations are detected (e.g. Quest-only "
-           "setups), corrects on detected universe shifts otherwise";
-    EXPECT_FALSE(ctx.requireTriggerPressToApply);
-    EXPECT_TRUE(ctx.ignoreOutliers)
-        << "ignoreOutliers default is now true: the filter is a no-op when "
-           "consensus is uniform and prevents one bad sample from skewing "
-           "the fit when it isn't.";
-    EXPECT_TRUE(ctx.quashTargetInContinuous)
-        << "quashTargetInContinuous default is now true: hides the duplicate "
-           "tracker pose while continuous calibration runs. Gated on "
-           "state == Continuous in the apply path, so one-shot is unaffected.";
-    EXPECT_FLOAT_EQ(ctx.continuousCalibrationThreshold, 1.5f);
-    EXPECT_FLOAT_EQ(ctx.maxRelativeErrorThreshold, 0.005f);
-    EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST)
-        << "One-shot default speed is FAST.";
-    EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO)
-        << "Continuous default speed is AUTO.";
-    EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
-    EXPECT_DOUBLE_EQ(ctx.calibratedScale, 1.0);
-    EXPECT_DOUBLE_EQ(ctx.floorOffsetMetersY, 0.0)
-        << "Floor adjustment defaults to 0 (no vertical nudge until the user sets the floor).";
-
+	EXPECT_FLOAT_EQ(ctx.jitterThreshold, 3.0f);
+	EXPECT_TRUE(ctx.recalibrateOnMovement) << "recalibrateOnMovement default is ON: prevents phantom drift while still";
+	EXPECT_TRUE(ctx.enableStaticRecalibration) << "enableStaticRecalibration default is ON: no-op when not locked, "
+	                                              "accelerates rigid-attachment recovery; flipped on this fork";
+	EXPECT_TRUE(ctx.baseStationDriftCorrectionEnabled) << "baseStationDriftCorrectionEnabled default is AUTO (true): "
+	                                                      "no-op when no base stations are detected (e.g. Quest-only "
+	                                                      "setups), corrects on detected universe shifts otherwise";
+	EXPECT_FALSE(ctx.requireTriggerPressToApply);
+	EXPECT_TRUE(ctx.ignoreOutliers) << "ignoreOutliers default is now true: the filter is a no-op when "
+	                                   "consensus is uniform and prevents one bad sample from skewing "
+	                                   "the fit when it isn't.";
+	EXPECT_TRUE(ctx.quashTargetInContinuous) << "quashTargetInContinuous default is now true: hides the duplicate "
+	                                            "tracker pose while continuous calibration runs. Gated on "
+	                                            "state == Continuous in the apply path, so one-shot is unaffected.";
+	EXPECT_FLOAT_EQ(ctx.continuousCalibrationThreshold, 1.5f);
+	EXPECT_FLOAT_EQ(ctx.maxRelativeErrorThreshold, 0.005f);
+	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST) << "One-shot default speed is FAST.";
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO) << "Continuous default speed is AUTO.";
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::AUTO);
+	EXPECT_DOUBLE_EQ(ctx.calibratedScale, 1.0);
+	EXPECT_DOUBLE_EQ(ctx.floorOffsetMetersY, 0.0)
+	    << "Floor adjustment defaults to 0 (no vertical nudge until the user sets the floor).";
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +327,6 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned) {
 // fixed magnitude bound. See project_wedge_guard_removed_2026-05-05.md.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // Regression guard for the registry-read underflow bug fixed 2026-05-04.
 // RegGetValueA can return size==0 for an empty/malformed REG_SZ; the original
@@ -337,17 +336,18 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned) {
 // profile"); positive input maps to input-1 (strip the null terminator).
 // ---------------------------------------------------------------------------
 #ifdef _WIN32
-TEST(ConfigurationTest, Regression_StripRegistryNullTerminator_HandlesZero) {
-    EXPECT_EQ(StripRegistryNullTerminator(0), 0u)
-        << "size==0 must NOT underflow â€” caller short-circuits to empty string";
+TEST(ConfigurationTest, Regression_StripRegistryNullTerminator_HandlesZero)
+{
+	EXPECT_EQ(StripRegistryNullTerminator(0), 0u)
+	    << "size==0 must NOT underflow â€” caller short-circuits to empty string";
 }
 
-TEST(ConfigurationTest, Regression_StripRegistryNullTerminator_StripsOne) {
-    EXPECT_EQ(StripRegistryNullTerminator(1), 0u)
-        << "size==1 (just a null byte) maps to empty string";
-    EXPECT_EQ(StripRegistryNullTerminator(2), 1u);
-    EXPECT_EQ(StripRegistryNullTerminator(10), 9u);
-    EXPECT_EQ(StripRegistryNullTerminator(0xFFFF), 0xFFFEu);
+TEST(ConfigurationTest, Regression_StripRegistryNullTerminator_StripsOne)
+{
+	EXPECT_EQ(StripRegistryNullTerminator(1), 0u) << "size==1 (just a null byte) maps to empty string";
+	EXPECT_EQ(StripRegistryNullTerminator(2), 1u);
+	EXPECT_EQ(StripRegistryNullTerminator(10), 9u);
+	EXPECT_EQ(StripRegistryNullTerminator(0xFFFF), 0xFFFEu);
 }
 #endif
 
@@ -372,92 +372,94 @@ TEST(ConfigurationTest, Regression_StripRegistryNullTerminator_StripsOne) {
 // to skip-if-default / change a tunable to always-write, one of these
 // expectations fails.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, WriteProfile_AlwaysStampsCalibrationData) {
-    // Calibration data is mandatory on every save. Even a fresh
-    // unconfigured context with default zeros must emit the calibration
-    // keys so a future load always has them.
-    CalibrationContext ctx; // all defaults
-    ctx.referenceTrackingSystem = "lighthouse";
-    ctx.targetTrackingSystem = "oculus";
-    ctx.validProfile = true;
+TEST(ConfigurationTest, WriteProfile_AlwaysStampsCalibrationData)
+{
+	// Calibration data is mandatory on every save. Even a fresh
+	// unconfigured context with default zeros must emit the calibration
+	// keys so a future load always has them.
+	CalibrationContext ctx; // all defaults
+	ctx.referenceTrackingSystem = "lighthouse";
+	ctx.targetTrackingSystem = "oculus";
+	ctx.validProfile = true;
 
-    std::stringstream io;
-    WriteProfile(ctx, io);
-    const std::string json = io.str();
+	std::stringstream io;
+	WriteProfile(ctx, io);
+	const std::string json = io.str();
 
-    EXPECT_NE(json.find("\"x\":"),  std::string::npos);
-    EXPECT_NE(json.find("\"y\":"),  std::string::npos);
-    EXPECT_NE(json.find("\"z\":"),  std::string::npos);
-    EXPECT_NE(json.find("\"roll\":"),  std::string::npos);
-    EXPECT_NE(json.find("\"yaw\":"),   std::string::npos);
-    EXPECT_NE(json.find("\"pitch\":"), std::string::npos);
-    EXPECT_NE(json.find("\"scale\":"), std::string::npos);
-    EXPECT_NE(json.find("\"reference_tracking_system\":"), std::string::npos);
-    EXPECT_NE(json.find("\"target_tracking_system\":"),    std::string::npos);
+	EXPECT_NE(json.find("\"x\":"), std::string::npos);
+	EXPECT_NE(json.find("\"y\":"), std::string::npos);
+	EXPECT_NE(json.find("\"z\":"), std::string::npos);
+	EXPECT_NE(json.find("\"roll\":"), std::string::npos);
+	EXPECT_NE(json.find("\"yaw\":"), std::string::npos);
+	EXPECT_NE(json.find("\"pitch\":"), std::string::npos);
+	EXPECT_NE(json.find("\"scale\":"), std::string::npos);
+	EXPECT_NE(json.find("\"reference_tracking_system\":"), std::string::npos);
+	EXPECT_NE(json.find("\"target_tracking_system\":"), std::string::npos);
 }
 
-TEST(ConfigurationTest, WriteProfile_SkipsDefaultTunables) {
-    // Skip-if-default: tunables left at their CalibrationContext-construction
-    // defaults must NOT appear in the JSON. Without this contract, a user's
-    // pre-2026 profile would come out of round-trip with new fields baked in
-    // at today's defaults â€” and any future default flip would have no effect
-    // on those profiles.
-    CalibrationContext ctx;  // all defaults
-    ctx.referenceTrackingSystem = "lighthouse";
-    ctx.targetTrackingSystem = "oculus";
-    ctx.validProfile = true;
+TEST(ConfigurationTest, WriteProfile_SkipsDefaultTunables)
+{
+	// Skip-if-default: tunables left at their CalibrationContext-construction
+	// defaults must NOT appear in the JSON. Without this contract, a user's
+	// pre-2026 profile would come out of round-trip with new fields baked in
+	// at today's defaults â€” and any future default flip would have no effect
+	// on those profiles.
+	CalibrationContext ctx; // all defaults
+	ctx.referenceTrackingSystem = "lighthouse";
+	ctx.targetTrackingSystem = "oculus";
+	ctx.validProfile = true;
 
-    std::stringstream io;
-    WriteProfile(ctx, io);
-    const std::string json = io.str();
+	std::stringstream io;
+	WriteProfile(ctx, io);
+	const std::string json = io.str();
 
-    // recalibrateOnMovement defaults to true â†’ skip
-    EXPECT_EQ(json.find("recalibrate_on_movement"), std::string::npos)
-        << "default-true bool must be skipped on save";
-    // baseStationDriftCorrectionEnabled defaults to true â†’ skip
-    EXPECT_EQ(json.find("base_station_drift_correction"), std::string::npos);
-    // ignoreOutliers defaults to true -> skip
-    EXPECT_EQ(json.find("ignore_outliers"), std::string::npos);
-    // jitterThreshold defaults to 3.0f -> skip
-    EXPECT_EQ(json.find("jitter_threshold"), std::string::npos);
+	// recalibrateOnMovement defaults to true â†’ skip
+	EXPECT_EQ(json.find("recalibrate_on_movement"), std::string::npos) << "default-true bool must be skipped on save";
+	// baseStationDriftCorrectionEnabled defaults to true â†’ skip
+	EXPECT_EQ(json.find("base_station_drift_correction"), std::string::npos);
+	// ignoreOutliers defaults to true -> skip
+	EXPECT_EQ(json.find("ignore_outliers"), std::string::npos);
+	// jitterThreshold defaults to 3.0f -> skip
+	EXPECT_EQ(json.find("jitter_threshold"), std::string::npos);
 }
 
-TEST(ConfigurationTest, WriteProfile_StampsNonDefaultTunables) {
-    // The other half of WRITE_IF_CHANGED: tunables flipped away from default
-    // MUST be written. If someone breaks the macro to always-skip, the
-    // user's customisations would silently disappear on next save.
-    CalibrationContext ctx;
-    ctx.referenceTrackingSystem = "lighthouse";
-    ctx.targetTrackingSystem = "oculus";
-    ctx.validProfile = true;
-    ctx.recalibrateOnMovement = false;       // flipped from default true
-    ctx.ignoreOutliers = false;              // flipped from default true
-    ctx.jitterThreshold = 5.5f;              // flipped from default 3.0
-    ctx.baseStationDriftCorrectionEnabled = false; // flipped from default true
+TEST(ConfigurationTest, WriteProfile_StampsNonDefaultTunables)
+{
+	// The other half of WRITE_IF_CHANGED: tunables flipped away from default
+	// MUST be written. If someone breaks the macro to always-skip, the
+	// user's customisations would silently disappear on next save.
+	CalibrationContext ctx;
+	ctx.referenceTrackingSystem = "lighthouse";
+	ctx.targetTrackingSystem = "oculus";
+	ctx.validProfile = true;
+	ctx.recalibrateOnMovement = false;             // flipped from default true
+	ctx.ignoreOutliers = false;                    // flipped from default true
+	ctx.jitterThreshold = 5.5f;                    // flipped from default 3.0
+	ctx.baseStationDriftCorrectionEnabled = false; // flipped from default true
 
-    std::stringstream io;
-    WriteProfile(ctx, io);
-    const std::string json = io.str();
+	std::stringstream io;
+	WriteProfile(ctx, io);
+	const std::string json = io.str();
 
-    EXPECT_NE(json.find("recalibrate_on_movement"),   std::string::npos);
-    EXPECT_NE(json.find("ignore_outliers"),            std::string::npos);
-    EXPECT_NE(json.find("jitter_threshold"),           std::string::npos);
-    EXPECT_NE(json.find("base_station_drift_correction"), std::string::npos);
+	EXPECT_NE(json.find("recalibrate_on_movement"), std::string::npos);
+	EXPECT_NE(json.find("ignore_outliers"), std::string::npos);
+	EXPECT_NE(json.find("jitter_threshold"), std::string::npos);
+	EXPECT_NE(json.find("base_station_drift_correction"), std::string::npos);
 }
 
-TEST(ConfigurationTest, WriteProfile_InvalidProfileWritesNothing) {
-    // Sanity: WriteProfile early-returns on !validProfile (Configuration.cpp:530).
-    // A caller that hands in an unfinished context should produce empty
-    // output, not partial JSON that a re-load would silently truncate.
-    CalibrationContext ctx;
-    ctx.validProfile = false;
+TEST(ConfigurationTest, WriteProfile_InvalidProfileWritesNothing)
+{
+	// Sanity: WriteProfile early-returns on !validProfile (Configuration.cpp:530).
+	// A caller that hands in an unfinished context should produce empty
+	// output, not partial JSON that a re-load would silently truncate.
+	CalibrationContext ctx;
+	ctx.validProfile = false;
 
-    std::stringstream io;
-    WriteProfile(ctx, io);
+	std::stringstream io;
+	WriteProfile(ctx, io);
 
-    EXPECT_TRUE(io.str().empty())
-        << "WriteProfile must early-return on invalid context â€” partial JSON "
-           "would be a silent data-loss bug for the caller";
+	EXPECT_TRUE(io.str().empty()) << "WriteProfile must early-return on invalid context â€” partial JSON "
+	                                 "would be a silent data-loss bug for the caller";
 }
 
 // ---------------------------------------------------------------------------
@@ -465,208 +467,205 @@ TEST(ConfigurationTest, WriteProfile_InvalidProfileWritesNothing) {
 // or later builds) need that key present; without it, even today's load
 // path treats the profile as v0 and runs the migration steps redundantly.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, SaveStampsCurrentSchemaVersion) {
-    CalibrationContext src;
-    src.referenceTrackingSystem = "lighthouse";
-    src.targetTrackingSystem = "oculus";
-    src.validProfile = true;
+TEST(ConfigurationTest, SaveStampsCurrentSchemaVersion)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
 
-    std::stringstream io;
-    WriteProfile(src, io);
+	std::stringstream io;
+	WriteProfile(src, io);
 
-    // Reload through ParseProfile and verify validProfile became true (which
-    // it does only if schema_version <= kProfileSchemaVersion is satisfied).
-    // If the saved JSON had no schema_version, it'd load as v0 -- still
-    // accepted but the rewritten file would become "stuck" at v0 instead of
-    // migrating forward. The contract is that every save bumps to current.
-    CalibrationContext dst;
-    std::stringstream io2(io.str());
-    ParseProfile(dst, io2);
-    EXPECT_TRUE(dst.validProfile)
-        << "A freshly-saved profile must be re-loadable cleanly";
+	// Reload through ParseProfile and verify validProfile became true (which
+	// it does only if schema_version <= kProfileSchemaVersion is satisfied).
+	// If the saved JSON had no schema_version, it'd load as v0 -- still
+	// accepted but the rewritten file would become "stuck" at v0 instead of
+	// migrating forward. The contract is that every save bumps to current.
+	CalibrationContext dst;
+	std::stringstream io2(io.str());
+	ParseProfile(dst, io2);
+	EXPECT_TRUE(dst.validProfile) << "A freshly-saved profile must be re-loadable cleanly";
 
-    // Also sanity-check that "schema_version" appears in the JSON literally.
-    // (Not a perfect check -- the parser doesn't expose the key list -- but
-    // confirms the WriteProfile path writes the field at all.)
-    EXPECT_NE(io.str().find("schema_version"), std::string::npos)
-        << "Saved JSON should contain a schema_version key";
+	// Also sanity-check that "schema_version" appears in the JSON literally.
+	// (Not a perfect check -- the parser doesn't expose the key list -- but
+	// confirms the WriteProfile path writes the field at all.)
+	EXPECT_NE(io.str().find("schema_version"), std::string::npos) << "Saved JSON should contain a schema_version key";
 }
 
-TEST(ConfigurationTest, BoundaryStandingSpaceRoundTrips) {
-    CalibrationContext src;
-    src.referenceTrackingSystem = "lighthouse";
-    src.targetTrackingSystem = "oculus";
-    src.validProfile = true;
-    src.boundary.enabled = true;
-    src.boundary.standingSpace = true;
-    src.boundary.floorY = 0.0;
-    src.boundary.ceilingY = 2.4;
-    src.boundary.vertices = {
-        { -1.0, 0.0, -1.0 },
-        {  1.0, 0.0, -1.0 },
-        {  1.0, 0.0,  1.0 },
-        { -1.0, 0.0,  1.0 },
-    };
+TEST(ConfigurationTest, BoundaryStandingSpaceRoundTrips)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
+	src.boundary.enabled = true;
+	src.boundary.standingSpace = true;
+	src.boundary.floorY = 0.0;
+	src.boundary.ceilingY = 2.4;
+	src.boundary.vertices = {
+	    {-1.0, 0.0, -1.0},
+	    {1.0, 0.0, -1.0},
+	    {1.0, 0.0, 1.0},
+	    {-1.0, 0.0, 1.0},
+	};
 
-    std::stringstream io;
-    WriteProfile(src, io);
+	std::stringstream io;
+	WriteProfile(src, io);
 
-    EXPECT_NE(io.str().find("standing_space"), std::string::npos);
+	EXPECT_NE(io.str().find("standing_space"), std::string::npos);
 
-    CalibrationContext dst;
-    std::stringstream reload(io.str());
-    ParseProfile(dst, reload);
+	CalibrationContext dst;
+	std::stringstream reload(io.str());
+	ParseProfile(dst, reload);
 
-    ASSERT_TRUE(dst.validProfile);
-    EXPECT_TRUE(dst.boundary.standingSpace);
-    EXPECT_TRUE(dst.boundary.enabled);
-    ASSERT_EQ(dst.boundary.vertices.size(), 4u);
-    EXPECT_NEAR(dst.boundary.ceilingY, 2.4, 1e-9);
+	ASSERT_TRUE(dst.validProfile);
+	EXPECT_TRUE(dst.boundary.standingSpace);
+	EXPECT_TRUE(dst.boundary.enabled);
+	ASSERT_EQ(dst.boundary.vertices.size(), 4u);
+	EXPECT_NEAR(dst.boundary.ceilingY, 2.4, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
 // Schema migration v3 -> v4. v3 profiles have no head_mount or boundary
 // sections. They must load with both at their disabled defaults.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections) {
-    std::string v3Json = MakeMinimalProfile(/*schemaVersion=*/3);
+TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
+{
+	std::string v3Json = MakeMinimalProfile(/*schemaVersion=*/3);
 
-    CalibrationContext ctx;
-    std::stringstream io(v3Json);
-    ParseProfile(ctx, io);
+	CalibrationContext ctx;
+	std::stringstream io(v3Json);
+	ParseProfile(ctx, io);
 
-    EXPECT_TRUE(ctx.validProfile);
-    EXPECT_EQ(ctx.headMount.mode, HeadMountMode::Off)
-        << "v3 profile must default head_mount.mode to Off";
-    EXPECT_TRUE(ctx.headMount.trackerSerial.empty())
-        << "v3 profile must default head_mount.trackerSerial to empty";
-    EXPECT_FALSE(ctx.headMount.offsetCalibrated)
-        << "v3 profile must default head_mount.offsetCalibrated to false";
-    EXPECT_TRUE(ctx.headMount.autoCorrectOffset)
-        << "v3 profile must default head_mount.autoCorrectOffset to true";
-    EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(
-        ctx.headMount.driverSynthTiming))
-        << "v3 profile must default DriverSynth timing";
-    EXPECT_FALSE(ctx.boundary.enabled)
-        << "v3 profile must default boundary.enabled to false";
+	EXPECT_TRUE(ctx.validProfile);
+	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::Off) << "v3 profile must default head_mount.mode to Off";
+	EXPECT_TRUE(ctx.headMount.trackerSerial.empty()) << "v3 profile must default head_mount.trackerSerial to empty";
+	EXPECT_FALSE(ctx.headMount.offsetCalibrated) << "v3 profile must default head_mount.offsetCalibrated to false";
+	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
+	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
+	    << "v3 profile must default DriverSynth timing";
+	EXPECT_FALSE(ctx.boundary.enabled) << "v3 profile must default boundary.enabled to false";
 }
 
 // ---------------------------------------------------------------------------
 // Round-trip for the v4 sections (head_mount, boundary). Non-default
 // values must survive a write->read cycle intact.
 // ---------------------------------------------------------------------------
-TEST(ConfigurationTest, V4SectionsRoundTrip) {
-    CalibrationContext src;
-    src.referenceTrackingSystem = "lighthouse";
-    src.targetTrackingSystem = "oculus";
-    src.validProfile = true;
+TEST(ConfigurationTest, V4SectionsRoundTrip)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
 
-    src.headMount.mode = HeadMountMode::Corroborate;
-    src.headMount.trackerSerial = "LHR-AABBCCDD";
-    src.headMount.trackerTrackingSystem = "lighthouse";
-    src.headMount.hideTracker = false;
-    src.headMount.offsetCalibrated = true;
-    src.headMount.autoCorrectOffset = false;
-    src.headMount.driverSynthTiming.staleLimitMs = 120;
-    src.headMount.driverSynthTiming.graceHoldMs = 1400;
-    src.headMount.driverSynthTiming.blendToFallbackMs = 900;
-    src.headMount.driverSynthTiming.stableBeforeSynthMs = 650;
-    src.headMount.driverSynthTiming.blendToSynthMs = 700;
-    // Set a non-identity headFromTracker.
-    Eigen::Quaterniond q = Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitY())
-                           * Eigen::AngleAxisd(0.05, Eigen::Vector3d::UnitX());
-    src.headMount.headFromTracker = Eigen::AffineCompact3d::Identity();
-    src.headMount.headFromTracker.linear() = q.toRotationMatrix();
-    src.headMount.headFromTracker.translation() = Eigen::Vector3d(0.01, -0.02, 0.03);
+	src.headMount.mode = HeadMountMode::Corroborate;
+	src.headMount.trackerSerial = "LHR-AABBCCDD";
+	src.headMount.trackerTrackingSystem = "lighthouse";
+	src.headMount.hideTracker = false;
+	src.headMount.offsetCalibrated = true;
+	src.headMount.autoCorrectOffset = false;
+	src.headMount.driverSynthTiming.staleLimitMs = 120;
+	src.headMount.driverSynthTiming.graceHoldMs = 1400;
+	src.headMount.driverSynthTiming.blendToFallbackMs = 900;
+	src.headMount.driverSynthTiming.stableBeforeSynthMs = 650;
+	src.headMount.driverSynthTiming.blendToSynthMs = 700;
+	// Set a non-identity headFromTracker.
+	Eigen::Quaterniond q =
+	    Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(0.05, Eigen::Vector3d::UnitX());
+	src.headMount.headFromTracker = Eigen::AffineCompact3d::Identity();
+	src.headMount.headFromTracker.linear() = q.toRotationMatrix();
+	src.headMount.headFromTracker.translation() = Eigen::Vector3d(0.01, -0.02, 0.03);
 
-    src.boundary.enabled = true;
-    src.boundary.floorY = -0.05;
-    src.boundary.ceilingY = 2.3;
-    src.boundary.vertices = { {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.5} };
-    src.boundary.priorChaperone = {0xDE, 0xAD, 0xBE, 0xEF};
-    src.boundary.priorChaperoneCaptured = true;
+	src.boundary.enabled = true;
+	src.boundary.floorY = -0.05;
+	src.boundary.ceilingY = 2.3;
+	src.boundary.vertices = {{1.0, 0.0, 0.0}, {-1.0, 0.0, 0.5}};
+	src.boundary.priorChaperone = {0xDE, 0xAD, 0xBE, 0xEF};
+	src.boundary.priorChaperoneCaptured = true;
 
-    std::stringstream io;
-    WriteProfile(src, io);
+	std::stringstream io;
+	WriteProfile(src, io);
 
-    CalibrationContext dst;
-    std::stringstream io2(io.str());
-    ParseProfile(dst, io2);
+	CalibrationContext dst;
+	std::stringstream io2(io.str());
+	ParseProfile(dst, io2);
 
-    EXPECT_TRUE(dst.validProfile);
-    EXPECT_EQ(dst.headMount.mode, HeadMountMode::Corroborate);
-    EXPECT_EQ(dst.headMount.trackerSerial, "LHR-AABBCCDD");
-    EXPECT_EQ(dst.headMount.trackerTrackingSystem, "lighthouse");
-    EXPECT_FALSE(dst.headMount.hideTracker);
-    EXPECT_TRUE(dst.headMount.offsetCalibrated);
-    EXPECT_FALSE(dst.headMount.autoCorrectOffset);
-    EXPECT_EQ(dst.headMount.driverSynthTiming.staleLimitMs, 120);
-    EXPECT_EQ(dst.headMount.driverSynthTiming.graceHoldMs, 1400);
-    EXPECT_EQ(dst.headMount.driverSynthTiming.blendToFallbackMs, 900);
-    EXPECT_EQ(dst.headMount.driverSynthTiming.stableBeforeSynthMs, 650);
-    EXPECT_EQ(dst.headMount.driverSynthTiming.blendToSynthMs, 700);
-    // Translation must round-trip to within floating-point precision.
-    EXPECT_NEAR(dst.headMount.headFromTracker.translation()(0), 0.01,  1e-9);
-    EXPECT_NEAR(dst.headMount.headFromTracker.translation()(1), -0.02, 1e-9);
-    EXPECT_NEAR(dst.headMount.headFromTracker.translation()(2), 0.03,  1e-9);
-    // Rotation: compare via quaternions; normalize first.
-    Eigen::Quaterniond qSrc(src.headMount.headFromTracker.rotation());
-    Eigen::Quaterniond qDst(dst.headMount.headFromTracker.rotation());
-    qSrc.normalize(); qDst.normalize();
-    EXPECT_NEAR(std::abs(qSrc.dot(qDst)), 1.0, 1e-6)
-        << "headFromTracker rotation must round-trip";
+	EXPECT_TRUE(dst.validProfile);
+	EXPECT_EQ(dst.headMount.mode, HeadMountMode::Corroborate);
+	EXPECT_EQ(dst.headMount.trackerSerial, "LHR-AABBCCDD");
+	EXPECT_EQ(dst.headMount.trackerTrackingSystem, "lighthouse");
+	EXPECT_FALSE(dst.headMount.hideTracker);
+	EXPECT_TRUE(dst.headMount.offsetCalibrated);
+	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
+	EXPECT_EQ(dst.headMount.driverSynthTiming.staleLimitMs, 120);
+	EXPECT_EQ(dst.headMount.driverSynthTiming.graceHoldMs, 1400);
+	EXPECT_EQ(dst.headMount.driverSynthTiming.blendToFallbackMs, 900);
+	EXPECT_EQ(dst.headMount.driverSynthTiming.stableBeforeSynthMs, 650);
+	EXPECT_EQ(dst.headMount.driverSynthTiming.blendToSynthMs, 700);
+	// Translation must round-trip to within floating-point precision.
+	EXPECT_NEAR(dst.headMount.headFromTracker.translation()(0), 0.01, 1e-9);
+	EXPECT_NEAR(dst.headMount.headFromTracker.translation()(1), -0.02, 1e-9);
+	EXPECT_NEAR(dst.headMount.headFromTracker.translation()(2), 0.03, 1e-9);
+	// Rotation: compare via quaternions; normalize first.
+	Eigen::Quaterniond qSrc(src.headMount.headFromTracker.rotation());
+	Eigen::Quaterniond qDst(dst.headMount.headFromTracker.rotation());
+	qSrc.normalize();
+	qDst.normalize();
+	EXPECT_NEAR(std::abs(qSrc.dot(qDst)), 1.0, 1e-6) << "headFromTracker rotation must round-trip";
 
-    EXPECT_TRUE(dst.boundary.enabled);
-    EXPECT_NEAR(dst.boundary.floorY,   -0.05, 1e-9);
-    EXPECT_NEAR(dst.boundary.ceilingY,  2.3,  1e-9);
-    ASSERT_EQ(dst.boundary.vertices.size(), 2u);
-    EXPECT_NEAR(dst.boundary.vertices[0].x, 1.0,  1e-9);
-    EXPECT_NEAR(dst.boundary.vertices[1].z, 0.5,  1e-9);
-    ASSERT_EQ(dst.boundary.priorChaperone.size(), 4u);
-    EXPECT_EQ(dst.boundary.priorChaperone[0], 0xDE);
-    EXPECT_EQ(dst.boundary.priorChaperone[3], 0xEF);
-    EXPECT_TRUE(dst.boundary.priorChaperoneCaptured);
-
+	EXPECT_TRUE(dst.boundary.enabled);
+	EXPECT_NEAR(dst.boundary.floorY, -0.05, 1e-9);
+	EXPECT_NEAR(dst.boundary.ceilingY, 2.3, 1e-9);
+	ASSERT_EQ(dst.boundary.vertices.size(), 2u);
+	EXPECT_NEAR(dst.boundary.vertices[0].x, 1.0, 1e-9);
+	EXPECT_NEAR(dst.boundary.vertices[1].z, 0.5, 1e-9);
+	ASSERT_EQ(dst.boundary.priorChaperone.size(), 4u);
+	EXPECT_EQ(dst.boundary.priorChaperone[0], 0xDE);
+	EXPECT_EQ(dst.boundary.priorChaperone[3], 0xEF);
+	EXPECT_TRUE(dst.boundary.priorChaperoneCaptured);
 }
 
 // Skip-if-default: the new sections must NOT appear in the JSON
 // when all fields are at their default values.
-TEST(ConfigurationTest, V4SectionsSkippedWhenDefault) {
-    CalibrationContext ctx;
-    ctx.referenceTrackingSystem = "lighthouse";
-    ctx.targetTrackingSystem = "oculus";
-    ctx.validProfile = true;
-    // All head_mount / boundary fields at construction defaults.
+TEST(ConfigurationTest, V4SectionsSkippedWhenDefault)
+{
+	CalibrationContext ctx;
+	ctx.referenceTrackingSystem = "lighthouse";
+	ctx.targetTrackingSystem = "oculus";
+	ctx.validProfile = true;
+	// All head_mount / boundary fields at construction defaults.
 
-    std::stringstream io;
-    WriteProfile(ctx, io);
-    const std::string json = io.str();
+	std::stringstream io;
+	WriteProfile(ctx, io);
+	const std::string json = io.str();
 
-    EXPECT_EQ(json.find("\"head_mount\""),  std::string::npos)
-        << "head_mount must be omitted when at default (Off, no serial)";
-    EXPECT_EQ(json.find("\"boundary\""),    std::string::npos)
-        << "boundary must be omitted when disabled and no vertices captured";
+	EXPECT_EQ(json.find("\"head_mount\""), std::string::npos)
+	    << "head_mount must be omitted when at default (Off, no serial)";
+	EXPECT_EQ(json.find("\"boundary\""), std::string::npos)
+	    << "boundary must be omitted when disabled and no vertices captured";
 }
 
-TEST(ConfigurationTest, HeadMountAutoCorrectDisabledPersistsWhenOtherwiseDefault) {
-    CalibrationContext src;
-    src.referenceTrackingSystem = "lighthouse";
-    src.targetTrackingSystem = "oculus";
-    src.validProfile = true;
-    src.headMount.autoCorrectOffset = false;
+TEST(ConfigurationTest, HeadMountAutoCorrectDisabledPersistsWhenOtherwiseDefault)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
+	src.headMount.autoCorrectOffset = false;
 
-    std::stringstream io;
-    WriteProfile(src, io);
-    const std::string json = io.str();
-    EXPECT_NE(json.find("\"head_mount\""), std::string::npos);
-    EXPECT_NE(json.find("\"auto_correct_offset\""), std::string::npos);
+	std::stringstream io;
+	WriteProfile(src, io);
+	const std::string json = io.str();
+	EXPECT_NE(json.find("\"head_mount\""), std::string::npos);
+	EXPECT_NE(json.find("\"auto_correct_offset\""), std::string::npos);
 
-    CalibrationContext dst;
-    std::stringstream in(json);
-    ParseProfile(dst, in);
+	CalibrationContext dst;
+	std::stringstream in(json);
+	ParseProfile(dst, in);
 
-    EXPECT_FALSE(dst.headMount.autoCorrectOffset);
-    EXPECT_EQ(dst.headMount.mode, HeadMountMode::Off);
-    EXPECT_TRUE(dst.headMount.trackerSerial.empty());
-    EXPECT_FALSE(dst.headMount.offsetCalibrated);
+	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
+	EXPECT_EQ(dst.headMount.mode, HeadMountMode::Off);
+	EXPECT_TRUE(dst.headMount.trackerSerial.empty());
+	EXPECT_FALSE(dst.headMount.offsetCalibrated);
 }

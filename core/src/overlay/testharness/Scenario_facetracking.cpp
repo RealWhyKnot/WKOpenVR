@@ -27,7 +27,8 @@ namespace {
 // FaceTrackingFrameShmem (WKOpenVRFaceTrackingFrameRingV2) header layout per
 // the survey: u32 magic, u32 shmem_version, u32 ring_size, u32 host_state,
 // atomic<u64> host_heartbeat_qpc, ...
-struct FaceTrackingShmemHeader {
+struct FaceTrackingShmemHeader
+{
 	uint32_t magic;
 	uint32_t shmem_version;
 	uint32_t ring_size;
@@ -35,11 +36,15 @@ struct FaceTrackingShmemHeader {
 	uint64_t host_heartbeat_qpc;
 };
 
-bool ReadFaceTrackingHeader(FaceTrackingShmemHeader &out) {
+bool ReadFaceTrackingHeader(FaceTrackingShmemHeader& out)
+{
 	HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, "WKOpenVRFaceTrackingFrameRingV2");
 	if (h == nullptr) return false;
-	void *view = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
-	if (view == nullptr) { ::CloseHandle(h); return false; }
+	void* view = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
+	if (view == nullptr) {
+		::CloseHandle(h);
+		return false;
+	}
 	std::memcpy(&out, view, sizeof(out));
 	::UnmapViewOfFile(view);
 	::CloseHandle(h);
@@ -48,40 +53,40 @@ bool ReadFaceTrackingHeader(FaceTrackingShmemHeader &out) {
 
 } // namespace
 
-ScenarioResult RunScenario_facetracking(ScenarioContext &ctx) {
+ScenarioResult RunScenario_facetracking(ScenarioContext& ctx)
+{
 	const auto t0 = std::chrono::steady_clock::now();
 	auto duration_now = [&]() {
-		return std::chrono::duration_cast<std::chrono::milliseconds>(
-			std::chrono::steady_clock::now() - t0);
+		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
 	};
 
-	const fs::path host_exe = ctx.driver_resources
-		/ "facetracking" / "host" / "WKOpenVR.FaceModuleHost.exe";
+	const fs::path host_exe = ctx.driver_resources / "facetracking" / "host" / "WKOpenVR.FaceModuleHost.exe";
 	std::error_code ec;
 	const bool host_present = fs::exists(host_exe, ec);
 	if (!host_present) {
-		ctx.log.Warn("FaceModuleHost.exe missing at " + host_exe.string()
-			+ "; skipping host-launch portion (driver wiring still exercised)");
+		ctx.log.Warn("FaceModuleHost.exe missing at " + host_exe.string() +
+		             "; skipping host-launch portion (driver wiring still exercised)");
 	}
 
 	HarnessIpcClient client;
 	try {
 		ctx.log.Step("opening face-tracking pipe");
 		client.OpenWithRetries(OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME);
-	} catch (const std::exception &ex) {
+	}
+	catch (const std::exception& ex) {
 		return Fail("facetracking", duration_now(), ex.what());
 	}
 
 	if (client.GetMismatchState() != HarnessIpcClient::MismatchState::Matching) {
 		return Fail("facetracking", duration_now(),
-			"protocol version mismatch driver=" + std::to_string(client.GetDriverVersion()));
+		            "protocol version mismatch driver=" + std::to_string(client.GetDriverVersion()));
 	}
 	ctx.log.Info("handshake ok");
 
 	try {
 		ctx.log.Step("sending SetFaceTrackingConfig");
 		protocol::Request req(protocol::RequestSetFaceTrackingConfig);
-		auto &cfg = req.setFaceTrackingConfig;
+		auto& cfg = req.setFaceTrackingConfig;
 		std::memset(&cfg, 0, sizeof(cfg));
 		cfg.master_enabled = 1;
 		cfg.eyelid_sync_enabled = 1;
@@ -98,11 +103,11 @@ ScenarioResult RunScenario_facetracking(ScenarioContext &ctx) {
 		const auto resp = client.SendBlocking(req);
 		if (resp.type != protocol::ResponseSuccess) {
 			return Fail("facetracking", duration_now(),
-				"expected ResponseSuccess, got type=" + std::to_string((int)resp.type));
+			            "expected ResponseSuccess, got type=" + std::to_string((int)resp.type));
 		}
-	} catch (const std::exception &ex) {
-		return Fail("facetracking", duration_now(),
-			std::string("SetFaceTrackingConfig failed: ") + ex.what());
+	}
+	catch (const std::exception& ex) {
+		return Fail("facetracking", duration_now(), std::string("SetFaceTrackingConfig failed: ") + ex.what());
 	}
 
 	// The driver creates WKOpenVRFaceTrackingFrameRingV2 during module Init,
@@ -110,26 +115,28 @@ ScenarioResult RunScenario_facetracking(ScenarioContext &ctx) {
 	FaceTrackingShmemHeader header{};
 	bool found = false;
 	for (int attempt = 0; attempt < 30; ++attempt) {
-		if (ReadFaceTrackingHeader(header)) { found = true; break; }
+		if (ReadFaceTrackingHeader(header)) {
+			found = true;
+			break;
+		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
 	if (!found) {
-		return Fail("facetracking", duration_now(),
-			"WKOpenVRFaceTrackingFrameRingV2 shmem segment not visible");
+		return Fail("facetracking", duration_now(), "WKOpenVRFaceTrackingFrameRingV2 shmem segment not visible");
 	}
 	if (header.magic != 0x46544652u /* 'FTFR' */) {
 		return Fail("facetracking", duration_now(),
-			"WKOpenVRFaceTrackingFrameRingV2 magic=0x"
-			+ std::to_string(header.magic) + " (expected 0x46544652)");
+		            "WKOpenVRFaceTrackingFrameRingV2 magic=0x" + std::to_string(header.magic) +
+		                " (expected 0x46544652)");
 	}
 	if (header.shmem_version != 3u) {
 		return Fail("facetracking", duration_now(),
-			"WKOpenVRFaceTrackingFrameRingV2 version=" + std::to_string(header.shmem_version)
-			+ " (expected 3)");
+		            "WKOpenVRFaceTrackingFrameRingV2 version=" + std::to_string(header.shmem_version) +
+		                " (expected 3)");
 	}
 	if (header.ring_size != 32u) {
 		return Fail("facetracking", duration_now(),
-			"WKOpenVRFaceTrackingFrameRingV2 ring_size=" + std::to_string(header.ring_size));
+		            "WKOpenVRFaceTrackingFrameRingV2 ring_size=" + std::to_string(header.ring_size));
 	}
 	ctx.log.Info("face shmem header OK (magic=FTFR, ver=3, ring=32)");
 
@@ -146,10 +153,10 @@ ScenarioResult RunScenario_facetracking(ScenarioContext &ctx) {
 		}
 		if (hb1 == hb0) {
 			ctx.log.Warn("host heartbeat did not advance within 6s -- driver spawned "
-				"the host but the host process may have failed to start cleanly");
-		} else {
-			ctx.log.Info("host heartbeat advanced (qpc " + std::to_string(hb0)
-				+ " -> " + std::to_string(hb1) + ")");
+			             "the host but the host process may have failed to start cleanly");
+		}
+		else {
+			ctx.log.Info("host heartbeat advanced (qpc " + std::to_string(hb0) + " -> " + std::to_string(hb1) + ")");
 		}
 	}
 

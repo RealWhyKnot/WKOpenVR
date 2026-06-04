@@ -17,18 +17,18 @@ namespace {
 
 // Umbrella app key. Anything starting with a non-"steam." prefix avoids
 // colliding with Steam's appid-derived overlay keys.
-constexpr const char *kAppKey = "wk.wkopenvr";
+constexpr const char* kAppKey = "wk.wkopenvr";
 
 // Pre-rename app key (was wk.openvr-pair). After registering the new key,
 // attempt to remove the old registration so SteamVR does not show a stale
 // duplicate row in the overlay list.
-constexpr const char *kRenamedLegacyAppKey = "wk.openvr-pair";
+constexpr const char* kRenamedLegacyAppKey = "wk.openvr-pair";
 
 // Pre-monorepo SC standalone key. Its registration still points at the now-
 // deleted SpaceCalibrator.exe so SteamVR keeps a phantom autolaunch entry.
 // Removing it after the umbrella registers prevents a duplicate row in the
 // SteamVR overlay list.
-constexpr const char *kLegacyAppKey = "steam.overlay.3368750";
+constexpr const char* kLegacyAppKey = "steam.overlay.3368750";
 
 std::filesystem::path ResolveManifestPath()
 {
@@ -57,14 +57,11 @@ void RegisterApplicationManifest(bool allowRuntimeLaunch)
 	}
 
 	EVRInitError initErr = VRInitError_None;
-	const EVRApplicationType appType = allowRuntimeLaunch
-		? VRApplication_Utility
-		: VRApplication_Background;
+	const EVRApplicationType appType = allowRuntimeLaunch ? VRApplication_Utility : VRApplication_Background;
 	VR_Init(&initErr, appType);
 	if (initErr != VRInitError_None) {
-		fprintf(stderr, "VR_Init (%s) failed: %s\n",
-			allowRuntimeLaunch ? "utility" : "background",
-			VR_GetVRInitErrorAsEnglishDescription(initErr));
+		fprintf(stderr, "VR_Init (%s) failed: %s\n", allowRuntimeLaunch ? "utility" : "background",
+		        VR_GetVRInitErrorAsEnglishDescription(initErr));
 		return;
 	}
 
@@ -76,12 +73,12 @@ void RegisterApplicationManifest(bool allowRuntimeLaunch)
 	const std::string manifestStr = manifestPath.string();
 
 	if (!VRApplications()->IsApplicationInstalled(kAppKey)) {
-		const EVRApplicationError appErr =
-			VRApplications()->AddApplicationManifest(manifestStr.c_str());
+		const EVRApplicationError appErr = VRApplications()->AddApplicationManifest(manifestStr.c_str());
 		if (appErr != VRApplicationError_None) {
 			fprintf(stderr, "AddApplicationManifest failed: %s\n",
-				VRApplications()->GetApplicationsErrorNameFromEnum(appErr));
-		} else {
+			        VRApplications()->GetApplicationsErrorNameFromEnum(appErr));
+		}
+		else {
 			VRApplications()->SetApplicationAutoLaunch(kAppKey, true);
 			fprintf(stderr, "Registered %s with SteamVR (autolaunch on)\n", kAppKey);
 		}
@@ -95,18 +92,16 @@ void RegisterApplicationManifest(bool allowRuntimeLaunch)
 
 		char oldBuf[MAX_PATH + 64] = {};
 		EVRApplicationError oldErr = VRApplicationError_None;
-		VRApplications()->GetApplicationPropertyString(
-			kRenamedLegacyAppKey, VRApplicationProperty_BinaryPath_String,
-			oldBuf, sizeof(oldBuf), &oldErr);
+		VRApplications()->GetApplicationPropertyString(kRenamedLegacyAppKey, VRApplicationProperty_BinaryPath_String,
+		                                               oldBuf, sizeof(oldBuf), &oldErr);
 		if (oldErr == VRApplicationError_None) {
-			char *slash = std::strrchr(oldBuf, '\\');
+			char* slash = std::strrchr(oldBuf, '\\');
 			if (slash) {
 				*(slash + 1) = '\0';
 				strcat_s(oldBuf, sizeof(oldBuf), "manifest.vrmanifest");
-				EVRApplicationError rmErr =
-					VRApplications()->RemoveApplicationManifest(oldBuf);
+				EVRApplicationError rmErr = VRApplications()->RemoveApplicationManifest(oldBuf);
 				fprintf(stderr, "Removed old wk.openvr-pair manifest: %s\n",
-					VRApplications()->GetApplicationsErrorNameFromEnum(rmErr));
+				        VRApplications()->GetApplicationsErrorNameFromEnum(rmErr));
 			}
 		}
 	}
@@ -122,11 +117,10 @@ void RegisterApplicationManifest(bool allowRuntimeLaunch)
 
 		char buf[MAX_PATH + 64] = {};
 		EVRApplicationError appErr = VRApplicationError_None;
-		VRApplications()->GetApplicationPropertyString(
-			kLegacyAppKey, VRApplicationProperty_BinaryPath_String,
-			buf, sizeof(buf), &appErr);
+		VRApplications()->GetApplicationPropertyString(kLegacyAppKey, VRApplicationProperty_BinaryPath_String, buf,
+		                                               sizeof(buf), &appErr);
 		if (appErr == VRApplicationError_None) {
-			char *lastSlash = std::strrchr(buf, '\\');
+			char* lastSlash = std::strrchr(buf, '\\');
 			if (lastSlash) {
 				*(lastSlash + 1) = '\0';
 				strcat_s(buf, sizeof(buf), "manifest.vrmanifest");
@@ -149,7 +143,7 @@ void UnregisterApplicationManifest()
 	VR_Init(&initErr, VRApplication_Utility);
 	if (initErr != VRInitError_None) {
 		fprintf(stderr, "VR_Init (utility) failed during unregister: %s\n",
-			VR_GetVRInitErrorAsEnglishDescription(initErr));
+		        VR_GetVRInitErrorAsEnglishDescription(initErr));
 		return;
 	}
 
@@ -160,11 +154,10 @@ void UnregisterApplicationManifest()
 
 	if (VRApplications()->IsApplicationInstalled(kAppKey)) {
 		const std::string manifestStr = manifestPath.string();
-		const EVRApplicationError appErr =
-			VRApplications()->RemoveApplicationManifest(manifestStr.c_str());
+		const EVRApplicationError appErr = VRApplications()->RemoveApplicationManifest(manifestStr.c_str());
 		if (appErr != VRApplicationError_None) {
 			fprintf(stderr, "RemoveApplicationManifest failed: %s\n",
-				VRApplications()->GetApplicationsErrorNameFromEnum(appErr));
+			        VRApplications()->GetApplicationsErrorNameFromEnum(appErr));
 		}
 	}
 

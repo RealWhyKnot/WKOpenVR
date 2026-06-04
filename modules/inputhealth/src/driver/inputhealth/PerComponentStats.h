@@ -31,8 +31,8 @@ namespace inputhealth {
 enum class AxisRole : uint8_t
 {
 	Unpaired = 0,
-	StickX   = 1,
-	StickY   = 2,
+	StickX = 1,
+	StickY = 2,
 };
 
 struct ComponentStats
@@ -42,10 +42,10 @@ struct ComponentStats
 	// the input by the same path strings the SteamVR Input bindings use
 	// ("/input/joystick/x", "/input/trigger/value", etc.).
 	std::string path;
-	bool        is_scalar  = false;
-	bool        is_boolean = false;
-	uint8_t     scalar_type  = 0; // vr::EVRScalarType for scalar components
-	uint8_t     scalar_units = 0; // vr::EVRScalarUnits for scalar components
+	bool is_scalar = false;
+	bool is_boolean = false;
+	uint8_t scalar_type = 0;  // vr::EVRScalarType for scalar components
+	uint8_t scalar_units = 0; // vr::EVRScalarUnits for scalar components
 
 	// Property container the driver passed at Create{Boolean,Scalar}Component
 	// time. Stable for the lifetime of the underlying tracked device. Stored
@@ -57,7 +57,7 @@ struct ComponentStats
 	// Lazily resolved FNV-1a 64-bit hash of Prop_SerialNumber_String for the
 	// owning device. Zero means "not yet resolved" -- the reset path resolves
 	// it on demand via vr::VRProperties() and caches the result here.
-	uint64_t    device_serial_hash = 0;
+	uint64_t device_serial_hash = 0;
 
 	// Hot-path retry throttle for device_serial_hash. Some drivers attach
 	// Prop_SerialNumber_String to the property container after the matching
@@ -65,14 +65,14 @@ struct ComponentStats
 	// Register helpers see an empty serial and leave device_serial_hash at
 	// zero. The Update detours retry the resolve at most once per second
 	// per component until it succeeds, then never again.
-	uint64_t    last_serial_resolve_attempt_us = 0;
-	bool        serial_resolution_logged       = false;
+	uint64_t last_serial_resolve_attempt_us = 0;
+	bool serial_resolution_logged = false;
 
 	// Latched first-update-on-this-handle log so the deploy-validation step
 	// has a clean grep-able signal that hooks fire end-to-end. Reset by
 	// Stage 1A's Init clears the whole map; per-handle reset comes through
 	// HandleResetInputHealthStats.
-	bool        first_update_logged = false;
+	bool first_update_logged = false;
 
 	// =========================================================
 	// Scalar-only stats. Unused (zero-sized at runtime) for booleans.
@@ -81,20 +81,20 @@ struct ComponentStats
 	// Streaming mean / variance over every value seen. The mean tracks the
 	// long-running rest centroid for an axis at idle, the long-running
 	// peak distribution for a trigger, etc.
-	WelfordState        welford;
+	WelfordState welford;
 
 	// Observed scalar range. This is intentionally a cheap raw min/max over
 	// all samples, not a verdict: the overlay uses it to tell whether an
 	// active trigger/stick exercise has covered enough range to be useful.
-	bool                scalar_range_initialized = false;
-	float               observed_min             = 0.0f;
-	float               observed_max             = 0.0f;
+	bool scalar_range_initialized = false;
+	float observed_min = 0.0f;
+	float observed_max = 0.0f;
 
 	// Two-sided PH on the value, with EWMA reference. For sticks: detects
 	// rest centroid migration. For triggers: a one-sided variant is more
 	// appropriate (only upward drift of rest matters), but the same struct
 	// is reused with one_sided_positive=true via the params at update time.
-	PageHinkleyState    ph_drift;
+	PageHinkleyState ph_drift;
 
 	// EWMA-decayed rolling minimum. Only meaningful for triggers: tracks
 	// the lowest rest-period value the trigger has reached, decayed slowly
@@ -105,14 +105,14 @@ struct ComponentStats
 	// Most recent sample + its timestamp. The X-side of a paired axis pair
 	// reads its partner's last_value to assemble the (x, y) tuple for the
 	// polar histogram update. The Y-side just records its sample here.
-	float    last_value      = 0.0f;
-	uint64_t last_update_us  = 0;
+	float last_value = 0.0f;
+	uint64_t last_update_us = 0;
 
 	// =========================================================
 	// Pairing for 2D analog sticks.
 	// =========================================================
 
-	AxisRole                     axis_role      = AxisRole::Unpaired;
+	AxisRole axis_role = AxisRole::Unpaired;
 	vr::VRInputComponentHandle_t partner_handle = 0;
 
 	// Polar histogram only owned by AxisRole::StickX. Kept zero-initialised
@@ -131,8 +131,8 @@ struct ComponentStats
 	uint64_t press_count = 0;
 
 	// Latest boolean state, for transition detection.
-	bool     last_boolean = false;
-	bool     pending_state = false;
+	bool last_boolean = false;
+	bool pending_state = false;
 	uint64_t last_committed_us = 0;
 
 	// Raw boolean transition timing. Used to learn short mechanical bounce
@@ -145,20 +145,20 @@ struct ComponentStats
 // Reset everything except the path / role / partner pairing. Used by
 // HandleResetInputHealthStats(reset_passive=1) to wipe accumulated history
 // without forgetting the topology mapping the wizard already discovered.
-inline void ComponentStatsResetPassive(ComponentStats &s)
+inline void ComponentStatsResetPassive(ComponentStats& s)
 {
 	WelfordReset(s.welford);
 	PageHinkleyReset(s.ph_drift);
 	EWMARollingMinReset(s.rest_min);
 	PolarHistogramReset(s.polar);
 	s.scalar_range_initialized = false;
-	s.observed_min   = 0.0f;
-	s.observed_max   = 0.0f;
-	s.last_value     = 0.0f;
+	s.observed_min = 0.0f;
+	s.observed_max = 0.0f;
+	s.last_value = 0.0f;
 	s.last_update_us = 0;
-	s.press_count    = 0;
-	s.last_boolean   = false;
-	s.pending_state  = false;
+	s.press_count = 0;
+	s.last_boolean = false;
+	s.pending_state = false;
 	s.last_committed_us = 0;
 	s.last_raw_transition_us = 0;
 	s.bounce_transition_count = 0;
@@ -172,7 +172,7 @@ inline void ComponentStatsResetPassive(ComponentStats &s)
 //   AxisRole::Unpaired  otherwise
 // `out_stem` is filled with the path with the trailing "/x" or "/y" stripped
 // so callers can match X/Y handles into pairs by stem equality.
-inline AxisRole ClassifyAxisRole(const std::string &path, std::string &out_stem)
+inline AxisRole ClassifyAxisRole(const std::string& path, std::string& out_stem)
 {
 	out_stem = path;
 	if (path.size() < 2) return AxisRole::Unpaired;

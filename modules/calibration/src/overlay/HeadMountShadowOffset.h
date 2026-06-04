@@ -21,21 +21,19 @@ constexpr double kShadowSourceResetQuietSec = 2.0;
 constexpr double kShadowFreshPoseMaxAgeMs = 150.0;
 constexpr size_t kShadowMaxWindowSamplesWithoutReadiness = 120;
 
-struct OffsetDelta {
+struct OffsetDelta
+{
 	double translationM = 0.0;
 	double rotationDeg = 0.0;
 };
 
-inline OffsetDelta ComputeOffsetDelta(
-	const Eigen::AffineCompact3d& a,
-	const Eigen::AffineCompact3d& b)
+inline OffsetDelta ComputeOffsetDelta(const Eigen::AffineCompact3d& a, const Eigen::AffineCompact3d& b)
 {
 	OffsetDelta out;
 	out.translationM = (a.translation() - b.translation()).norm();
 	const Eigen::Quaterniond aq(a.linear());
 	const Eigen::Quaterniond bq(b.linear());
-	out.rotationDeg =
-		aq.normalized().angularDistance(bq.normalized()) * (180.0 / EIGEN_PI);
+	out.rotationDeg = aq.normalized().angularDistance(bq.normalized()) * (180.0 / EIGEN_PI);
 	if (!std::isfinite(out.translationM)) {
 		out.translationM = std::numeric_limits<double>::infinity();
 	}
@@ -47,27 +45,23 @@ inline OffsetDelta ComputeOffsetDelta(
 
 inline bool IsMeaningfulOffsetDelta(const OffsetDelta& delta)
 {
-	return delta.translationM >= kShadowNoopTranslationM
-		|| delta.rotationDeg >= kShadowNoopRotationDeg;
+	return delta.translationM >= kShadowNoopTranslationM || delta.rotationDeg >= kShadowNoopRotationDeg;
 }
 
 inline bool IsPlausibleOffsetDelta(const OffsetDelta& delta)
 {
-	return std::isfinite(delta.translationM)
-		&& std::isfinite(delta.rotationDeg)
-		&& delta.translationM <= kShadowMaxTranslationM
-		&& delta.rotationDeg <= kShadowMaxRotationDeg;
+	return std::isfinite(delta.translationM) && std::isfinite(delta.rotationDeg) &&
+	       delta.translationM <= kShadowMaxTranslationM && delta.rotationDeg <= kShadowMaxRotationDeg;
 }
 
 inline bool IsStableOffsetDelta(const OffsetDelta& delta)
 {
-	return std::isfinite(delta.translationM)
-		&& std::isfinite(delta.rotationDeg)
-		&& delta.translationM <= kShadowStableTranslationM
-		&& delta.rotationDeg <= kShadowStableRotationDeg;
+	return std::isfinite(delta.translationM) && std::isfinite(delta.rotationDeg) &&
+	       delta.translationM <= kShadowStableTranslationM && delta.rotationDeg <= kShadowStableRotationDeg;
 }
 
-struct ShadowGateInput {
+struct ShadowGateInput
+{
 	bool toggleEnabled = true;
 	bool windowSolved = false;
 	bool posesFresh = false;
@@ -83,7 +77,8 @@ struct ShadowGateInput {
 	int requiredStableWindows = kShadowRequiredStableWindows;
 };
 
-struct ShadowGateResult {
+struct ShadowGateResult
+{
 	bool readyToApply = false;
 	bool wouldApply = false;
 	const char* reason = "unknown";

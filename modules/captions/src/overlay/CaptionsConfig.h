@@ -11,12 +11,12 @@
 // consent" sentinel so the user doesn't have to re-confirm every restart.
 struct CaptionsConfig
 {
-    int         mode                = 0;     // 0 = PTT, 1 = always-on
-    bool        always_on_consented = false;
-    std::string source_lang         = "auto";
-    std::string target_lang         = "";
-    std::string chatbox_address     = "/chatbox/input";
-    bool        notify_sound        = false;
+	int mode = 0; // 0 = PTT, 1 = always-on
+	bool always_on_consented = false;
+	std::string source_lang = "auto";
+	std::string target_lang = "";
+	std::string chatbox_address = "/chatbox/input";
+	bool notify_sound = false;
 };
 
 // Load from disk. Returns a default-constructed struct if the file is
@@ -27,4 +27,4 @@ CaptionsConfig LoadCaptionsConfig();
 // Save to disk via write-to-tmp + MoveFileExW(REPLACE_EXISTING). A crash
 // mid-write leaves the existing file untouched rather than truncated.
 // Silent on failure (the existing file stays valid; next call will retry).
-void SaveCaptionsConfig(const CaptionsConfig &cfg);
+void SaveCaptionsConfig(const CaptionsConfig& cfg);

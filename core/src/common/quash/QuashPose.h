@@ -21,9 +21,9 @@ constexpr double kQuashOffsetY = 0.0;
 // downstream timeout / dropout gates that watch for stalled motion.
 inline void ApplyQuashToPose(vr::DriverPose_t& pose)
 {
-    pose.vecPosition[0] += kQuashOffsetX;
-    pose.vecPosition[1] += kQuashOffsetY;
-    pose.vecPosition[2] += kQuashOffsetZ;
+	pose.vecPosition[0] += kQuashOffsetX;
+	pose.vecPosition[1] += kQuashOffsetY;
+	pose.vecPosition[2] += kQuashOffsetZ;
 }
 
 } // namespace openvr_pair::common::quash

@@ -10,7 +10,7 @@
 
 namespace openvr_pair::common {
 
-bool IsReadableMemoryRange(const void *addr, size_t bytes);
-std::string DescribeVirtualQueryRegion(const char *tag, const void *addr);
+bool IsReadableMemoryRange(const void* addr, size_t bytes);
+std::string DescribeVirtualQueryRegion(const char* tag, const void* addr);
 
 } // namespace openvr_pair::common

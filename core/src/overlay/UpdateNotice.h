@@ -22,12 +22,12 @@ namespace openvr_pair::overlay {
 
 struct UpdateNoticeState
 {
-	bool available = false;        // True when remote stamp > local stamp.
-	bool checkComplete = false;    // False until the worker writes a result.
-	std::string latestTag;         // e.g. "v2026.5.13.1"
-	std::string latestVersion;     // tag with leading "v" stripped
-	std::string releaseUrl;        // human-readable release page (html_url)
-	std::string errorMessage;      // non-empty on failure
+	bool available = false;     // True when remote stamp > local stamp.
+	bool checkComplete = false; // False until the worker writes a result.
+	std::string latestTag;      // e.g. "v2026.5.13.1"
+	std::string latestVersion;  // tag with leading "v" stripped
+	std::string releaseUrl;     // human-readable release page (html_url)
+	std::string errorMessage;   // non-empty on failure
 };
 
 // Kick the single process-wide check. Safe to call multiple times; the

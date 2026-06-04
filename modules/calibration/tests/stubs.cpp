@@ -22,98 +22,106 @@
 CalibrationContext CalCtx;
 
 namespace Metrics {
-    // Definitions for the storage of the time-series globals declared in
-    // CalibrationMetrics.h. The overlay uses these for live plots; the tests
-    // only need them to exist so Push() calls inside CalibrationCalc don't
-    // produce undefined references.
-    double TimeSpan = 30.0;
-    double CurrentTime = 0.0;
+// Definitions for the storage of the time-series globals declared in
+// CalibrationMetrics.h. The overlay uses these for live plots; the tests
+// only need them to exist so Push() calls inside CalibrationCalc don't
+// produce undefined references.
+double TimeSpan = 30.0;
+double CurrentTime = 0.0;
 
-    TimeSeries<Eigen::Vector3d> posOffset_rawComputed;
-    TimeSeries<Eigen::Vector3d> posOffset_currentCal;
-    TimeSeries<Eigen::Vector3d> posOffset_lastSample;
-    TimeSeries<Eigen::Vector3d> posOffset_byRelPose;
+TimeSeries<Eigen::Vector3d> posOffset_rawComputed;
+TimeSeries<Eigen::Vector3d> posOffset_currentCal;
+TimeSeries<Eigen::Vector3d> posOffset_lastSample;
+TimeSeries<Eigen::Vector3d> posOffset_byRelPose;
 
-    TimeSeries<double> error_rawComputed;
-    TimeSeries<double> error_currentCal;
-    TimeSeries<double> error_byRelPose;
-    TimeSeries<double> error_currentCalRelPose;
-    TimeSeries<double> axisIndependence;
-    TimeSeries<double> computationTime;
-    TimeSeries<double> jitterRef;
-    TimeSeries<double> jitterTarget;
-    TimeSeries<double> rotationConditionRatio;
-    TimeSeries<double> consecutiveRejections;
-    TimeSeries<double> samplesInBuffer;
-    TimeSeries<double> watchdogResetCount;
-    TimeSeries<double> translationDiversity;
-    TimeSeries<double> rotationDiversity;
-    TimeSeries<Eigen::Vector3d> translationAxisRangesCm;
-    TimeSeries<double> pairedMotionWarningCount;
-    TimeSeries<double> watchdogHealthySkip;
-    TimeSeries<double> effectivePriorMm;
-    TimeSeries<double> validateRmsThresholdMm;
-    std::string lastRejectReason;
+TimeSeries<double> error_rawComputed;
+TimeSeries<double> error_currentCal;
+TimeSeries<double> error_byRelPose;
+TimeSeries<double> error_currentCalRelPose;
+TimeSeries<double> axisIndependence;
+TimeSeries<double> computationTime;
+TimeSeries<double> jitterRef;
+TimeSeries<double> jitterTarget;
+TimeSeries<double> rotationConditionRatio;
+TimeSeries<double> consecutiveRejections;
+TimeSeries<double> samplesInBuffer;
+TimeSeries<double> watchdogResetCount;
+TimeSeries<double> translationDiversity;
+TimeSeries<double> rotationDiversity;
+TimeSeries<Eigen::Vector3d> translationAxisRangesCm;
+TimeSeries<double> pairedMotionWarningCount;
+TimeSeries<double> watchdogHealthySkip;
+TimeSeries<double> effectivePriorMm;
+TimeSeries<double> validateRmsThresholdMm;
+std::string lastRejectReason;
 
-    TimeSeries<bool> calibrationApplied;
+TimeSeries<bool> calibrationApplied;
 
-    TimeSeries<bool>     headMountActive;
-    TimeSeries<double>   headMountResidualMm;
-    TimeSeries<double>   questHmdVsProxyDeltaMm;
-    TimeSeries<uint32_t> snapSuppressedCount;
-    TimeSeries<uint32_t> driverSynthFallbackCount;
-    TimeSeries<bool>     boundaryActive;
-    TimeSeries<uint32_t> chaperoneRePushCount;
+TimeSeries<bool> headMountActive;
+TimeSeries<double> headMountResidualMm;
+TimeSeries<double> questHmdVsProxyDeltaMm;
+TimeSeries<uint32_t> snapSuppressedCount;
+TimeSeries<uint32_t> driverSynthFallbackCount;
+TimeSeries<bool> boundaryActive;
+TimeSeries<uint32_t> chaperoneRePushCount;
 
-    TimeSeries<double> fallbackApplyRate;
-    TimeSeries<double> perIdApplyRate;
-    TimeSeries<double> quashApplyRate;
+TimeSeries<double> fallbackApplyRate;
+TimeSeries<double> perIdApplyRate;
+TimeSeries<double> quashApplyRate;
 
-    bool enableLogs = false;
+bool enableLogs = false;
 
-    double timestamp() {
-        // Tests don't rely on wall-clock timing — return a monotonic counter
-        // so successive calls are ordered but cheap.
-        static double t = 0.0;
-        t += 1.0;
-        return t;
-    }
-
-    void RecordTimestamp() {
-        CurrentTime = timestamp();
-    }
-
-    void WriteLogAnnotation(const char* /*s*/) {
-        // No-op: the tests don't open a CSV log file.
-    }
-
-    void SetTickRawPoses(
-        const Eigen::Vector3d& /*refTrans*/, const Eigen::Quaterniond& /*refRot*/,
-        const Eigen::Vector3d& /*targetTrans*/, const Eigen::Quaterniond& /*targetRot*/,
-        TickPhase /*phase*/) {
-        // No-op: tests don't need per-tick pose logging.
-    }
-
-    void WriteLogEntry() {
-        // No-op.
-    }
-
-    bool EnsureLogFileReady(const char* /*reason*/) {
-        return enableLogs;
-    }
-
-    bool FlushLogFile() {
-        return enableLogs;
-    }
-
-    LogHealth GetLogHealth() {
-        LogHealth health;
-        health.debugEnabled = enableLogs;
-        health.status = enableLogs ? "test logging enabled" : "debug logging disabled";
-        return health;
-    }
-
-    void WriteLogHealthSnapshot(const char* /*reason*/) {
-        // No-op.
-    }
+double timestamp()
+{
+	// Tests don't rely on wall-clock timing — return a monotonic counter
+	// so successive calls are ordered but cheap.
+	static double t = 0.0;
+	t += 1.0;
+	return t;
 }
+
+void RecordTimestamp()
+{
+	CurrentTime = timestamp();
+}
+
+void WriteLogAnnotation(const char* /*s*/)
+{
+	// No-op: the tests don't open a CSV log file.
+}
+
+void SetTickRawPoses(const Eigen::Vector3d& /*refTrans*/, const Eigen::Quaterniond& /*refRot*/,
+                     const Eigen::Vector3d& /*targetTrans*/, const Eigen::Quaterniond& /*targetRot*/,
+                     TickPhase /*phase*/)
+{
+	// No-op: tests don't need per-tick pose logging.
+}
+
+void WriteLogEntry()
+{
+	// No-op.
+}
+
+bool EnsureLogFileReady(const char* /*reason*/)
+{
+	return enableLogs;
+}
+
+bool FlushLogFile()
+{
+	return enableLogs;
+}
+
+LogHealth GetLogHealth()
+{
+	LogHealth health;
+	health.debugEnabled = enableLogs;
+	health.status = enableLogs ? "test logging enabled" : "debug logging disabled";
+	return health;
+}
+
+void WriteLogHealthSnapshot(const char* /*reason*/)
+{
+	// No-op.
+}
+} // namespace Metrics

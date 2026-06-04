@@ -33,11 +33,11 @@ public class ModuleProcessMain
     private static readonly ConcurrentQueue<IpcPacket> _packetsToSend = new();
     private static Timer? _connectionTimer;
 
-    private static object _callbackLock = new ();
+    private static readonly Lock _callbackLock = new();
     private static bool _shouldCallReceive = false;
     public static void QueueReceiveEvent()
     {
-        lock ( _callbackLock )
+        lock (_callbackLock)
         {
             _shouldCallReceive = true;
         }
@@ -56,7 +56,7 @@ public class ModuleProcessMain
 
         try
         {
-            if ( args.Length < 1 )
+            if (args.Length < 1)
             {
                 // Not enough arguments
                 return ModuleProcessExitCodes.INVALID_ARGS;
@@ -90,7 +90,7 @@ public class ModuleProcessMain
 
             return rootCommand.Parse(args).Invoke();
         }
-        catch ( Exception ex )
+        catch (Exception ex)
         {
             // So that we can catch errors
             if (Logger != null)
@@ -158,15 +158,19 @@ public class ModuleProcessMain
                         DefModuleAssembly?.TrackingModule?.Teardown();
                     }
                     catch (Exception) { }
-                });
-                teardownThread.IsBackground = true;
+                })
+                {
+                    IsBackground = true
+                };
                 teardownThread.Start();
                 teardownThread.Join(TimeSpan.FromSeconds(10));
 
                 Process.GetCurrentProcess().Kill();
-            });
-            watchdogThread.IsBackground = true;
-            watchdogThread.Name = "ParentWatchdog";
+            })
+            {
+                IsBackground = true,
+                Name = "ParentWatchdog"
+            };
             watchdogThread.Start();
         }
         else
@@ -198,7 +202,8 @@ public class ModuleProcessMain
             DefModuleAssembly.TrackingModule.ModuleInformation.Name);
 
         // Initialise to invalid state
-        UnifiedTracking.Data = new() {
+        UnifiedTracking.Data = new()
+        {
             Eye = new()
             {
                 Left = new()
@@ -217,48 +222,50 @@ public class ModuleProcessMain
                 _minDilation = 0xFFFFFFFF,
             }
         };
-        for ( int i = 0; i < ( int )UnifiedExpressions.Max + 1; i++ )
+        for (int i = 0; i < (int)UnifiedExpressions.Max + 1; i++)
         {
             UnifiedTracking.Data.Shapes[i].Weight = 0xFFFFFFFF;
         }
 
         Client.OnReceiveShouldBeQueued += QueueReceiveEvent;
-        Client.OnPacketReceivedCallback += (in IpcPacket packet) => {
+        Client.OnPacketReceivedCallback += (in packet) =>
+        {
             // Reset the timeout
             _connectionTimer?.Change(TimeSpan.FromSeconds(CONNECTION_TIMEOUT), Timeout.InfiniteTimeSpan);
 
             // Handle packets
-            switch ( packet.GetPacketType() )
+            switch (packet.GetPacketType())
             {
                 case IpcPacket.PacketType.EventGetSupported:
                     {
-                        var result = DefModuleAssembly.TrackingModule.Supported;
+                        (bool SupportsEye, bool SupportsExpression) = DefModuleAssembly.TrackingModule.Supported;
                         Logger.LogInformation(
                             "Replying supported streams: eye={eye} expression={expression}",
-                            result.SupportsEye,
-                            result.SupportsExpression);
+                            SupportsEye,
+                            SupportsExpression);
                         var pkt = new ReplySupportedPacket()
                         {
-                            eyeAvailable        = result.SupportsEye,
-                            expressionAvailable = result.SupportsExpression
+                            eyeAvailable = SupportsEye,
+                            expressionAvailable = SupportsExpression
                         };
                         _packetsToSend.Enqueue(pkt);
                         break;
                     }
                 case IpcPacket.PacketType.EventInit:
                     {
-                        var pkt = (EventInitPacket) packet;
+                        var pkt = (EventInitPacket)packet;
 
                         bool eyeSuccess, expressionSuccess;
                         try
                         {
                             (eyeSuccess, expressionSuccess) = DefModuleAssembly.TrackingModule.Initialize(pkt.eyeAvailable, pkt.expressionAvailable);
                         }
-                        catch ( MissingMethodException )
+                        catch (MissingMethodException)
                         {
                             Logger.LogError("{moduleName} is missing an ExtTrackingModule method. Skipping.", DefModuleAssembly.GetType().Name);
                             return;
-                        } catch ( Exception e )
+                        }
+                        catch (Exception e)
                         {
                             Logger.LogError("Exception initializing {module}. Skipping. {e}", DefModuleAssembly.GetType().Name, e);
                             return;
@@ -293,17 +300,19 @@ public class ModuleProcessMain
                                 catch { }
                                 Environment.Exit(ModuleProcessExitCodes.EXCEPTION_CRASH);
                             }
-                        });
-                        // Background thread as to not prevent the CLR from terminating if stuck in native code (looking at you vive)
-                        thread.IsBackground = true;
+                        })
+                        {
+                            // Background thread as to not prevent the CLR from terminating if stuck in native code (looking at you vive)
+                            IsBackground = true
+                        };
                         thread.Start();
 
                         var pktNew = new ReplyInitPacket()
                         {
-                            eyeSuccess              = eyeSuccess,
-                            expressionSuccess       = expressionSuccess,
-                            ModuleInformationName   = DefModuleAssembly.TrackingModule.ModuleInformation.Name,
-                            IconDataStreams         = DefModuleAssembly.TrackingModule.ModuleInformation.StaticImages
+                            eyeSuccess = eyeSuccess,
+                            expressionSuccess = expressionSuccess,
+                            ModuleInformationName = DefModuleAssembly.TrackingModule.ModuleInformation.Name,
+                            IconDataStreams = DefModuleAssembly.TrackingModule.ModuleInformation.StaticImages
                         };
                         _packetsToSend.Enqueue(pktNew);
                         break;
@@ -317,7 +326,7 @@ public class ModuleProcessMain
                         {
                             DefModuleAssembly.TrackingModule.Teardown();
                         }
-                        catch(Exception e)
+                        catch (Exception e)
                         {
                             Logger.LogWarning("Tracking module failed to cleanly shut down.");
                             Logger.LogError(e.ToString());
@@ -346,7 +355,7 @@ public class ModuleProcessMain
 
                 case IpcPacket.PacketType.EventUpdateStatus:
                     {
-                        var pkt = (EventStatusUpdatePacket) packet;
+                        var pkt = (EventStatusUpdatePacket)packet;
                         DefModuleAssembly.TrackingModule.Status = pkt.ModuleState;
 
                         break;
@@ -371,7 +380,7 @@ public class ModuleProcessMain
         }, null, TimeSpan.FromSeconds(CONNECTION_TIMEOUT), Timeout.InfiniteTimeSpan);
 
         // Loop infinitely while we wait for commands
-        while ( WaitForPackets && !cts.IsCancellationRequested)
+        while (WaitForPackets && !cts.IsCancellationRequested)
         {
             // Send packets in loop
             while (_packetsToSend.TryDequeue(out IpcPacket pkt))
@@ -380,7 +389,7 @@ public class ModuleProcessMain
             }
 
             // Tell the client to receive data
-            if ( _shouldCallReceive )
+            if (_shouldCallReceive)
             {
                 Client.ReceivePackets();
             }

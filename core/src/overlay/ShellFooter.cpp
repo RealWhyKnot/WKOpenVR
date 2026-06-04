@@ -20,7 +20,7 @@
 
 namespace openvr_pair::overlay {
 
-void DrawShellFooter(const ShellFooterStatus &status)
+void DrawShellFooter(const ShellFooterStatus& status)
 {
 	const float lineH = ImGui::GetTextLineHeight();
 	// Reserve two text lines so the footer still has room when the composed
@@ -33,21 +33,22 @@ void DrawShellFooter(const ShellFooterStatus &status)
 	}
 	ImGui::Separator();
 
-	const char *label = status.driverLabel ? status.driverLabel : "Driver";
-	const char *stamp = status.buildStamp ? status.buildStamp : OPENVR_PAIR_VERSION_STRING;
+	const char* label = status.driverLabel ? status.driverLabel : "Driver";
+	const char* stamp = status.buildStamp ? status.buildStamp : OPENVR_PAIR_VERSION_STRING;
 
-	const ui::SemanticPalette &pal = ui::GetPalette();
+	const ui::SemanticPalette& pal = ui::GetPalette();
 	const ShellFooterConnectionState connectionState =
-		ResolveShellFooterConnectionState(status.driverConnected, status.vrConnected);
+	    ResolveShellFooterConnectionState(status.driverConnected, status.vrConnected);
 
 	ImU32 dotColor = pal.dotPending;
 	ImVec4 textColor = pal.statusPending;
-	const char *state = "waiting for SteamVR";
+	const char* state = "waiting for SteamVR";
 	if (connectionState == ShellFooterConnectionState::Connected) {
 		dotColor = pal.dotOk;
 		textColor = pal.statusOk;
 		state = "connected";
-	} else if (connectionState == ShellFooterConnectionState::Disconnected) {
+	}
+	else if (connectionState == ShellFooterConnectionState::Disconnected) {
 		dotColor = pal.dotError;
 		textColor = pal.statusError;
 		state = "disconnected";
@@ -73,13 +74,12 @@ void DrawShellFooter(const ShellFooterStatus &status)
 	if (notice.available && !notice.latestVersion.empty()) {
 		ImGui::PushStyleColor(ImGuiCol_Text, pal.statusInfo);
 		const std::string text =
-			std::string("Update available: v") + notice.latestVersion + "  (click for release notes)";
+		    std::string("Update available: v") + notice.latestVersion + "  (click for release notes)";
 		ImGui::TextUnformatted(text.c_str());
 		ImGui::PopStyleColor();
 #ifdef _WIN32
 		if (ImGui::IsItemClicked() && !notice.releaseUrl.empty()) {
-			ShellExecuteA(nullptr, "open", notice.releaseUrl.c_str(),
-				nullptr, nullptr, SW_SHOWNORMAL);
+			ShellExecuteA(nullptr, "open", notice.releaseUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 		}
 #endif
 		if (ImGui::IsItemHovered() && !notice.releaseUrl.empty()) {

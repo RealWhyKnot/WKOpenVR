@@ -34,7 +34,7 @@ namespace skeletal {
 // Cache the driver pointer for SetFingerSmoothingConfig / GetFingerSmoothingConfig
 // access from inside the detour. Called once from InjectHooks() in the existing
 // InterfaceHookInjector.cpp during driver Init.
-void Init(ServerTrackedDeviceProvider *driver);
+void Init(ServerTrackedDeviceProvider* driver);
 
 // Tear down our skeletal hooks. Called from DisableHooks(). The IHook registry
 // drops our entries on its own; this is a hook to reset cached driver-pointer
@@ -52,7 +52,7 @@ void Shutdown();
 // vtables fit easily within the same .text page; a huge spread means the
 // "interface" pointer is garbage (e.g. settings memory, like the Internal
 // chase encountered).
-void TryInstallPublicHooks(void *iface);
+void TryInstallPublicHooks(void* iface);
 
 // Mark the per-finger smoothing state as needing a fresh seed on the next
 // UpdateSkeleton frame for each finger whose bit is set in `fingerBits`.

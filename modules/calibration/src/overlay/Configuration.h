@@ -5,11 +5,11 @@
 #include <iosfwd>
 
 #ifdef _WIN32
-#include <windows.h>  // DWORD for StripRegistryNullTerminator's signature
+#include <windows.h> // DWORD for StripRegistryNullTerminator's signature
 #endif
 
-void LoadProfile(CalibrationContext &ctx);
-void SaveProfile(CalibrationContext &ctx);
+void LoadProfile(CalibrationContext& ctx);
+void SaveProfile(CalibrationContext& ctx);
 
 // Set to true if the last LoadProfile call found a chaperone geometry array
 // whose length was not a multiple of 12 (corrupt profile). The UI uses this
@@ -21,8 +21,8 @@ extern bool g_chaperoneGeometrySizeMismatch;
 // without touching the Windows registry. Not used by production code (the
 // overlay's hot path goes through LoadProfile / SaveProfile, which call
 // these internally after wrapping a stringstream around the registry value).
-void ParseProfile(CalibrationContext &ctx, std::istream &stream);
-void WriteProfile(CalibrationContext &ctx, std::ostream &out);
+void ParseProfile(CalibrationContext& ctx, std::istream& stream);
+void WriteProfile(CalibrationContext& ctx, std::ostream& out);
 
 #ifdef _WIN32
 // Strip the trailing null terminator from a RegGetValueA byte count for

@@ -22,19 +22,27 @@ namespace openvr_pair::overlay::testharness {
 
 namespace {
 
-struct Options {
-	std::set<std::string> filter;  // empty = all
+struct Options
+{
+	std::set<std::string> filter; // empty = all
 	bool keep_sandbox = false;
 	bool verbose = false;
 };
 
-Options ParseArgs(int argc, char **argv) {
+Options ParseArgs(int argc, char** argv)
+{
 	Options o;
 	for (int i = 1; i < argc; ++i) {
 		const std::string_view arg(argv[i]);
 		if (arg == "--test-harness") continue;
-		if (arg == "--keep-sandbox") { o.keep_sandbox = true; continue; }
-		if (arg == "--verbose")      { o.verbose = true; continue; }
+		if (arg == "--keep-sandbox") {
+			o.keep_sandbox = true;
+			continue;
+		}
+		if (arg == "--verbose") {
+			o.verbose = true;
+			continue;
+		}
 		if (arg.substr(0, 9) == "--filter=") {
 			std::string list(arg.substr(9));
 			while (!list.empty()) {
@@ -58,30 +66,30 @@ Options ParseArgs(int argc, char **argv) {
 			}
 			continue;
 		}
-		std::fprintf(stderr, "[testharness] unknown flag '%.*s' (ignored)\n",
-			(int)arg.size(), arg.data());
+		std::fprintf(stderr, "[testharness] unknown flag '%.*s' (ignored)\n", (int)arg.size(), arg.data());
 	}
 	return o;
 }
 
-bool ShouldRun(const std::set<std::string> &filter, const std::string &slug) {
+bool ShouldRun(const std::set<std::string>& filter, const std::string& slug)
+{
 	if (filter.empty()) return true;
 	return filter.count(slug) != 0;
 }
 
 } // namespace
 
-int Run(int argc, char **argv) {
+int Run(int argc, char** argv)
+{
 	if (std::strcmp(WKOPENVR_BUILD_CHANNEL, "dev") != 0) {
-		std::fprintf(stderr, "--test-harness is only valid on dev builds (channel=%s)\n",
-			WKOPENVR_BUILD_CHANNEL);
+		std::fprintf(stderr, "--test-harness is only valid on dev builds (channel=%s)\n", WKOPENVR_BUILD_CHANNEL);
 		return 2;
 	}
 
 	const Options opts = ParseArgs(argc, argv);
 
-	std::fprintf(stdout, "WKOpenVR test harness (build %s, channel %s)\n",
-		WKOPENVR_BUILD_STAMP, WKOPENVR_BUILD_CHANNEL);
+	std::fprintf(stdout, "WKOpenVR test harness (build %s, channel %s)\n", WKOPENVR_BUILD_STAMP,
+	             WKOPENVR_BUILD_CHANNEL);
 	std::fflush(stdout);
 
 	// 1. Refuse if SteamVR is alive or our shmem is squatting somewhere.
@@ -99,18 +107,17 @@ int Run(int argc, char **argv) {
 	SandboxLayout layout;
 	try {
 		StageOptions so;
-		so.features = {"calibration", "smoothing", "inputhealth",
-			"facetracking", "oscrouter", "captions", "phantom"};
+		so.features = {"calibration", "smoothing", "inputhealth", "facetracking", "oscrouter", "captions", "phantom"};
 		so.include_facetracking_host = true;
 		so.include_captions_host = true;
 		so.include_phantom_sidecar = true;
 		layout = sandbox.Stage(so);
-	} catch (const std::exception &ex) {
+	}
+	catch (const std::exception& ex) {
 		std::fprintf(stderr, "[testharness] sandbox staging failed: %s\n", ex.what());
 		return 4;
 	}
-	std::fprintf(stdout, "[testharness] sandbox staged at %s\n",
-		layout.root.string().c_str());
+	std::fprintf(stdout, "[testharness] sandbox staged at %s\n", layout.root.string().c_str());
 
 	// 3. Mock runtime + driver loader.
 	MockOpenVRRuntime mock(layout.driver_resources);
@@ -118,7 +125,8 @@ int Run(int argc, char **argv) {
 	InProcessDriverLoader loader;
 	try {
 		loader.Load(layout.driver_dll, mock);
-	} catch (const std::exception &ex) {
+	}
+	catch (const std::exception& ex) {
 		std::fprintf(stderr, "[testharness] driver load failed: %s\n", ex.what());
 		return 5;
 	}
@@ -127,49 +135,42 @@ int Run(int argc, char **argv) {
 	std::fflush(stdout);
 
 	// 4. Scenarios.
-	struct Entry {
-		const char *slug;
+	struct Entry
+	{
+		const char* slug;
 		ScenarioFn run;
 	};
 	const Entry kScenarios[] = {
-		{"calibration",  &RunScenario_calibration},
-		{"smoothing",    &RunScenario_smoothing},
-		{"inputhealth",  &RunScenario_inputhealth},
-		{"facetracking", &RunScenario_facetracking},
-		{"oscrouter",    &RunScenario_oscrouter},
-		{"captions",     &RunScenario_captions},
-		{"phantom",      &RunScenario_phantom},
+	    {"calibration", &RunScenario_calibration}, {"smoothing", &RunScenario_smoothing},
+	    {"inputhealth", &RunScenario_inputhealth}, {"facetracking", &RunScenario_facetracking},
+	    {"oscrouter", &RunScenario_oscrouter},     {"captions", &RunScenario_captions},
+	    {"phantom", &RunScenario_phantom},
 	};
 
 	std::vector<ScenarioResult> results;
-	for (const auto &entry : kScenarios) {
+	for (const auto& entry : kScenarios) {
 		if (!ShouldRun(opts.filter, entry.slug)) continue;
 
 		HarnessLogger log(entry.slug);
 		log.Step("starting scenario");
 
 		ScenarioContext ctx{
-			mock,
-			loader.provider(),
-			pose_source,
-			layout.root,
-			layout.driver_root,
-			layout.driver_resources,
-			log,
+		    mock, loader.provider(), pose_source, layout.root, layout.driver_root, layout.driver_resources, log,
 		};
 
 		const auto t0 = std::chrono::steady_clock::now();
 		ScenarioResult result;
 		try {
 			result = entry.run(ctx);
-		} catch (const std::exception &ex) {
-			const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
-				std::chrono::steady_clock::now() - t0);
-			result = Fail(entry.slug, dt,
-				std::string("scenario threw std::exception: ") + ex.what());
-		} catch (...) {
-			const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
-				std::chrono::steady_clock::now() - t0);
+		}
+		catch (const std::exception& ex) {
+			const auto dt =
+			    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+			result = Fail(entry.slug, dt, std::string("scenario threw std::exception: ") + ex.what());
+		}
+		catch (...) {
+			const auto dt =
+			    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
 			result = Fail(entry.slug, dt, "scenario threw an unknown exception");
 		}
 		if (result.name.empty()) result.name = entry.slug;
@@ -177,7 +178,8 @@ int Run(int argc, char **argv) {
 
 		if (result.passed) {
 			log.Info("PASS (" + std::to_string(result.duration.count()) + " ms)");
-		} else {
+		}
+		else {
 			log.Error("FAIL: " + result.failure_reason);
 		}
 	}
@@ -190,10 +192,9 @@ int Run(int argc, char **argv) {
 	// 6. Report.
 	std::fprintf(stdout, "\n=== test harness summary ===\n");
 	size_t passed = 0;
-	for (const auto &r : results) {
-		std::fprintf(stdout, "  %-14s %s  (%lld ms)\n",
-			r.name.c_str(), r.passed ? "PASS" : "FAIL",
-			(long long)r.duration.count());
+	for (const auto& r : results) {
+		std::fprintf(stdout, "  %-14s %s  (%lld ms)\n", r.name.c_str(), r.passed ? "PASS" : "FAIL",
+		             (long long)r.duration.count());
 		if (!r.passed) std::fprintf(stdout, "        %s\n", r.failure_reason.c_str());
 		if (r.passed) ++passed;
 	}

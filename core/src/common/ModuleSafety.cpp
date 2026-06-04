@@ -30,7 +30,7 @@ std::wstring WidenAscii(std::string_view value)
 	return out;
 }
 
-std::wstring JoinPath(const std::wstring &left, std::wstring_view right)
+std::wstring JoinPath(const std::wstring& left, std::wstring_view right)
 {
 	if (left.empty()) return std::wstring(right.data(), right.size());
 	std::wstring out = left;
@@ -39,14 +39,14 @@ std::wstring JoinPath(const std::wstring &left, std::wstring_view right)
 	return out;
 }
 
-bool FileExists(const std::wstring &path)
+bool FileExists(const std::wstring& path)
 {
 	if (path.empty()) return false;
 	DWORD attr = GetFileAttributesW(path.c_str());
 	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-bool DeleteFileIfPresent(const std::wstring &path)
+bool DeleteFileIfPresent(const std::wstring& path)
 {
 	if (path.empty()) return false;
 	if (DeleteFileW(path.c_str()) != FALSE) return true;
@@ -54,41 +54,24 @@ bool DeleteFileIfPresent(const std::wstring &path)
 	return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
 }
 
-bool WriteTextFile(const std::wstring &path, std::string_view body)
+bool WriteTextFile(const std::wstring& path, std::string_view body)
 {
 	if (path.empty()) return false;
-	HANDLE file = CreateFileW(
-		path.c_str(),
-		GENERIC_WRITE,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		nullptr,
-		CREATE_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL,
-		nullptr);
+	HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                          nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (file == INVALID_HANDLE_VALUE) return false;
 
 	DWORD written = 0;
-	const BOOL ok = WriteFile(
-		file,
-		body.data(),
-		static_cast<DWORD>(body.size()),
-		&written,
-		nullptr);
+	const BOOL ok = WriteFile(file, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
 	CloseHandle(file);
 	return ok != FALSE && written == body.size();
 }
 
-std::string ReadTextFile(const std::wstring &path)
+std::string ReadTextFile(const std::wstring& path)
 {
 	if (path.empty()) return {};
-	HANDLE file = CreateFileW(
-		path.c_str(),
-		GENERIC_READ,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		nullptr,
-		OPEN_EXISTING,
-		FILE_ATTRIBUTE_NORMAL,
-		nullptr);
+	HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                          nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (file == INVALID_HANDLE_VALUE) return {};
 
 	LARGE_INTEGER size{};
@@ -99,19 +82,14 @@ std::string ReadTextFile(const std::wstring &path)
 
 	std::string body(static_cast<size_t>(size.QuadPart), '\0');
 	DWORD read = 0;
-	const BOOL ok = ReadFile(
-		file,
-		body.data(),
-		static_cast<DWORD>(body.size()),
-		&read,
-		nullptr);
+	const BOOL ok = ReadFile(file, body.data(), static_cast<DWORD>(body.size()), &read, nullptr);
 	CloseHandle(file);
 	if (!ok) return {};
 	body.resize(read);
 	return body;
 }
 
-std::string MarkerBody(const ModuleSpec &spec, std::string_view reason)
+std::string MarkerBody(const ModuleSpec& spec, std::string_view reason)
 {
 	std::string body;
 	body.reserve(180 + reason.size());
@@ -125,7 +103,7 @@ std::string MarkerBody(const ModuleSpec &spec, std::string_view reason)
 	return body;
 }
 
-bool WriteMarker(const std::wstring &path, const ModuleSpec &spec, std::string_view reason)
+bool WriteMarker(const std::wstring& path, const ModuleSpec& spec, std::string_view reason)
 {
 	return WriteTextFile(path, MarkerBody(spec, reason));
 }
@@ -151,7 +129,7 @@ unsigned ReadUnsignedField(std::string_view body, std::string_view key)
 	return out;
 }
 
-CrashCounters ReadCounters(const ModuleSpec &spec)
+CrashCounters ReadCounters(const ModuleSpec& spec)
 {
 	const std::string body = ReadTextFile(CounterPath(spec, false));
 	CrashCounters counters;
@@ -160,7 +138,7 @@ CrashCounters ReadCounters(const ModuleSpec &spec)
 	return counters;
 }
 
-bool WriteCounters(const ModuleSpec &spec, const CrashCounters &counters)
+bool WriteCounters(const ModuleSpec& spec, const CrashCounters& counters)
 {
 	std::string body;
 	body.reserve(96);
@@ -185,7 +163,7 @@ std::wstring EnvironmentRootOverride()
 	return value;
 }
 
-std::wstring StatePath(const ModuleSpec &spec, const wchar_t *prefix, const wchar_t *suffix, bool create)
+std::wstring StatePath(const ModuleSpec& spec, const wchar_t* prefix, const wchar_t* suffix, bool create)
 {
 	std::wstring root = RootPath(create);
 	if (root.empty()) return {};
@@ -195,7 +173,7 @@ std::wstring StatePath(const ModuleSpec &spec, const wchar_t *prefix, const wcha
 	return JoinPath(root, file);
 }
 
-void ClearRuntimeMarkers(const ModuleSpec &spec)
+void ClearRuntimeMarkers(const ModuleSpec& spec)
 {
 	DeleteFileIfPresent(ActiveMarkerPath(spec, false));
 	DeleteFileIfPresent(SuspectMarkerPath(spec, false));
@@ -203,26 +181,26 @@ void ClearRuntimeMarkers(const ModuleSpec &spec)
 
 } // namespace
 
-const ModuleSpec *Specs(size_t *count)
+const ModuleSpec* Specs(size_t* count)
 {
 	return openvr_pair::common::modules::DriverSafetyModules(count);
 }
 
-const ModuleSpec *FindById(openvr_pair::common::modules::ModuleId id)
+const ModuleSpec* FindById(openvr_pair::common::modules::ModuleId id)
 {
-	const ModuleSpec *spec = openvr_pair::common::modules::FindById(id);
+	const ModuleSpec* spec = openvr_pair::common::modules::FindById(id);
 	return spec && spec->participates_in_driver_safety ? spec : nullptr;
 }
 
-const ModuleSpec *FindBySlug(std::string_view slug)
+const ModuleSpec* FindBySlug(std::string_view slug)
 {
-	const ModuleSpec *spec = openvr_pair::common::modules::FindBySlug(slug);
+	const ModuleSpec* spec = openvr_pair::common::modules::FindBySlug(slug);
 	return spec && spec->participates_in_driver_safety ? spec : nullptr;
 }
 
-const ModuleSpec *FindByFlagFileName(std::string_view flagFileName)
+const ModuleSpec* FindByFlagFileName(std::string_view flagFileName)
 {
-	const ModuleSpec *spec = openvr_pair::common::modules::FindByFlagFileName(flagFileName);
+	const ModuleSpec* spec = openvr_pair::common::modules::FindByFlagFileName(flagFileName);
 	return spec && spec->participates_in_driver_safety ? spec : nullptr;
 }
 
@@ -238,83 +216,81 @@ std::wstring RootPath(bool create)
 	return WkOpenVrSubdirectoryPath(L"module_safety", create);
 }
 
-std::wstring ActiveMarkerPath(const ModuleSpec &spec, bool create)
+std::wstring ActiveMarkerPath(const ModuleSpec& spec, bool create)
 {
 	return StatePath(spec, L"active_", L".flag", create);
 }
 
-std::wstring SuspectMarkerPath(const ModuleSpec &spec, bool create)
+std::wstring SuspectMarkerPath(const ModuleSpec& spec, bool create)
 {
 	return StatePath(spec, L"suspect_", L".flag", create);
 }
 
-std::wstring CleanMarkerPath(const ModuleSpec &spec, bool create)
+std::wstring CleanMarkerPath(const ModuleSpec& spec, bool create)
 {
 	return StatePath(spec, L"clean_", L".flag", create);
 }
 
-std::wstring CounterPath(const ModuleSpec &spec, bool create)
+std::wstring CounterPath(const ModuleSpec& spec, bool create)
 {
 	return StatePath(spec, L"counter_", L".state", create);
 }
 
-std::wstring AutoDisabledMarkerPath(const ModuleSpec &spec, bool create)
+std::wstring AutoDisabledMarkerPath(const ModuleSpec& spec, bool create)
 {
 	return StatePath(spec, L"auto_disabled_", L".flag", create);
 }
 
-bool HasActiveMarker(const ModuleSpec &spec)
+bool HasActiveMarker(const ModuleSpec& spec)
 {
 	return FileExists(ActiveMarkerPath(spec, false));
 }
 
-bool HasSuspectMarker(const ModuleSpec &spec)
+bool HasSuspectMarker(const ModuleSpec& spec)
 {
 	return FileExists(SuspectMarkerPath(spec, false));
 }
 
-bool HasCleanMarker(const ModuleSpec &spec)
+bool HasCleanMarker(const ModuleSpec& spec)
 {
 	return FileExists(CleanMarkerPath(spec, false));
 }
 
-bool HasAutoDisabledMarker(const ModuleSpec &spec)
+bool HasAutoDisabledMarker(const ModuleSpec& spec)
 {
 	return FileExists(AutoDisabledMarkerPath(spec, false));
 }
 
-std::string AutoDisabledReason(const ModuleSpec &spec)
+std::string AutoDisabledReason(const ModuleSpec& spec)
 {
 	return ReadField(ReadTextFile(AutoDisabledMarkerPath(spec, false)), "reason=");
 }
 
-bool MarkActive(const ModuleSpec &spec)
+bool MarkActive(const ModuleSpec& spec)
 {
 	DeleteFileIfPresent(CleanMarkerPath(spec, false));
 	return WriteMarker(ActiveMarkerPath(spec, true), spec, "active");
 }
 
-bool MarkSuspect(const ModuleSpec &spec, std::string_view reason)
+bool MarkSuspect(const ModuleSpec& spec, std::string_view reason)
 {
 	return WriteMarker(SuspectMarkerPath(spec, true), spec, reason);
 }
 
-bool ClearSuspect(const ModuleSpec &spec)
+bool ClearSuspect(const ModuleSpec& spec)
 {
 	return DeleteFileIfPresent(SuspectMarkerPath(spec, false));
 }
 
-bool MarkClean(const ModuleSpec &spec)
+bool MarkClean(const ModuleSpec& spec)
 {
 	const bool activeCleared = DeleteFileIfPresent(ActiveMarkerPath(spec, false));
 	const bool suspectCleared = DeleteFileIfPresent(SuspectMarkerPath(spec, false));
 	DeleteFileIfPresent(CounterPath(spec, false));
-	return WriteMarker(CleanMarkerPath(spec, true), spec, "clean_shutdown")
-		&& activeCleared
-		&& suspectCleared;
+	return WriteMarker(CleanMarkerPath(spec, true), spec, "clean_shutdown") && activeCleared && suspectCleared;
 }
 
-bool MarkFault(const ModuleSpec &spec, std::string_view reason)
+bool MarkFault(const ModuleSpec& spec, std::string_view reason)
 {
 	const bool wrote = WriteMarker(AutoDisabledMarkerPath(spec, true), spec, reason);
 	ClearRuntimeMarkers(spec);
@@ -322,7 +298,7 @@ bool MarkFault(const ModuleSpec &spec, std::string_view reason)
 	return wrote;
 }
 
-LaunchAssessment AssessLaunch(const ModuleSpec &spec, bool allowActiveOnlyAutoDisable)
+LaunchAssessment AssessLaunch(const ModuleSpec& spec, bool allowActiveOnlyAutoDisable)
 {
 	LaunchAssessment result;
 	result.had_stale_active = HasActiveMarker(spec);
@@ -335,10 +311,10 @@ LaunchAssessment AssessLaunch(const ModuleSpec &spec, bool allowActiveOnlyAutoDi
 	if (result.had_stale_suspect) {
 		++counters.suspect_unclean;
 		result.reason = "unclean_exit_during_module_operation";
-	} else {
+	}
+	else {
 		++counters.active_unclean;
-		if (allowActiveOnlyAutoDisable &&
-			counters.active_unclean >= kActiveOnlyAutoDisableThreshold) {
+		if (allowActiveOnlyAutoDisable && counters.active_unclean >= kActiveOnlyAutoDisableThreshold) {
 			result.reason = "repeated_unclean_driver_exit";
 		}
 	}
@@ -348,18 +324,19 @@ LaunchAssessment AssessLaunch(const ModuleSpec &spec, bool allowActiveOnlyAutoDi
 
 	if (!result.reason.empty()) {
 		result.auto_disabled = MarkFault(spec, result.reason);
-	} else {
+	}
+	else {
 		ClearRuntimeMarkers(spec);
 	}
 	return result;
 }
 
-bool ConvertStaleActiveToAutoDisabled(const ModuleSpec &spec)
+bool ConvertStaleActiveToAutoDisabled(const ModuleSpec& spec)
 {
 	return AssessLaunch(spec, true).auto_disabled;
 }
 
-bool ClearAutoDisabled(const ModuleSpec &spec)
+bool ClearAutoDisabled(const ModuleSpec& spec)
 {
 	const bool disabledCleared = DeleteFileIfPresent(AutoDisabledMarkerPath(spec, false));
 	const bool activeCleared = DeleteFileIfPresent(ActiveMarkerPath(spec, false));
@@ -370,7 +347,7 @@ bool ClearAutoDisabled(const ModuleSpec &spec)
 
 bool ClearAutoDisabledForFlag(std::string_view flagFileName)
 {
-	const ModuleSpec *spec = FindByFlagFileName(flagFileName);
+	const ModuleSpec* spec = FindByFlagFileName(flagFileName);
 	return spec ? ClearAutoDisabled(*spec) : false;
 }
 

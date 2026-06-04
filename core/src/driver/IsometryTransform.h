@@ -1,4 +1,4 @@
-#pragma once 
+#pragma once
 #define EIGEN_MPL2_ONLY
 
 #include <Eigen/Dense>
@@ -7,7 +7,8 @@
  * Contains an isometric transformation, represented as the pair of a rotation quaternion and translation vector.
  * The translation is applied to the left of the quaternion.
  */
-struct IsoTransform {
+struct IsoTransform
+{
 	Eigen::Quaterniond rotation;
 	Eigen::Vector3d translation;
 
@@ -18,13 +19,13 @@ struct IsoTransform {
 	// ambiguous with Eigen's RotationBase::operator*(EigenBase) at any call site
 	// like `quat * vec3`. These single-arg constructors are not used implicitly
 	// anywhere in the project.
-	explicit IsoTransform(const Eigen::Quaterniond &rot) : rotation(rot), translation(Eigen::Vector3d::Zero()) {}
-	explicit IsoTransform(const Eigen::Vector3d &trans) : rotation(Eigen::Quaterniond::Identity()), translation(trans) {}
-	IsoTransform(const Eigen::Quaterniond& rot, const Eigen::Vector3d& trans) : rotation(rot), translation(trans) {}
-	
-	void pretranslate(const Eigen::Vector3d& t) {
-		translation += t;
+	explicit IsoTransform(const Eigen::Quaterniond& rot) : rotation(rot), translation(Eigen::Vector3d::Zero()) {}
+	explicit IsoTransform(const Eigen::Vector3d& trans) : rotation(Eigen::Quaterniond::Identity()), translation(trans)
+	{
 	}
+	IsoTransform(const Eigen::Quaterniond& rot, const Eigen::Vector3d& trans) : rotation(rot), translation(trans) {}
+
+	void pretranslate(const Eigen::Vector3d& t) { translation += t; }
 
 	/**
 	 * Interpolates between this transform and target. The position of localPoint after transformation will smoothly
@@ -33,7 +34,8 @@ struct IsoTransform {
 	IsoTransform interpolateAround(double lerp, const IsoTransform& target, const Eigen::Vector3d& localPoint) const;
 };
 
-inline IsoTransform operator*(const IsoTransform& a, const IsoTransform& b) {
+inline IsoTransform operator*(const IsoTransform& a, const IsoTransform& b)
+{
 	// tA * rA * tB * rB = tA * (trans(rA * tB)) * rA * rB.
 	// `Eigen::Quaterniond * Vector3d` rotates the vector directly without
 	// materialising a 4x4 isometry; equivalent result, fewer allocations and
@@ -54,11 +56,14 @@ inline IsoTransform operator*(const IsoTransform& a, const IsoTransform& b) {
 	return IsoTransform(rot, trans);
 }
 
-inline Eigen::Vector3d operator*(const IsoTransform& a, const Eigen::Vector3d& p) {
+inline Eigen::Vector3d operator*(const IsoTransform& a, const Eigen::Vector3d& p)
+{
 	return a.translation + a.rotation * p;
 }
 
-inline IsoTransform IsoTransform::interpolateAround(double lerp, const IsoTransform& target, const Eigen::Vector3d& localPoint) const {
+inline IsoTransform IsoTransform::interpolateAround(double lerp, const IsoTransform& target,
+                                                    const Eigen::Vector3d& localPoint) const
+{
 	auto initialPos = (*this) * localPoint;
 	Eigen::Vector3d finalPos = initialPos * (1 - lerp) + (target * localPoint) * lerp;
 

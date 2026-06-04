@@ -17,17 +17,18 @@
 #include "WatchdogDecisions.h"
 
 using spacecal::watchdog::IsCalibrationHealthy;
-using spacecal::watchdog::ShouldClearViaWatchdog;
-using spacecal::watchdog::kMaxConsecutiveRejections;
 using spacecal::watchdog::kHealthyPriorErrorMaxMeters;
+using spacecal::watchdog::kMaxConsecutiveRejections;
+using spacecal::watchdog::ShouldClearViaWatchdog;
 
 // ---------------------------------------------------------------------------
 // IsCalibrationHealthy: false when not valid (regardless of error).
 // ---------------------------------------------------------------------------
-TEST(WatchdogDecisionsTest, IsCalibrationHealthy_NotValidIsAlwaysUnhealthy) {
-    EXPECT_FALSE(IsCalibrationHealthy(/*isValid=*/false, /*priorMeters=*/0.0));
-    EXPECT_FALSE(IsCalibrationHealthy(false, 0.001));
-    EXPECT_FALSE(IsCalibrationHealthy(false, 1.0));
+TEST(WatchdogDecisionsTest, IsCalibrationHealthy_NotValidIsAlwaysUnhealthy)
+{
+	EXPECT_FALSE(IsCalibrationHealthy(/*isValid=*/false, /*priorMeters=*/0.0));
+	EXPECT_FALSE(IsCalibrationHealthy(false, 0.001));
+	EXPECT_FALSE(IsCalibrationHealthy(false, 1.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -36,14 +37,14 @@ TEST(WatchdogDecisionsTest, IsCalibrationHealthy_NotValidIsAlwaysUnhealthy) {
 // from 10 mm to 5 mm in the original commit per a real-session diagnosis;
 // any future widening must be deliberate.
 // ---------------------------------------------------------------------------
-TEST(WatchdogDecisionsTest, IsCalibrationHealthy_FiveMillimeterBoundary) {
-    EXPECT_TRUE(IsCalibrationHealthy(true, 0.0));
-    EXPECT_TRUE(IsCalibrationHealthy(true, 0.001));
-    EXPECT_TRUE(IsCalibrationHealthy(true, 0.00499));
-    EXPECT_FALSE(IsCalibrationHealthy(true, 0.005))
-        << "Exactly 5 mm must NOT be healthy (strict less-than floor)";
-    EXPECT_FALSE(IsCalibrationHealthy(true, 0.006));
-    EXPECT_FALSE(IsCalibrationHealthy(true, 0.050));
+TEST(WatchdogDecisionsTest, IsCalibrationHealthy_FiveMillimeterBoundary)
+{
+	EXPECT_TRUE(IsCalibrationHealthy(true, 0.0));
+	EXPECT_TRUE(IsCalibrationHealthy(true, 0.001));
+	EXPECT_TRUE(IsCalibrationHealthy(true, 0.00499));
+	EXPECT_FALSE(IsCalibrationHealthy(true, 0.005)) << "Exactly 5 mm must NOT be healthy (strict less-than floor)";
+	EXPECT_FALSE(IsCalibrationHealthy(true, 0.006));
+	EXPECT_FALSE(IsCalibrationHealthy(true, 0.050));
 }
 
 // ---------------------------------------------------------------------------
@@ -53,35 +54,36 @@ TEST(WatchdogDecisionsTest, IsCalibrationHealthy_FiveMillimeterBoundary) {
 //   - rejectionCount >= kMaxConsecutiveRejections (50)
 //   - prior is NOT in the healthy band (otherwise it's the skip-fire path)
 // ---------------------------------------------------------------------------
-TEST(WatchdogDecisionsTest, ShouldClearViaWatchdog_RequiresAllConditions) {
-    // All three present: clear.
-    EXPECT_TRUE(ShouldClearViaWatchdog(true, 50, 0.010));
-    EXPECT_TRUE(ShouldClearViaWatchdog(true, 100, 0.020));
+TEST(WatchdogDecisionsTest, ShouldClearViaWatchdog_RequiresAllConditions)
+{
+	// All three present: clear.
+	EXPECT_TRUE(ShouldClearViaWatchdog(true, 50, 0.010));
+	EXPECT_TRUE(ShouldClearViaWatchdog(true, 100, 0.020));
 
-    // Not valid: never clear.
-    EXPECT_FALSE(ShouldClearViaWatchdog(false, 50, 0.010));
-    EXPECT_FALSE(ShouldClearViaWatchdog(false, 1000, 1.0));
+	// Not valid: never clear.
+	EXPECT_FALSE(ShouldClearViaWatchdog(false, 50, 0.010));
+	EXPECT_FALSE(ShouldClearViaWatchdog(false, 1000, 1.0));
 
-    // Below cap: never clear.
-    EXPECT_FALSE(ShouldClearViaWatchdog(true, 0, 0.010));
-    EXPECT_FALSE(ShouldClearViaWatchdog(true, 49, 0.010))
-        << "49 rejections is below the 50 cap; must wait one more.";
+	// Below cap: never clear.
+	EXPECT_FALSE(ShouldClearViaWatchdog(true, 0, 0.010));
+	EXPECT_FALSE(ShouldClearViaWatchdog(true, 49, 0.010)) << "49 rejections is below the 50 cap; must wait one more.";
 
-    // Healthy prior: never clear (skip-fire path).
-    EXPECT_FALSE(ShouldClearViaWatchdog(true, 50, 0.001))
-        << "Healthy prior must not be cleared — that's the wedge-guard's "
-           "job (with magnitude check) or the user's job, not this watchdog.";
-    EXPECT_FALSE(ShouldClearViaWatchdog(true, 1000, 0.004));
+	// Healthy prior: never clear (skip-fire path).
+	EXPECT_FALSE(ShouldClearViaWatchdog(true, 50, 0.001))
+	    << "Healthy prior must not be cleared — that's the wedge-guard's "
+	       "job (with magnitude check) or the user's job, not this watchdog.";
+	EXPECT_FALSE(ShouldClearViaWatchdog(true, 1000, 0.004));
 }
 
 // ---------------------------------------------------------------------------
 // ShouldClearViaWatchdog: rejection cap boundary. Pinned so a future tuning
 // of the 50-rejection trigger is forced through the test suite.
 // ---------------------------------------------------------------------------
-TEST(WatchdogDecisionsTest, ShouldClearViaWatchdog_RejectionCapBoundary) {
-    EXPECT_FALSE(ShouldClearViaWatchdog(true, kMaxConsecutiveRejections - 1, 0.010));
-    EXPECT_TRUE(ShouldClearViaWatchdog(true, kMaxConsecutiveRejections, 0.010));
-    EXPECT_TRUE(ShouldClearViaWatchdog(true, kMaxConsecutiveRejections + 1, 0.010));
+TEST(WatchdogDecisionsTest, ShouldClearViaWatchdog_RejectionCapBoundary)
+{
+	EXPECT_FALSE(ShouldClearViaWatchdog(true, kMaxConsecutiveRejections - 1, 0.010));
+	EXPECT_TRUE(ShouldClearViaWatchdog(true, kMaxConsecutiveRejections, 0.010));
+	EXPECT_TRUE(ShouldClearViaWatchdog(true, kMaxConsecutiveRejections + 1, 0.010));
 }
 
 // ---------------------------------------------------------------------------
@@ -89,35 +91,29 @@ TEST(WatchdogDecisionsTest, ShouldClearViaWatchdog_RejectionCapBoundary) {
 // future change that breaks the contract fails the build, not just the
 // tests.
 // ---------------------------------------------------------------------------
-static_assert(IsCalibrationHealthy(true, 0.001),
-    "1 mm prior on a valid cal must be healthy");
-static_assert(!IsCalibrationHealthy(true, 0.005),
-    "5 mm prior is NOT healthy (strict less-than floor)");
-static_assert(!IsCalibrationHealthy(false, 0.001),
-    "invalid cal cannot be healthy regardless of prior error");
-static_assert(ShouldClearViaWatchdog(true, 50, 0.010),
-    "50 rejections + 10 mm prior + valid must fire clear");
-static_assert(!ShouldClearViaWatchdog(true, 50, 0.001),
-    "50 rejections + 1 mm prior must NOT clear (skip-fire path)");
-static_assert(!ShouldClearViaWatchdog(true, 49, 0.010),
-    "49 rejections is below cap — must not yet clear");
+static_assert(IsCalibrationHealthy(true, 0.001), "1 mm prior on a valid cal must be healthy");
+static_assert(!IsCalibrationHealthy(true, 0.005), "5 mm prior is NOT healthy (strict less-than floor)");
+static_assert(!IsCalibrationHealthy(false, 0.001), "invalid cal cannot be healthy regardless of prior error");
+static_assert(ShouldClearViaWatchdog(true, 50, 0.010), "50 rejections + 10 mm prior + valid must fire clear");
+static_assert(!ShouldClearViaWatchdog(true, 50, 0.001), "50 rejections + 1 mm prior must NOT clear (skip-fire path)");
+static_assert(!ShouldClearViaWatchdog(true, 49, 0.010), "49 rejections is below cap — must not yet clear");
 
 TEST(RejectReasonTest, MotionQualityReasonsAreClassified)
 {
-    using spacecal::reject_reason::IsMotionQualityGate;
-    using spacecal::reject_reason::NeedsMoreRotation;
-    using spacecal::reject_reason::NeedsMoreTranslation;
+	using spacecal::reject_reason::IsMotionQualityGate;
+	using spacecal::reject_reason::NeedsMoreRotation;
+	using spacecal::reject_reason::NeedsMoreTranslation;
 
-    EXPECT_TRUE(NeedsMoreRotation("rotation_no_deltas"));
-    EXPECT_TRUE(NeedsMoreRotation("rotation_planar"));
-    EXPECT_TRUE(NeedsMoreTranslation("translation_no_deltas"));
-    EXPECT_TRUE(NeedsMoreTranslation("translation_planar"));
-    EXPECT_TRUE(NeedsMoreTranslation("axis_variance_low"));
+	EXPECT_TRUE(NeedsMoreRotation("rotation_no_deltas"));
+	EXPECT_TRUE(NeedsMoreRotation("rotation_planar"));
+	EXPECT_TRUE(NeedsMoreTranslation("translation_no_deltas"));
+	EXPECT_TRUE(NeedsMoreTranslation("translation_planar"));
+	EXPECT_TRUE(NeedsMoreTranslation("axis_variance_low"));
 
-    EXPECT_TRUE(IsMotionQualityGate("rotation_planar"));
-    EXPECT_TRUE(IsMotionQualityGate("translation_planar"));
-    EXPECT_FALSE(IsMotionQualityGate("below_floor_or_worse"));
-    EXPECT_FALSE(IsMotionQualityGate("validate_failed"));
-    EXPECT_FALSE(IsMotionQualityGate(""));
-    EXPECT_FALSE(IsMotionQualityGate(nullptr));
+	EXPECT_TRUE(IsMotionQualityGate("rotation_planar"));
+	EXPECT_TRUE(IsMotionQualityGate("translation_planar"));
+	EXPECT_FALSE(IsMotionQualityGate("below_floor_or_worse"));
+	EXPECT_FALSE(IsMotionQualityGate("validate_failed"));
+	EXPECT_FALSE(IsMotionQualityGate(""));
+	EXPECT_FALSE(IsMotionQualityGate(nullptr));
 }

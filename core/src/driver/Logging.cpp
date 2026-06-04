@@ -8,7 +8,7 @@
 #include <cerrno>
 #include <chrono>
 
-FILE *LogFile = nullptr;
+FILE* LogFile = nullptr;
 
 namespace {
 
@@ -50,9 +50,8 @@ void OpenLogFile()
 	FILE* file = fopen("wkopenvr_driver.log", "a");
 	AdoptLogFile(file ? file : stderr, file != nullptr);
 	if (LogFile) {
-		fprintf(LogFile,
-			"[log-open] driver log using fallback path; primary_errno=%d primary_path_empty=%d\n",
-			openErrno, path.empty() ? 1 : 0);
+		fprintf(LogFile, "[log-open] driver log using fallback path; primary_errno=%d primary_path_empty=%d\n",
+		        openErrno, path.empty() ? 1 : 0);
 		LogFlush();
 	}
 }

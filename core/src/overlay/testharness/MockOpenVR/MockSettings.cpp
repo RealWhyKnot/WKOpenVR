@@ -15,52 +15,52 @@ namespace fs = std::filesystem;
 
 namespace openvr_pair::overlay::testharness {
 
-size_t MockSettings::KeyHash::operator()(const Key &k) const noexcept {
-	return std::hash<std::string>{}(k.section) * 0x9E3779B97F4A7C15ULL
-		^ std::hash<std::string>{}(k.key);
+size_t MockSettings::KeyHash::operator()(const Key& k) const noexcept
+{
+	return std::hash<std::string>{}(k.section) * 0x9E3779B97F4A7C15ULL ^ std::hash<std::string>{}(k.key);
 }
-bool MockSettings::KeyEq::operator()(const Key &a, const Key &b) const noexcept {
+bool MockSettings::KeyEq::operator()(const Key& a, const Key& b) const noexcept
+{
 	return a.section == b.section && a.key == b.key;
 }
 
-MockSettings::MockSettings(MockOpenVRRuntime &owner) : owner_(owner) {}
+MockSettings::MockSettings(MockOpenVRRuntime& owner) : owner_(owner) {}
 
-const char *MockSettings::GetSettingsErrorNameFromEnum(vr::EVRSettingsError /*eError*/) {
+const char* MockSettings::GetSettingsErrorNameFromEnum(vr::EVRSettingsError /*eError*/)
+{
 	return "MockSettings::default";
 }
 
-void MockSettings::SetBool(const char *pchSection, const char *pchSettingsKey, bool bValue,
-	vr::EVRSettingsError *peError)
+void MockSettings::SetBool(const char* pchSection, const char* pchSettingsKey, bool bValue,
+                           vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
 	bool_[Key{pchSection ? pchSection : "", pchSettingsKey ? pchSettingsKey : ""}] = bValue;
 }
-void MockSettings::SetInt32(const char *pchSection, const char *pchSettingsKey, int32_t nValue,
-	vr::EVRSettingsError *peError)
+void MockSettings::SetInt32(const char* pchSection, const char* pchSettingsKey, int32_t nValue,
+                            vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
 	int_[Key{pchSection ? pchSection : "", pchSettingsKey ? pchSettingsKey : ""}] = nValue;
 }
-void MockSettings::SetFloat(const char *pchSection, const char *pchSettingsKey, float flValue,
-	vr::EVRSettingsError *peError)
+void MockSettings::SetFloat(const char* pchSection, const char* pchSettingsKey, float flValue,
+                            vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
 	float_[Key{pchSection ? pchSection : "", pchSettingsKey ? pchSettingsKey : ""}] = flValue;
 }
-void MockSettings::SetString(const char *pchSection, const char *pchSettingsKey,
-	const char *pchValue, vr::EVRSettingsError *peError)
+void MockSettings::SetString(const char* pchSection, const char* pchSettingsKey, const char* pchValue,
+                             vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
-	string_[Key{pchSection ? pchSection : "", pchSettingsKey ? pchSettingsKey : ""}]
-		= pchValue ? pchValue : "";
+	string_[Key{pchSection ? pchSection : "", pchSettingsKey ? pchSettingsKey : ""}] = pchValue ? pchValue : "";
 }
 
-bool MockSettings::GetBool(const char *pchSection, const char *pchSettingsKey,
-	vr::EVRSettingsError *peError)
+bool MockSettings::GetBool(const char* pchSection, const char* pchSettingsKey, vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
@@ -71,8 +71,7 @@ bool MockSettings::GetBool(const char *pchSection, const char *pchSettingsKey,
 	}
 	return it->second;
 }
-int32_t MockSettings::GetInt32(const char *pchSection, const char *pchSettingsKey,
-	vr::EVRSettingsError *peError)
+int32_t MockSettings::GetInt32(const char* pchSection, const char* pchSettingsKey, vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
@@ -83,8 +82,7 @@ int32_t MockSettings::GetInt32(const char *pchSection, const char *pchSettingsKe
 	}
 	return it->second;
 }
-float MockSettings::GetFloat(const char *pchSection, const char *pchSettingsKey,
-	vr::EVRSettingsError *peError)
+float MockSettings::GetFloat(const char* pchSection, const char* pchSettingsKey, vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	std::lock_guard<std::mutex> lock(mu_);
@@ -95,51 +93,54 @@ float MockSettings::GetFloat(const char *pchSection, const char *pchSettingsKey,
 	}
 	return it->second;
 }
-void MockSettings::GetString(const char *pchSection, const char *pchSettingsKey,
-	char *pchValue, uint32_t unValueLen, vr::EVRSettingsError *peError)
+void MockSettings::GetString(const char* pchSection, const char* pchSettingsKey, char* pchValue, uint32_t unValueLen,
+                             vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	if (!pchValue || unValueLen == 0) return;
 	pchValue[0] = '\0';
 	std::lock_guard<std::mutex> lock(mu_);
-	auto it = string_.find(Key{pchSection ? pchSection : "",
-		pchSettingsKey ? pchSettingsKey : ""});
+	auto it = string_.find(Key{pchSection ? pchSection : "", pchSettingsKey ? pchSettingsKey : ""});
 	if (it == string_.end()) {
 		if (peError) *peError = vr::VRSettingsError_UnsetSettingHasNoDefault;
 		return;
 	}
 	std::snprintf(pchValue, static_cast<size_t>(unValueLen), "%s", it->second.c_str());
 }
-void MockSettings::RemoveSection(const char *pchSection, vr::EVRSettingsError *peError) {
+void MockSettings::RemoveSection(const char* pchSection, vr::EVRSettingsError* peError)
+{
 	if (peError) *peError = vr::VRSettingsError_None;
 	if (!pchSection) return;
 	std::lock_guard<std::mutex> lock(mu_);
 	const std::string sect(pchSection);
-	for (auto it = bool_.begin(); it != bool_.end(); )
+	for (auto it = bool_.begin(); it != bool_.end();)
 		it = it->first.section == sect ? bool_.erase(it) : ++it;
-	for (auto it = int_.begin(); it != int_.end(); )
+	for (auto it = int_.begin(); it != int_.end();)
 		it = it->first.section == sect ? int_.erase(it) : ++it;
-	for (auto it = float_.begin(); it != float_.end(); )
+	for (auto it = float_.begin(); it != float_.end();)
 		it = it->first.section == sect ? float_.erase(it) : ++it;
-	for (auto it = string_.begin(); it != string_.end(); )
+	for (auto it = string_.begin(); it != string_.end();)
 		it = it->first.section == sect ? string_.erase(it) : ++it;
 }
-void MockSettings::RemoveKeyInSection(const char *pchSection, const char *pchSettingsKey,
-	vr::EVRSettingsError *peError)
+void MockSettings::RemoveKeyInSection(const char* pchSection, const char* pchSettingsKey, vr::EVRSettingsError* peError)
 {
 	if (peError) *peError = vr::VRSettingsError_None;
 	if (!pchSection || !pchSettingsKey) return;
 	std::lock_guard<std::mutex> lock(mu_);
 	Key k{pchSection, pchSettingsKey};
-	bool_.erase(k); int_.erase(k); float_.erase(k); string_.erase(k);
+	bool_.erase(k);
+	int_.erase(k);
+	float_.erase(k);
+	string_.erase(k);
 }
 
 // -----------------------------------------------------------------------------
 // MockDriverLog
 
-MockDriverLog::MockDriverLog(MockOpenVRRuntime &owner) : owner_(owner) {}
+MockDriverLog::MockDriverLog(MockOpenVRRuntime& owner) : owner_(owner) {}
 
-void MockDriverLog::Log(const char *pchLogMessage) {
+void MockDriverLog::Log(const char* pchLogMessage)
+{
 	if (pchLogMessage) {
 		std::fprintf(stdout, "[driverlog] %s", pchLogMessage);
 		// Many driver lines lack trailing newline; normalise.
@@ -157,10 +158,9 @@ void MockDriverLog::Log(const char *pchLogMessage) {
 // -----------------------------------------------------------------------------
 // MockResources
 
-MockResources::MockResources(MockOpenVRRuntime &owner) : owner_(owner) {}
+MockResources::MockResources(MockOpenVRRuntime& owner) : owner_(owner) {}
 
-uint32_t MockResources::LoadSharedResource(const char *pchResourceName, char *pchBuffer,
-	uint32_t unBufferLen)
+uint32_t MockResources::LoadSharedResource(const char* pchResourceName, char* pchBuffer, uint32_t unBufferLen)
 {
 	if (!pchResourceName) return 0;
 	const fs::path root = owner_.driver_resources();
@@ -175,8 +175,8 @@ uint32_t MockResources::LoadSharedResource(const char *pchResourceName, char *pc
 	return sz;
 }
 
-uint32_t MockResources::GetResourceFullPath(const char *pchResourceName,
-	const char *pchResourceTypeDirectory, char *pchPathBuffer, uint32_t unBufferLen)
+uint32_t MockResources::GetResourceFullPath(const char* pchResourceName, const char* pchResourceTypeDirectory,
+                                            char* pchPathBuffer, uint32_t unBufferLen)
 {
 	if (!pchResourceName) return 0;
 	const fs::path root = owner_.driver_resources();
@@ -193,22 +193,28 @@ uint32_t MockResources::GetResourceFullPath(const char *pchResourceName,
 // -----------------------------------------------------------------------------
 // MockDriverManager
 
-MockDriverManager::MockDriverManager(MockOpenVRRuntime &owner) : owner_(owner) {}
+MockDriverManager::MockDriverManager(MockOpenVRRuntime& owner) : owner_(owner) {}
 
-uint32_t MockDriverManager::GetDriverCount() const { return 1; }
-uint32_t MockDriverManager::GetDriverName(vr::DriverId_t /*nDriver*/, char *pchValue,
-	uint32_t unBufferSize)
+uint32_t MockDriverManager::GetDriverCount() const
 {
-	static const char *kName = "01wkopenvr";
+	return 1;
+}
+uint32_t MockDriverManager::GetDriverName(vr::DriverId_t /*nDriver*/, char* pchValue, uint32_t unBufferSize)
+{
+	static const char* kName = "01wkopenvr";
 	const uint32_t need = (uint32_t)std::strlen(kName) + 1;
 	if (!pchValue || unBufferSize < need) return need;
 	std::memcpy(pchValue, kName, need);
 	return need;
 }
-vr::DriverHandle_t MockDriverManager::GetDriverHandle(const char * /*pchDriverName*/) {
+vr::DriverHandle_t MockDriverManager::GetDriverHandle(const char* /*pchDriverName*/)
+{
 	return (vr::DriverHandle_t)0x10000001ULL;
 }
-bool MockDriverManager::IsEnabled(vr::DriverId_t /*nDriver*/) const { return true; }
+bool MockDriverManager::IsEnabled(vr::DriverId_t /*nDriver*/) const
+{
+	return true;
+}
 
 } // namespace openvr_pair::overlay::testharness
 

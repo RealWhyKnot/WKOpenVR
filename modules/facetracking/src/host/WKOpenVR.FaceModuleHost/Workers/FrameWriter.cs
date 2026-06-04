@@ -25,31 +25,31 @@ internal struct Float88 { private float _e0; }
 [StructLayout(LayoutKind.Sequential, Pack = 8)]
 internal struct FaceTrackingFrameBodyNative
 {
-    public ulong   qpc_sample_time;
-    public ulong   source_module_uuid_hash;
-    public Float3  eye_origin_l;
-    public Float3  eye_origin_r;
-    public Float3  eye_gaze_l;
-    public Float3  eye_gaze_r;
-    public float   eye_openness_l;
-    public float   eye_openness_r;
-    public float   pupil_dilation_l;
-    public float   pupil_dilation_r;
-    public float   eye_confidence_l;
-    public float   eye_confidence_r;
+    public ulong qpc_sample_time;
+    public ulong source_module_uuid_hash;
+    public Float3 eye_origin_l;
+    public Float3 eye_origin_r;
+    public Float3 eye_gaze_l;
+    public Float3 eye_gaze_r;
+    public float eye_openness_l;
+    public float eye_openness_r;
+    public float pupil_dilation_l;
+    public float pupil_dilation_r;
+    public float eye_confidence_l;
+    public float eye_confidence_r;
     public Float88 expressions;
-    public uint    flags;
+    public uint flags;
 
     // v2 head pose fields. head_flags bit 0 = head valid this frame.
     // SubprocessManager will populate these when head data flows from the
     // upstream ReplyUpdate packet; default zero means "no head data".
-    public float   head_yaw;
-    public float   head_pitch;
-    public float   head_roll;
-    public float   head_pos_x;
-    public float   head_pos_y;
-    public float   head_pos_z;
-    public uint    head_flags;
+    public float head_yaw;
+    public float head_pitch;
+    public float head_roll;
+    public float head_pos_x;
+    public float head_pos_y;
+    public float head_pos_z;
+    public uint head_flags;
 }
 
 // Per-slot seqlock layout. generation precedes body; offset validated by static_assert below.
@@ -67,13 +67,13 @@ internal struct FaceTrackingFrameSlotNative
 /// </summary>
 public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposable
 {
-    private const uint  Magic        = 0x46544652u; // 'FTFR'
-    private const uint  ShmemVersion = 3; // v3: expressions grown to upstream-format 88 slots
-    private const int   RingSize     = 32;
+    private const uint Magic = 0x46544652u; // 'FTFR'
+    private const uint ShmemVersion = 3; // v3: expressions grown to upstream-format 88 slots
+    private const int RingSize = 32;
 
     // Public constant so callers can size their upstream-shape buffers
     // consistently. Mirrors protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT.
-    public const int    UpstreamShapeCount = 88;
+    public const int UpstreamShapeCount = 88;
 
     // Byte offsets inside ShmemData. Layout must match Protocol.h exactly:
     //   uint32_t magic                        @  0
@@ -84,49 +84,55 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
     //   uint32_t _reserved_header[2]          @ 24..31
     //   atomic<uint64_t> publish_index        @ 32
     //   FaceTrackingFrameSlot slots[RING_SIZE] @ 40
-    private const int   HostStateOffset    = 12;
-    private const int   HostHeartbeatOffset = 16;
-    private const int   PublishIndexOffset = 32;
-    private const int   SlotsOffset        = PublishIndexOffset + 8; // 40
+    private const int HostStateOffset = 12;
+    private const int HostHeartbeatOffset = 16;
+    private const int PublishIndexOffset = 32;
+    private const int SlotsOffset = PublishIndexOffset + 8; // 40
 
     // host_state values mirror Protocol.h HostState enum.
-    public const uint   HostStateLegacy     = 0;
-    public const uint   HostStatePublishing = 1;
-    public const uint   HostStateIdle       = 2;
-    public const uint   HostStateDraining   = 3;
+    public const uint HostStateLegacy = 0;
+    public const uint HostStatePublishing = 1;
+    public const uint HostStateIdle = 2;
+    public const uint HostStateDraining = 3;
 
     private static readonly int SlotSize = UnsafeHelper.SizeOf<FaceTrackingFrameSlotNative>();
     private static readonly int BodyOffsetInSlot =
         (int)Marshal.OffsetOf<FaceTrackingFrameSlotNative>(nameof(FaceTrackingFrameSlotNative.body));
 
-    private MemoryMappedFile?         _mmf;
+    private MemoryMappedFile? _mmf;
     private MemoryMappedViewAccessor? _view;
-    private long                      _localPublishIndex;
-    private bool                      _sanitizationLogged;
+    private long _localPublishIndex;
+    private bool _sanitizationLogged;
 
     // Pinned base pointer acquired once at open, valid until Dispose.
     // All seqlock generation and publish_index reads/writes go through this
     // pointer so Volatile.Read/Write can give us acquire/release semantics on
     // x64 without the overhead of _view.ReadUInt64 / _view.Write.
     private unsafe byte* _basePtr;
-    private bool         _ptrAcquired;
+    private bool _ptrAcquired;
 
     // Flipped to true by Dispose; checked at the top of WriteUnderSeqlock so
     // a publish racing with shutdown drops the frame instead of dereferencing
     // a torn-down mapping (AV would tear down the whole host).
     private volatile bool _disposed;
-    private int           _droppedFrameLogCounter;
+    private int _droppedFrameLogCounter;
 
     private const float InvalidSignalMin = 1_000_000.0f;
 
-    private static bool IsInvalidSignal(float value) =>
-        !float.IsFinite(value) || value >= InvalidSignalMin;
+    private static bool IsInvalidSignal(float value)
+    {
+        return !float.IsFinite(value) || value >= InvalidSignalMin;
+    }
 
     private static float SanitizeUnit(float value, float fallback, ref int replaced)
     {
         if (IsInvalidSignal(value)) { replaced++; return fallback; }
         float clamped = Math.Clamp(value, 0.0f, 1.0f);
-        if (clamped != value) replaced++;
+        if (clamped != value)
+        {
+            replaced++;
+        }
+
         return clamped;
     }
 
@@ -141,20 +147,25 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
         await Task.Run(() =>
         {
             int totalSize = SlotsOffset + RingSize * SlotSize; // 40 + 32 * sizeof(slot)
-            _mmf  = MemoryMappedFile.OpenExisting(
+            _mmf = MemoryMappedFile.OpenExisting(
                 shmemName,
                 MemoryMappedFileRights.ReadWrite);
             _view = _mmf.CreateViewAccessor(0, totalSize, MemoryMappedFileAccess.ReadWrite);
 
             // Validate header using the managed accessor (fine for one-time reads).
-            uint magic   = _view.ReadUInt32(0);
+            uint magic = _view.ReadUInt32(0);
             uint version = _view.ReadUInt32(4);
             if (magic != Magic)
+            {
                 throw new InvalidOperationException(
                     $"Shmem magic mismatch: got 0x{magic:X8}, expected 0x{Magic:X8}");
+            }
+
             if (version != ShmemVersion)
+            {
                 throw new InvalidOperationException(
                     $"Shmem version mismatch: got {version}, expected {ShmemVersion}");
+            }
 
             // Acquire the raw base pointer for seqlock generation / publish_index fields.
             // AcquirePointer increments the SafeHandle refcount; released in Dispose.
@@ -162,7 +173,7 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
             {
                 byte* p = null;
                 _view.SafeMemoryMappedViewHandle.AcquirePointer(ref p);
-                _basePtr     = p;
+                _basePtr = p;
                 _ptrAcquired = true;
             }
 
@@ -186,22 +197,25 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
         ulong moduleUuidHash,
         CancellationToken ct)
     {
-        if (_view is null) return ValueTask.CompletedTask;
+        if (_view is null)
+        {
+            return ValueTask.CompletedTask;
+        }
 
         ulong qpc = (ulong)System.Diagnostics.Stopwatch.GetTimestamp();
 
         var body = new FaceTrackingFrameBodyNative
         {
-            qpc_sample_time         = qpc,
+            qpc_sample_time = qpc,
             source_module_uuid_hash = moduleUuidHash,
-            eye_openness_l          = eye.LeftOpenness,
-            eye_openness_r          = eye.RightOpenness,
-            pupil_dilation_l        = eye.PupilDilationLeft,
-            pupil_dilation_r        = eye.PupilDilationRight,
-            eye_confidence_l        = eye.Left.Confidence,
-            eye_confidence_r        = eye.Right.Confidence,
-            flags                   = (eyeValid ? 1u : 0u) | (exprValid ? 2u : 0u),
-            head_flags              = 0u,
+            eye_openness_l = eye.LeftOpenness,
+            eye_openness_r = eye.RightOpenness,
+            pupil_dilation_l = eye.PupilDilationLeft,
+            pupil_dilation_r = eye.PupilDilationRight,
+            eye_confidence_l = eye.Left.Confidence,
+            eye_confidence_r = eye.Right.Confidence,
+            flags = (eyeValid ? 1u : 0u) | (exprValid ? 2u : 0u),
+            head_flags = 0u,
         };
 
         body.eye_origin_l[0] = eye.Left.OriginHmd.X;
@@ -210,16 +224,18 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
         body.eye_origin_r[0] = eye.Right.OriginHmd.X;
         body.eye_origin_r[1] = eye.Right.OriginHmd.Y;
         body.eye_origin_r[2] = eye.Right.OriginHmd.Z;
-        body.eye_gaze_l[0]   = eye.Left.DirHmd.X;
-        body.eye_gaze_l[1]   = eye.Left.DirHmd.Y;
-        body.eye_gaze_l[2]   = eye.Left.DirHmd.Z;
-        body.eye_gaze_r[0]   = eye.Right.DirHmd.X;
-        body.eye_gaze_r[1]   = eye.Right.DirHmd.Y;
-        body.eye_gaze_r[2]   = eye.Right.DirHmd.Z;
+        body.eye_gaze_l[0] = eye.Left.DirHmd.X;
+        body.eye_gaze_l[1] = eye.Left.DirHmd.Y;
+        body.eye_gaze_l[2] = eye.Left.DirHmd.Z;
+        body.eye_gaze_r[0] = eye.Right.DirHmd.X;
+        body.eye_gaze_r[1] = eye.Right.DirHmd.Y;
+        body.eye_gaze_r[2] = eye.Right.DirHmd.Z;
 
         int count = Math.Min(upstreamShapes.Length, UpstreamShapeCount);
         for (int i = 0; i < count; i++)
+        {
             body.expressions[i] = upstreamShapes[i];
+        }
 
         SanitizeSignals(ref body);
         WriteUnderSeqlock(ref body);
@@ -273,16 +289,19 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
         {
             int n = Interlocked.Increment(ref _droppedFrameLogCounter);
             if ((n % 60) == 1)
+            {
                 logger.Warn("FrameWriter: dropping publish; mapping not available (shutdown race or Dispose called).");
+            }
+
             return;
         }
 
-        long next    = Interlocked.Increment(ref _localPublishIndex);
-        int  slotIdx = (int)((next - 1) % RingSize);
+        long next = Interlocked.Increment(ref _localPublishIndex);
+        int slotIdx = (int)((next - 1) % RingSize);
 
-        int  slotOffset = SlotsOffset + slotIdx * SlotSize;
-        long genOffset  = slotOffset;
-        int  bodyOffset = slotOffset + BodyOffsetInSlot;
+        int slotOffset = SlotsOffset + slotIdx * SlotSize;
+        long genOffset = slotOffset;
+        int bodyOffset = slotOffset + BodyOffsetInSlot;
 
         long* genPtr = (long*)(_basePtr + genOffset);
 
@@ -313,7 +332,11 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
     /// </summary>
     public unsafe void WriteHostState(uint state)
     {
-        if (_disposed || !_ptrAcquired || _basePtr == null) return;
+        if (_disposed || !_ptrAcquired || _basePtr == null)
+        {
+            return;
+        }
+
         int* statePtr = (int*)(_basePtr + HostStateOffset);
         Volatile.Write(ref *statePtr, (int)state);
     }
@@ -325,7 +348,11 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
     /// </summary>
     public unsafe void WriteHeartbeatTick()
     {
-        if (_disposed || !_ptrAcquired || _basePtr == null) return;
+        if (_disposed || !_ptrAcquired || _basePtr == null)
+        {
+            return;
+        }
+
         WriteHeartbeatUnlocked();
     }
 
@@ -347,11 +374,11 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
         {
             _view?.SafeMemoryMappedViewHandle.ReleasePointer();
             _ptrAcquired = false;
-            _basePtr     = null;
+            _basePtr = null;
         }
         _view?.Dispose();
         _mmf?.Dispose();
         _view = null;
-        _mmf  = null;
+        _mmf = null;
     }
 }

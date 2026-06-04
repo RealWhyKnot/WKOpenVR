@@ -34,11 +34,9 @@ struct InputHealthHealthSummarySnapshot
 	ProfileIoStats profile_io;
 };
 
-InputHealthPathFamilyCounters CountInputHealthPathFamilies(
-	const std::unordered_map<uint64_t, SnapshotReader::Entry> &entries);
+InputHealthPathFamilyCounters
+CountInputHealthPathFamilies(const std::unordered_map<uint64_t, SnapshotReader::Entry>& entries);
 
-std::string BuildInputHealthHealthSummaryJson(
-	const InputHealthHealthSummarySnapshot &snapshot);
+std::string BuildInputHealthHealthSummaryJson(const InputHealthHealthSummarySnapshot& snapshot);
 
-bool WriteInputHealthHealthSummary(
-	const InputHealthHealthSummarySnapshot &snapshot);
+bool WriteInputHealthHealthSummary(const InputHealthHealthSummarySnapshot& snapshot);

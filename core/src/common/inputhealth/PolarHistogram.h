@@ -38,22 +38,22 @@
 
 namespace inputhealth {
 
-constexpr int      kBinCount               = 36;     // 10 deg per bin
-constexpr int      kPerBinCap              = 256;    // count saturation
-constexpr int      kPerBinMinForConfidence = 16;     // adoption rule denominator
-constexpr double   kBinWidthRad            = 6.283185307179586 / kBinCount;
+constexpr int kBinCount = 36;               // 10 deg per bin
+constexpr int kPerBinCap = 256;             // count saturation
+constexpr int kPerBinMinForConfidence = 16; // adoption rule denominator
+constexpr double kBinWidthRad = 6.283185307179586 / kBinCount;
 
 struct PolarBin
 {
-	float    max_r          = 0.0f;
-	uint16_t count          = 0;
+	float max_r = 0.0f;
+	uint16_t count = 0;
 	uint64_t last_update_us = 0;
 };
 
 struct PolarHistogramState
 {
 	PolarBin bins[kBinCount] = {};
-	float    global_max_r    = 0.0f; // running max of all bins, for ratio tests
+	float global_max_r = 0.0f; // running max of all bins, for ratio tests
 };
 
 inline int PolarBinIndexForAngle(double theta_rad)
@@ -73,22 +73,21 @@ inline int PolarBinIndexForAngle(double theta_rad)
 // use any monotonic clock. The decay parameter controls how fast a bin's
 // max_r decays once its count has saturated; typical: alpha for 24h
 // half-life at the per-component update rate.
-inline void PolarHistogramUpdate(PolarHistogramState &s,
-                                 double x, double y,
-                                 uint64_t timestamp_us,
+inline void PolarHistogramUpdate(PolarHistogramState& s, double x, double y, uint64_t timestamp_us,
                                  double saturated_decay)
 {
-	const double r     = std::hypot(x, y);
+	const double r = std::hypot(x, y);
 	const double theta = std::atan2(y, x);
-	const int    bin   = PolarBinIndexForAngle(theta);
+	const int bin = PolarBinIndexForAngle(theta);
 
-	PolarBin &b = s.bins[bin];
+	PolarBin& b = s.bins[bin];
 	const float rf = static_cast<float>(r);
 
 	if (b.count < kPerBinCap) {
 		++b.count;
 		if (rf > b.max_r) b.max_r = rf;
-	} else {
+	}
+	else {
 		// Cap reached: blend the running max via EWMA decay so the bin can
 		// reflect a hardware change (stick that used to reach 1.0 in this
 		// direction starts capping at 0.92) instead of being permanently
@@ -100,8 +99,10 @@ inline void PolarHistogramUpdate(PolarHistogramState &s,
 		// Adopt only when blending pulls upward, OR when the new sample is
 		// strictly higher than the historical max (a genuine new peak should
 		// always be captured even at a tiny decay).
-		if (rf > b.max_r) b.max_r = rf;
-		else              b.max_r = blended;
+		if (rf > b.max_r)
+			b.max_r = rf;
+		else
+			b.max_r = blended;
 	}
 	b.last_update_us = timestamp_us;
 
@@ -112,7 +113,7 @@ inline void PolarHistogramUpdate(PolarHistogramState &s,
 // density adoption rule. Detectors should multiply test statistics by this
 // confidence before crossing a threshold so a single-sample bin cannot
 // trigger a "dead arc" call.
-inline float PolarBinConfidence(const PolarBin &b)
+inline float PolarBinConfidence(const PolarBin& b)
 {
 	if (b.count == 0) return 0.0f;
 	float c = static_cast<float>(b.count) / static_cast<float>(kPerBinMinForConfidence);
@@ -120,9 +121,10 @@ inline float PolarBinConfidence(const PolarBin &b)
 	return c;
 }
 
-inline void PolarHistogramReset(PolarHistogramState &s)
+inline void PolarHistogramReset(PolarHistogramState& s)
 {
-	for (int i = 0; i < kBinCount; ++i) s.bins[i] = PolarBin{};
+	for (int i = 0; i < kBinCount; ++i)
+		s.bins[i] = PolarBin{};
 	s.global_max_r = 0.0f;
 }
 

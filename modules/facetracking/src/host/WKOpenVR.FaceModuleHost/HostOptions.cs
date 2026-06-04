@@ -38,11 +38,19 @@ public sealed class HostOptions
 
         // Override from env vars first (lower priority than args).
         if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_PIPE") is { } envPipe)
+        {
             opts.DriverHandshakePipe = envPipe;
+        }
+
         if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_SHMEM") is { } envShmem)
+        {
             opts.ShmemName = envShmem;
+        }
+
         if (Environment.GetEnvironmentVariable("WKOPENVR_DEBUG_LOGGING") is { } envDebug)
+        {
             opts.DebugLoggingEnabled = IsTruthy(envDebug);
+        }
 
         // Command-line args override env vars.
         for (int i = 0; i < args.Length; i++)
@@ -50,19 +58,25 @@ public sealed class HostOptions
             switch (args[i])
             {
                 case "--driver-handshake-pipe" when i + 1 < args.Length: opts.DriverHandshakePipe = args[++i]; break;
-                case "--shmem-name"            when i + 1 < args.Length: opts.ShmemName           = args[++i]; break;
-                case "--modules-dir"           when i + 1 < args.Length: opts.ModulesInstallDir   = args[++i]; break;
-                case "--status-file"           when i + 1 < args.Length: opts.StatusFilePath      = args[++i]; break;
-                case "--log-file"              when i + 1 < args.Length: opts.LogFilePath         = args[++i]; break;
-                case "--debug-logging"         when i + 1 < args.Length: opts.DebugLoggingEnabled = IsTruthy(args[++i]); break;
+                case "--shmem-name" when i + 1 < args.Length: opts.ShmemName = args[++i]; break;
+                case "--modules-dir" when i + 1 < args.Length: opts.ModulesInstallDir = args[++i]; break;
+                case "--status-file" when i + 1 < args.Length: opts.StatusFilePath = args[++i]; break;
+                case "--log-file" when i + 1 < args.Length: opts.LogFilePath = args[++i]; break;
+                case "--debug-logging" when i + 1 < args.Length: opts.DebugLoggingEnabled = IsTruthy(args[++i]); break;
                 case "--e2e-fake-face-output": opts.E2eFakeFrames = true; break;
-                case "--e2e-fake-frame-count"  when i + 1 < args.Length:
+                case "--e2e-fake-frame-count" when i + 1 < args.Length:
                     if (int.TryParse(args[++i], out int frameCount))
+                    {
                         opts.E2eFakeFrameCount = Math.Max(1, frameCount);
+                    }
+
                     break;
                 case "--e2e-fake-frame-interval-ms" when i + 1 < args.Length:
                     if (int.TryParse(args[++i], out int intervalMs))
+                    {
                         opts.E2eFakeFrameIntervalMs = Math.Max(0, intervalMs);
+                    }
+
                     break;
             }
         }
@@ -70,10 +84,11 @@ public sealed class HostOptions
         return opts;
     }
 
-    private static bool IsTruthy(string value) =>
-        value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+    private static bool IsTruthy(string value)
+    {
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("on", StringComparison.OrdinalIgnoreCase);
-
+    }
 }

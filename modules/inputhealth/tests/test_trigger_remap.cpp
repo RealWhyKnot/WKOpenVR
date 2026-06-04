@@ -17,12 +17,12 @@ namespace {
 // the full driver binary (which depends on openvr_driver.h at runtime).
 float TriggerRemap(float raw, float triggerMin, float triggerMax)
 {
-    const float maxValue = triggerMax > 0.0f ? triggerMax : 1.0f;
-    const float range    = std::max(0.001f, maxValue - triggerMin);
-    const float remapped = (raw - triggerMin) / range;
-    if (remapped < 0.0f) return 0.0f;
-    if (remapped > 1.0f) return 1.0f;
-    return remapped;
+	const float maxValue = triggerMax > 0.0f ? triggerMax : 1.0f;
+	const float range = std::max(0.001f, maxValue - triggerMin);
+	const float remapped = (raw - triggerMin) / range;
+	if (remapped < 0.0f) return 0.0f;
+	if (remapped > 1.0f) return 1.0f;
+	return remapped;
 }
 
 } // namespace
@@ -33,9 +33,9 @@ float TriggerRemap(float raw, float triggerMin, float triggerMax)
 
 TEST(TriggerRemap, PerfectHardware_RestIsZero)
 {
-    EXPECT_FLOAT_EQ(TriggerRemap(0.0f, 0.0f, 1.0f), 0.0f);
-    EXPECT_FLOAT_EQ(TriggerRemap(0.5f, 0.0f, 1.0f), 0.5f);
-    EXPECT_FLOAT_EQ(TriggerRemap(1.0f, 0.0f, 1.0f), 1.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(0.0f, 0.0f, 1.0f), 0.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(0.5f, 0.0f, 1.0f), 0.5f);
+	EXPECT_FLOAT_EQ(TriggerRemap(1.0f, 0.0f, 1.0f), 1.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -45,25 +45,25 @@ TEST(TriggerRemap, PerfectHardware_RestIsZero)
 
 TEST(TriggerRemap, DriftedRest_ReleasedGoesToZero)
 {
-    const float rest = 0.05f;
-    const float peak = 0.98f;
-    EXPECT_FLOAT_EQ(TriggerRemap(rest, rest, peak), 0.0f);
+	const float rest = 0.05f;
+	const float peak = 0.98f;
+	EXPECT_FLOAT_EQ(TriggerRemap(rest, rest, peak), 0.0f);
 }
 
 TEST(TriggerRemap, DriftedRest_FullPressGoesToOne)
 {
-    const float rest = 0.05f;
-    const float peak = 0.98f;
-    EXPECT_FLOAT_EQ(TriggerRemap(peak, rest, peak), 1.0f);
+	const float rest = 0.05f;
+	const float peak = 0.98f;
+	EXPECT_FLOAT_EQ(TriggerRemap(peak, rest, peak), 1.0f);
 }
 
 TEST(TriggerRemap, DriftedRest_MidpointIsCorrect)
 {
-    const float rest = 0.05f;
-    const float peak = 0.98f;
-    const float mid  = (rest + peak) * 0.5f;
-    const float result = TriggerRemap(mid, rest, peak);
-    EXPECT_NEAR(result, 0.5f, 0.001f);
+	const float rest = 0.05f;
+	const float peak = 0.98f;
+	const float mid = (rest + peak) * 0.5f;
+	const float result = TriggerRemap(mid, rest, peak);
+	EXPECT_NEAR(result, 0.5f, 0.001f);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,8 +72,8 @@ TEST(TriggerRemap, DriftedRest_MidpointIsCorrect)
 
 TEST(TriggerRemap, BelowMin_ClampsToZero)
 {
-    EXPECT_FLOAT_EQ(TriggerRemap(0.02f, 0.05f, 1.0f), 0.0f);
-    EXPECT_FLOAT_EQ(TriggerRemap(0.0f,  0.05f, 1.0f), 0.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(0.02f, 0.05f, 1.0f), 0.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(0.0f, 0.05f, 1.0f), 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ TEST(TriggerRemap, BelowMin_ClampsToZero)
 
 TEST(TriggerRemap, AboveMax_ClampsToOne)
 {
-    EXPECT_FLOAT_EQ(TriggerRemap(1.1f, 0.0f, 1.0f), 1.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(1.1f, 0.0f, 1.0f), 1.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -94,15 +94,15 @@ TEST(TriggerRemap, AboveMax_ClampsToOne)
 
 TEST(TriggerRemap, NoDoubleSubtract_RestOffsetEqualToTriggerMin)
 {
-    // Simulate a path where rest_offset == trigger_min == 0.05.
-    // The OLD code did: value = raw - rest_offset (= raw - 0.05), then
-    // remapped = (value - trigger_min) / range = (raw - 0.1) / range.
-    // A released trigger at raw=0.05 would produce (0.05 - 0.1) < 0.
-    // The NEW code uses raw directly in the remap, so released -> 0.
-    const float rest = 0.05f;
-    const float peak = 0.98f;
-    // Released trigger exactly at rest floor.
-    EXPECT_GE(TriggerRemap(rest, rest, peak), 0.0f);
+	// Simulate a path where rest_offset == trigger_min == 0.05.
+	// The OLD code did: value = raw - rest_offset (= raw - 0.05), then
+	// remapped = (value - trigger_min) / range = (raw - 0.1) / range.
+	// A released trigger at raw=0.05 would produce (0.05 - 0.1) < 0.
+	// The NEW code uses raw directly in the remap, so released -> 0.
+	const float rest = 0.05f;
+	const float peak = 0.98f;
+	// Released trigger exactly at rest floor.
+	EXPECT_GE(TriggerRemap(rest, rest, peak), 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,9 +111,9 @@ TEST(TriggerRemap, NoDoubleSubtract_RestOffsetEqualToTriggerMin)
 
 TEST(TriggerRemap, ZeroRestLowPeak)
 {
-    EXPECT_FLOAT_EQ(TriggerRemap(0.0f,  0.0f, 0.95f), 0.0f);
-    EXPECT_FLOAT_EQ(TriggerRemap(0.95f, 0.0f, 0.95f), 1.0f);
-    EXPECT_NEAR(TriggerRemap(0.475f, 0.0f, 0.95f), 0.5f, 0.001f);
+	EXPECT_FLOAT_EQ(TriggerRemap(0.0f, 0.0f, 0.95f), 0.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(0.95f, 0.0f, 0.95f), 1.0f);
+	EXPECT_NEAR(TriggerRemap(0.475f, 0.0f, 0.95f), 0.5f, 0.001f);
 }
 
 // ---------------------------------------------------------------------------
@@ -122,8 +122,8 @@ TEST(TriggerRemap, ZeroRestLowPeak)
 
 TEST(TriggerRemap, MaxNotLearned_FallsBackToOne)
 {
-    // When trigger_max == 0, the formula substitutes 1.0 as the ceiling.
-    const float rest = 0.05f;
-    EXPECT_FLOAT_EQ(TriggerRemap(rest, rest, 0.0f), 0.0f);
-    EXPECT_FLOAT_EQ(TriggerRemap(1.0f, rest, 0.0f), 1.0f);
+	// When trigger_max == 0, the formula substitutes 1.0 as the ceiling.
+	const float rest = 0.05f;
+	EXPECT_FLOAT_EQ(TriggerRemap(rest, rest, 0.0f), 0.0f);
+	EXPECT_FLOAT_EQ(TriggerRemap(1.0f, rest, 0.0f), 1.0f);
 }

@@ -57,10 +57,10 @@ constexpr size_t kSamplesNeeded = 20;
 // the panic-unlock at 40 mm comfortably above the new floor; locks that
 // have genuinely broken still release via IsPanicLevelDeviation regardless
 // of where the leave threshold sits.
-constexpr double kEnterTranslM = 0.003;                  // 3 mm hard floor
-constexpr double kLeaveTranslM = 0.015;                  // 15 mm
-constexpr double kEnterRotRad  = 0.7 * EIGEN_PI / 180.0; // 0.7 deg
-constexpr double kLeaveRotRad  = 1.5 * EIGEN_PI / 180.0; // 1.5 deg
+constexpr double kEnterTranslM = 0.003;                 // 3 mm hard floor
+constexpr double kLeaveTranslM = 0.015;                 // 15 mm
+constexpr double kEnterRotRad = 0.7 * EIGEN_PI / 180.0; // 0.7 deg
+constexpr double kLeaveRotRad = 1.5 * EIGEN_PI / 180.0; // 1.5 deg
 
 // Adaptive enter threshold derived from the rolling MAD floor. The hard
 // floor at kEnterTranslM keeps the gate tight on low-noise rigs (every
@@ -79,11 +79,11 @@ constexpr double kLeaveRotRad  = 1.5 * EIGEN_PI / 180.0; // 1.5 deg
 constexpr double kEnterAdaptiveScale = 2.0;
 inline double EnterThresholdFor(double madFloor)
 {
-    constexpr double kCeil = kLeaveTranslM - 0.001;
-    double v = kEnterAdaptiveScale * madFloor;
-    if (v < kEnterTranslM) v = kEnterTranslM;
-    if (v > kCeil)         v = kCeil;
-    return v;
+	constexpr double kCeil = kLeaveTranslM - 0.001;
+	double v = kEnterAdaptiveScale * madFloor;
+	if (v < kEnterTranslM) v = kEnterTranslM;
+	if (v > kCeil) v = kCeil;
+	return v;
 }
 
 // HMD linear-speed threshold (m/s) below which a queued AUTO-lock flip is
@@ -138,7 +138,7 @@ constexpr double kPanicRotRad = 5.0 * EIGEN_PI / 180.0;
 // queue still appropriate" (no -- commit unlock now).
 inline bool IsPanicLevelDeviation(double translStdDev, double rotMaxAngle)
 {
-    return translStdDev >= kPanicTranslM || rotMaxAngle >= kPanicRotRad;
+	return translStdDev >= kPanicTranslM || rotMaxAngle >= kPanicRotRad;
 }
 
 // Returns the verdict the detector should produce given the current
@@ -151,19 +151,15 @@ inline bool IsPanicLevelDeviation(double translStdDev, double rotMaxAngle)
 // of recent MAD readings as the floor input to EnterThresholdFor) pass the
 // adaptive value here so cross-tracking-system pairs whose natural noise
 // sits above 3 mm can still engage AUTO Lock.
-inline bool VerdictWithHysteresis(double translStdDev,
-                                  double rotMaxAngle,
-                                  bool prevLocked,
+inline bool VerdictWithHysteresis(double translStdDev, double rotMaxAngle, bool prevLocked,
                                   double enterTranslM = kEnterTranslM)
 {
-    if (prevLocked) {
-        const bool stillRigid =
-            (translStdDev < kLeaveTranslM) && (rotMaxAngle < kLeaveRotRad);
-        return stillRigid;
-    }
-    const bool genuinelyRigid =
-        (translStdDev < enterTranslM) && (rotMaxAngle < kEnterRotRad);
-    return genuinelyRigid;
+	if (prevLocked) {
+		const bool stillRigid = (translStdDev < kLeaveTranslM) && (rotMaxAngle < kLeaveRotRad);
+		return stillRigid;
+	}
+	const bool genuinelyRigid = (translStdDev < enterTranslM) && (rotMaxAngle < kEnterRotRad);
+	return genuinelyRigid;
 }
 
 // Settled-state predicate. "Settled" means: currently locked, MAD inside
@@ -176,21 +172,18 @@ inline bool VerdictWithHysteresis(double translStdDev,
 // Used by the [cal-heartbeat] settled= field; a >70% rate in real sessions
 // is the success criterion for the 2026-05-25 settling fix.
 constexpr double kSettledMinHoldSec = 3.0;
-inline bool IsSettled(bool currentlyLocked,
-                      double translMad,
-                      double madFloor,
-                      double secsSinceLastFlip)
+inline bool IsSettled(bool currentlyLocked, double translMad, double madFloor, double secsSinceLastFlip)
 {
-    if (!currentlyLocked) return false;
-    if (secsSinceLastFlip < kSettledMinHoldSec) return false;
-    return translMad < EnterThresholdFor(madFloor);
+	if (!currentlyLocked) return false;
+	if (secsSinceLastFlip < kSettledMinHoldSec) return false;
+	return translMad < EnterThresholdFor(madFloor);
 }
 
 // Returns true when an HMD linear speed is low enough to commit a queued
 // flip without producing a visible mid-gesture jump.
 inline bool HmdIsStationary(double hmdSpeedMps)
 {
-    return hmdSpeedMps < kStationaryHmdMps;
+	return hmdSpeedMps < kStationaryHmdMps;
 }
 
 // Per-tick commit-gate decision for a pending AUTO Lock flip. Captures the
@@ -203,28 +196,25 @@ inline bool HmdIsStationary(double hmdSpeedMps)
 //
 // The `mode` field carries a static string literal suitable for the
 // "committed_via" diagnostic. Callers must not free it.
-struct CommitGateDecision {
-    bool commit;
-    const char* mode;
+struct CommitGateDecision
+{
+	bool commit;
+	const char* mode;
 };
 
-inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo,
-                                             double hmdSpeedMps,
-                                             double now,
-                                             double pendingHeldSec)
+inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo, double hmdSpeedMps, double now, double pendingHeldSec)
 {
-    (void)now;
-    const bool stationary = HmdIsStationary(hmdSpeedMps);
-    const bool isUnlock = (pendingFlipTo == false);
-    const bool unlockTimeoutFired = isUnlock
-        && pendingHeldSec >= kAutoLockUnlockMaxWaitSeconds;
+	(void)now;
+	const bool stationary = HmdIsStationary(hmdSpeedMps);
+	const bool isUnlock = (pendingFlipTo == false);
+	const bool unlockTimeoutFired = isUnlock && pendingHeldSec >= kAutoLockUnlockMaxWaitSeconds;
 
-    if (!stationary && !unlockTimeoutFired) {
-        return { false, "held" };
-    }
-    if (unlockTimeoutFired) return { true, "unlock_timeout" };
-    if (stationary)         return { true, "stationary_gate" };
-    return { true, "unknown" };
+	if (!stationary && !unlockTimeoutFired) {
+		return {false, "held"};
+	}
+	if (unlockTimeoutFired) return {true, "unlock_timeout"};
+	if (stationary) return {true, "stationary_gate"};
+	return {true, "unknown"};
 }
 
 // MAD-based robust translation deviation over a window of relative-pose
@@ -245,28 +235,30 @@ inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo,
 // O(N) for N=30; trivial cost per tick.
 inline double RobustTranslDeviation(const std::deque<Eigen::AffineCompact3d>& history)
 {
-    const size_t n = history.size();
-    if (n == 0) return 0.0;
+	const size_t n = history.size();
+	if (n == 0) return 0.0;
 
-    std::vector<double> xs(n), ys(n), zs(n);
-    for (size_t i = 0; i < n; ++i) {
-        const auto& t = history[i].translation();
-        xs[i] = t.x(); ys[i] = t.y(); zs[i] = t.z();
-    }
-    auto medianOf = [](std::vector<double>& v) {
-        const size_t mid = v.size() / 2;
-        std::nth_element(v.begin(), v.begin() + mid, v.end());
-        return v[mid];
-    };
-    const Eigen::Vector3d median(medianOf(xs), medianOf(ys), medianOf(zs));
+	std::vector<double> xs(n), ys(n), zs(n);
+	for (size_t i = 0; i < n; ++i) {
+		const auto& t = history[i].translation();
+		xs[i] = t.x();
+		ys[i] = t.y();
+		zs[i] = t.z();
+	}
+	auto medianOf = [](std::vector<double>& v) {
+		const size_t mid = v.size() / 2;
+		std::nth_element(v.begin(), v.begin() + mid, v.end());
+		return v[mid];
+	};
+	const Eigen::Vector3d median(medianOf(xs), medianOf(ys), medianOf(zs));
 
-    std::vector<double> devs(n);
-    for (size_t i = 0; i < n; ++i) {
-        devs[i] = (history[i].translation() - median).norm();
-    }
-    const size_t mid = n / 2;
-    std::nth_element(devs.begin(), devs.begin() + mid, devs.end());
-    return devs[mid] * 1.4826;
+	std::vector<double> devs(n);
+	for (size_t i = 0; i < n; ++i) {
+		devs[i] = (history[i].translation() - median).norm();
+	}
+	const size_t mid = n / 2;
+	std::nth_element(devs.begin(), devs.begin() + mid, devs.end());
+	return devs[mid] * 1.4826;
 }
 
 // MAD-based robust rotation deviation. Median of geodesic distances from
@@ -277,18 +269,18 @@ inline double RobustTranslDeviation(const std::deque<Eigen::AffineCompact3d>& hi
 // outlier-detection metric).
 inline double RobustRotDeviation(const std::deque<Eigen::AffineCompact3d>& history)
 {
-    const size_t n = history.size();
-    if (n == 0) return 0.0;
+	const size_t n = history.size();
+	if (n == 0) return 0.0;
 
-    const Eigen::Quaterniond medianQ(history[n / 2].rotation());
+	const Eigen::Quaterniond medianQ(history[n / 2].rotation());
 
-    std::vector<double> devs(n);
-    for (size_t i = 0; i < n; ++i) {
-        devs[i] = medianQ.angularDistance(Eigen::Quaterniond(history[i].rotation()));
-    }
-    const size_t mid = n / 2;
-    std::nth_element(devs.begin(), devs.begin() + mid, devs.end());
-    return devs[mid] * 1.4826;
+	std::vector<double> devs(n);
+	for (size_t i = 0; i < n; ++i) {
+		devs[i] = medianQ.angularDistance(Eigen::Quaterniond(history[i].rotation()));
+	}
+	const size_t mid = n / 2;
+	std::nth_element(devs.begin(), devs.begin() + mid, devs.end());
+	return devs[mid] * 1.4826;
 }
 
 } // namespace spacecal::autolock

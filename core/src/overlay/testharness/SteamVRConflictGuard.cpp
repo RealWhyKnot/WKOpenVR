@@ -18,7 +18,8 @@ namespace openvr_pair::overlay::testharness {
 
 namespace {
 
-bool IEqualsAscii(std::wstring_view a, std::wstring_view b) noexcept {
+bool IEqualsAscii(std::wstring_view a, std::wstring_view b) noexcept
+{
 	if (a.size() != b.size()) return false;
 	for (size_t i = 0; i < a.size(); ++i) {
 		const auto lhs = (wchar_t)::towlower(a[i]);
@@ -28,11 +29,13 @@ bool IEqualsAscii(std::wstring_view a, std::wstring_view b) noexcept {
 	return true;
 }
 
-struct VrServerHit {
+struct VrServerHit
+{
 	DWORD pid = 0;
 };
 
-bool FindVrServer(VrServerHit &out) {
+bool FindVrServer(VrServerHit& out)
+{
 	HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snap == INVALID_HANDLE_VALUE) return false;
 	PROCESSENTRY32W pe{};
@@ -53,15 +56,13 @@ bool FindVrServer(VrServerHit &out) {
 
 // Returns the first shmem segment name we manage to open, indicating that
 // some process is already publishing into it. Empty string means clean.
-std::string DetectLiveShmem() {
-	static const char *kSegments[] = {
-		"WKOpenVRPoseMemoryV2",
-		"WKOpenVRInputHealthMemoryV1",
-		"WKOpenVRFaceTrackingFrameRingV2",
-		"WKOpenVROscRouterStatsV1",
-		"WKOpenVRPhantomStateV2",
+std::string DetectLiveShmem()
+{
+	static const char* kSegments[] = {
+	    "WKOpenVRPoseMemoryV2",     "WKOpenVRInputHealthMemoryV1", "WKOpenVRFaceTrackingFrameRingV2",
+	    "WKOpenVROscRouterStatsV1", "WKOpenVRPhantomStateV2",
 	};
-	for (const char *name : kSegments) {
+	for (const char* name : kSegments) {
 		HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, name);
 		if (h != nullptr) {
 			::CloseHandle(h);
@@ -73,15 +74,16 @@ std::string DetectLiveShmem() {
 
 } // namespace
 
-SteamVRConflictResult CheckSteamVRConflicts() {
+SteamVRConflictResult CheckSteamVRConflicts()
+{
 	SteamVRConflictResult result;
 
 	VrServerHit hit{};
 	if (FindVrServer(hit)) {
 		char buf[256];
 		std::snprintf(buf, sizeof(buf),
-			"refusing to run --test-harness: SteamVR (vrserver.exe pid=%lu) is alive; close SteamVR first",
-			(unsigned long)hit.pid);
+		              "refusing to run --test-harness: SteamVR (vrserver.exe pid=%lu) is alive; close SteamVR first",
+		              (unsigned long)hit.pid);
 		result.ok = false;
 		result.error = buf;
 		return result;
@@ -91,7 +93,7 @@ SteamVRConflictResult CheckSteamVRConflicts() {
 	if (!live.empty()) {
 		result.ok = false;
 		result.error = "refusing to run --test-harness: shmem segment '" + live +
-			"' is already mapped; close any running WKOpenVR driver instance and retry";
+		               "' is already mapped; close any running WKOpenVR driver instance and retry";
 		return result;
 	}
 

@@ -45,63 +45,64 @@ std::string FilenameForHash(uint64_t hash)
 	return buf;
 }
 
-DeviceProfile Decode(const picojson::value &v)
+DeviceProfile Decode(const picojson::value& v)
 {
 	DeviceProfile p;
 	if (!v.is<picojson::object>()) return p;
-	const auto &obj = v.get<picojson::object>();
-	auto getStr = [&](const char *k, std::string &out) {
+	const auto& obj = v.get<picojson::object>();
+	auto getStr = [&](const char* k, std::string& out) {
 		auto it = obj.find(k);
 		if (it != obj.end() && it->second.is<std::string>()) out = it->second.get<std::string>();
 	};
-	auto getBool = [&](const char *k, bool &out) {
+	auto getBool = [&](const char* k, bool& out) {
 		auto it = obj.find(k);
 		if (it != obj.end() && it->second.is<bool>()) out = it->second.get<bool>();
 	};
-	auto getU64 = [&](const char *k, uint64_t &out) {
+	auto getU64 = [&](const char* k, uint64_t& out) {
 		auto it = obj.find(k);
 		if (it != obj.end() && it->second.is<std::string>()) {
 			out = strtoull(it->second.get<std::string>().c_str(), nullptr, 16);
-		} else if (it != obj.end() && it->second.is<double>()) {
+		}
+		else if (it != obj.end() && it->second.is<double>()) {
 			double d = it->second.get<double>();
 			if (d >= 0.0) out = static_cast<uint64_t>(d);
 		}
 	};
-	auto getU32From = [](const picojson::object &src, const char *k, uint32_t &out) {
+	auto getU32From = [](const picojson::object& src, const char* k, uint32_t& out) {
 		auto it = src.find(k);
 		if (it != src.end() && it->second.is<double>()) {
 			double d = it->second.get<double>();
 			if (d >= 0.0 && d <= 4294967295.0) out = static_cast<uint32_t>(d);
 		}
 	};
-	auto getU64From = [](const picojson::object &src, const char *k, uint64_t &out) {
+	auto getU64From = [](const picojson::object& src, const char* k, uint64_t& out) {
 		auto it = src.find(k);
 		if (it != src.end() && it->second.is<double>()) {
 			double d = it->second.get<double>();
 			if (d >= 0.0) out = static_cast<uint64_t>(d);
 		}
 	};
-	auto getDoubleFrom = [](const picojson::object &src, const char *k, double &out) {
+	auto getDoubleFrom = [](const picojson::object& src, const char* k, double& out) {
 		auto it = src.find(k);
 		if (it != src.end() && it->second.is<double>()) out = it->second.get<double>();
 	};
-	auto getBoolFrom = [](const picojson::object &src, const char *k, bool &out) {
+	auto getBoolFrom = [](const picojson::object& src, const char* k, bool& out) {
 		auto it = src.find(k);
 		if (it != src.end() && it->second.is<bool>()) out = it->second.get<bool>();
 	};
-	auto getStrFrom = [](const picojson::object &src, const char *k, std::string &out) {
+	auto getStrFrom = [](const picojson::object& src, const char* k, std::string& out) {
 		auto it = src.find(k);
 		if (it != src.end() && it->second.is<std::string>()) out = it->second.get<std::string>();
 	};
 
-	getStr ("serial",                   p.serial);
-	getU64 ("serial_hash_hex",          p.serial_hash);
-	getStr ("display_name",             p.display_name);
-	getBool("enable_diagnostics_only",  p.enable_diagnostics_only);
-	getBool("enable_rest_recenter",     p.enable_rest_recenter);
-	getBool("enable_trigger_remap",     p.enable_trigger_remap);
-	getBool("corrections_enabled",      p.corrections_enabled);
-	getBool("rest_recenter_migrated",   p.rest_recenter_migrated);
+	getStr("serial", p.serial);
+	getU64("serial_hash_hex", p.serial_hash);
+	getStr("display_name", p.display_name);
+	getBool("enable_diagnostics_only", p.enable_diagnostics_only);
+	getBool("enable_rest_recenter", p.enable_rest_recenter);
+	getBool("enable_trigger_remap", p.enable_trigger_remap);
+	getBool("corrections_enabled", p.corrections_enabled);
+	getBool("rest_recenter_migrated", p.rest_recenter_migrated);
 
 	// One-time migration: rest-recenter's default was flipped on. Profiles saved
 	// before the flip persisted the old off default and lack the marker above;
@@ -109,8 +110,7 @@ DeviceProfile Decode(const picojson::value &v)
 	// deliberate opt-out is respected.
 	if (!p.rest_recenter_migrated) {
 		if (!p.enable_rest_recenter) {
-			LOG("[profiles] rest-recenter off->on migration for '%s' (default flip)",
-				p.serial.c_str());
+			LOG("[profiles] rest-recenter off->on migration for '%s' (default flip)", p.serial.c_str());
 		}
 		p.enable_rest_recenter = true;
 		p.rest_recenter_migrated = true;
@@ -118,9 +118,9 @@ DeviceProfile Decode(const picojson::value &v)
 
 	auto learnedIt = obj.find("learned_paths");
 	if (learnedIt != obj.end() && learnedIt->second.is<picojson::array>()) {
-		for (const auto &item : learnedIt->second.get<picojson::array>()) {
+		for (const auto& item : learnedIt->second.get<picojson::array>()) {
 			if (!item.is<picojson::object>()) continue;
-			const auto &lpObj = item.get<picojson::object>();
+			const auto& lpObj = item.get<picojson::object>();
 			LearnedPathRecord r;
 			getStrFrom(lpObj, "path", r.path);
 			getStrFrom(lpObj, "kind", r.kind);
@@ -147,28 +147,25 @@ DeviceProfile Decode(const picojson::value &v)
 	// capped idle-floor offsets.
 	{
 		size_t before = p.learned_paths.size();
-		p.learned_paths.erase(
-			std::remove_if(p.learned_paths.begin(), p.learned_paths.end(),
-				[](const LearnedPathRecord &r) {
-					const inputhealth::PathFamily family =
-						inputhealth::ClassifyPathFamily(r.path);
-					return family == inputhealth::PathFamily::Unsupported ||
-						inputhealth::IsDiagnosticsOnlyFamily(family);
-				}),
-			p.learned_paths.end());
+		p.learned_paths.erase(std::remove_if(p.learned_paths.begin(), p.learned_paths.end(),
+		                                     [](const LearnedPathRecord& r) {
+			                                     const inputhealth::PathFamily family =
+			                                         inputhealth::ClassifyPathFamily(r.path);
+			                                     return family == inputhealth::PathFamily::Unsupported ||
+			                                            inputhealth::IsDiagnosticsOnlyFamily(family);
+		                                     }),
+		                      p.learned_paths.end());
 		size_t after = p.learned_paths.size();
 		if (before != after) {
-			LOG("[profiles] pruned %zu legacy path record(s) from serial_hash=0x%016llx",
-				before - after, (unsigned long long)p.serial_hash);
+			LOG("[profiles] pruned %zu legacy path record(s) from serial_hash=0x%016llx", before - after,
+			    (unsigned long long)p.serial_hash);
 		}
 
-		for (auto &record : p.learned_paths) {
-			const inputhealth::PathFamily family =
-				inputhealth::ClassifyPathFamily(record.path);
+		for (auto& record : p.learned_paths) {
+			const inputhealth::PathFamily family = inputhealth::ClassifyPathFamily(record.path);
 			if (!inputhealth::IsIdleFloorFamily(family)) continue;
 			record.kind = "scalar_single";
-			record.learned_rest_offset = std::max(0.0,
-				std::min(0.05, record.learned_rest_offset));
+			record.learned_rest_offset = std::max(0.0, std::min(0.05, record.learned_rest_offset));
 			record.learned_trigger_min = 0.0;
 			record.learned_trigger_max = 0.0;
 			record.learned_deadzone_radius = 0.0;
@@ -179,24 +176,24 @@ DeviceProfile Decode(const picojson::value &v)
 	return p;
 }
 
-std::string Encode(const DeviceProfile &p)
+std::string Encode(const DeviceProfile& p)
 {
 	char hashHex[32];
 	snprintf(hashHex, sizeof(hashHex), "%016llx", (unsigned long long)p.serial_hash);
 
 	picojson::object obj;
-	obj["serial"]                  = picojson::value(p.serial);
-	obj["serial_hash_hex"]         = picojson::value(std::string(hashHex));
-	obj["display_name"]            = picojson::value(p.display_name);
+	obj["serial"] = picojson::value(p.serial);
+	obj["serial_hash_hex"] = picojson::value(std::string(hashHex));
+	obj["display_name"] = picojson::value(p.display_name);
 	obj["enable_diagnostics_only"] = picojson::value(p.enable_diagnostics_only);
-	obj["enable_rest_recenter"]    = picojson::value(p.enable_rest_recenter);
-	obj["enable_trigger_remap"]    = picojson::value(p.enable_trigger_remap);
-	obj["corrections_enabled"]     = picojson::value(p.corrections_enabled);
-	obj["rest_recenter_migrated"]  = picojson::value(p.rest_recenter_migrated);
+	obj["enable_rest_recenter"] = picojson::value(p.enable_rest_recenter);
+	obj["enable_trigger_remap"] = picojson::value(p.enable_trigger_remap);
+	obj["corrections_enabled"] = picojson::value(p.corrections_enabled);
+	obj["rest_recenter_migrated"] = picojson::value(p.rest_recenter_migrated);
 
 	picojson::array learned;
 	learned.reserve(p.learned_paths.size());
-	for (const auto &r : p.learned_paths) {
+	for (const auto& r : p.learned_paths) {
 		picojson::object item;
 		item["path"] = picojson::value(r.path);
 		item["kind"] = picojson::value(r.kind);
@@ -249,7 +246,7 @@ void ProfileStore::LoadAll()
 	LOG("[profiles] loaded %zu profile(s) from disk (checkpoint)", profiles_.size());
 }
 
-bool ProfileStore::Save(const DeviceProfile &profile, const char *reason)
+bool ProfileStore::Save(const DeviceProfile& profile, const char* reason)
 {
 	++stats_.attempted_saves;
 	if (reason && reason[0] != '\0') {
@@ -289,32 +286,26 @@ bool ProfileStore::Save(const DeviceProfile &profile, const char *reason)
 		if (nowTp - s_lastSkipLog >= std::chrono::seconds(30)) {
 			s_lastSkipLog = nowTp;
 			int totalSkipped = 0;
-			for (const auto &kv : s_skipCountByDevice) totalSkipped += kv.second;
-			LOG("[profiles] checkpoint coalesced: skipped=%d in last ~30s",
-				totalSkipped);
+			for (const auto& kv : s_skipCountByDevice)
+				totalSkipped += kv.second;
+			LOG("[profiles] checkpoint coalesced: skipped=%d in last ~30s", totalSkipped);
 			s_skipCountByDevice.clear();
 		}
 		return true;
 	}
 
-	std::wstring path    = dir + L"\\" + openvr_pair::common::Utf8ToWide(FilenameForHash(profile.serial_hash));
+	std::wstring path = dir + L"\\" + openvr_pair::common::Utf8ToWide(FilenameForHash(profile.serial_hash));
 	std::wstring tmpPath = path + L".tmp";
 
 	// Write to a temp file first so a crash mid-write never corrupts the
 	// existing profile. MoveFileExW with WRITE_THROUGH makes the rename
 	// durable before we return success.
-	HANDLE hFile = CreateFileW(
-		tmpPath.c_str(),
-		GENERIC_WRITE,
-		0,
-		nullptr,
-		CREATE_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL,
-		nullptr);
+	HANDLE hFile =
+	    CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		++stats_.failed_writes;
-		LOG("[profiles] failed to open tmp '%s' for write (err=%lu)",
-			openvr_pair::common::WideToUtf8(tmpPath).c_str(), GetLastError());
+		LOG("[profiles] failed to open tmp '%s' for write (err=%lu)", openvr_pair::common::WideToUtf8(tmpPath).c_str(),
+		    GetLastError());
 		return false;
 	}
 
@@ -326,17 +317,16 @@ bool ProfileStore::Save(const DeviceProfile &profile, const char *reason)
 
 	if (!ok || written != static_cast<DWORD>(body.size())) {
 		++stats_.failed_writes;
-		LOG("[profiles] write/flush failed for tmp '%s' (err=%lu)",
-			openvr_pair::common::WideToUtf8(tmpPath).c_str(), GetLastError());
+		LOG("[profiles] write/flush failed for tmp '%s' (err=%lu)", openvr_pair::common::WideToUtf8(tmpPath).c_str(),
+		    GetLastError());
 		DeleteFileW(tmpPath.c_str());
 		return false;
 	}
 
-	if (!MoveFileExW(tmpPath.c_str(), path.c_str(),
-			MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+	if (!MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
 		++stats_.failed_writes;
-		LOG("[profiles] atomic rename failed '%s' -> '%s' (err=%lu)",
-			openvr_pair::common::WideToUtf8(tmpPath).c_str(), openvr_pair::common::WideToUtf8(path).c_str(), GetLastError());
+		LOG("[profiles] atomic rename failed '%s' -> '%s' (err=%lu)", openvr_pair::common::WideToUtf8(tmpPath).c_str(),
+		    openvr_pair::common::WideToUtf8(path).c_str(), GetLastError());
 		DeleteFileW(tmpPath.c_str());
 		return false;
 	}
@@ -345,19 +335,18 @@ bool ProfileStore::Save(const DeviceProfile &profile, const char *reason)
 	s_lastSavedHashByDevice[profile.serial_hash] = hash;
 	++stats_.actual_writes;
 	LOG("[profiles] saved profile checkpoint: serial_hash=0x%016llx paths=%zu hash=0x%016llx reason=%s",
-		(unsigned long long)profile.serial_hash, profile.learned_paths.size(),
-		(unsigned long long)hash,
-		stats_.last_save_reason.empty() ? "unspecified" : stats_.last_save_reason.c_str());
+	    (unsigned long long)profile.serial_hash, profile.learned_paths.size(), (unsigned long long)hash,
+	    stats_.last_save_reason.empty() ? "unspecified" : stats_.last_save_reason.c_str());
 	return true;
 }
 
-DeviceProfile &ProfileStore::GetOrCreate(uint64_t serial_hash)
+DeviceProfile& ProfileStore::GetOrCreate(uint64_t serial_hash)
 {
 	auto it = profiles_.find(serial_hash);
 	if (it != profiles_.end()) return it->second;
 	DeviceProfile p;
 	p.serial_hash = serial_hash;
-	auto &slot = profiles_[serial_hash];
+	auto& slot = profiles_[serial_hash];
 	slot = std::move(p);
 	return slot;
 }

@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <ctime>
 
-extern FILE *LogFile;
+extern FILE* LogFile;
 
 void OpenLogFile();
 bool EnsureLogFileOpen();
@@ -12,13 +12,15 @@ void LogFlush();
 void CloseLogFile();
 
 #ifndef LOG
-#define LOG(fmt, ...) do { \
-	if (EnsureLogFileOpen()) { \
-		tm logNow = TimeForLog(); \
-		fprintf(LogFile, "[%02d:%02d:%02d] " fmt "\n", logNow.tm_hour, logNow.tm_min, logNow.tm_sec, ##__VA_ARGS__); \
-		LogFlush(); \
-	} \
-} while (0)
+#define LOG(fmt, ...)                                                                                                  \
+	do {                                                                                                               \
+		if (EnsureLogFileOpen()) {                                                                                     \
+			tm logNow = TimeForLog();                                                                                  \
+			fprintf(LogFile, "[%02d:%02d:%02d] " fmt "\n", logNow.tm_hour, logNow.tm_min, logNow.tm_sec,               \
+			        ##__VA_ARGS__);                                                                                    \
+			LogFlush();                                                                                                \
+		}                                                                                                              \
+	} while (0)
 #endif
 
 #ifndef TRACE

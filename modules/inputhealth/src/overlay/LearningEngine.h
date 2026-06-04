@@ -48,20 +48,20 @@ struct LearningEngineStats
 class LearningEngine
 {
 public:
-	LearningEngine(IPCClient &ipc, ProfileStore &profiles);
+	LearningEngine(IPCClient& ipc, ProfileStore& profiles);
 
-	void Tick(const SnapshotReader &reader);
+	void Tick(const SnapshotReader& reader);
 	void Flush();
 
 	void SetRestBurstActive(bool active);
 	bool IsRestBurstActive() const { return rest_burst_active_; }
 
-	LearningPathView GetPathView(uint64_t serial_hash, const char *path) const;
+	LearningPathView GetPathView(uint64_t serial_hash, const char* path) const;
 	void PushReadyCompensations();
 	void SetDeviceCorrectionsEnabled(uint64_t serial_hash, bool enabled);
-	void UnlearnPath(uint64_t serial_hash, const char *path);
+	void UnlearnPath(uint64_t serial_hash, const char* path);
 	void UnlearnDevice(uint64_t serial_hash);
-	const LearningEngineStats &Stats() const { return stats_; }
+	const LearningEngineStats& Stats() const { return stats_; }
 
 private:
 	struct PathState
@@ -94,8 +94,8 @@ private:
 		uint32_t drift_shift_resets = 0;
 	};
 
-	IPCClient &ipc_;
-	ProfileStore &profiles_;
+	IPCClient& ipc_;
+	ProfileStore& profiles_;
 	bool rest_burst_active_ = false;
 	std::unordered_map<std::string, PathState> states_;
 	std::unordered_map<uint64_t, uint64_t> device_button_quiet_until_us_;
@@ -109,11 +109,11 @@ private:
 	// every device's /proximity collapses into a single line.
 	std::unordered_set<std::string> warned_unsupported_paths_;
 
-	PathState &StateFor(uint64_t serial_hash, const std::string &path);
-	const PathState *FindState(uint64_t serial_hash, const std::string &path) const;
-	void SyncProfile(uint64_t serial_hash, PathState &state, bool immediate, const char *reason);
-	void PushCompensation(uint64_t serial_hash, const PathState &state, bool enabled);
-	void WarnUnsupportedOnce(const char *kind, const std::string &path);
+	PathState& StateFor(uint64_t serial_hash, const std::string& path);
+	const PathState* FindState(uint64_t serial_hash, const std::string& path) const;
+	void SyncProfile(uint64_t serial_hash, PathState& state, bool immediate, const char* reason);
+	void PushCompensation(uint64_t serial_hash, const PathState& state, bool enabled);
+	void WarnUnsupportedOnce(const char* kind, const std::string& path);
 	// Wraps profiles_.Save() in try/catch; logs on failure and returns false.
-	bool TrySaveProfile(const DeviceProfile &profile, const char *reason);
+	bool TrySaveProfile(const DeviceProfile& profile, const char* reason);
 };

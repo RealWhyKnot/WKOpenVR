@@ -22,30 +22,23 @@ inline double SampleFillScore(int progress, int target)
 	return Clamp01(static_cast<double>(progress) / static_cast<double>(target));
 }
 
-inline double OneShotReadyScore(
-	CalibrationState state,
-	int sampleProgress,
-	int sampleTarget,
-	double rotationDiversity,
-	double translationDiversity)
+inline double OneShotReadyScore(CalibrationState state, int sampleProgress, int sampleTarget, double rotationDiversity,
+                                double translationDiversity)
 {
 	const double sampleScore = SampleFillScore(sampleProgress, sampleTarget);
-	const double rotationScore = std::min(
-		sampleScore,
-		Clamp01(rotationDiversity / kOneShotRotationReadyDiversity));
-	const double translationScore = std::min(
-		sampleScore,
-		Clamp01(translationDiversity / kOneShotTranslationReadyDiversity));
+	const double rotationScore = std::min(sampleScore, Clamp01(rotationDiversity / kOneShotRotationReadyDiversity));
+	const double translationScore =
+	    std::min(sampleScore, Clamp01(translationDiversity / kOneShotTranslationReadyDiversity));
 
 	switch (state) {
-	case CalibrationState::Begin:
-		return 0.0;
-	case CalibrationState::Rotation:
-		return 0.5 * rotationScore;
-	case CalibrationState::Translation:
-		return 0.5 + 0.5 * translationScore;
-	default:
-		return sampleScore;
+		case CalibrationState::Begin:
+			return 0.0;
+		case CalibrationState::Rotation:
+			return 0.5 * rotationScore;
+		case CalibrationState::Translation:
+			return 0.5 + 0.5 * translationScore;
+		default:
+			return sampleScore;
 	}
 }
 

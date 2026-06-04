@@ -22,10 +22,10 @@ protected:
 	void SetUp() override
 	{
 		ImGui::CreateContext();
-		ImGuiIO &io = ImGui::GetIO();
+		ImGuiIO& io = ImGui::GetIO();
 		io.IniFilename = nullptr;
 		io.Fonts->AddFontDefault();
-		unsigned char *pixels = nullptr;
+		unsigned char* pixels = nullptr;
 		int width = 0;
 		int height = 0;
 		io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
@@ -33,15 +33,11 @@ protected:
 		openvr_pair::overlay::ui::SetTheme(openvr_pair::overlay::ui::ThemeId::Legacy);
 	}
 
-	void TearDown() override
-	{
-		ImGui::DestroyContext();
-	}
+	void TearDown() override { ImGui::DestroyContext(); }
 
-	template<typename Body>
-	void RenderAt(const ImVec2 &size, Body &&body)
+	template <typename Body> void RenderAt(const ImVec2& size, Body&& body)
 	{
-		ImGuiIO &io = ImGui::GetIO();
+		ImGuiIO& io = ImGui::GetIO();
 		io.DisplaySize = size;
 		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 
@@ -49,8 +45,8 @@ protected:
 		ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
 		ImGui::SetNextWindowSize(size);
 		ImGui::Begin("ui_core_test", nullptr,
-			ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-			ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+		             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+		                 ImGuiWindowFlags_NoSavedSettings);
 		std::forward<Body>(body)();
 		ImGui::End();
 		ImGui::Render();
@@ -77,14 +73,14 @@ TEST(FeaturePlugin, ChannelHelpersRouteReleaseAndDevelopmentModules)
 
 TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
 {
-	EXPECT_TRUE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
-		false, "enable_questapp.flag", "enable_questapp.flag", ""));
-	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
-		true, "enable_questapp.flag", "enable_questapp.flag", ""));
-	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
-		false, "enable_smoothing.flag", "enable_questapp.flag", ""));
-	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(
-		false, "enable_questapp.flag", "enable_questapp.flag", "enable_questapp.flag"));
+	EXPECT_TRUE(
+	    openvr_pair::overlay::ShouldSelectDesktopDefaultTab(false, "enable_questapp.flag", "enable_questapp.flag", ""));
+	EXPECT_FALSE(
+	    openvr_pair::overlay::ShouldSelectDesktopDefaultTab(true, "enable_questapp.flag", "enable_questapp.flag", ""));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(false, "enable_smoothing.flag",
+	                                                                 "enable_questapp.flag", ""));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(false, "enable_questapp.flag",
+	                                                                 "enable_questapp.flag", "enable_questapp.flag"));
 }
 
 TEST(ShellUiLogic, CalibrationPluginOwnsUnifiedLogsPanel)
@@ -107,54 +103,50 @@ TEST(ShellFooter, ResolvesConnectionStateLikeSpaceCalibrator)
 	using openvr_pair::overlay::ResolveShellFooterConnectionState;
 	using openvr_pair::overlay::ShellFooterConnectionState;
 
-	EXPECT_EQ(ShellFooterConnectionState::Connected,
-		ResolveShellFooterConnectionState(true, false));
-	EXPECT_EQ(ShellFooterConnectionState::WaitingForSteamVR,
-		ResolveShellFooterConnectionState(false, false));
-	EXPECT_EQ(ShellFooterConnectionState::Disconnected,
-		ResolveShellFooterConnectionState(false, true));
+	EXPECT_EQ(ShellFooterConnectionState::Connected, ResolveShellFooterConnectionState(true, false));
+	EXPECT_EQ(ShellFooterConnectionState::WaitingForSteamVR, ResolveShellFooterConnectionState(false, false));
+	EXPECT_EQ(ShellFooterConnectionState::Disconnected, ResolveShellFooterConnectionState(false, true));
 }
 
 TEST(ShellSettings, PreservesMultipleShellKeys)
 {
 	const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
 	const std::filesystem::path dir =
-		std::filesystem::temp_directory_path() /
-		("wkopenvr-shellsettings-test-" + std::to_string(unique));
+	    std::filesystem::temp_directory_path() / ("wkopenvr-shellsettings-test-" + std::to_string(unique));
 
 	std::filesystem::remove_all(dir);
 	std::filesystem::create_directories(dir);
 
 	EXPECT_TRUE(openvr_pair::overlay::WriteShellSetting(dir.wstring(), "theme", "Dark"));
-	EXPECT_TRUE(openvr_pair::overlay::WriteShellSetting(
-		dir.wstring(), "desktop_default_module", "enable_smoothing.flag"));
+	EXPECT_TRUE(
+	    openvr_pair::overlay::WriteShellSetting(dir.wstring(), "desktop_default_module", "enable_smoothing.flag"));
 
 	EXPECT_EQ("Dark", openvr_pair::overlay::ReadShellSetting(dir.wstring(), "theme", ""));
-	EXPECT_EQ("enable_smoothing.flag", openvr_pair::overlay::ReadShellSetting(
-		dir.wstring(), "desktop_default_module", ""));
+	EXPECT_EQ("enable_smoothing.flag",
+	          openvr_pair::overlay::ReadShellSetting(dir.wstring(), "desktop_default_module", ""));
 
 	std::filesystem::remove_all(dir);
 }
 
 TEST_F(UiCoreTest, PanelAndSettingTableRenderAtSmallAndDashboardSizes)
 {
-	for (const ImVec2 size : { ImVec2(640.0f, 480.0f), ImVec2(1200.0f, 780.0f) }) {
+	for (const ImVec2 size : {ImVec2(640.0f, 480.0f), ImVec2(1200.0f, 780.0f)}) {
 		RenderAt(size, [] {
 			bool enabled = true;
 			int amount = 42;
 
 			openvr_pair::overlay::ui::DrawPanel("Settings", [&] {
-				openvr_pair::overlay::ui::DrawSettingTable("settings_grid", 160.0f,
-					[&](openvr_pair::overlay::ui::SettingTableScope &table) {
-						openvr_pair::overlay::ui::SettingRow(table, "Enabled", [&] {
-							openvr_pair::overlay::ui::CheckboxWithTooltip(
-								"##enabled", &enabled, "Controls whether this setting is active.");
-						});
-						openvr_pair::overlay::ui::SettingRow(table, "Amount", [&] {
-							openvr_pair::overlay::ui::SliderIntWithTooltip(
-								"##amount", &amount, 0, 100, "%d%%", "Shared integer slider.");
-						});
-					});
+				openvr_pair::overlay::ui::DrawSettingTable(
+				    "settings_grid", 160.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+					    openvr_pair::overlay::ui::SettingRow(table, "Enabled", [&] {
+						    openvr_pair::overlay::ui::CheckboxWithTooltip("##enabled", &enabled,
+						                                                  "Controls whether this setting is active.");
+					    });
+					    openvr_pair::overlay::ui::SettingRow(table, "Amount", [&] {
+						    openvr_pair::overlay::ui::SliderIntWithTooltip("##amount", &amount, 0, 100, "%d%%",
+						                                                   "Shared integer slider.");
+					    });
+				    });
 			});
 		});
 	}
@@ -165,12 +157,10 @@ TEST_F(UiCoreTest, TabHelpersRenderNestedScrollableContent)
 	RenderAt(ImVec2(1200.0f, 780.0f), [] {
 		openvr_pair::overlay::ui::TabBarScope tabs("tabs");
 		ASSERT_TRUE((bool)tabs);
-		openvr_pair::overlay::ui::DrawTabItem("Settings", [] {
-			openvr_pair::overlay::ui::DrawTextWrapped("Settings body");
-		});
-		openvr_pair::overlay::ui::DrawScrollableTabItem("Logs", [] {
-			openvr_pair::overlay::ui::DrawTextWrapped("Scrollable body");
-		});
+		openvr_pair::overlay::ui::DrawTabItem("Settings",
+		                                      [] { openvr_pair::overlay::ui::DrawTextWrapped("Settings body"); });
+		openvr_pair::overlay::ui::DrawScrollableTabItem(
+		    "Logs", [] { openvr_pair::overlay::ui::DrawTextWrapped("Scrollable body"); });
 	});
 }
 
@@ -187,10 +177,13 @@ TEST_F(UiCoreTest, BannersDisabledStateAndActionsRender)
 			disabled.AttachReasonTooltip();
 		}
 
-		openvr_pair::overlay::ui::DrawActionRow("actions", {
-			openvr_pair::overlay::ui::ActionButton{ "Primary", "Primary action.", false, nullptr, ImVec2(120.0f, 0.0f), [] {} },
-			openvr_pair::overlay::ui::ActionButton{ "Blocked", nullptr, true, "Blocked action.", ImVec2(120.0f, 0.0f), [] {} },
-		});
+		openvr_pair::overlay::ui::DrawActionRow(
+		    "actions", {
+		                   openvr_pair::overlay::ui::ActionButton{"Primary", "Primary action.", false, nullptr,
+		                                                          ImVec2(120.0f, 0.0f), [] {}},
+		                   openvr_pair::overlay::ui::ActionButton{"Blocked", nullptr, true, "Blocked action.",
+		                                                          ImVec2(120.0f, 0.0f), [] {}},
+		               });
 	});
 }
 

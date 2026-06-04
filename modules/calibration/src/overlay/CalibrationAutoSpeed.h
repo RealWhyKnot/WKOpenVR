@@ -4,7 +4,8 @@
 
 namespace spacecal::calibration_speed {
 
-enum class AutoSpeedBucket {
+enum class AutoSpeedBucket
+{
 	Fast,
 	Slow,
 	VerySlow,
@@ -36,9 +37,12 @@ inline AutoSpeedBucket BucketForObservedFitRmsMm(double fitRmsMm)
 inline const char* AutoSpeedBucketName(AutoSpeedBucket bucket)
 {
 	switch (bucket) {
-	case AutoSpeedBucket::Fast: return "Fast";
-	case AutoSpeedBucket::Slow: return "Slow";
-	case AutoSpeedBucket::VerySlow: return "Very Slow";
+		case AutoSpeedBucket::Fast:
+			return "Fast";
+		case AutoSpeedBucket::Slow:
+			return "Slow";
+		case AutoSpeedBucket::VerySlow:
+			return "Very Slow";
 	}
 	return "?";
 }

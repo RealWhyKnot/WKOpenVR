@@ -28,53 +28,51 @@ namespace phantom {
 class VirtualTrackerManager
 {
 public:
-    VirtualTrackerManager();
+	VirtualTrackerManager();
 
-    // Called once when the driver module activates. Captures the init
-    // timestamp used by the deferred-add gate.
-    void OnDriverInit();
+	// Called once when the driver module activates. Captures the init
+	// timestamp used by the deferred-add gate.
+	void OnDriverInit();
 
-    // Overlay-driven per-role toggle. Stored locally; the actual
-    // TrackedDeviceAdded happens lazily in MaybeActivate when the gate
-    // conditions are met.
-    void SetEnabled(BodyRole role, bool enabled);
-    bool IsEnabled(BodyRole role) const;
-    int EnabledCount() const;
+	// Overlay-driven per-role toggle. Stored locally; the actual
+	// TrackedDeviceAdded happens lazily in MaybeActivate when the gate
+	// conditions are met.
+	void SetEnabled(BodyRole role, bool enabled);
+	bool IsEnabled(BodyRole role) const;
+	int EnabledCount() const;
 
-    void SetMasterEnabled(bool enabled);
-    bool MasterEnabled() const;
+	void SetMasterEnabled(bool enabled);
+	bool MasterEnabled() const;
 
-    // Called every tick by PhantomModule (specifically when the HMD pose
-    // updates). Lazily activates pending virtual devices and pushes
-    // solver-derived poses on every already-activated device.
-    void Tick(const vr::DriverPose_t& hmd_pose,
-              const BodyCompletionResult& body,
-              double min_confidence);
+	// Called every tick by PhantomModule (specifically when the HMD pose
+	// updates). Lazily activates pending virtual devices and pushes
+	// solver-derived poses on every already-activated device.
+	void Tick(const vr::DriverPose_t& hmd_pose, const BodyCompletionResult& body, double min_confidence);
 
-    // Diagnostic: how many virtual devices are currently activated.
-    int ActiveCount() const;
+	// Diagnostic: how many virtual devices are currently activated.
+	int ActiveCount() const;
 
 private:
-    void MaybeActivate(BodyRole role);
+	void MaybeActivate(BodyRole role);
 
-    std::array<std::unique_ptr<VirtualTrackerDevice>, kBodyRoleCount> devices_{};
-    std::array<bool, kBodyRoleCount> enabled_{};
+	std::array<std::unique_ptr<VirtualTrackerDevice>, kBodyRoleCount> devices_{};
+	std::array<bool, kBodyRoleCount> enabled_{};
 
-    std::atomic<bool> master_enabled_{false};
-    std::atomic<bool> hmd_pose_seen_{false};
-    std::chrono::steady_clock::time_point init_time_{};
-    std::chrono::steady_clock::time_point last_diag_log_{};
-    uint64_t diag_ticks_ = 0;
-    uint64_t diag_published_ = 0;
-    uint64_t diag_skip_invalid_ = 0;
-    uint64_t diag_skip_confidence_ = 0;
+	std::atomic<bool> master_enabled_{false};
+	std::atomic<bool> hmd_pose_seen_{false};
+	std::chrono::steady_clock::time_point init_time_{};
+	std::chrono::steady_clock::time_point last_diag_log_{};
+	uint64_t diag_ticks_ = 0;
+	uint64_t diag_published_ = 0;
+	uint64_t diag_skip_invalid_ = 0;
+	uint64_t diag_skip_confidence_ = 0;
 
-    // Defer TrackedDeviceAdded for this long after driver init so SteamVR
-    // has time to enumerate real devices first. The exact duration is a
-    // tradeoff: too short and openvr#1536 regressions surface, too long
-    // and the user waits visibly for body trackers after launch. 3 s
-    // matches what SlimeVR and Amethyst settled on.
-    static constexpr std::chrono::milliseconds kInitSettleDelay{3000};
+	// Defer TrackedDeviceAdded for this long after driver init so SteamVR
+	// has time to enumerate real devices first. The exact duration is a
+	// tradeoff: too short and openvr#1536 regressions surface, too long
+	// and the user waits visibly for body trackers after launch. 3 s
+	// matches what SlimeVR and Amethyst settled on.
+	static constexpr std::chrono::milliseconds kInitSettleDelay{3000};
 };
 
 } // namespace phantom

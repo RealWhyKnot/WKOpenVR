@@ -213,13 +213,26 @@ if ($runHarness) {
 	if ($HarnessFilter) {
 		$harnessArgs += @("--filter", $HarnessFilter)
 	}
-	# WKOpenVR.exe is a WIN32-subsystem binary; under PowerShell stdio
-	# inheritance its stdout/stderr round-trip cleanly only when we let
-	# them flow through directly (no Invoke-NativeQuiet wrap, which
-	# truncates the per-scenario PASS/FAIL lines).
-	& $harnessExe @harnessArgs
-	if ($LASTEXITCODE -ne 0) {
-		throw "WKOpenVR.exe --test-harness failed (exit $LASTEXITCODE)"
+	# WKOpenVR.exe is a WIN32-subsystem binary. PowerShell does not wait for
+	# it through `& exe`, so use Start-Process and relay captured output.
+	$harnessStdout = [System.IO.Path]::GetTempFileName()
+	$harnessStderr = [System.IO.Path]::GetTempFileName()
+	try {
+		$p = Start-Process -FilePath $harnessExe -ArgumentList $harnessArgs `
+			-RedirectStandardOutput $harnessStdout `
+			-RedirectStandardError $harnessStderr `
+			-WindowStyle Hidden -Wait -PassThru
+		if (Test-Path -LiteralPath $harnessStdout) {
+			Get-Content -LiteralPath $harnessStdout | ForEach-Object { Write-Host $_ }
+		}
+		if (Test-Path -LiteralPath $harnessStderr) {
+			Get-Content -LiteralPath $harnessStderr | ForEach-Object { Write-Host $_ }
+		}
+		if ($p.ExitCode -ne 0) {
+			throw "WKOpenVR.exe --test-harness failed (exit $($p.ExitCode))"
+		}
+	} finally {
+		Remove-Item -LiteralPath $harnessStdout, $harnessStderr -Force -ErrorAction SilentlyContinue
 	}
 }
 

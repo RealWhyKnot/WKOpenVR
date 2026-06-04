@@ -52,10 +52,11 @@ struct PresenceCounts
 };
 
 // Decode the NUL-terminated path field of a snapshot body into a std::string.
-inline std::string PathFromSnapshotBody(const protocol::InputHealthSnapshotBody &b)
+inline std::string PathFromSnapshotBody(const protocol::InputHealthSnapshotBody& b)
 {
 	size_t n = 0;
-	while (n < protocol::INPUTHEALTH_PATH_LEN && b.path[n] != '\0') ++n;
+	while (n < protocol::INPUTHEALTH_PATH_LEN && b.path[n] != '\0')
+		++n;
 	return std::string(b.path, b.path + n);
 }
 
@@ -70,15 +71,21 @@ namespace detail {
 // inside the CountInputHealthPresence template can find them via ADL on the
 // inputhealth namespace.
 
-inline const protocol::InputHealthSnapshotBody &
-GetSnapshotBody(const protocol::InputHealthSnapshotBody &b) { return b; }
+inline const protocol::InputHealthSnapshotBody& GetSnapshotBody(const protocol::InputHealthSnapshotBody& b)
+{
+	return b;
+}
 
 template <typename K, typename V>
-inline const protocol::InputHealthSnapshotBody &
-GetSnapshotBody(const std::pair<const K, V> &kv) { return kv.second.body; }
+inline const protocol::InputHealthSnapshotBody& GetSnapshotBody(const std::pair<const K, V>& kv)
+{
+	return kv.second.body;
+}
 
-template <typename V>
-inline auto GetSnapshotBody(const V &v) -> decltype((v.body)) { return v.body; }
+template <typename V> inline auto GetSnapshotBody(const V& v) -> decltype((v.body))
+{
+	return v.body;
+}
 
 } // namespace detail
 
@@ -88,18 +95,17 @@ inline auto GetSnapshotBody(const V &v) -> decltype((v.body)) { return v.body; }
 // value), or any value with a `.body` field directly.
 //
 // Slots with handle == 0 are skipped entirely (empty/retired slots).
-template <typename Range>
-inline PresenceCounts CountInputHealthPresence(const Range &entries)
+template <typename Range> inline PresenceCounts CountInputHealthPresence(const Range& entries)
 {
 	PresenceCounts c{};
 	std::unordered_set<uint64_t> distinct_serials;
 
-	for (const auto &item : entries) {
-		const protocol::InputHealthSnapshotBody &body = detail::GetSnapshotBody(item);
+	for (const auto& item : entries) {
+		const protocol::InputHealthSnapshotBody& body = detail::GetSnapshotBody(item);
 		if (body.handle == 0) continue;
 
 		const std::string path = PathFromSnapshotBody(body);
-		const PathClass cls    = ClassifyInputPath(path);
+		const PathClass cls = ClassifyInputPath(path);
 
 		if (cls == PathClass::Unsupported) {
 			++c.unsupported_slots;
@@ -115,7 +121,8 @@ inline PresenceCounts CountInputHealthPresence(const Range &entries)
 
 		if (body.device_serial_hash == 0) {
 			++c.zero_hash_slots;
-		} else {
+		}
+		else {
 			distinct_serials.insert(body.device_serial_hash);
 		}
 	}

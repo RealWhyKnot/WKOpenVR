@@ -15,7 +15,7 @@
 // All functions are pure: no CalCtx access, no vr::* calls. Callers read
 // device-pose arrays and pass the extracted values here.
 
-#include "Calibration.h"  // HeadMountMode, HeadMountConfig
+#include "Calibration.h" // HeadMountMode, HeadMountConfig
 
 #include <cmath>
 
@@ -30,13 +30,11 @@ namespace spacecal::snap_suppression {
 //
 // When trackerSpeedMps < 0 (caller signals tracker invalid/unavailable) or
 // mode < Corroborate, returns hmdSpeedMps unchanged.
-inline double EffectiveSpeedMps(HeadMountMode mode,
-                                double hmdSpeedMps,
-                                double trackerSpeedMps)
+inline double EffectiveSpeedMps(HeadMountMode mode, double hmdSpeedMps, double trackerSpeedMps)
 {
-    if (mode < HeadMountMode::Corroborate) return hmdSpeedMps;
-    if (trackerSpeedMps < 0.0) return hmdSpeedMps;   // tracker invalid
-    return std::max(hmdSpeedMps, trackerSpeedMps);
+	if (mode < HeadMountMode::Corroborate) return hmdSpeedMps;
+	if (trackerSpeedMps < 0.0) return hmdSpeedMps; // tracker invalid
+	return std::max(hmdSpeedMps, trackerSpeedMps);
 }
 
 // Jump detection classification for the 30 cm auto-recovery site.
@@ -54,16 +52,14 @@ inline double EffectiveSpeedMps(HeadMountMode mode,
 //
 // Thresholds are per the plan spec and must not be tuned here without
 // updating the plan.
-constexpr double kSnapHmdJumpM        = 0.30;  // 30 cm
-constexpr double kSnapTrackerMaxDispM = 0.02;  // 2 cm
+constexpr double kSnapHmdJumpM = 0.30;        // 30 cm
+constexpr double kSnapTrackerMaxDispM = 0.02; // 2 cm
 
-inline bool IsJumpClassifiedAsSnap(HeadMountMode mode,
-                                   double hmdDeltaM,
-                                   double trackerDeltaM)
+inline bool IsJumpClassifiedAsSnap(HeadMountMode mode, double hmdDeltaM, double trackerDeltaM)
 {
-    if (mode < HeadMountMode::Corroborate) return false;
-    if (trackerDeltaM < 0.0) return false;  // tracker invalid; no corroboration
-    return hmdDeltaM >= kSnapHmdJumpM && trackerDeltaM < kSnapTrackerMaxDispM;
+	if (mode < HeadMountMode::Corroborate) return false;
+	if (trackerDeltaM < 0.0) return false; // tracker invalid; no corroboration
+	return hmdDeltaM >= kSnapHmdJumpM && trackerDeltaM < kSnapTrackerMaxDispM;
 }
 
 // Geometry-shift coherence source selection.
@@ -72,11 +68,10 @@ inline bool IsJumpClassifiedAsSnap(HeadMountMode mode,
 // the who_moved block should use the head-tracker's actual pose-to-pose
 // displacement rather than the velocity-integrated HMD estimate. Returns
 // true when the tracker displacement should be preferred.
-inline bool ShouldUseTrackerDisplacement(HeadMountMode mode,
-                                         double trackerDeltaM)
+inline bool ShouldUseTrackerDisplacement(HeadMountMode mode, double trackerDeltaM)
 {
-    if (mode < HeadMountMode::Corroborate) return false;
-    return trackerDeltaM >= 0.0;
+	if (mode < HeadMountMode::Corroborate) return false;
+	return trackerDeltaM >= 0.0;
 }
 
-}  // namespace spacecal::snap_suppression
+} // namespace spacecal::snap_suppression

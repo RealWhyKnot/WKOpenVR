@@ -13,14 +13,20 @@ namespace openvr_pair::overlay::ui {
 
 ImVec4 StatusColor(StatusTone tone)
 {
-	const SemanticPalette &pal = GetPalette();
+	const SemanticPalette& pal = GetPalette();
 	switch (tone) {
-	case StatusTone::Ok: return pal.statusOk;
-	case StatusTone::Pending: return pal.statusPending;
-	case StatusTone::Error: return pal.statusError;
-	case StatusTone::Warn: return pal.statusWarn;
-	case StatusTone::Info: return pal.statusInfo;
-	case StatusTone::Idle: return pal.statusIdle;
+		case StatusTone::Ok:
+			return pal.statusOk;
+		case StatusTone::Pending:
+			return pal.statusPending;
+		case StatusTone::Error:
+			return pal.statusError;
+		case StatusTone::Warn:
+			return pal.statusWarn;
+		case StatusTone::Info:
+			return pal.statusInfo;
+		case StatusTone::Idle:
+			return pal.statusIdle;
 	}
 	return pal.statusIdle;
 }
@@ -35,8 +41,7 @@ ScopedStyleColor::~ScopedStyleColor()
 	ImGui::PopStyleColor();
 }
 
-DisabledSection::DisabledSection(bool disabled, const char *whyTooltip)
-	: active(disabled), why(whyTooltip)
+DisabledSection::DisabledSection(bool disabled, const char* whyTooltip) : active(disabled), why(whyTooltip)
 {
 	if (active) ImGui::BeginDisabled();
 }
@@ -53,70 +58,70 @@ void DisabledSection::AttachReasonTooltip() const
 	}
 }
 
-void TooltipForLastItem(const char *tooltip)
+void TooltipForLastItem(const char* tooltip)
 {
 	if (tooltip && tooltip[0] != '\0' && ImGui::IsItemHovered()) {
 		ImGui::SetTooltip("%s", tooltip);
 	}
 }
 
-void TooltipOnHover(const char *tooltip)
+void TooltipOnHover(const char* tooltip)
 {
 	TooltipForLastItem(tooltip);
 }
 
-bool CheckboxWithTooltip(const char *label, bool *value, const char *tooltip)
+bool CheckboxWithTooltip(const char* label, bool* value, const char* tooltip)
 {
 	const bool changed = ImGui::Checkbox(label, value);
 	TooltipForLastItem(tooltip);
 	return changed;
 }
 
-bool SliderIntWithTooltip(const char *label, int *value, int min, int max, const char *format, const char *tooltip)
+bool SliderIntWithTooltip(const char* label, int* value, int min, int max, const char* format, const char* tooltip)
 {
 	const bool changed = ImGui::SliderInt(label, value, min, max, format);
 	TooltipForLastItem(tooltip);
 	return changed;
 }
 
-bool RadioButtonWithTooltip(const char *label, bool active, const char *tooltip)
+bool RadioButtonWithTooltip(const char* label, bool active, const char* tooltip)
 {
 	const bool clicked = ImGui::RadioButton(label, active);
 	TooltipForLastItem(tooltip);
 	return clicked;
 }
 
-void DrawHelpMarker(const char *tooltip)
+void DrawHelpMarker(const char* tooltip)
 {
 	if (!tooltip || tooltip[0] == '\0') return;
 	ImGui::TextDisabled("(?)");
 	TooltipForLastItem(tooltip);
 }
 
-void DrawTextWrapped(const char *text)
+void DrawTextWrapped(const char* text)
 {
 	if (!text) return;
 	ImGui::TextWrapped("%s", text);
 }
 
-void DrawTextWrapped(const std::string &text)
+void DrawTextWrapped(const std::string& text)
 {
 	DrawTextWrapped(text.c_str());
 }
 
-void DrawColoredText(const char *text, ImVec4 color)
+void DrawColoredText(const char* text, ImVec4 color)
 {
 	if (!text) return;
 	ImGui::TextColored(color, "%s", text);
 }
 
-void DrawStatusText(const char *text, StatusTone tone)
+void DrawStatusText(const char* text, StatusTone tone)
 {
 	if (!text) return;
 	ImGui::TextColored(StatusColor(tone), "%s", text);
 }
 
-void DrawEmptyState(const char *text)
+void DrawEmptyState(const char* text)
 {
 	if (!text) return;
 	ImGui::TextDisabled("%s", text);
@@ -124,7 +129,7 @@ void DrawEmptyState(const char *text)
 
 void DrawStatusDot(ImU32 color)
 {
-	ImDrawList *dl = ImGui::GetWindowDrawList();
+	ImDrawList* dl = ImGui::GetWindowDrawList();
 	const float h = ImGui::GetTextLineHeight();
 	const float r = h * 0.32f;
 	const ImVec2 cursor = ImGui::GetCursorScreenPos();
@@ -134,7 +139,7 @@ void DrawStatusDot(ImU32 color)
 	ImGui::SameLine();
 }
 
-void RightAlignText(const char *text, ImVec4 color, bool colored)
+void RightAlignText(const char* text, ImVec4 color, bool colored)
 {
 	if (!text) return;
 	const float colW = ImGui::GetContentRegionAvail().x;
@@ -144,12 +149,13 @@ void RightAlignText(const char *text, ImVec4 color, bool colored)
 	ImGui::SameLine(0.0f, 0.0f);
 	if (colored) {
 		ImGui::TextColored(color, "%s", text);
-	} else {
+	}
+	else {
 		ImGui::TextDisabled("%s", text);
 	}
 }
 
-bool CopyToClipboardButton(const char *id, const char *text)
+bool CopyToClipboardButton(const char* id, const char* text)
 {
 	if (!id || !text) return false;
 	ImGui::PushID(id);
@@ -172,12 +178,13 @@ bool CopyWideTextToClipboard(std::wstring_view text)
 		CloseClipboard();
 		return false;
 	}
-	if (auto *buf = static_cast<wchar_t *>(GlobalLock(h))) {
+	if (auto* buf = static_cast<wchar_t*>(GlobalLock(h))) {
 		memcpy(buf, text.data(), text.size() * sizeof(wchar_t));
 		buf[text.size()] = L'\0';
 		GlobalUnlock(h);
 		SetClipboardData(CF_UNICODETEXT, h);
-	} else {
+	}
+	else {
 		GlobalFree(h);
 		CloseClipboard();
 		return false;
@@ -186,7 +193,7 @@ bool CopyWideTextToClipboard(std::wstring_view text)
 	return true;
 }
 
-void DrawFilePath(const char *path)
+void DrawFilePath(const char* path)
 {
 	if (!path || !path[0]) return;
 	const float avail = ImGui::GetContentRegionAvail().x;
@@ -218,9 +225,11 @@ std::string FormatByteCount(uint64_t bytes)
 	char buf[64];
 	if (bytes >= (1ull << 20)) {
 		snprintf(buf, sizeof buf, "%.1f MB", static_cast<double>(bytes) / static_cast<double>(1ull << 20));
-	} else if (bytes >= (1ull << 10)) {
+	}
+	else if (bytes >= (1ull << 10)) {
 		snprintf(buf, sizeof buf, "%.0f KB", static_cast<double>(bytes) / static_cast<double>(1ull << 10));
-	} else {
+	}
+	else {
 		snprintf(buf, sizeof buf, "%llu B", static_cast<unsigned long long>(bytes));
 	}
 	return buf;
@@ -237,11 +246,14 @@ std::string FormatFileAgeSeconds(uint64_t ageSeconds)
 	char buf[64];
 	if (ageSeconds < 60) {
 		snprintf(buf, sizeof buf, "%llus ago", static_cast<unsigned long long>(ageSeconds));
-	} else if (ageSeconds < 3600) {
+	}
+	else if (ageSeconds < 3600) {
 		snprintf(buf, sizeof buf, "%llum ago", static_cast<unsigned long long>(ageSeconds / 60));
-	} else if (ageSeconds < 86400) {
+	}
+	else if (ageSeconds < 86400) {
 		snprintf(buf, sizeof buf, "%lluh ago", static_cast<unsigned long long>(ageSeconds / 3600));
-	} else {
+	}
+	else {
 		snprintf(buf, sizeof buf, "%llud ago", static_cast<unsigned long long>(ageSeconds / 86400));
 	}
 	return buf;
@@ -262,9 +274,9 @@ std::string FormatFileAgeFromFileTime(uint64_t mtimeFileTime)
 	return FormatFileAgeFromFileTime(mtimeFileTime, now);
 }
 
-void DrawBanner(const char *title, const char *detail, ImVec4 background, ImVec4 titleColor, ImVec4 detailColor)
+void DrawBanner(const char* title, const char* detail, ImVec4 background, ImVec4 titleColor, ImVec4 detailColor)
 {
-	const ImGuiStyle &style = ImGui::GetStyle();
+	const ImGuiStyle& style = ImGui::GetStyle();
 	const float width = ImGui::GetContentRegionAvail().x;
 	if (width <= 1.0f) return;
 
@@ -272,18 +284,14 @@ void DrawBanner(const char *title, const char *detail, ImVec4 background, ImVec4
 	const float wrapWidth = std::max(1.0f, width - padding.x * 2.0f);
 	const bool hasTitle = title && title[0] != '\0';
 	const bool hasDetail = detail && detail[0] != '\0';
-	const float titleHeight = hasTitle
-		? ImGui::CalcTextSize(title, nullptr, false, wrapWidth).y
-		: 0.0f;
-	const float detailHeight = hasDetail
-		? ImGui::CalcTextSize(detail, nullptr, false, wrapWidth).y
-		: 0.0f;
+	const float titleHeight = hasTitle ? ImGui::CalcTextSize(title, nullptr, false, wrapWidth).y : 0.0f;
+	const float detailHeight = hasDetail ? ImGui::CalcTextSize(detail, nullptr, false, wrapWidth).y : 0.0f;
 	const float gap = (hasTitle && hasDetail) ? style.ItemSpacing.y * 0.5f : 0.0f;
 	const float height = padding.y * 2.0f + titleHeight + gap + detailHeight;
 
 	const ImVec2 rectMin = ImGui::GetCursorScreenPos();
 	const ImVec2 rectMax(rectMin.x + width, rectMin.y + height);
-	ImDrawList *dl = ImGui::GetWindowDrawList();
+	ImDrawList* dl = ImGui::GetWindowDrawList();
 	dl->AddRectFilled(rectMin, rectMax, ImGui::GetColorU32(background), 6.0f);
 	dl->AddRect(rectMin, rectMax, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.12f)), 6.0f);
 
@@ -302,25 +310,25 @@ void DrawBanner(const char *title, const char *detail, ImVec4 background, ImVec4
 	ImGui::Dummy(ImVec2(width, 0.0f));
 }
 
-void DrawErrorBanner(const char *title, const char *detail)
+void DrawErrorBanner(const char* title, const char* detail)
 {
-	const SemanticPalette &pal = GetPalette();
+	const SemanticPalette& pal = GetPalette();
 	DrawBanner(title, detail, pal.bannerErrorBg, pal.bannerErrorTitle, pal.bannerErrorDetail);
 }
 
-void DrawWaitingBanner(const char *message)
+void DrawWaitingBanner(const char* message)
 {
-	const SemanticPalette &pal = GetPalette();
+	const SemanticPalette& pal = GetPalette();
 	DrawBanner("Waiting", message, pal.bannerWarnBg, pal.bannerWarnTitle, pal.bannerWarnDetail);
 }
 
-void DrawInfoBanner(const char *title, const char *detail)
+void DrawInfoBanner(const char* title, const char* detail)
 {
-	const SemanticPalette &pal = GetPalette();
+	const SemanticPalette& pal = GetPalette();
 	DrawBanner(title, detail, pal.bannerInfoBg, pal.bannerInfoText, pal.bannerInfoText);
 }
 
-void DrawSectionHeading(const char *label)
+void DrawSectionHeading(const char* label)
 {
 	if (!label) return;
 	ImGui::Spacing();
@@ -328,13 +336,14 @@ void DrawSectionHeading(const char *label)
 	ImGui::SeparatorText(label);
 }
 
-bool ActionButtonWidget(const ActionButton &button)
+bool ActionButtonWidget(const ActionButton& button)
 {
 	DisabledSection disabled(button.disabled, button.disabledTooltip);
 	const bool clicked = ImGui::Button(button.label ? button.label : "", button.size);
 	if (button.disabled) {
 		disabled.AttachReasonTooltip();
-	} else {
+	}
+	else {
 		TooltipForLastItem(button.tooltip);
 	}
 	if (clicked && !button.disabled && button.onClick) {
@@ -343,12 +352,12 @@ bool ActionButtonWidget(const ActionButton &button)
 	return clicked && !button.disabled;
 }
 
-int DrawActionRow(const char *id, std::initializer_list<ActionButton> buttons)
+int DrawActionRow(const char* id, std::initializer_list<ActionButton> buttons)
 {
 	ImGui::PushID(id ? id : "##action_row");
 	int clickedIndex = -1;
 	int index = 0;
-	for (const ActionButton &button : buttons) {
+	for (const ActionButton& button : buttons) {
 		if (index > 0) ImGui::SameLine();
 		if (ActionButtonWidget(button)) clickedIndex = index;
 		++index;

@@ -11,7 +11,8 @@ namespace openvr_pair::overlay::testharness {
 
 namespace {
 
-inline MockCall MakeCall(MockCallKind kind) {
+inline MockCall MakeCall(MockCallKind kind)
+{
 	MockCall c;
 	c.kind = kind;
 	return c;
@@ -19,17 +20,17 @@ inline MockCall MakeCall(MockCallKind kind) {
 
 } // namespace
 
-MockServerDriverHost::MockServerDriverHost(MockOpenVRRuntime &owner) : owner_(owner) {}
+MockServerDriverHost::MockServerDriverHost(MockOpenVRRuntime& owner) : owner_(owner) {}
 
-uint32_t MockServerDriverHost::FindDeviceBySerial(const std::string &serial) const {
+uint32_t MockServerDriverHost::FindDeviceBySerial(const std::string& serial) const
+{
 	std::lock_guard<std::mutex> lock(mu_);
 	auto it = serial_to_id_.find(serial);
 	return it == serial_to_id_.end() ? UINT32_MAX : it->second;
 }
 
-bool MockServerDriverHost::TrackedDeviceAdded(const char *pchDeviceSerialNumber,
-	vr::ETrackedDeviceClass eDeviceClass,
-	vr::ITrackedDeviceServerDriver *pDriver)
+bool MockServerDriverHost::TrackedDeviceAdded(const char* pchDeviceSerialNumber, vr::ETrackedDeviceClass eDeviceClass,
+                                              vr::ITrackedDeviceServerDriver* pDriver)
 {
 	if (pchDeviceSerialNumber == nullptr) return false;
 	const std::string serial(pchDeviceSerialNumber);
@@ -53,8 +54,8 @@ bool MockServerDriverHost::TrackedDeviceAdded(const char *pchDeviceSerialNumber,
 	return true;
 }
 
-void MockServerDriverHost::TrackedDevicePoseUpdated(uint32_t unWhichDevice,
-	const vr::DriverPose_t &newPose, uint32_t /*unPoseStructSize*/)
+void MockServerDriverHost::TrackedDevicePoseUpdated(uint32_t unWhichDevice, const vr::DriverPose_t& newPose,
+                                                    uint32_t /*unPoseStructSize*/)
 {
 	MockCall call = MakeCall(MockCallKind::TrackedDevicePoseUpdated);
 	call.device_id = unWhichDevice;
@@ -69,27 +70,27 @@ void MockServerDriverHost::TrackedDevicePoseUpdated(uint32_t unWhichDevice,
 
 void MockServerDriverHost::VsyncEvent(double /*vsyncTimeOffsetSeconds*/) {}
 
-void MockServerDriverHost::VendorSpecificEvent(uint32_t /*unWhichDevice*/,
-	vr::EVREventType /*eventType*/, const vr::VREvent_Data_t & /*eventData*/,
-	double /*eventTimeOffset*/) {}
+void MockServerDriverHost::VendorSpecificEvent(uint32_t /*unWhichDevice*/, vr::EVREventType /*eventType*/,
+                                               const vr::VREvent_Data_t& /*eventData*/, double /*eventTimeOffset*/)
+{
+}
 
-bool MockServerDriverHost::IsExiting() {
+bool MockServerDriverHost::IsExiting()
+{
 	return exiting_;
 }
 
-bool MockServerDriverHost::PollNextEvent(vr::VREvent_t * /*pEvent*/,
-	uint32_t /*uncbVREvent*/)
+bool MockServerDriverHost::PollNextEvent(vr::VREvent_t* /*pEvent*/, uint32_t /*uncbVREvent*/)
 {
 	return false;
 }
 
 void MockServerDriverHost::GetRawTrackedDevicePoses(float /*fPredictedSecondsFromNow*/,
-	vr::TrackedDevicePose_t *pTrackedDevicePoseArray,
-	uint32_t unTrackedDevicePoseArrayCount)
+                                                    vr::TrackedDevicePose_t* pTrackedDevicePoseArray,
+                                                    uint32_t unTrackedDevicePoseArrayCount)
 {
 	if (pTrackedDevicePoseArray == nullptr) return;
-	std::memset(pTrackedDevicePoseArray, 0,
-		sizeof(vr::TrackedDevicePose_t) * unTrackedDevicePoseArrayCount);
+	std::memset(pTrackedDevicePoseArray, 0, sizeof(vr::TrackedDevicePose_t) * unTrackedDevicePoseArrayCount);
 	for (uint32_t i = 0; i < unTrackedDevicePoseArrayCount; ++i) {
 		pTrackedDevicePoseArray[i].mDeviceToAbsoluteTracking.m[0][0] = 1.0f;
 		pTrackedDevicePoseArray[i].mDeviceToAbsoluteTracking.m[1][1] = 1.0f;
@@ -97,30 +98,33 @@ void MockServerDriverHost::GetRawTrackedDevicePoses(float /*fPredictedSecondsFro
 	}
 }
 
-void MockServerDriverHost::RequestRestart(const char *pchLocalizedReason,
-	const char * /*pchExecutableToStart*/, const char * /*pchArguments*/,
-	const char * /*pchWorkingDirectory*/)
+void MockServerDriverHost::RequestRestart(const char* pchLocalizedReason, const char* /*pchExecutableToStart*/,
+                                          const char* /*pchArguments*/, const char* /*pchWorkingDirectory*/)
 {
 	MockCall call = MakeCall(MockCallKind::RequestRestart);
 	if (pchLocalizedReason) call.text = pchLocalizedReason;
 	owner_.recorder().Push(std::move(call));
 }
 
-uint32_t MockServerDriverHost::GetFrameTimings(vr::Compositor_FrameTiming * /*pTiming*/,
-	uint32_t /*nFrames*/)
+uint32_t MockServerDriverHost::GetFrameTimings(vr::Compositor_FrameTiming* /*pTiming*/, uint32_t /*nFrames*/)
 {
 	return 0;
 }
 
-void MockServerDriverHost::SetDisplayEyeToHead(uint32_t /*unWhichDevice*/,
-	const vr::HmdMatrix34_t & /*eyeToHeadLeft*/,
-	const vr::HmdMatrix34_t & /*eyeToHeadRight*/) {}
+void MockServerDriverHost::SetDisplayEyeToHead(uint32_t /*unWhichDevice*/, const vr::HmdMatrix34_t& /*eyeToHeadLeft*/,
+                                               const vr::HmdMatrix34_t& /*eyeToHeadRight*/)
+{
+}
 
-void MockServerDriverHost::SetDisplayProjectionRaw(uint32_t /*unWhichDevice*/,
-	const vr::HmdRect2_t & /*eyeLeft*/, const vr::HmdRect2_t & /*eyeRight*/) {}
+void MockServerDriverHost::SetDisplayProjectionRaw(uint32_t /*unWhichDevice*/, const vr::HmdRect2_t& /*eyeLeft*/,
+                                                   const vr::HmdRect2_t& /*eyeRight*/)
+{
+}
 
-void MockServerDriverHost::SetRecommendedRenderTargetSize(uint32_t /*unWhichDevice*/,
-	uint32_t /*nWidth*/, uint32_t /*nHeight*/) {}
+void MockServerDriverHost::SetRecommendedRenderTargetSize(uint32_t /*unWhichDevice*/, uint32_t /*nWidth*/,
+                                                          uint32_t /*nHeight*/)
+{
+}
 
 } // namespace openvr_pair::overlay::testharness
 

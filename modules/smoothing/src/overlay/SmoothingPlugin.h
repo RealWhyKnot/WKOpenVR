@@ -11,14 +11,14 @@
 class SmoothingPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
 public:
-	const char *Name() const override { return ModuleName(ModuleId::Smoothing); }
-	const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::Smoothing); }
-	const char *PipeName() const override { return ModulePipeName(ModuleId::Smoothing); }
+	const char* Name() const override { return ModuleName(ModuleId::Smoothing); }
+	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::Smoothing); }
+	const char* PipeName() const override { return ModulePipeName(ModuleId::Smoothing); }
 
-	void OnStart(openvr_pair::overlay::ShellContext &context) override;
-	void Tick(openvr_pair::overlay::ShellContext &context) override;
-	void DrawTab(openvr_pair::overlay::ShellContext &context) override;
-	void DrawLogsSection(openvr_pair::overlay::ShellContext &context) override;
+	void OnStart(openvr_pair::overlay::ShellContext& context) override;
+	void Tick(openvr_pair::overlay::ShellContext& context) override;
+	void DrawTab(openvr_pair::overlay::ShellContext& context) override;
+	void DrawLogsSection(openvr_pair::overlay::ShellContext& context) override;
 
 private:
 	SmoothingConfig cfg_ = LoadConfig();
@@ -42,12 +42,12 @@ private:
 	std::chrono::steady_clock::time_point lastPredictionReplayScan_{};
 
 	bool ConnectIfNeeded();
-	void SendConfig();                                        // finger smoothing config
+	void SendConfig();                                            // finger smoothing config
 	void SendDevicePrediction(uint32_t openVRID, int smoothness); // per-device prediction
-	void ReplayDevicePredictions(const char *reason);          // resend whole map on connect/device changes
+	void ReplayDevicePredictions(const char* reason);             // resend whole map on connect/device changes
 	void TickPredictionRestore();
 	void TickExternalToolDetection();
-	void TickCalibrationLockClear();                          // zero driver slots when locks change
+	void TickCalibrationLockClear(); // zero driver slots when locks change
 	void DrawSettingsTab();
 	void DrawAdvancedTab();
 	void DrawLogsTab();

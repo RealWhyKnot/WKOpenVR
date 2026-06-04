@@ -8,7 +8,7 @@
 namespace openvr_pair::common {
 namespace {
 
-uint64_t FileTimeToU64(const FILETIME &ft)
+uint64_t FileTimeToU64(const FILETIME& ft)
 {
 	ULARGE_INTEGER q{};
 	q.LowPart = ft.dwLowDateTime;
@@ -18,12 +18,10 @@ uint64_t FileTimeToU64(const FILETIME &ft)
 
 } // namespace
 
-std::wstring TimestampedLogFileName(std::wstring_view prefix, const SYSTEMTIME &utc)
+std::wstring TimestampedLogFileName(std::wstring_view prefix, const SYSTEMTIME& utc)
 {
-	const int dateLen = GetDateFormatEx(
-		LOCALE_NAME_INVARIANT, 0, &utc, L"yyyy-MM-dd", nullptr, 0, nullptr);
-	const int timeLen = GetTimeFormatEx(
-		LOCALE_NAME_INVARIANT, 0, &utc, L"HH-mm-ss", nullptr, 0);
+	const int dateLen = GetDateFormatEx(LOCALE_NAME_INVARIANT, 0, &utc, L"yyyy-MM-dd", nullptr, 0, nullptr);
+	const int timeLen = GetTimeFormatEx(LOCALE_NAME_INVARIANT, 0, &utc, L"HH-mm-ss", nullptr, 0);
 	if (dateLen <= 0 || timeLen <= 0) return {};
 
 	std::vector<wchar_t> date(static_cast<size_t>(dateLen));
@@ -44,10 +42,7 @@ std::wstring TimestampedLogFileName(std::wstring_view prefix, const SYSTEMTIME &
 	return name;
 }
 
-void DeleteOldLogFiles(
-	const std::wstring &directory,
-	std::wstring_view prefix,
-	std::chrono::hours maxAge)
+void DeleteOldLogFiles(const std::wstring& directory, std::wstring_view prefix, std::chrono::hours maxAge)
 {
 	if (directory.empty() || prefix.empty() || maxAge.count() <= 0) return;
 
@@ -57,8 +52,7 @@ void DeleteOldLogFiles(
 	if (!SystemTimeToFileTime(&nowSystem, &nowFile)) return;
 
 	const uint64_t now = FileTimeToU64(nowFile);
-	const uint64_t age100ns =
-		static_cast<uint64_t>(maxAge.count()) * 3600ULL * 10ULL * 1000ULL * 1000ULL;
+	const uint64_t age100ns = static_cast<uint64_t>(maxAge.count()) * 3600ULL * 10ULL * 1000ULL * 1000ULL;
 	const uint64_t cutoff = (now > age100ns) ? now - age100ns : 0;
 
 	std::wstring search = directory;

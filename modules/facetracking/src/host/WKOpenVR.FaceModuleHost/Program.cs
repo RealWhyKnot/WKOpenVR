@@ -1,21 +1,23 @@
+using System.Numerics;
 using WKOpenVR.FaceModuleHost;
 using WKOpenVR.FaceModuleHost.Logging;
 using WKOpenVR.FaceModuleHost.Workers;
 using WKOpenVR.FaceTracking.Registry;
-using System.Numerics;
 
 var opts = HostOptions.FromArgs(args);
-var cts  = new CancellationTokenSource();
-var ct   = cts.Token;
+var cts = new CancellationTokenSource();
+CancellationToken ct = cts.Token;
 
 var logger = new HostLogger(logFilePath: opts.LogFilePath, forceEnabled: opts.DebugLoggingEnabled);
 logger.Info("[startup] phase=logger-open");
 logger.Info($"[startup] paths root={AppPaths.RootDir()} logs={AppPaths.LogsDir()} modules={opts.ModulesInstallDir} status={opts.StatusFilePath}");
 
-AppDomain.CurrentDomain.UnhandledException += (s, e) => {
+AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+{
     try { logger.Error($"[crash] AppDomain.UnhandledException: {e.ExceptionObject}"); logger.Flush(); } catch { }
 };
-TaskScheduler.UnobservedTaskException += (s, e) => {
+TaskScheduler.UnobservedTaskException += (s, e) =>
+{
     try { logger.Error($"[crash] TaskScheduler.UnobservedTaskException: {e.Exception}"); logger.Flush(); e.SetObserved(); } catch { }
 };
 logger.Info("[startup] phase=crash-handlers-installed");
@@ -53,7 +55,7 @@ else
 logger.Info("[startup] phase=singleton-acquired");
 
 // Verify the subprocess EXE is present before opening any IPC.
-var hostDir      = Path.GetDirectoryName(typeof(Program).Assembly.Location) ?? AppContext.BaseDirectory;
+var hostDir = Path.GetDirectoryName(typeof(Program).Assembly.Location) ?? AppContext.BaseDirectory;
 var subprocessExe = Path.Combine(hostDir, "WKOpenVR.FaceModuleProcess.exe");
 logger.Info($"[startup] subprocess-exe-path={subprocessExe} (exists={File.Exists(subprocessExe)})");
 if (!File.Exists(subprocessExe))
@@ -85,22 +87,22 @@ var registry = RegistryClient.Create();
 logger.Info("[startup] phase=registry-client-created");
 logger.Flush();
 
-var loader   = new SubprocessManager(opts, logger);
+var loader = new SubprocessManager(opts, logger);
 logger.Info("[startup] phase=subprocess-manager-created");
 logger.Flush();
 
-var writer   = new FrameWriter(opts.ShmemName, logger);
+var writer = new FrameWriter(opts.ShmemName, logger);
 logger.Info("[startup] phase=frame-writer-created");
 logger.Flush();
 
 logger.Info($"[startup] phase=opening-ipc-pipe pipe={opts.DriverHandshakePipe}");
 logger.Flush();
 // Pass the same CTS so MsgShutdown cancels all workers.
-var pipe     = new HostControlPipeServer(opts.DriverHandshakePipe, loader, logger, cts);
+var pipe = new HostControlPipeServer(opts.DriverHandshakePipe, loader, logger, cts);
 logger.Info("[startup] phase=ipc-pipe-created");
 logger.Flush();
 
-var status   = new HostStatusWriter(opts.StatusFilePath, loader, logger, opts);
+var status = new HostStatusWriter(opts.StatusFilePath, loader, logger, opts);
 logger.Info("[startup] phase=status-writer-created");
 logger.Flush();
 
@@ -122,7 +124,7 @@ try
 
     logger.Info($"[startup] phase=discovering-modules path={opts.ModulesInstallDir}");
     logger.Flush();
-    var loadedModules = await loader.LoadAllAsync();
+    IReadOnlyList<DiscoveredModule> loadedModules = await loader.LoadAllAsync();
     logger.Info($"[startup] phase=modules-loaded count={loadedModules.Count}");
     logger.Flush();
     // (Expression remap moved to the driver; the host now forwards the
@@ -142,7 +144,7 @@ try
     logger.Info("[startup] phase=running");
 
     // Surface any worker fault rather than silently discarding it.
-    var finishedTask = await Task.WhenAny(workers);
+    Task finishedTask = await Task.WhenAny(workers);
     try
     {
         await finishedTask;
@@ -220,9 +222,11 @@ static async Task RunRegistryPollAsync(
         try
         {
             await Task.Delay(TimeSpan.FromHours(6), ct);
-            var index = await registry.GetIndexAsync(ct);
+            IndexDocument? index = await registry.GetIndexAsync(ct);
             if (index is not null)
+            {
                 logger.Info($"Registry index refreshed: {index.Modules.Length} module(s) listed.");
+            }
         }
         catch (OperationCanceledException) { break; }
         catch (Exception ex)
@@ -254,9 +258,9 @@ static async Task<int> RunE2eFakeFramesAsync(
 
         var eye = new EyeFrameSink
         {
-            LeftOpenness       = 0.62f,
-            RightOpenness      = 0.58f,
-            PupilDilationLeft  = 0.33f,
+            LeftOpenness = 0.62f,
+            RightOpenness = 0.58f,
+            PupilDilationLeft = 0.33f,
             PupilDilationRight = 0.37f,
         };
         eye.Left.OriginHmd = new Vector3(-0.032f, 0.012f, -0.045f);
@@ -272,9 +276,9 @@ static async Task<int> RunE2eFakeFramesAsync(
         // aliases that bridge upstream's later renames to our pre-rename
         // names (MouthCornerPull -> MouthSmile).
         float[] upstreamShapes = new float[FrameWriter.UpstreamShapeCount];
-        const int kUpstreamJawOpenIndex            = 22;
-        const int kUpstreamMouthCornerPullLeftIdx  = 57; // upstream v5 name
-        upstreamShapes[kUpstreamJawOpenIndex]           = 0.75f;
+        const int kUpstreamJawOpenIndex = 22;
+        const int kUpstreamMouthCornerPullLeftIdx = 57; // upstream v5 name
+        upstreamShapes[kUpstreamJawOpenIndex] = 0.75f;
         upstreamShapes[kUpstreamMouthCornerPullLeftIdx] = 0.25f;
 
         logger.Info("[e2e] phase=publishing-frames");
@@ -290,7 +294,9 @@ static async Task<int> RunE2eFakeFramesAsync(
                 ct);
             framesWritten++;
             if (opts.E2eFakeFrameIntervalMs > 0)
+            {
                 await Task.Delay(opts.E2eFakeFrameIntervalMs, ct);
+            }
         }
 
         HostStatusWriter.WriteE2eStatus(

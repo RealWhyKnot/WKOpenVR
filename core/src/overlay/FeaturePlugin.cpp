@@ -3,7 +3,7 @@
 
 namespace openvr_pair::overlay {
 
-bool FeaturePlugin::IsInstalled(ShellContext &context) const
+bool FeaturePlugin::IsInstalled(ShellContext& context) const
 {
 	return context.IsFlagPresent(FlagFileName());
 }

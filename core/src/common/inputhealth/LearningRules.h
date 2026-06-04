@@ -43,64 +43,47 @@ inline bool IsOneSidedScalar(uint8_t scalar_units)
 	return scalar_units == kOpenVrScalarUnitsNormalizedOneSided;
 }
 
-inline bool ScalarMetadataAllowsCompensation(
-	uint8_t kind,
-	const std::string &path,
-	uint8_t scalar_type,
-	uint8_t scalar_units)
+inline bool ScalarMetadataAllowsCompensation(uint8_t kind, const std::string& path, uint8_t scalar_type,
+                                             uint8_t scalar_units)
 {
 	if (!IsAbsoluteScalar(scalar_type)) return false;
 
 	const PathFamily family = ClassifyPathFamily(path);
 	if (IsTriggerRemapFamily(family) || IsIdleFloorFamily(family)) {
-		return kind == protocol::InputHealthCompScalarSingle &&
-			IsOneSidedScalar(scalar_units);
+		return kind == protocol::InputHealthCompScalarSingle && IsOneSidedScalar(scalar_units);
 	}
 
 	if (IsThumbstickAxisFamily(family)) {
-		return (kind == protocol::InputHealthCompStickX ||
-			kind == protocol::InputHealthCompStickY) &&
-			IsTwoSidedScalar(scalar_units);
+		return (kind == protocol::InputHealthCompStickX || kind == protocol::InputHealthCompStickY) &&
+		       IsTwoSidedScalar(scalar_units);
 	}
 
 	return false;
 }
 
-inline bool ScalarMetadataAllowsLearning(
-	PathFamily family,
-	const std::string &path,
-	uint8_t kind,
-	uint8_t scalar_type,
-	uint8_t scalar_units)
+inline bool ScalarMetadataAllowsLearning(PathFamily family, const std::string& path, uint8_t kind, uint8_t scalar_type,
+                                         uint8_t scalar_units)
 {
 	if (!AllowsPersistentScalarLearning(family)) return false;
 	return ScalarMetadataAllowsCompensation(kind, path, scalar_type, scalar_units);
 }
 
-inline bool ScalarMetadataAllowsLearning(
-	PathClass path_class,
-	const std::string &path,
-	uint8_t kind,
-	uint8_t scalar_type,
-	uint8_t scalar_units)
+inline bool ScalarMetadataAllowsLearning(PathClass path_class, const std::string& path, uint8_t kind,
+                                         uint8_t scalar_type, uint8_t scalar_units)
 {
 	if (!IsCompensationPath(path_class)) return false;
-	return ScalarMetadataAllowsLearning(
-		ClassifyPathFamily(path), path, kind, scalar_type, scalar_units);
+	return ScalarMetadataAllowsLearning(ClassifyPathFamily(path), path, kind, scalar_type, scalar_units);
 }
 
 inline bool IsStrictStickRest(float x, float y, bool buttons_quiet)
 {
-	return buttons_quiet &&
-		std::fabs(x) < kStrictRestThreshold &&
-		std::fabs(y) < kStrictRestThreshold;
+	return buttons_quiet && std::fabs(x) < kStrictRestThreshold && std::fabs(y) < kStrictRestThreshold;
 }
 
 inline bool IsStableStickRestCandidate(float x, float y, bool buttons_quiet)
 {
 	return buttons_quiet &&
-		std::hypot(static_cast<double>(x), static_cast<double>(y)) <=
-			static_cast<double>(kStableStickRestRadiusCap);
+	       std::hypot(static_cast<double>(x), static_cast<double>(y)) <= static_cast<double>(kStableStickRestRadiusCap);
 }
 
 inline bool IsStrictTriggerRest(float value)
@@ -123,19 +106,13 @@ struct StableRestWindow
 	float max_partner = 0.0f;
 };
 
-inline void ResetStableRestWindow(StableRestWindow &w)
+inline void ResetStableRestWindow(StableRestWindow& w)
 {
 	w = StableRestWindow{};
 }
 
-inline bool UpdateStableRestWindow(
-	StableRestWindow &w,
-	bool candidate,
-	float primary,
-	float partner,
-	uint64_t now_us,
-	float max_span = kStableRestSpanMax,
-	uint64_t min_window_us = kStableRestWindowUs)
+inline bool UpdateStableRestWindow(StableRestWindow& w, bool candidate, float primary, float partner, uint64_t now_us,
+                                   float max_span = kStableRestSpanMax, uint64_t min_window_us = kStableRestWindowUs)
 {
 	if (!candidate) {
 		ResetStableRestWindow(w);
@@ -170,18 +147,16 @@ inline bool UpdateStableRestWindow(
 
 inline bool IsLikelyButtonBounceInterval(uint64_t interval_us)
 {
-	return interval_us >= kButtonBounceMinIntervalUs &&
-		interval_us <= kButtonBounceMaxIntervalUs;
+	return interval_us >= kButtonBounceMinIntervalUs && interval_us <= kButtonBounceMaxIntervalUs;
 }
 
 inline uint32_t DebounceFromBounceInterval(uint32_t interval_us)
 {
 	const uint32_t padded = interval_us + 1000U;
-	return std::max<uint32_t>(1000U,
-		std::min<uint32_t>(kButtonBounceMaxIntervalUs, padded));
+	return std::max<uint32_t>(1000U, std::min<uint32_t>(kButtonBounceMaxIntervalUs, padded));
 }
 
-inline bool IsSystemButtonPath(const std::string &path)
+inline bool IsSystemButtonPath(const std::string& path)
 {
 	return path.find("/input/system/") != std::string::npos;
 }

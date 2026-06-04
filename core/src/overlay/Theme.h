@@ -23,12 +23,12 @@ namespace openvr_pair::overlay::ui {
 // site stable.
 struct SemanticPalette
 {
-	ImVec4 statusOk;        // Enabled, connected, host running
-	ImVec4 statusPending;   // Enabling/Disabling in flight, waiting
-	ImVec4 statusError;     // disconnected, failure, sync error
-	ImVec4 statusWarn;      // drift detected, stale source
-	ImVec4 statusInfo;      // dev-build badge, maintainer accent
-	ImVec4 statusIdle;      // Disabled, never synced (muted)
+	ImVec4 statusOk;      // Enabled, connected, host running
+	ImVec4 statusPending; // Enabling/Disabling in flight, waiting
+	ImVec4 statusError;   // disconnected, failure, sync error
+	ImVec4 statusWarn;    // drift detected, stale source
+	ImVec4 statusInfo;    // dev-build badge, maintainer accent
+	ImVec4 statusIdle;    // Disabled, never synced (muted)
 
 	ImVec4 bannerErrorBg;
 	ImVec4 bannerErrorTitle;
@@ -70,11 +70,11 @@ enum class ThemeId
 
 // Read the active theme's palette. Always returns a valid reference, even
 // before InitThemeFromDisk runs (defaults to the Legacy palette).
-const SemanticPalette &GetPalette();
+const SemanticPalette& GetPalette();
 
 ThemeId GetCurrentThemeId();
-const char *ThemeName(ThemeId id);
-const char *ThemeCaption(ThemeId id);
+const char* ThemeName(ThemeId id);
+const char* ThemeCaption(ThemeId id);
 
 // Apply a theme: rewrites ImGui::GetStyle().Colors[] in place, swaps the
 // active palette, and (when shellProfileRoot is non-empty) persists the
@@ -84,6 +84,6 @@ void SetTheme(ThemeId id);
 // One-shot at startup. Reads shell.txt under context.profileRoot; on parse
 // failure or missing file, defaults to ThemeId::Legacy. Also calls SetTheme
 // so ImGui colors are configured before the first frame.
-void InitThemeFromDisk(const ShellContext &context);
+void InitThemeFromDisk(const ShellContext& context);
 
 } // namespace openvr_pair::overlay::ui

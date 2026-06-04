@@ -10,14 +10,16 @@
 
 namespace wkopenvr::questapp {
 
-struct OperationResult {
-    bool ok = false;
-    std::string message;
+struct OperationResult
+{
+	bool ok = false;
+	std::string message;
 };
 
-struct SettingsQueryResult {
-    OperationResult result;
-    QuestCompanionSettings settings;
+struct SettingsQueryResult
+{
+	OperationResult result;
+	QuestCompanionSettings settings;
 };
 
 std::wstring QuestAppDataDir(bool create = true);
@@ -29,14 +31,10 @@ bool PlatformToolsInstalled();
 bool CompanionApkAvailable(const openvr_pair::overlay::ShellContext& context);
 
 OperationResult InstallPlatformTools(const openvr_pair::overlay::ShellContext& context);
-OperationResult InstallCompanionApp(
-    const openvr_pair::overlay::ShellContext& context,
-    AdbController& adb,
-    QuestAppConfig& cfg);
-OperationResult SyncCompanionConfig(
-    AdbController& adb,
-    const QuestAppConfig& cfg,
-    const QuestCompanionSettings& settings);
+OperationResult InstallCompanionApp(const openvr_pair::overlay::ShellContext& context, AdbController& adb,
+                                    QuestAppConfig& cfg);
+OperationResult SyncCompanionConfig(AdbController& adb, const QuestAppConfig& cfg,
+                                    const QuestCompanionSettings& settings);
 SettingsQueryResult QueryCompanionSettings(AdbController& adb, const QuestAppConfig& cfg);
 OperationResult UninstallCompanionApp(AdbController& adb, QuestAppConfig& cfg);
 

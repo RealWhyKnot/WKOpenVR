@@ -32,6 +32,48 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: lint
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-lint-${{ runner.os }}-${{ hashFiles('modules/facetracking/src/host/**/*.csproj', 'tests/e2e/facetracking_test_module/**/*.csproj', 'modules/facetracking/src/host/**/packages.lock.json') }}
+          restore-keys: |
+            nuget-lint-${{ runner.os }}-
+
+      - name: Install LLVM tools
+        shell: pwsh
+        run: |
+          if (Get-Command clang-format -ErrorAction SilentlyContinue) {
+            Write-Host "clang-format already available."
+            exit 0
+          }
+          choco install llvm -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (Test-Path -LiteralPath $llvmBin) {
+            $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Run lint check
+        shell: pwsh
+        run: .\lint.ps1 -Check
+
   build:
     name: cmake + msbuild (windows)
     runs-on: windows-latest

@@ -17,8 +17,7 @@ namespace {
 std::filesystem::path UniqueTempDir()
 {
 	const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-	return std::filesystem::temp_directory_path()
-		/ ("wkopenvr_bug_report_test_" + std::to_string(now));
+	return std::filesystem::temp_directory_path() / ("wkopenvr_bug_report_test_" + std::to_string(now));
 }
 
 void WriteText(const std::filesystem::path& path, const std::string& text)
@@ -30,19 +29,16 @@ void WriteText(const std::filesystem::path& path, const std::string& text)
 std::string ReadText(const std::filesystem::path& path)
 {
 	std::ifstream in(path, std::ios::binary);
-	return std::string(
-		std::istreambuf_iterator<char>(in),
-		std::istreambuf_iterator<char>());
+	return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 } // namespace
 
 TEST(BugReport, SanitizesPersonalData)
 {
-	const std::string raw =
-		"C:\\Users\\Alice\\AppData\\LocalLow\\WKOpenVR\\Logs\\spacecal_log.txt\n"
-		"user alice@example.com endpoint=192.168.1.42 token=ghp_abcdefghijklmnopqrstuvwxyz\n"
-		"serial='LHR-10268F5C'\n";
+	const std::string raw = "C:\\Users\\Alice\\AppData\\LocalLow\\WKOpenVR\\Logs\\spacecal_log.txt\n"
+	                        "user alice@example.com endpoint=192.168.1.42 token=ghp_abcdefghijklmnopqrstuvwxyz\n"
+	                        "serial='LHR-10268F5C'\n";
 
 	const std::string sanitized = SanitizeBugReportText(raw);
 
@@ -65,9 +61,9 @@ TEST(BugReport, CreatesReportAndPrefilledIssueUrl)
 	std::filesystem::create_directories(logs);
 
 	WriteText(logs / "driver_log.2026-05-27T01-00-00.txt",
-		"driver path C:\\Users\\Bob\\AppData\\LocalLow\\WKOpenVR\\Logs\\driver_log.txt\n");
+	          "driver path C:\\Users\\Bob\\AppData\\LocalLow\\WKOpenVR\\Logs\\driver_log.txt\n");
 	WriteText(logs / "spacecal_log.2026-05-27T01-00-01.txt",
-		"serial='LHR-ABC123' quest=<private-ip> email bob@example.com\n");
+	          "serial='LHR-ABC123' quest=<private-ip> email bob@example.com\n");
 
 	BugReportOptions options;
 	options.logRoot = logs.wstring();

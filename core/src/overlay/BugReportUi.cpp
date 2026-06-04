@@ -29,47 +29,43 @@ void DrawBugReportButton(ShellContext& context)
 		options.version = OPENVR_PAIR_VERSION_STRING;
 		const common::BugReportResult report = common::CreateBugReport(options);
 		if (!report.success) {
-			context.SetStatus(report.error.empty()
-				? "Could not prepare a bug report."
-				: report.error);
-		} else {
+			context.SetStatus(report.error.empty() ? "Could not prepare a bug report." : report.error);
+		}
+		else {
 			ImGui::SetClipboardText(report.issueBody.c_str());
 #ifdef _WIN32
 			const std::wstring explorerArgs = L"/select,\"" + report.reportFile + L"\"";
-			ShellExecuteW(nullptr, L"open", L"explorer.exe",
-				explorerArgs.c_str(), nullptr, SW_SHOWNORMAL);
-			ShellExecuteA(nullptr, "open", report.issueUrl.c_str(),
-				nullptr, nullptr, SW_SHOWNORMAL);
+			ShellExecuteW(nullptr, L"open", L"explorer.exe", explorerArgs.c_str(), nullptr, SW_SHOWNORMAL);
+			ShellExecuteA(nullptr, "open", report.issueUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 #endif
 			context.SetStatus(
-				"Bug report opened. A sanitized report file is selected in Explorer and copied to the clipboard.");
+			    "Bug report opened. A sanitized report file is selected in Explorer and copied to the clipboard.");
 		}
 	};
 
 	if (ImGui::Button("Report bug##report_bug")) {
 		if (!common::IsDebugLoggingEnabled()) {
 			ImGui::OpenPopup("Enable debug logging first?##bug_report_debug_prompt");
-		} else {
+		}
+		else {
 			createReport();
 		}
 	}
 	ui::TooltipForLastItem(
-		"Prepare a sanitized text report from recent WKOpenVR logs, copy it to the clipboard, "
-		"select it in Explorer, and open the GitHub bug form. Turn debug logging on before reproducing "
-		"the issue for a more useful report.");
+	    "Prepare a sanitized text report from recent WKOpenVR logs, copy it to the clipboard, "
+	    "select it in Explorer, and open the GitHub bug form. Turn debug logging on before reproducing "
+	    "the issue for a more useful report.");
 
-	if (ImGui::BeginPopupModal(
-		"Enable debug logging first?##bug_report_debug_prompt",
-		nullptr,
-		ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::TextWrapped(
-			"Debug logging is off. Turn it on, reproduce the issue, then click Report bug again "
-			"so the report includes useful diagnostics.");
+	if (ImGui::BeginPopupModal("Enable debug logging first?##bug_report_debug_prompt", nullptr,
+	                           ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped("Debug logging is off. Turn it on, reproduce the issue, then click Report bug again "
+		                   "so the report includes useful diagnostics.");
 		ImGui::Spacing();
 		if (ImGui::Button("Enable debug logging")) {
 			if (common::SetDebugLoggingEnabled(true)) {
 				context.SetStatus("Debug logging enabled. Reproduce the issue, then click Report bug again.");
-			} else {
+			}
+			else {
 				context.SetStatus("Could not enable debug logging.");
 			}
 			ImGui::CloseCurrentPopup();

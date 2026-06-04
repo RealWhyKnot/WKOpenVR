@@ -19,7 +19,9 @@
 // Including SkeletalHookInjector.h directly would require adding the
 // smoothing module's source directory to this target's include path; one
 // forward declaration here keeps the dependency edge narrow.
-namespace skeletal { void MarkFingersNeedReseed(uint16_t fingerBits); }
+namespace skeletal {
+void MarkFingersNeedReseed(uint16_t fingerBits);
+}
 
 #include <algorithm>
 #include <atomic>
@@ -62,36 +64,37 @@ namespace {
 namespace module_registry = openvr_pair::common::modules;
 namespace module_safety = openvr_pair::common::module_safety;
 
-std::string InputHealthPathString(const char *path)
+std::string InputHealthPathString(const char* path)
 {
 	size_t n = 0;
-	while (n < protocol::INPUTHEALTH_PATH_LEN && path[n] != '\0') ++n;
+	while (n < protocol::INPUTHEALTH_PATH_LEN && path[n] != '\0')
+		++n;
 	return std::string(path, path + n);
 }
 
-const module_safety::ModuleSpec *SafetySpecForFeatureMask(uint32_t featureMask)
+const module_safety::ModuleSpec* SafetySpecForFeatureMask(uint32_t featureMask)
 {
 	switch (featureMask) {
-	case pairdriver::kFeatureCalibration:
-		return module_safety::FindById(module_registry::ModuleId::Calibration);
-	case pairdriver::kFeatureSmoothing:
-		return module_safety::FindById(module_registry::ModuleId::Smoothing);
-	case pairdriver::kFeatureInputHealth:
-		return module_safety::FindById(module_registry::ModuleId::InputHealth);
-	case pairdriver::kFeatureFaceTracking:
-		return module_safety::FindById(module_registry::ModuleId::FaceTracking);
-	case pairdriver::kFeatureOscRouter:
-		return module_safety::FindById(module_registry::ModuleId::OscRouter);
-	case pairdriver::kFeatureCaptions:
-		return module_safety::FindById(module_registry::ModuleId::Captions);
-	case pairdriver::kFeaturePhantom:
-		return module_safety::FindById(module_registry::ModuleId::Phantom);
-	default:
-		return nullptr;
+		case pairdriver::kFeatureCalibration:
+			return module_safety::FindById(module_registry::ModuleId::Calibration);
+		case pairdriver::kFeatureSmoothing:
+			return module_safety::FindById(module_registry::ModuleId::Smoothing);
+		case pairdriver::kFeatureInputHealth:
+			return module_safety::FindById(module_registry::ModuleId::InputHealth);
+		case pairdriver::kFeatureFaceTracking:
+			return module_safety::FindById(module_registry::ModuleId::FaceTracking);
+		case pairdriver::kFeatureOscRouter:
+			return module_safety::FindById(module_registry::ModuleId::OscRouter);
+		case pairdriver::kFeatureCaptions:
+			return module_safety::FindById(module_registry::ModuleId::Captions);
+		case pairdriver::kFeaturePhantom:
+			return module_safety::FindById(module_registry::ModuleId::Phantom);
+		default:
+			return nullptr;
 	}
 }
 
-const char *ModuleDisableReason(const char *reason)
+const char* ModuleDisableReason(const char* reason)
 {
 	return (reason && reason[0]) ? reason : "module_fault";
 }
@@ -99,8 +102,7 @@ const char *ModuleDisableReason(const char *reason)
 class ModuleSafetyScope
 {
 public:
-	ModuleSafetyScope(const module_safety::ModuleSpec *spec, const char *reason)
-		: spec_(spec)
+	ModuleSafetyScope(const module_safety::ModuleSpec* spec, const char* reason) : spec_(spec)
 	{
 		if (spec_) {
 			active_ = module_safety::MarkSuspect(*spec_, ModuleDisableReason(reason));
@@ -114,11 +116,11 @@ public:
 		}
 	}
 
-	ModuleSafetyScope(const ModuleSafetyScope &) = delete;
-	ModuleSafetyScope &operator=(const ModuleSafetyScope &) = delete;
+	ModuleSafetyScope(const ModuleSafetyScope&) = delete;
+	ModuleSafetyScope& operator=(const ModuleSafetyScope&) = delete;
 
 private:
-	const module_safety::ModuleSpec *spec_ = nullptr;
+	const module_safety::ModuleSpec* spec_ = nullptr;
 	bool active_ = false;
 };
 
@@ -128,12 +130,11 @@ private:
 #define M_PI 3.14159265358979323846
 #endif
 
-vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriverContext)
+vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriverContext)
 {
 	TRACE("ServerTrackedDeviceProvider::Init()");
-	LOG("ServerTrackedDeviceProvider::Init begin version=%s protocol=%u build_is_dev=%d",
-		PAIRDRIVER_VERSION_STRING, (unsigned)protocol::Version,
-		(int)WKOPENVR_BUILD_IS_DEV);
+	LOG("ServerTrackedDeviceProvider::Init begin version=%s protocol=%u build_is_dev=%d", PAIRDRIVER_VERSION_STRING,
+	    (unsigned)protocol::Version, (int)WKOPENVR_BUILD_IS_DEV);
 	VR_INIT_SERVER_DRIVER_CONTEXT(pDriverContext);
 
 	// QPF is constant for the lifetime of the boot; capture it once instead of
@@ -153,30 +154,29 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		activeModules.clear();
 	}
 	DriverModuleContext moduleContext{this, pDriverContext, featureFlags};
-	const char *calibrationPipe = module_registry::PipeName(module_registry::ModuleId::Calibration);
-	const char *smoothingPipe = module_registry::PipeName(module_registry::ModuleId::Smoothing);
-	const char *inputHealthPipe = module_registry::PipeName(module_registry::ModuleId::InputHealth);
-	const char *faceTrackingPipe = module_registry::PipeName(module_registry::ModuleId::FaceTracking);
-	const char *oscRouterPipe = module_registry::PipeName(module_registry::ModuleId::OscRouter);
-	const char *captionsPipe = module_registry::PipeName(module_registry::ModuleId::Captions);
-	const char *phantomPipe = module_registry::PipeName(module_registry::ModuleId::Phantom);
+	const char* calibrationPipe = module_registry::PipeName(module_registry::ModuleId::Calibration);
+	const char* smoothingPipe = module_registry::PipeName(module_registry::ModuleId::Smoothing);
+	const char* inputHealthPipe = module_registry::PipeName(module_registry::ModuleId::InputHealth);
+	const char* faceTrackingPipe = module_registry::PipeName(module_registry::ModuleId::FaceTracking);
+	const char* oscRouterPipe = module_registry::PipeName(module_registry::ModuleId::OscRouter);
+	const char* captionsPipe = module_registry::PipeName(module_registry::ModuleId::Captions);
+	const char* phantomPipe = module_registry::PipeName(module_registry::ModuleId::Phantom);
 	auto activateModule = [&](std::unique_ptr<DriverModule> module) {
 		if (!module) {
 			LOG("Driver module factory returned null");
 			return;
 		}
 		const uint32_t moduleMask = module->FeatureMask();
-		const char *moduleName = module->Name();
+		const char* moduleName = module->Name();
 		if ((featureFlags & moduleMask) == 0) {
-			LOG("Driver module '%s' skipped; module_mask=0x%08x featureFlags=0x%08x",
-				moduleName, (unsigned)moduleMask, (unsigned)featureFlags);
+			LOG("Driver module '%s' skipped; module_mask=0x%08x featureFlags=0x%08x", moduleName, (unsigned)moduleMask,
+			    (unsigned)featureFlags);
 			return;
 		}
-		const module_safety::ModuleSpec *safety = SafetySpecForFeatureMask(moduleMask);
+		const module_safety::ModuleSpec* safety = SafetySpecForFeatureMask(moduleMask);
 		if (safety && module_safety::HasAutoDisabledMarker(*safety)) {
 			featureFlags &= ~moduleMask;
-			LOG("Driver module '%s' skipped by safety gate; module_mask=0x%08x",
-				moduleName, (unsigned)moduleMask);
+			LOG("Driver module '%s' skipped by safety gate; module_mask=0x%08x", moduleName, (unsigned)moduleMask);
 			return;
 		}
 		if (safety && !module_safety::MarkActive(*safety)) {
@@ -187,22 +187,26 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		try {
 			ModuleSafetyScope safetyScope(safety, "init");
 			initialized = module->Init(moduleContext);
-		} catch (const std::exception &ex) {
+		}
+		catch (const std::exception& ex) {
 			LOG("Driver module '%s' init threw: %s", moduleName, ex.what());
 			if (safety) module_safety::MarkFault(*safety, "init_exception");
 			try {
 				module->Shutdown();
-			} catch (...) {
+			}
+			catch (...) {
 				LOG("Driver module '%s' shutdown after init exception also threw", moduleName);
 			}
 			featureFlags &= ~moduleMask;
 			return;
-		} catch (...) {
+		}
+		catch (...) {
 			LOG("Driver module '%s' init threw an unknown exception", moduleName);
 			if (safety) module_safety::MarkFault(*safety, "init_exception");
 			try {
 				module->Shutdown();
-			} catch (...) {
+			}
+			catch (...) {
 				LOG("Driver module '%s' shutdown after init exception also threw", moduleName);
 			}
 			featureFlags &= ~moduleMask;
@@ -256,8 +260,8 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		alignmentSpeedParams.thr_rot_small = 1.0f * (EIGEN_PI / 180.0f);
 		alignmentSpeedParams.thr_rot_large = 5.0f * (EIGEN_PI / 180.0f);
 
-		alignmentSpeedParams.thr_trans_tiny = 0.1f / 1000.0; // mm
-		alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0; // mm
+		alignmentSpeedParams.thr_trans_tiny = 0.1f / 1000.0;   // mm
+		alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0;  // mm
 		alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0; // mm
 
 		alignmentSpeedParams.align_speed_tiny = 0.05f;
@@ -268,68 +272,47 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			// Non-fatal: pose telemetry is not essential -- calibration still
 			// works without it. Log so the overlay's diagnostics (or a post-
 			// mortem grep) can surface the cause.
-			LOG("shmem.Create(%s) failed (GetLastError=%u); pose telemetry disabled",
-				OPENVR_PAIRDRIVER_SHMEM_NAME, (unsigned)GetLastError());
+			LOG("shmem.Create(%s) failed (GetLastError=%u); pose telemetry disabled", OPENVR_PAIRDRIVER_SHMEM_NAME,
+			    (unsigned)GetLastError());
 		}
 
-		calibrationServer = std::make_unique<IPCServer>(
-			this,
-			calibrationPipe,
-			pairdriver::kFeatureCalibration);
+		calibrationServer = std::make_unique<IPCServer>(this, calibrationPipe, pairdriver::kFeatureCalibration);
 		LOG("Starting calibration IPC server pipe=%s", calibrationPipe);
 		calibrationServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureSmoothing) {
-		smoothingServer = std::make_unique<IPCServer>(
-			this,
-			smoothingPipe,
-			pairdriver::kFeatureSmoothing);
+		smoothingServer = std::make_unique<IPCServer>(this, smoothingPipe, pairdriver::kFeatureSmoothing);
 		LOG("Starting smoothing IPC server pipe=%s", smoothingPipe);
 		smoothingServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureInputHealth) {
-		inputHealthServer = std::make_unique<IPCServer>(
-			this,
-			inputHealthPipe,
-			pairdriver::kFeatureInputHealth);
+		inputHealthServer = std::make_unique<IPCServer>(this, inputHealthPipe, pairdriver::kFeatureInputHealth);
 		LOG("Starting inputhealth IPC server pipe=%s", inputHealthPipe);
 		inputHealthServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureFaceTracking) {
-		faceTrackingServer = std::make_unique<IPCServer>(
-			this,
-			faceTrackingPipe,
-			pairdriver::kFeatureFaceTracking);
+		faceTrackingServer = std::make_unique<IPCServer>(this, faceTrackingPipe, pairdriver::kFeatureFaceTracking);
 		LOG("Starting facetracking IPC server pipe=%s", faceTrackingPipe);
 		faceTrackingServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureOscRouter) {
-		oscRouterServer = std::make_unique<IPCServer>(
-			this,
-			oscRouterPipe,
-			pairdriver::kFeatureOscRouter);
+		oscRouterServer = std::make_unique<IPCServer>(this, oscRouterPipe, pairdriver::kFeatureOscRouter);
 		LOG("Starting oscrouter IPC server pipe=%s", oscRouterPipe);
 		oscRouterServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeatureCaptions) {
-		captionsServer = std::make_unique<IPCServer>(
-			this,
-			captionsPipe,
-			pairdriver::kFeatureCaptions);
+		captionsServer = std::make_unique<IPCServer>(this, captionsPipe, pairdriver::kFeatureCaptions);
 		LOG("Starting captions IPC server pipe=%s", captionsPipe);
 		captionsServer->Run();
 	}
 
 	if (featureFlags & pairdriver::kFeaturePhantom) {
-		phantomServer = std::make_unique<IPCServer>(
-			this,
-			phantomPipe,
-			pairdriver::kFeaturePhantom);
+		phantomServer = std::make_unique<IPCServer>(this, phantomPipe, pairdriver::kFeaturePhantom);
 		LOG("Starting phantom IPC server pipe=%s", phantomPipe);
 		phantomServer->Run();
 	}
@@ -358,24 +341,27 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 			activeModules.clear();
 		}
 		for (size_t i = modules.size(); i > 0; --i) {
-			ActiveDriverModule &entry = modules[i - 1];
+			ActiveDriverModule& entry = modules[i - 1];
 			bool clean = true;
 			if (entry.module) {
 				try {
 					ModuleSafetyScope safetyScope(entry.safety, "shutdown");
 					entry.module->Shutdown();
-				} catch (const std::exception &ex) {
+				}
+				catch (const std::exception& ex) {
 					clean = false;
-					LOG("Driver module '%s' shutdown during init failure threw: %s",
-						entry.module->Name(), ex.what());
-				} catch (...) {
+					LOG("Driver module '%s' shutdown during init failure threw: %s", entry.module->Name(), ex.what());
+				}
+				catch (...) {
 					clean = false;
 					LOG("Driver module shutdown during init failure threw an unknown exception");
 				}
 			}
 			if (entry.safety) {
-				if (clean) module_safety::MarkClean(*entry.safety);
-				else module_safety::MarkFault(*entry.safety, "shutdown_exception");
+				if (clean)
+					module_safety::MarkClean(*entry.safety);
+				else
+					module_safety::MarkFault(*entry.safety, "shutdown_exception");
 			}
 		}
 		shmem.Close();
@@ -391,8 +377,8 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
 		activeModuleCount = activeModules.size();
 	}
-	LOG("ServerTrackedDeviceProvider::Init complete active_modules=%zu featureFlags=0x%08x",
-		activeModuleCount, (unsigned)featureFlags);
+	LOG("ServerTrackedDeviceProvider::Init complete active_modules=%zu featureFlags=0x%08x", activeModuleCount,
+	    (unsigned)featureFlags);
 	return vr::VRInitError_None;
 }
 
@@ -407,19 +393,16 @@ void ServerTrackedDeviceProvider::RunFrame()
 	openvr_pair::common::ProcessPerfSample perfSample{};
 	if (!s_perfSampler.MaybeSample(perfSample)) return;
 
-	const std::string line =
-		openvr_pair::common::FormatProcessPerfSample("driver-host", perfSample);
+	const std::string line = openvr_pair::common::FormatProcessPerfSample("driver-host", perfSample);
 	LOG("[perf] %s", line.c_str());
 	openvr_pair::common::RecordRuntimeProcessSample("driver-host", perfSample);
-	openvr_pair::common::MaybeWriteRuntimeHealthSummary(
-		10000,
-		L"runtime_health_driver_host.json");
+	openvr_pair::common::MaybeWriteRuntimeHealthSummary(10000, L"runtime_health_driver_host.json");
 }
 
-void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry, const char *reason)
+void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry, const char* reason)
 {
-	const char *disableReason = ModuleDisableReason(reason);
-	const char *name = entry.module ? entry.module->Name() : "(unknown)";
+	const char* disableReason = ModuleDisableReason(reason);
+	const char* name = entry.module ? entry.module->Name() : "(unknown)";
 	LOG("Driver module '%s' disabled by safety gate reason=%s", name, disableReason);
 	if (entry.safety) {
 		module_safety::MarkFault(*entry.safety, disableReason);
@@ -428,15 +411,17 @@ void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry
 		try {
 			ModuleSafetyScope safetyScope(entry.safety, "fault_shutdown");
 			entry.module->Shutdown();
-		} catch (const std::exception &ex) {
+		}
+		catch (const std::exception& ex) {
 			LOG("Driver module '%s' shutdown after fault threw: %s", name, ex.what());
-		} catch (...) {
+		}
+		catch (...) {
 			LOG("Driver module '%s' shutdown after fault threw an unknown exception", name);
 		}
 	}
 }
 
-void ServerTrackedDeviceProvider::DisableActiveModuleAt(size_t index, const char *reason)
+void ServerTrackedDeviceProvider::DisableActiveModuleAt(size_t index, const char* reason)
 {
 	ActiveDriverModule entry;
 	{
@@ -449,7 +434,7 @@ void ServerTrackedDeviceProvider::DisableActiveModuleAt(size_t index, const char
 	DisableDetachedModule(std::move(entry), reason);
 }
 
-bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask, const char *reason)
+bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask, const char* reason)
 {
 	ActiveDriverModule entry;
 	bool found = false;
@@ -470,7 +455,7 @@ bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask
 		return true;
 	}
 
-	const module_safety::ModuleSpec *safety = SafetySpecForFeatureMask(featureMask);
+	const module_safety::ModuleSpec* safety = SafetySpecForFeatureMask(featureMask);
 	if (safety) {
 		module_safety::MarkFault(*safety, ModuleDisableReason(reason));
 	}
@@ -486,8 +471,8 @@ void ServerTrackedDeviceProvider::Cleanup()
 		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
 		activeModuleCount = activeModules.size();
 	}
-	LOG("ServerTrackedDeviceProvider::Cleanup begin active_modules=%zu featureFlags=0x%08x",
-		activeModuleCount, (unsigned)featureFlags);
+	LOG("ServerTrackedDeviceProvider::Cleanup begin active_modules=%zu featureFlags=0x%08x", activeModuleCount,
+	    (unsigned)featureFlags);
 
 	// Order matters. The previous order (server.Stop -> shmem.Close ->
 	// DisableHooks -> VR_CLEANUP) had a fatal race: DisableHooks removes
@@ -513,16 +498,18 @@ void ServerTrackedDeviceProvider::Cleanup()
 		activeModules.clear();
 	}
 	for (size_t i = modules.size(); i > 0; --i) {
-		ActiveDriverModule &entry = modules[i - 1];
+		ActiveDriverModule& entry = modules[i - 1];
 		bool clean = true;
 		if (entry.module) {
 			try {
 				ModuleSafetyScope safetyScope(entry.safety, "shutdown");
 				entry.module->Shutdown();
-			} catch (const std::exception &ex) {
+			}
+			catch (const std::exception& ex) {
 				clean = false;
 				LOG("Driver module '%s' shutdown threw: %s", entry.module->Name(), ex.what());
-			} catch (...) {
+			}
+			catch (...) {
 				clean = false;
 				LOG("Driver module shutdown threw an unknown exception");
 			}
@@ -530,7 +517,8 @@ void ServerTrackedDeviceProvider::Cleanup()
 		if (entry.safety) {
 			if (clean) {
 				module_safety::MarkClean(*entry.safety);
-			} else {
+			}
+			else {
 				module_safety::MarkFault(*entry.safety, "shutdown_exception");
 			}
 		}
@@ -547,10 +535,8 @@ void ServerTrackedDeviceProvider::Cleanup()
 	LOG("ServerTrackedDeviceProvider::Cleanup complete");
 }
 
-bool ServerTrackedDeviceProvider::HandleIpcRequest(
-	uint32_t featureMask,
-	const protocol::Request &request,
-	protocol::Response &response)
+bool ServerTrackedDeviceProvider::HandleIpcRequest(uint32_t featureMask, const protocol::Request& request,
+                                                   protocol::Response& response)
 {
 	if (request.type == protocol::RequestHandshake) {
 		response.type = protocol::ResponseHandshake;
@@ -565,7 +551,7 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(
 		{
 			std::unique_lock<std::mutex> activeLock(activeModulesMutex);
 			if (index >= activeModules.size()) break;
-			ActiveDriverModule &entry = activeModules[index];
+			ActiveDriverModule& entry = activeModules[index];
 			if (!entry.module || (entry.module->FeatureMask() & featureMask) == 0) {
 				++index;
 				continue;
@@ -575,16 +561,18 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(
 				ModuleSafetyScope safetyScope(entry.safety, "request");
 				if (entry.module->HandleRequest(request, response)) return true;
 				++index;
-			} catch (const std::exception &ex) {
-				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+			}
+			catch (const std::exception& ex) {
+				const char* name = entry.module ? entry.module->Name() : "(unknown)";
 				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
 				LOG("Driver module '%s' request threw: %s", name, ex.what());
 				featureFlags &= ~moduleMask;
 				faulted = std::move(entry);
 				activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
 				disableFaulted = true;
-			} catch (...) {
-				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+			}
+			catch (...) {
+				const char* name = entry.module ? entry.module->Name() : "(unknown)";
 				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
 				LOG("Driver module '%s' request threw an unknown exception", name);
 				featureFlags &= ~moduleMask;
@@ -601,7 +589,7 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(
 	return false;
 }
 
-void ServerTrackedDeviceProvider::OnGetGenericInterface(const char *pchInterface, void *iface)
+void ServerTrackedDeviceProvider::OnGetGenericInterface(const char* pchInterface, void* iface)
 {
 	size_t index = 0;
 	for (;;) {
@@ -610,7 +598,7 @@ void ServerTrackedDeviceProvider::OnGetGenericInterface(const char *pchInterface
 		{
 			std::unique_lock<std::mutex> activeLock(activeModulesMutex);
 			if (index >= activeModules.size()) break;
-			ActiveDriverModule &entry = activeModules[index];
+			ActiveDriverModule& entry = activeModules[index];
 			if (!entry.module) {
 				++index;
 				continue;
@@ -619,16 +607,18 @@ void ServerTrackedDeviceProvider::OnGetGenericInterface(const char *pchInterface
 				ModuleSafetyScope safetyScope(entry.safety, "interface");
 				entry.module->OnGetGenericInterface(pchInterface, iface);
 				++index;
-			} catch (const std::exception &ex) {
-				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+			}
+			catch (const std::exception& ex) {
+				const char* name = entry.module ? entry.module->Name() : "(unknown)";
 				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
 				LOG("Driver module '%s' interface hook threw: %s", name, ex.what());
 				featureFlags &= ~moduleMask;
 				faulted = std::move(entry);
 				activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
 				disableFaulted = true;
-			} catch (...) {
-				const char *name = entry.module ? entry.module->Name() : "(unknown)";
+			}
+			catch (...) {
+				const char* name = entry.module ? entry.module->Name() : "(unknown)";
 				const uint32_t moduleMask = entry.module ? entry.module->FeatureMask() : 0;
 				LOG("Driver module '%s' interface hook threw an unknown exception", name);
 				featureFlags &= ~moduleMask;
@@ -645,56 +635,60 @@ void ServerTrackedDeviceProvider::OnGetGenericInterface(const char *pchInterface
 
 namespace {
 
-
-	vr::HmdQuaternion_t convert(const Eigen::Quaterniond& q) {
-		vr::HmdQuaternion_t result;
-		result.w = q.w();
-		result.x = q.x();
-		result.y = q.y();
-		result.z = q.z();
-		return result;
-	}
-
-	vr::HmdVector3_t convert(const Eigen::Vector3d& v) {
-		vr::HmdVector3_t result;
-		result.v[0] = (float) v.x();
-		result.v[1] = (float) v.y();
-		result.v[2] = (float) v.z();
-		return result;
-	}
-
-	Eigen::Quaterniond convert(const vr::HmdQuaternion_t& q) {
-		return Eigen::Quaterniond(q.w, q.x, q.y, q.z);
-	}
-
-	Eigen::Vector3d convert(const vr::HmdVector3d_t& v) {
-		return Eigen::Vector3d(v.v[0], v.v[1], v.v[2]);
-	}
-
-	Eigen::Vector3d convert(const double* arr) {
-		return Eigen::Vector3d(arr[0], arr[1], arr[2]);
-	}
-
-	IsoTransform toIsoWorldTransform(const vr::DriverPose_t& pose) {
-		Eigen::Quaterniond rot(pose.qWorldFromDriverRotation.w, pose.qWorldFromDriverRotation.x, pose.qWorldFromDriverRotation.y, pose.qWorldFromDriverRotation.z);
-		Eigen::Vector3d trans(pose.vecWorldFromDriverTranslation[0], pose.vecWorldFromDriverTranslation[1], pose.vecWorldFromDriverTranslation[2]);
-
-		return IsoTransform(rot, trans);
-	}
-
-	IsoTransform toIsoPose(const vr::DriverPose_t& pose) {
-		auto worldXform = toIsoWorldTransform(pose);
-
-		Eigen::Quaterniond rot(pose.qRotation.w, pose.qRotation.x, pose.qRotation.y, pose.qRotation.z);
-		Eigen::Vector3d trans(pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]);
-
-		return worldXform * IsoTransform(rot, trans);
-	}
+vr::HmdQuaternion_t convert(const Eigen::Quaterniond& q)
+{
+	vr::HmdQuaternion_t result;
+	result.w = q.w();
+	result.x = q.x();
+	result.y = q.y();
+	result.z = q.z();
+	return result;
 }
 
+vr::HmdVector3_t convert(const Eigen::Vector3d& v)
+{
+	vr::HmdVector3_t result;
+	result.v[0] = (float)v.x();
+	result.v[1] = (float)v.y();
+	result.v[2] = (float)v.z();
+	return result;
+}
 
+Eigen::Quaterniond convert(const vr::HmdQuaternion_t& q)
+{
+	return Eigen::Quaterniond(q.w, q.x, q.y, q.z);
+}
 
+Eigen::Vector3d convert(const vr::HmdVector3d_t& v)
+{
+	return Eigen::Vector3d(v.v[0], v.v[1], v.v[2]);
+}
 
+Eigen::Vector3d convert(const double* arr)
+{
+	return Eigen::Vector3d(arr[0], arr[1], arr[2]);
+}
+
+IsoTransform toIsoWorldTransform(const vr::DriverPose_t& pose)
+{
+	Eigen::Quaterniond rot(pose.qWorldFromDriverRotation.w, pose.qWorldFromDriverRotation.x,
+	                       pose.qWorldFromDriverRotation.y, pose.qWorldFromDriverRotation.z);
+	Eigen::Vector3d trans(pose.vecWorldFromDriverTranslation[0], pose.vecWorldFromDriverTranslation[1],
+	                      pose.vecWorldFromDriverTranslation[2]);
+
+	return IsoTransform(rot, trans);
+}
+
+IsoTransform toIsoPose(const vr::DriverPose_t& pose)
+{
+	auto worldXform = toIsoWorldTransform(pose);
+
+	Eigen::Quaterniond rot(pose.qRotation.w, pose.qRotation.x, pose.qRotation.y, pose.qRotation.z);
+	Eigen::Vector3d trans(pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]);
+
+	return worldXform * IsoTransform(rot, trans);
+}
+} // namespace
 
 void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTransform& newTransform)
 {
@@ -702,7 +696,7 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 
 	std::lock_guard<std::mutex> lock(stateMutex);
 
-	auto &tf = transforms[newTransform.openVRID];
+	auto& tf = transforms[newTransform.openVRID];
 	const bool wasEnabled = tf.enabled;
 	tf.enabled = newTransform.enabled;
 
@@ -713,7 +707,8 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 		// fully populated; bound the read to the buffer length.
 		size_t maxLen = sizeof newTransform.target_system;
 		size_t len = 0;
-		while (len < maxLen && newTransform.target_system[len] != '\0') ++len;
+		while (len < maxLen && newTransform.target_system[len] != '\0')
+			++len;
 		deviceSystem[newTransform.openVRID].assign(newTransform.target_system, len);
 		// Mark the lookup state so the pose-hook thread doesn't re-query the
 		// property store for this slot. Empty target_system means "unknown" --
@@ -757,15 +752,13 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 		}
 	}
 
-	if (newTransform.updateScale)
-		tf.scale = newTransform.scale;
+	if (newTransform.updateScale) tf.scale = newTransform.scale;
 
 	// v23 (2026-05-19): only mutate stored hide when the caller explicitly
 	// signals intent. Prior unconditional assignment let any partial-init
 	// payload (e.g. ResetAndDisableOffsets) silently wipe a user-marked
 	// always-hidden tracker.
-	if (newTransform.updateQuash)
-		tf.quash = newTransform.quash;
+	if (newTransform.updateQuash) tf.quash = newTransform.quash;
 
 	// On enable transition, the slot's `transform` may be stale from a prior session
 	// or never initialized. Snap to the target so we don't ramp in from a junk state.
@@ -779,11 +772,8 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 		// pattern. Once-per-event (driven by SetDeviceTransform IPC), so
 		// no throttling needed.
 		LOG("device_transform_snap_on_enable: id=%u target=(%.3f,%.3f,%.3f) prevFallbackActive=%d",
-			(unsigned)newTransform.openVRID,
-			tf.targetTransform.translation.x(),
-			tf.targetTransform.translation.y(),
-			tf.targetTransform.translation.z(),
-			(int)tf.fallbackActive);
+		    (unsigned)newTransform.openVRID, tf.targetTransform.translation.x(), tf.targetTransform.translation.y(),
+		    tf.targetTransform.translation.z(), (int)tf.fallbackActive);
 	}
 
 	// On disable transition, drop any pending lerp target so a future re-enable
@@ -799,23 +789,22 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 	tf.currentRate = DeltaSize::TINY;
 }
 
-
-void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDevicePrediction &cfg)
+void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDevicePrediction& cfg)
 {
 	if (cfg.openVRID >= vr::k_unMaxTrackedDeviceCount) return;
 
 	std::lock_guard<std::mutex> lock(stateMutex);
 
-	auto &tf = transforms[cfg.openVRID];
+	auto& tf = transforms[cfg.openVRID];
 	const uint8_t oldSmoothness = tf.predictionSmoothness;
-	const bool    oldSmart      = tf.smartEnabled;
-	const bool    newSmart      = cfg.smart_enabled != 0;
+	const bool oldSmart = tf.smartEnabled;
+	const bool newSmart = cfg.smart_enabled != 0;
 
 	// Cheap to write unconditionally; HandleDevicePoseUpdated reads it once
 	// per pose update for the velocity / acceleration / poseTimeOffset
 	// scaling. 0 = pose untouched, 100 = predictor fully defeated.
 	tf.predictionSmoothness = cfg.predictionSmoothness;
-	tf.smartEnabled         = newSmart;
+	tf.smartEnabled = newSmart;
 	tf.smartShadowParams = prediction::smart_shadow::BuildParams(cfg.predictionSmoothness);
 	if (oldSmoothness != cfg.predictionSmoothness) {
 		// New coefficients: drop the running filter so it reseeds from the next
@@ -829,11 +818,9 @@ void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDeviceP
 	}
 #endif
 	if (oldSmoothness != cfg.predictionSmoothness || oldSmart != newSmart) {
-		LOG("[prediction] SetDevicePrediction id=%u smoothness=%u old=%u smart=%s",
-			cfg.openVRID,
-			static_cast<unsigned>(cfg.predictionSmoothness),
-			static_cast<unsigned>(oldSmoothness),
-			newSmart ? "on" : "off");
+		LOG("[prediction] SetDevicePrediction id=%u smoothness=%u old=%u smart=%s", cfg.openVRID,
+		    static_cast<unsigned>(cfg.predictionSmoothness), static_cast<unsigned>(oldSmoothness),
+		    newSmart ? "on" : "off");
 	}
 }
 
@@ -841,7 +828,8 @@ void ServerTrackedDeviceProvider::SetTrackingSystemFallback(const protocol::SetT
 {
 	size_t maxLen = sizeof newFallback.system_name;
 	size_t len = 0;
-	while (len < maxLen && newFallback.system_name[len] != '\0') ++len;
+	while (len < maxLen && newFallback.system_name[len] != '\0')
+		++len;
 	if (len == 0) return;
 
 	std::lock_guard<std::mutex> lock(stateMutex);
@@ -873,10 +861,10 @@ void ServerTrackedDeviceProvider::SetTrackingSystemFallback(const protocol::SetT
 		return;
 	}
 	slot->tf.enabled = true;
-	slot->tf.transform.translation = Eigen::Vector3d(
-		newFallback.translation.v[0], newFallback.translation.v[1], newFallback.translation.v[2]);
-	slot->tf.transform.rotation = Eigen::Quaterniond(
-		newFallback.rotation.w, newFallback.rotation.x, newFallback.rotation.y, newFallback.rotation.z);
+	slot->tf.transform.translation =
+	    Eigen::Vector3d(newFallback.translation.v[0], newFallback.translation.v[1], newFallback.translation.v[2]);
+	slot->tf.transform.rotation = Eigen::Quaterniond(newFallback.rotation.w, newFallback.rotation.x,
+	                                                 newFallback.rotation.y, newFallback.rotation.z);
 	slot->tf.scale = newFallback.scale;
 	// predictionSmoothness from the fallback path is ignored from
 	// Protocol v12 onward (2026-05-11). Per-device prediction is now
@@ -885,12 +873,9 @@ void ServerTrackedDeviceProvider::SetTrackingSystemFallback(const protocol::SetT
 	slot->tf.recalibrateOnMovement = newFallback.recalibrateOnMovement;
 }
 
-void ServerTrackedDeviceProvider::ApplySmartSmoothing(
-	uint32_t openVRID,
-	DeviceTransform& device,
-	const vr::DriverPose_t& rawPose,
-	vr::DriverPose_t& pose,
-	uint8_t smoothness) const
+void ServerTrackedDeviceProvider::ApplySmartSmoothing(uint32_t openVRID, DeviceTransform& device,
+                                                      const vr::DriverPose_t& rawPose, vr::DriverPose_t& pose,
+                                                      uint8_t smoothness) const
 {
 	(void)openVRID;
 	namespace ss = prediction::smart_shadow;
@@ -899,11 +884,8 @@ void ServerTrackedDeviceProvider::ApplySmartSmoothing(
 	// pass the pose through unfiltered rather than guess.
 	if (qpcFreq.QuadPart <= 0) return;
 
-	const double rawPos[3] = {
-		rawPose.vecPosition[0], rawPose.vecPosition[1], rawPose.vecPosition[2] };
-	const double rawRot[4] = {
-		rawPose.qRotation.w, rawPose.qRotation.x,
-		rawPose.qRotation.y, rawPose.qRotation.z };
+	const double rawPos[3] = {rawPose.vecPosition[0], rawPose.vecPosition[1], rawPose.vecPosition[2]};
+	const double rawRot[4] = {rawPose.qRotation.w, rawPose.qRotation.x, rawPose.qRotation.y, rawPose.qRotation.z};
 
 	// Bad input (NaN/Inf or a degenerate quaternion): leave the pose untouched
 	// and force a reseed on the next good sample. Guarding here keeps FilterStep
@@ -917,10 +899,10 @@ void ServerTrackedDeviceProvider::ApplySmartSmoothing(
 
 	LARGE_INTEGER now{};
 	QueryPerformanceCounter(&now);
-	const double dt = device.smartFilterLastSample.QuadPart > 0
-		? (now.QuadPart - device.smartFilterLastSample.QuadPart) /
-		      static_cast<double>(qpcFreq.QuadPart)
-		: -1.0;  // first sample -> FilterStep seeds and passes through
+	const double dt =
+	    device.smartFilterLastSample.QuadPart > 0
+	        ? (now.QuadPart - device.smartFilterLastSample.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
+	        : -1.0; // first sample -> FilterStep seeds and passes through
 	device.smartFilterLastSample = now;
 
 	double reportedLinear = 0.0;
@@ -932,9 +914,8 @@ void ServerTrackedDeviceProvider::ApplySmartSmoothing(
 		reportedAngular = std::min(ss::Length3(rawPose.vecAngularVelocity), 80.0);
 	}
 
-	const ss::StepResult r = ss::FilterStep(
-		device.smartFilter, device.smartShadowParams,
-		rawPos, rawRot, reportedLinear, reportedAngular, dt);
+	const ss::StepResult r = ss::FilterStep(device.smartFilter, device.smartShadowParams, rawPos, rawRot,
+	                                        reportedLinear, reportedAngular, dt);
 
 	// Velocity / acceleration / lookahead suppression, released during motion:
 	// SteamVR keeps extrapolating while the device actually moves (low latency)
@@ -977,7 +958,7 @@ void ServerTrackedDeviceProvider::ApplySmartSmoothing(
 #endif
 }
 
-bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose)
+bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t& pose)
 {
 	// Apply debug pose before anything else
 	if (openVRID > 0) {
@@ -1036,7 +1017,8 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		// extrapolation is suppressed at rest but active during motion. Replaces
 		// the old freeze-prone position EWM + motion-ramp gate.
 		ApplySmartSmoothing(openVRID, tf, rawSmoothingInput, pose, smoothness);
-	} else {
+	}
+	else {
 		// Smoothness dropped to 0: reset filter state so a future re-enable
 		// seeds from the current raw pose rather than a stale snapshot.
 		tf.smartFilter.initialized = false;
@@ -1066,10 +1048,8 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	vr::DriverPose_t driverSynthPose{};
 	{
 		std::lock_guard<std::mutex> hmLk(m_headMountStateMutex);
-		driverSynthTrackerSlot =
-			m_headMountState.mode == 3
-			&& m_headMountState.deviceId >= 0
-			&& static_cast<int32_t>(openVRID) == m_headMountState.deviceId;
+		driverSynthTrackerSlot = m_headMountState.mode == 3 && m_headMountState.deviceId >= 0 &&
+		                         static_cast<int32_t>(openVRID) == m_headMountState.deviceId;
 	}
 	auto snapshotDriverSynthTracker = [&](const vr::DriverPose_t& snapshotPose) {
 		if (!driverSynthTrackerSlot) return;
@@ -1099,54 +1079,68 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			}
 
 			driver_synth::SynthState synthState{};
-			synthState.mode             = hmState.mode;
-			synthState.deviceId         = hmState.deviceId;
+			synthState.mode = hmState.mode;
+			synthState.deviceId = hmState.deviceId;
 			synthState.offsetCalibrated = hmState.offsetCalibrated;
 			memcpy(synthState.headFromTrackerTrans, hmState.headFromTrackerTrans,
 			       sizeof synthState.headFromTrackerTrans);
-			memcpy(synthState.headFromTrackerRot, hmState.headFromTrackerRot,
-			       sizeof synthState.headFromTrackerRot);
+			memcpy(synthState.headFromTrackerRot, hmState.headFromTrackerRot, sizeof synthState.headFromTrackerRot);
 			driverSynthTiming = hmState.driverSynthTiming;
 
 			driverSynthNow = std::chrono::steady_clock::now();
-			driverSynthTrackerAgeMs =
-				driver_synth::SnapshotAgeMs(trackerCopy, driverSynthNow);
-			driverSynthComposeOk = driver_synth::Compose(
-				synthState, trackerCopy, driverSynthNow, driverSynthPose,
-				driverSynthTiming);
+			driverSynthTrackerAgeMs = driver_synth::SnapshotAgeMs(trackerCopy, driverSynthNow);
+			driverSynthComposeOk =
+			    driver_synth::Compose(synthState, trackerCopy, driverSynthNow, driverSynthPose, driverSynthTiming);
 
 			// Synthesis failure no longer hard-switches the HMD pose source here.
 			// The normal HMD path below first builds the headset fallback pose, then
 			// the source blender crossfades between fallback and tracker synth.
-			if (!driverSynthComposeOk)
-			{
+			if (!driverSynthComposeOk) {
 				auto markReasonLogged = [](std::atomic<uint8_t>& flags, uint8_t bit) {
 					uint8_t observed = flags.load(std::memory_order_relaxed);
 					while ((observed & bit) == 0) {
-						if (flags.compare_exchange_weak(
-							observed, static_cast<uint8_t>(observed | bit),
-							std::memory_order_relaxed, std::memory_order_relaxed)) {
+						if (flags.compare_exchange_weak(observed, static_cast<uint8_t>(observed | bit),
+						                                std::memory_order_relaxed, std::memory_order_relaxed)) {
 							return true;
 						}
 					}
 					return false;
 				};
 				static std::atomic<uint8_t> s_loggedReasons{0};
-				enum { R_UNRESOLVED=1, R_OFFSET=2, R_INVALID=4, R_STALE=8, R_MISMATCH=16, R_UNKNOWN=32 };
+				enum
+				{
+					R_UNRESOLVED = 1,
+					R_OFFSET = 2,
+					R_INVALID = 4,
+					R_STALE = 8,
+					R_MISMATCH = 16,
+					R_UNKNOWN = 32
+				};
 				const char* reason = "unknown";
 				uint8_t bit = 0;
 				if (synthState.deviceId < 0) {
-					reason = "tracker_unresolved"; bit = R_UNRESOLVED;
-				} else if (!synthState.offsetCalibrated) {
-					reason = "offset_not_calibrated"; bit = R_OFFSET;
-				} else if (!trackerCopy.valid || !trackerCopy.pose.poseIsValid) {
-					reason = "tracker_invalid"; bit = R_INVALID;
-				} else if (!driver_synth::IsTrackerFresh(trackerCopy, driverSynthNow)) {
-					reason = "tracker_stale"; bit = R_STALE;
-				} else if (trackerCopy.capturedForDeviceId != synthState.deviceId) {
-					reason = "snapshot_device_mismatch"; bit = R_MISMATCH;
-				} else {
-					reason = "unknown"; bit = R_UNKNOWN;
+					reason = "tracker_unresolved";
+					bit = R_UNRESOLVED;
+				}
+				else if (!synthState.offsetCalibrated) {
+					reason = "offset_not_calibrated";
+					bit = R_OFFSET;
+				}
+				else if (!trackerCopy.valid || !trackerCopy.pose.poseIsValid) {
+					reason = "tracker_invalid";
+					bit = R_INVALID;
+				}
+				else if (!driver_synth::IsTrackerFresh(trackerCopy, driverSynthNow)) {
+					reason = "tracker_stale";
+					bit = R_STALE;
+				}
+				else if (trackerCopy.capturedForDeviceId != synthState.deviceId) {
+					reason = "snapshot_device_mismatch";
+					bit = R_MISMATCH;
+				}
+				else {
+					reason = "unknown";
+					bit = R_UNKNOWN;
 				}
 				if (markReasonLogged(s_loggedReasons, bit)) {
 					LOG("[driver-synth] fallback: reason='%s'", reason);
@@ -1168,12 +1162,12 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			synthTrackerPose.vecPosition[2] *= tf.scale;
 
 			auto deviceWorldPose = toIsoPose(synthTrackerPose);
-			tf.currentRate = GetTransformDeltaSize(
-				tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
+			tf.currentRate = GetTransformDeltaSize(tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
 			BlendTransform(tf, deviceWorldPose);
 			ApplyTransform(tf, synthTrackerPose);
 			snapshotDriverSynthTracker(synthTrackerPose);
-		} else if (driverSynthTrackerSlot) {
+		}
+		else if (driverSynthTrackerSlot) {
 			static std::atomic<bool> s_loggedHiddenNoTransform{false};
 			if (!s_loggedHiddenNoTransform.exchange(true, std::memory_order_relaxed)) {
 				LOG("[driver-synth] tracker snapshot skipped: hidden selected tracker has no enabled transform");
@@ -1190,19 +1184,17 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 				if (handle != vr::k_ulInvalidPropertyContainer) {
 					vr::ETrackedPropertyError err = vr::TrackedProp_Success;
 					std::string s = helpers->GetStringProperty(handle, vr::Prop_SerialNumber_String, &err);
-					if (err == vr::TrackedProp_Success && !s.empty())
-						snprintf(serial, sizeof serial, "%s", s.c_str());
+					if (err == vr::TrackedProp_Success && !s.empty()) snprintf(serial, sizeof serial, "%s", s.c_str());
 				}
 			}
-			LOG("[calibration] hide-tracker active for %s; pose offset by (%.0f,%.0f,%.0f) m -- model lives outside play space",
-				serial[0] ? serial : "(unknown)",
-				openvr_pair::common::quash::kQuashOffsetX,
-				openvr_pair::common::quash::kQuashOffsetY,
-				openvr_pair::common::quash::kQuashOffsetZ);
+			LOG("[calibration] hide-tracker active for %s; pose offset by (%.0f,%.0f,%.0f) m -- model lives outside "
+			    "play space",
+			    serial[0] ? serial : "(unknown)", openvr_pair::common::quash::kQuashOffsetX,
+			    openvr_pair::common::quash::kQuashOffsetY, openvr_pair::common::quash::kQuashOffsetZ);
 			lock.lock();
 		}
-	} else if (tf.enabled)
-	{
+	}
+	else if (tf.enabled) {
 		// Scale is applied to driver-local position before the calibration
 		// transform (rotation + translation) is composed in below. This
 		// scales positions around the driver-local origin, which is correct
@@ -1229,8 +1221,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		snapshotDriverSynthTracker(pose);
 		shmem.IncrementTelemetry(protocol::DriverPoseShmem::TELEMETRY_PER_ID_APPLY);
 	}
-	else
-	{
+	else {
 		// Per-ID transform is disabled. Check for a per-tracking-system fallback --
 		// this lets a tracker that connected after the last overlay scan inherit
 		// the calibrated offset on its very first pose update.
@@ -1247,8 +1238,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 				QueryPerformanceCounter(&now);
 				// Retry no more than once per second. qpcFreq.QuadPart is the
 				// number of QPC ticks per second.
-				if (qpcFreq.QuadPart > 0 &&
-					(now.QuadPart - lastLookupAttempt[openVRID].QuadPart) < qpcFreq.QuadPart) {
+				if (qpcFreq.QuadPart > 0 && (now.QuadPart - lastLookupAttempt[openVRID].QuadPart) < qpcFreq.QuadPart) {
 					shouldTry = false;
 				}
 			}
@@ -1289,7 +1279,8 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 					if (queryOk) {
 						deviceSystem[openVRID] = std::move(queriedSys);
 						lookupState[openVRID] = LookupState::Cached;
-					} else {
+					}
+					else {
 						lookupState[openVRID] = LookupState::Failed;
 						QueryPerformanceCounter(&lastLookupAttempt[openVRID]);
 					}
@@ -1360,20 +1351,13 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		}
 		vr::DriverPose_t blendedPose{};
 		const auto blendResult = driver_synth::StepSourceBlend(
-			m_driverSynthBlendState,
-			pose,
-			driverSynthComposeOk ? &driverSynthPose : nullptr,
-			driverSynthComposeOk,
-			driverSynthNow,
-			blendedPose,
-			driverSynthTiming);
+		    m_driverSynthBlendState, pose, driverSynthComposeOk ? &driverSynthPose : nullptr, driverSynthComposeOk,
+		    driverSynthNow, blendedPose, driverSynthTiming);
 		pose = blendedPose;
 		if (blendResult.phaseChanged) {
 			LOG("[driver-synth] source_blend phase=%s prev=%s reason='%s' alpha=%.3f tracker_age_ms=%lld",
-			    driver_synth::PhaseName(blendResult.phase),
-			    driver_synth::PhaseName(blendResult.previousPhase),
-			    driverSynthComposeOk ? "tracker_ready" : driverSynthFallbackReason,
-			    blendResult.alpha,
+			    driver_synth::PhaseName(blendResult.phase), driver_synth::PhaseName(blendResult.previousPhase),
+			    driverSynthComposeOk ? "tracker_ready" : driverSynthFallbackReason, blendResult.alpha,
 			    (long long)driverSynthTrackerAgeMs);
 		}
 	}
@@ -1397,8 +1381,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		try {
 			static std::atomic<bool> s_phantomPoseSafetyMarked{false};
 			if (!s_phantomPoseSafetyMarked.exchange(true, std::memory_order_relaxed)) {
-				if (const module_safety::ModuleSpec *safety =
-						SafetySpecForFeatureMask(pairdriver::kFeaturePhantom)) {
+				if (const module_safety::ModuleSpec* safety = SafetySpecForFeatureMask(pairdriver::kFeaturePhantom)) {
 					module_safety::MarkSuspect(*safety, "pose_pipeline");
 				}
 			}
@@ -1408,12 +1391,14 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			if (!phantom::MaybeOverridePose(openVRID, qpcNow.QuadPart, qpcFreq.QuadPart, pose)) {
 				return false;
 			}
-		} catch (const std::exception &ex) {
+		}
+		catch (const std::exception& ex) {
 			LOG("Phantom pose pipeline threw: %s", ex.what());
 			lock.unlock();
 			DisableActiveModuleByMask(pairdriver::kFeaturePhantom, "pose_exception");
 			return true;
-		} catch (...) {
+		}
+		catch (...) {
 			LOG("Phantom pose pipeline threw an unknown exception");
 			lock.unlock();
 			DisableActiveModuleByMask(pairdriver::kFeaturePhantom, "pose_exception");
@@ -1425,7 +1410,8 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	return true;
 }
 
-void ServerTrackedDeviceProvider::HandleApplyRandomOffset() {
+void ServerTrackedDeviceProvider::HandleApplyRandomOffset()
+{
 	std::random_device gen;
 	std::uniform_real_distribution<double> d(-1, 1);
 	auto init = Eigen::Vector3d(d(gen), d(gen), d(gen));
@@ -1439,23 +1425,23 @@ void ServerTrackedDeviceProvider::HandleApplyRandomOffset() {
 	LOG("%s", oss.str().c_str());
 }
 
-void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMountConfig &cfg)
+void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMountConfig& cfg)
 {
 	// Copy the wire payload into the cached state under its own mutex. The
 	// pose hook copies this state out (under lock, instantly) and then works
 	// on the copy without holding the lock, so the critical section here is
 	// just a struct write.
 	HeadMountDriverState next{};
-	next.mode             = static_cast<int>(cfg.mode);
-	next.deviceId         = cfg.deviceId;
-	next.hideTracker      = cfg.hideTracker;
+	next.mode = static_cast<int>(cfg.mode);
+	next.deviceId = cfg.deviceId;
+	next.hideTracker = cfg.hideTracker;
 	next.offsetCalibrated = cfg.offsetCalibrated;
 	next.driverSynthTiming = wkopenvr::headmount::ClampDriverSynthTimingConfig({
-		(int)cfg.driverSynthStaleLimitMs,
-		(int)cfg.driverSynthGraceHoldMs,
-		(int)cfg.driverSynthBlendToFallbackMs,
-		(int)cfg.driverSynthStableBeforeSynthMs,
-		(int)cfg.driverSynthBlendToSynthMs,
+	    (int)cfg.driverSynthStaleLimitMs,
+	    (int)cfg.driverSynthGraceHoldMs,
+	    (int)cfg.driverSynthBlendToFallbackMs,
+	    (int)cfg.driverSynthStableBeforeSynthMs,
+	    (int)cfg.driverSynthBlendToSynthMs,
 	});
 
 	// NUL-safe copy of the fixed-size name buffers.
@@ -1467,10 +1453,8 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		memcpy(next.trackerTrackingSystem, cfg.trackerTrackingSystem, sysLen);
 	}
 
-	memcpy(next.headFromTrackerTrans, cfg.headFromTrackerTrans,
-	       sizeof cfg.headFromTrackerTrans);
-	memcpy(next.headFromTrackerRot, cfg.headFromTrackerRot,
-	       sizeof cfg.headFromTrackerRot);
+	memcpy(next.headFromTrackerTrans, cfg.headFromTrackerTrans, sizeof cfg.headFromTrackerTrans);
+	memcpy(next.headFromTrackerRot, cfg.headFromTrackerRot, sizeof cfg.headFromTrackerRot);
 
 	bool stateChanged = false;
 	bool sourceChanged = false;
@@ -1480,35 +1464,26 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		prev = m_headMountState;
 		m_headMountState = next;
 		sourceChanged =
-			next.mode != prev.mode
-			|| next.deviceId != prev.deviceId
-			|| next.hideTracker != prev.hideTracker
-			|| next.offsetCalibrated != prev.offsetCalibrated
-			|| memcmp(next.trackerSerial, prev.trackerSerial, sizeof next.trackerSerial) != 0
-			|| memcmp(next.trackerTrackingSystem, prev.trackerTrackingSystem,
-			          sizeof next.trackerTrackingSystem) != 0
-			|| memcmp(next.headFromTrackerTrans, prev.headFromTrackerTrans,
-			          sizeof next.headFromTrackerTrans) != 0
-			|| memcmp(next.headFromTrackerRot, prev.headFromTrackerRot,
-			          sizeof next.headFromTrackerRot) != 0;
-		stateChanged = sourceChanged
-			|| next.driverSynthTiming.staleLimitMs != prev.driverSynthTiming.staleLimitMs
-			|| next.driverSynthTiming.graceHoldMs != prev.driverSynthTiming.graceHoldMs
-			|| next.driverSynthTiming.blendToFallbackMs != prev.driverSynthTiming.blendToFallbackMs
-			|| next.driverSynthTiming.stableBeforeSynthMs != prev.driverSynthTiming.stableBeforeSynthMs
-			|| next.driverSynthTiming.blendToSynthMs != prev.driverSynthTiming.blendToSynthMs;
+		    next.mode != prev.mode || next.deviceId != prev.deviceId || next.hideTracker != prev.hideTracker ||
+		    next.offsetCalibrated != prev.offsetCalibrated ||
+		    memcmp(next.trackerSerial, prev.trackerSerial, sizeof next.trackerSerial) != 0 ||
+		    memcmp(next.trackerTrackingSystem, prev.trackerTrackingSystem, sizeof next.trackerTrackingSystem) != 0 ||
+		    memcmp(next.headFromTrackerTrans, prev.headFromTrackerTrans, sizeof next.headFromTrackerTrans) != 0 ||
+		    memcmp(next.headFromTrackerRot, prev.headFromTrackerRot, sizeof next.headFromTrackerRot) != 0;
+		stateChanged = sourceChanged || next.driverSynthTiming.staleLimitMs != prev.driverSynthTiming.staleLimitMs ||
+		               next.driverSynthTiming.graceHoldMs != prev.driverSynthTiming.graceHoldMs ||
+		               next.driverSynthTiming.blendToFallbackMs != prev.driverSynthTiming.blendToFallbackMs ||
+		               next.driverSynthTiming.stableBeforeSynthMs != prev.driverSynthTiming.stableBeforeSynthMs ||
+		               next.driverSynthTiming.blendToSynthMs != prev.driverSynthTiming.blendToSynthMs;
 		// Log on change only to avoid flooding when the overlay re-sends
 		// the same config on every AssignTargets scan.
 		if (stateChanged) {
 			LOG("[driver-head-mount] config: mode=%d deviceID=%d offsetCalibrated=%d"
-				" synth_stale_ms=%d grace_ms=%d blend_fallback_ms=%d"
-				" stable_synth_ms=%d blend_synth_ms=%d",
-			    next.mode, next.deviceId, (int)next.offsetCalibrated,
-			    next.driverSynthTiming.staleLimitMs,
-			    next.driverSynthTiming.graceHoldMs,
-			    next.driverSynthTiming.blendToFallbackMs,
-			    next.driverSynthTiming.stableBeforeSynthMs,
-			    next.driverSynthTiming.blendToSynthMs);
+			    " synth_stale_ms=%d grace_ms=%d blend_fallback_ms=%d"
+			    " stable_synth_ms=%d blend_synth_ms=%d",
+			    next.mode, next.deviceId, (int)next.offsetCalibrated, next.driverSynthTiming.staleLimitMs,
+			    next.driverSynthTiming.graceHoldMs, next.driverSynthTiming.blendToFallbackMs,
+			    next.driverSynthTiming.stableBeforeSynthMs, next.driverSynthTiming.blendToSynthMs);
 		}
 	}
 	if (sourceChanged) {
@@ -1518,22 +1493,21 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 	}
 }
 
-void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig &cfg)
+void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig& cfg)
 {
 	const uint64_t newHeader = pairdriver::PackFingerHeader(cfg);
-	const uint64_t newLow    = pairdriver::PackFingerLow(cfg);
+	const uint64_t newLow = pairdriver::PackFingerLow(cfg);
 
 	// Two exchanges: header carries the master/smoothness/mask plus fingers 8&9;
 	// low carries fingers 0..7. The detour reads both atomically with acquire;
 	// a partial update during the brief gap is harmless (one frame, one finger).
 	const uint64_t oldHeader = fingerCfgPacked.exchange(newHeader, std::memory_order_acq_rel);
-	const uint64_t oldLow    = perFingerSmoothness0to7Packed.exchange(newLow, std::memory_order_acq_rel);
+	const uint64_t oldLow = perFingerSmoothness0to7Packed.exchange(newLow, std::memory_order_acq_rel);
 
 	// Log only on real changes so a slider drag (60 Hz no-op tick) doesn't
 	// flood the log file.
 	if (oldHeader != newHeader || oldLow != newLow) {
-		const protocol::FingerSmoothingConfig prev =
-			pairdriver::UnpackFingerSmoothing(oldHeader, oldLow);
+		const protocol::FingerSmoothingConfig prev = pairdriver::UnpackFingerSmoothing(oldHeader, oldLow);
 
 		// Compute which fingers transitioned from "not smoothed" to
 		// "smoothed" so the detour can reseed its per-finger state.previous
@@ -1548,18 +1522,18 @@ void ServerTrackedDeviceProvider::SetFingerSmoothingConfig(const protocol::Finge
 		// prev.master_enabled == 0 (atomics start at zero), so the very
 		// first SetFingerSmoothingConfig after driver init reseeds every
 		// currently-enabled finger automatically.
-		const uint16_t reseedBits =
-			pairdriver::ComputeFingerSmoothingReseedBits(prev, cfg);
+		const uint16_t reseedBits = pairdriver::ComputeFingerSmoothingReseedBits(prev, cfg);
 		if (reseedBits) skeletal::MarkFingersNeedReseed(reseedBits);
 
-		LOG("[skeletal] SetFingerSmoothingConfig via IPC: enabled=%d global=%u mask=0x%04x per_finger=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u] (was: enabled=%d global=%u mask=0x%04x)",
-			(int)cfg.master_enabled, (unsigned)cfg.smoothness, (unsigned)cfg.finger_mask,
-			(unsigned)cfg.per_finger_smoothness[0], (unsigned)cfg.per_finger_smoothness[1],
-			(unsigned)cfg.per_finger_smoothness[2], (unsigned)cfg.per_finger_smoothness[3],
-			(unsigned)cfg.per_finger_smoothness[4], (unsigned)cfg.per_finger_smoothness[5],
-			(unsigned)cfg.per_finger_smoothness[6], (unsigned)cfg.per_finger_smoothness[7],
-			(unsigned)cfg.per_finger_smoothness[8], (unsigned)cfg.per_finger_smoothness[9],
-			(int)prev.master_enabled, (unsigned)prev.smoothness, (unsigned)prev.finger_mask);
+		LOG("[skeletal] SetFingerSmoothingConfig via IPC: enabled=%d global=%u mask=0x%04x "
+		    "per_finger=[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u] (was: enabled=%d global=%u mask=0x%04x)",
+		    (int)cfg.master_enabled, (unsigned)cfg.smoothness, (unsigned)cfg.finger_mask,
+		    (unsigned)cfg.per_finger_smoothness[0], (unsigned)cfg.per_finger_smoothness[1],
+		    (unsigned)cfg.per_finger_smoothness[2], (unsigned)cfg.per_finger_smoothness[3],
+		    (unsigned)cfg.per_finger_smoothness[4], (unsigned)cfg.per_finger_smoothness[5],
+		    (unsigned)cfg.per_finger_smoothness[6], (unsigned)cfg.per_finger_smoothness[7],
+		    (unsigned)cfg.per_finger_smoothness[8], (unsigned)cfg.per_finger_smoothness[9], (int)prev.master_enabled,
+		    (unsigned)prev.smoothness, (unsigned)prev.finger_mask);
 	}
 }
 
@@ -1569,24 +1543,23 @@ protocol::FingerSmoothingConfig ServerTrackedDeviceProvider::GetFingerSmoothingC
 	// loads + acquire fences on x64 are both single movs each; the cost is
 	// one extra cache-line touch per call vs the old single-atomic version.
 	const uint64_t header = fingerCfgPacked.load(std::memory_order_acquire);
-	const uint64_t low    = perFingerSmoothness0to7Packed.load(std::memory_order_acquire);
+	const uint64_t low = perFingerSmoothness0to7Packed.load(std::memory_order_acquire);
 	return pairdriver::UnpackFingerSmoothing(header, low);
 }
 
-void ServerTrackedDeviceProvider::SetInputHealthConfig(const protocol::InputHealthConfig &cfg)
+void ServerTrackedDeviceProvider::SetInputHealthConfig(const protocol::InputHealthConfig& cfg)
 {
 	const uint64_t newPacked = pairdriver::PackInputHealthConfig(cfg);
 
 	const uint64_t oldPacked = inputHealthCfgPacked.exchange(newPacked, std::memory_order_acq_rel);
 
 	if (oldPacked != newPacked) {
-		const protocol::InputHealthConfig prev =
-			pairdriver::UnpackInputHealthConfig(oldPacked);
-		LOG("[inputhealth] SetInputHealthConfig via IPC: master=%d diag_only=%d rest=%d trig=%d (was: master=%d diag_only=%d rest=%d trig=%d)",
-			(int)cfg.master_enabled, (int)cfg.diagnostics_only,
-			(int)cfg.enable_rest_recenter, (int)cfg.enable_trigger_remap,
-			(int)prev.master_enabled, (int)prev.diagnostics_only,
-			(int)prev.enable_rest_recenter, (int)prev.enable_trigger_remap);
+		const protocol::InputHealthConfig prev = pairdriver::UnpackInputHealthConfig(oldPacked);
+		LOG("[inputhealth] SetInputHealthConfig via IPC: master=%d diag_only=%d rest=%d trig=%d (was: master=%d "
+		    "diag_only=%d rest=%d trig=%d)",
+		    (int)cfg.master_enabled, (int)cfg.diagnostics_only, (int)cfg.enable_rest_recenter,
+		    (int)cfg.enable_trigger_remap, (int)prev.master_enabled, (int)prev.diagnostics_only,
+		    (int)prev.enable_rest_recenter, (int)prev.enable_trigger_remap);
 	}
 }
 
@@ -1598,7 +1571,7 @@ protocol::InputHealthConfig ServerTrackedDeviceProvider::GetInputHealthConfig() 
 	return pairdriver::UnpackInputHealthConfig(packed);
 }
 
-void ServerTrackedDeviceProvider::SetInputHealthCompensation(const protocol::InputHealthCompensationEntry &entry)
+void ServerTrackedDeviceProvider::SetInputHealthCompensation(const protocol::InputHealthCompensationEntry& entry)
 {
 	const std::string path = InputHealthPathString(entry.path);
 	if (entry.device_serial_hash == 0 || path.empty()) return;
@@ -1611,37 +1584,29 @@ void ServerTrackedDeviceProvider::SetInputHealthCompensation(const protocol::Inp
 			if (serialIt->second.empty()) inputHealthComp.erase(serialIt);
 		}
 		LOG("[inputhealth] SetInputHealthCompensation: serial_hash=0x%016llx path='%s' enabled=0",
-			(unsigned long long)entry.device_serial_hash, path.c_str());
+		    (unsigned long long)entry.device_serial_hash, path.c_str());
 		return;
 	}
 
 	// Reject paths that should never carry compensation. The overlay's learning
 	// engine applies the same policy so this is a belt-and-suspenders guard
 	// against stale entries arriving from an older overlay build.
-	if (!inputhealth::AllowsDriverCompensation(
-			inputhealth::ClassifyPathFamily(path))) {
+	if (!inputhealth::AllowsDriverCompensation(inputhealth::ClassifyPathFamily(path))) {
 		LOG("[inputhealth] SetInputHealthCompensation: rejected unsupported path serial_hash=0x%016llx path='%s'",
-			(unsigned long long)entry.device_serial_hash, path.c_str());
+		    (unsigned long long)entry.device_serial_hash, path.c_str());
 		return;
 	}
 
 	inputHealthComp[entry.device_serial_hash][path] = entry;
 	LOG("[inputhealth] SetInputHealthCompensation: serial_hash=0x%016llx path='%s' enabled=1 kind=%u"
-		" offset=%.5f trig_min=%.5f trig_max=%.5f dead=%.5f debounce_us=%u",
-		(unsigned long long)entry.device_serial_hash,
-		path.c_str(),
-		(unsigned)entry.kind,
-		entry.learned_rest_offset,
-		entry.learned_trigger_min,
-		entry.learned_trigger_max,
-		entry.learned_deadzone_radius,
-		(unsigned)entry.learned_debounce_us);
+	    " offset=%.5f trig_min=%.5f trig_max=%.5f dead=%.5f debounce_us=%u",
+	    (unsigned long long)entry.device_serial_hash, path.c_str(), (unsigned)entry.kind, entry.learned_rest_offset,
+	    entry.learned_trigger_min, entry.learned_trigger_max, entry.learned_deadzone_radius,
+	    (unsigned)entry.learned_debounce_us);
 }
 
-bool ServerTrackedDeviceProvider::LookupInputHealthCompensation(
-	uint64_t serial_hash,
-	const std::string &path,
-	protocol::InputHealthCompensationEntry &out) const
+bool ServerTrackedDeviceProvider::LookupInputHealthCompensation(uint64_t serial_hash, const std::string& path,
+                                                                protocol::InputHealthCompensationEntry& out) const
 {
 	if (serial_hash == 0 || path.empty()) return false;
 	// Block until the shared lock is acquired. Writes (SetInputHealthCompensation /
@@ -1674,6 +1639,6 @@ void ServerTrackedDeviceProvider::ClearInputHealthCompensation(uint64_t serial_h
 		return;
 	}
 	const size_t erased = inputHealthComp.erase(serial_hash);
-	LOG("[inputhealth] ClearInputHealthCompensation: serial_hash=0x%016llx erased=%zu",
-		(unsigned long long)serial_hash, erased);
+	LOG("[inputhealth] ClearInputHealthCompensation: serial_hash=0x%016llx erased=%zu", (unsigned long long)serial_hash,
+	    erased);
 }

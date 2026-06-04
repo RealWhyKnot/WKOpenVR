@@ -31,14 +31,14 @@ namespace {
 // Hard-coded so a hostile build server can't redirect the update probe
 // somewhere else by mutating a config file. Editing this line is a
 // deliberate recompile.
-constexpr wchar_t kHost[]      = L"api.github.com";
-constexpr wchar_t kPath[]      = L"/repos/RealWhyKnot/WKOpenVR/releases/latest";
+constexpr wchar_t kHost[] = L"api.github.com";
+constexpr wchar_t kPath[] = L"/repos/RealWhyKnot/WKOpenVR/releases/latest";
 constexpr wchar_t kUserAgent[] = L"WKOpenVR-UpdateNotice/1.0";
 
 // Parse YYYY.M.D.N[-XXXX]? (with optional leading "v") into four numeric
 // components. Returns false on malformed input. The trailing -XXXX hex
 // suffix (dev-build hash) is dropped before comparison.
-bool ParseStamp(const std::string &raw, int (&out)[4])
+bool ParseStamp(const std::string& raw, int (&out)[4])
 {
 	std::string s = raw;
 	if (!s.empty() && s[0] == 'v') s.erase(0, 1);
@@ -47,22 +47,25 @@ bool ParseStamp(const std::string &raw, int (&out)[4])
 
 	int parsed[4] = {0, 0, 0, 0};
 	int idx = 0;
-	const char *p = s.c_str();
+	const char* p = s.c_str();
 	while (idx < 4 && *p) {
-		char *end = nullptr;
+		char* end = nullptr;
 		const long v = std::strtol(p, &end, 10);
 		if (end == p) return false;
 		parsed[idx++] = static_cast<int>(v);
 		p = end;
-		if (*p == '.')      ++p;
-		else if (*p != '\0') return false;
+		if (*p == '.')
+			++p;
+		else if (*p != '\0')
+			return false;
 	}
 	if (idx != 4) return false;
-	for (int i = 0; i < 4; ++i) out[i] = parsed[i];
+	for (int i = 0; i < 4; ++i)
+		out[i] = parsed[i];
 	return true;
 }
 
-bool IsRemoteNewer(const std::string &remote, const std::string &local)
+bool IsRemoteNewer(const std::string& remote, const std::string& local)
 {
 	int r[4] = {0}, l[4] = {0};
 	if (!ParseStamp(remote, r) || !ParseStamp(local, l)) return false;
@@ -85,24 +88,24 @@ bool IsLocalDevBuild()
 
 // Minimal WinHttp GET. Returns body on success, empty + sets err on failure.
 // Follows the API's default redirect behaviour.
-std::string HttpGet(const wchar_t *host, const wchar_t *path, std::string &err)
+std::string HttpGet(const wchar_t* host, const wchar_t* path, std::string& err)
 {
-	HINTERNET hSession = WinHttpOpen(kUserAgent,
-		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-	if (!hSession) { err = "WinHttpOpen failed"; return {}; }
+	HINTERNET hSession =
+	    WinHttpOpen(kUserAgent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!hSession) {
+		err = "WinHttpOpen failed";
+		return {};
+	}
 
-	HINTERNET hConnect = WinHttpConnect(hSession, host,
-		INTERNET_DEFAULT_HTTPS_PORT, 0);
+	HINTERNET hConnect = WinHttpConnect(hSession, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
 	if (!hConnect) {
 		WinHttpCloseHandle(hSession);
 		err = "WinHttpConnect failed";
 		return {};
 	}
 
-	HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr,
-		WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-		WINHTTP_FLAG_SECURE);
+	HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+	                                        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 	if (!hRequest) {
 		WinHttpCloseHandle(hConnect);
 		WinHttpCloseHandle(hSession);
@@ -113,13 +116,10 @@ std::string HttpGet(const wchar_t *host, const wchar_t *path, std::string &err)
 	// GitHub requires the Accept + API-version headers; without them the
 	// API silently negotiates to a different content type that doesn't
 	// preserve the JSON we want.
-	const wchar_t kHeaders[] =
-		L"Accept: application/vnd.github+json\r\n"
-		L"X-GitHub-Api-Version: 2022-11-28\r\n";
-	if (!WinHttpSendRequest(hRequest, kHeaders, (DWORD)wcslen(kHeaders),
-			WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
-		|| !WinHttpReceiveResponse(hRequest, nullptr))
-	{
+	const wchar_t kHeaders[] = L"Accept: application/vnd.github+json\r\n"
+	                           L"X-GitHub-Api-Version: 2022-11-28\r\n";
+	if (!WinHttpSendRequest(hRequest, kHeaders, (DWORD)wcslen(kHeaders), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+	    !WinHttpReceiveResponse(hRequest, nullptr)) {
 		WinHttpCloseHandle(hRequest);
 		WinHttpCloseHandle(hConnect);
 		WinHttpCloseHandle(hSession);
@@ -128,10 +128,8 @@ std::string HttpGet(const wchar_t *host, const wchar_t *path, std::string &err)
 	}
 
 	DWORD status = 0, statusSize = sizeof status;
-	WinHttpQueryHeaders(hRequest,
-		WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-		WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
-		WINHTTP_NO_HEADER_INDEX);
+	WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+	                    &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
 	if (status != 200) {
 		WinHttpCloseHandle(hRequest);
 		WinHttpCloseHandle(hConnect);
@@ -182,7 +180,7 @@ struct UpdateNoticeSingleton
 	}
 };
 
-UpdateNoticeSingleton &Instance()
+UpdateNoticeSingleton& Instance()
 {
 	static UpdateNoticeSingleton s;
 	return s;
@@ -190,7 +188,7 @@ UpdateNoticeSingleton &Instance()
 
 void RunCheck()
 {
-	auto &inst = Instance();
+	auto& inst = Instance();
 	UpdateNoticeState next;
 
 	// Dev builds never have a sensible local stamp to compare against,
@@ -233,19 +231,19 @@ void RunCheck()
 		return;
 	}
 
-	auto getStr = [&v](const char *key) -> std::string {
+	auto getStr = [&v](const char* key) -> std::string {
 		return openvr_pair::common::json::StringAt(v, key);
 	};
 
-	next.latestTag     = getStr("tag_name");
-	next.releaseUrl    = getStr("html_url");
+	next.latestTag = getStr("tag_name");
+	next.releaseUrl = getStr("html_url");
 	next.checkComplete = true;
 	if (next.latestTag.empty()) {
 		next.errorMessage = "GitHub response missing tag_name";
-	} else {
+	}
+	else {
 		next.latestVersion = next.latestTag;
-		if (!next.latestVersion.empty() && next.latestVersion.front() == 'v')
-			next.latestVersion.erase(0, 1);
+		if (!next.latestVersion.empty() && next.latestVersion.front() == 'v') next.latestVersion.erase(0, 1);
 		next.available = IsRemoteNewer(next.latestTag, OPENVR_PAIR_VERSION_STRING);
 	}
 
@@ -260,7 +258,7 @@ void RunCheck()
 
 void StartUpdateCheck()
 {
-	auto &inst = Instance();
+	auto& inst = Instance();
 	bool expected = false;
 	if (!inst.inFlight.compare_exchange_strong(expected, true)) return;
 	if (inst.worker.joinable()) inst.worker.join();
@@ -269,7 +267,7 @@ void StartUpdateCheck()
 
 UpdateNoticeState GetUpdateNoticeState()
 {
-	auto &inst = Instance();
+	auto& inst = Instance();
 	std::lock_guard<std::mutex> lock(inst.mu);
 	return inst.state;
 }

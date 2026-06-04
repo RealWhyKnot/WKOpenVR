@@ -6,21 +6,18 @@ namespace wkopenvr::headmount {
 
 inline bool IsContinuousHeadMountBindingState(CalibrationState state)
 {
-	return state == CalibrationState::Continuous
-		|| state == CalibrationState::ContinuousStandby;
+	return state == CalibrationState::Continuous || state == CalibrationState::ContinuousStandby;
 }
 
 inline bool HasContinuousTargetIdentity(const CalibrationContext& ctx)
 {
-	return !ctx.targetStandby.serial.empty()
-		&& !ctx.targetStandby.trackingSystem.empty();
+	return !ctx.targetStandby.serial.empty() && !ctx.targetStandby.trackingSystem.empty();
 }
 
 inline bool HeadMountMatchesContinuousTarget(const CalibrationContext& ctx)
 {
-	return HasContinuousTargetIdentity(ctx)
-		&& ctx.headMount.trackerSerial == ctx.targetStandby.serial
-		&& ctx.headMount.trackerTrackingSystem == ctx.targetStandby.trackingSystem;
+	return HasContinuousTargetIdentity(ctx) && ctx.headMount.trackerSerial == ctx.targetStandby.serial &&
+	       ctx.headMount.trackerTrackingSystem == ctx.targetStandby.trackingSystem;
 }
 
 inline bool BindHeadMountToContinuousTarget(CalibrationContext& ctx)
@@ -37,8 +34,7 @@ inline bool BindHeadMountToContinuousTarget(CalibrationContext& ctx)
 	bool changed = false;
 	HeadMountConfig& hm = ctx.headMount;
 	const bool identityChanged =
-		hm.trackerSerial != ctx.targetStandby.serial
-		|| hm.trackerTrackingSystem != ctx.targetStandby.trackingSystem;
+	    hm.trackerSerial != ctx.targetStandby.serial || hm.trackerTrackingSystem != ctx.targetStandby.trackingSystem;
 
 	if (hm.trackerSerial != ctx.targetStandby.serial) {
 		hm.trackerSerial = ctx.targetStandby.serial;
@@ -54,9 +50,7 @@ inline bool BindHeadMountToContinuousTarget(CalibrationContext& ctx)
 	}
 
 	const int32_t targetDeviceId =
-		(ctx.targetID >= 0 && ctx.targetID < (int32_t)vr::k_unMaxTrackedDeviceCount)
-			? ctx.targetID
-			: -1;
+	    (ctx.targetID >= 0 && ctx.targetID < (int32_t)vr::k_unMaxTrackedDeviceCount) ? ctx.targetID : -1;
 	if (hm.deviceID != targetDeviceId) {
 		hm.deviceID = targetDeviceId;
 		changed = true;

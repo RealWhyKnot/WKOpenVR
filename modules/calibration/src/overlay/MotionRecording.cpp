@@ -18,25 +18,32 @@ namespace {
 // newlines). Identical to the parser in tools/replay/main.cpp; deliberately
 // duplicated rather than shared so the in-app version can evolve without
 // dragging the standalone CLI's link line along.
-std::vector<std::string> SplitCsv(const std::string& line) {
+std::vector<std::string> SplitCsv(const std::string& line)
+{
 	std::vector<std::string> out;
 	std::string cur;
 	for (char c : line) {
-		if (c == ',') { out.push_back(cur); cur.clear(); }
-		else { cur.push_back(c); }
+		if (c == ',') {
+			out.push_back(cur);
+			cur.clear();
+		}
+		else {
+			cur.push_back(c);
+		}
 	}
 	out.push_back(cur);
 	return out;
 }
 
-void RTrim(std::string& s) {
-	while (!s.empty() && (s.back() == '\r' || s.back() == '\n' ||
-		s.back() == ' ' || s.back() == '\t')) {
+void RTrim(std::string& s)
+{
+	while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ' || s.back() == '\t')) {
 		s.pop_back();
 	}
 }
 
-bool ReadDouble(const std::string& s, double& out) {
+bool ReadDouble(const std::string& s, double& out)
+{
 	if (s.empty()) return false;
 	char* end = nullptr;
 	const double v = std::strtod(s.c_str(), &end);
@@ -45,14 +52,16 @@ bool ReadDouble(const std::string& s, double& out) {
 	return true;
 }
 
-int ColIndex(const std::unordered_map<std::string, int>& cols, const char* name) {
+int ColIndex(const std::unordered_map<std::string, int>& cols, const char* name)
+{
 	const auto it = cols.find(name);
 	return (it == cols.end()) ? -1 : it->second;
 }
 
 // Strip a leading "# key=" prefix from an annotation line. Returns the value
 // part (post-=) on match, or empty string when the line doesn't have that key.
-std::string ParseHeaderKv(const std::string& line, const char* key) {
+std::string ParseHeaderKv(const std::string& line, const char* key)
+{
 	const std::string prefix = std::string("# ") + key + "=";
 	if (line.rfind(prefix, 0) != 0) return {};
 	return line.substr(prefix.size());
@@ -61,7 +70,8 @@ std::string ParseHeaderKv(const std::string& line, const char* key) {
 // %LocalAppDataLow%\WKOpenVR\Logs -- same path the live logger writes to.
 // Was \SpaceCalibrator\Logs\ pre-monorepo; the umbrella consolidation moved
 // SC's overlay-side logs to the umbrella's log directory.
-std::wstring GetLogsDir() {
+std::wstring GetLogsDir()
+{
 	PWSTR rootPath = nullptr;
 	if (SHGetKnownFolderPath(FOLDERID_LocalAppDataLow, 0, nullptr, &rootPath) != S_OK) {
 		if (rootPath) CoTaskMemFree(rootPath);
@@ -75,7 +85,8 @@ std::wstring GetLogsDir() {
 
 } // namespace
 
-LoadedRecording LoadRecording(const std::string& path) {
+LoadedRecording LoadRecording(const std::string& path)
+{
 	LoadedRecording rec;
 	rec.sourcePath = path;
 
@@ -103,13 +114,20 @@ LoadedRecording LoadRecording(const std::string& path) {
 			}
 			// Pull metadata KVs out of the header annotations the live logger emits.
 			std::string v;
-			if (!(v = ParseHeaderKv(line, "build_stamp")).empty())            rec.meta.buildStamp = v;
-			else if (!(v = ParseHeaderKv(line, "build_channel")).empty())     rec.meta.buildChannel = v;
-			else if (!(v = ParseHeaderKv(line, "hmd_tracking_system")).empty()) rec.meta.hmdTrackingSystem = v;
-			else if (!(v = ParseHeaderKv(line, "hmd_model")).empty())         rec.meta.hmdModel = v;
-			else if (!(v = ParseHeaderKv(line, "hmd_serial")).empty())        rec.meta.hmdSerial = v;
-			else if (!(v = ParseHeaderKv(line, "steamvr_runtime_path")).empty()) rec.meta.steamvrRuntime = v;
-			else if (!(v = ParseHeaderKv(line, "windows")).empty())           rec.meta.windowsVersion = v;
+			if (!(v = ParseHeaderKv(line, "build_stamp")).empty())
+				rec.meta.buildStamp = v;
+			else if (!(v = ParseHeaderKv(line, "build_channel")).empty())
+				rec.meta.buildChannel = v;
+			else if (!(v = ParseHeaderKv(line, "hmd_tracking_system")).empty())
+				rec.meta.hmdTrackingSystem = v;
+			else if (!(v = ParseHeaderKv(line, "hmd_model")).empty())
+				rec.meta.hmdModel = v;
+			else if (!(v = ParseHeaderKv(line, "hmd_serial")).empty())
+				rec.meta.hmdSerial = v;
+			else if (!(v = ParseHeaderKv(line, "steamvr_runtime_path")).empty())
+				rec.meta.steamvrRuntime = v;
+			else if (!(v = ParseHeaderKv(line, "windows")).empty())
+				rec.meta.windowsVersion = v;
 			else if (!(v = ParseHeaderKv(line, "logical_processors")).empty()) {
 				rec.meta.logicalProcessors = std::atoi(v.c_str());
 			}
@@ -129,7 +147,8 @@ LoadedRecording LoadRecording(const std::string& path) {
 	}
 
 	std::unordered_map<std::string, int> cols;
-	for (size_t i = 0; i < header.size(); ++i) cols[header[i]] = (int)i;
+	for (size_t i = 0; i < header.size(); ++i)
+		cols[header[i]] = (int)i;
 
 	const int idxTimestamp = ColIndex(cols, "Timestamp");
 	const int idxRefTx = ColIndex(cols, "ref_tx");
@@ -149,12 +168,13 @@ LoadedRecording LoadRecording(const std::string& path) {
 	const int idxTickPhase = ColIndex(cols, "tick_phase");
 
 	const int required[] = {
-		idxRefTx, idxRefTy, idxRefTz, idxRefQw, idxRefQx, idxRefQy, idxRefQz,
-		idxTgtTx, idxTgtTy, idxTgtTz, idxTgtQw, idxTgtQx, idxTgtQy, idxTgtQz,
+	    idxRefTx, idxRefTy, idxRefTz, idxRefQw, idxRefQx, idxRefQy, idxRefQz,
+	    idxTgtTx, idxTgtTy, idxTgtTz, idxTgtQw, idxTgtQx, idxTgtQy, idxTgtQz,
 	};
 	for (int idx : required) {
 		if (idx < 0) {
-			rec.error = "Recording is missing one of the required raw-pose columns (ref_t{x,y,z}, ref_q{w,x,y,z}, tgt_*).";
+			rec.error =
+			    "Recording is missing one of the required raw-pose columns (ref_t{x,y,z}, ref_q{w,x,y,z}, tgt_*).";
 			return rec;
 		}
 	}
@@ -179,20 +199,13 @@ LoadedRecording LoadRecording(const std::string& path) {
 		row.timestamp = ts;
 
 		double rt[3], rq[4], tt[3], tq[4];
-		if (!ReadDouble(fields[idxRefTx], rt[0]) ||
-			!ReadDouble(fields[idxRefTy], rt[1]) ||
-			!ReadDouble(fields[idxRefTz], rt[2]) ||
-			!ReadDouble(fields[idxRefQw], rq[0]) ||
-			!ReadDouble(fields[idxRefQx], rq[1]) ||
-			!ReadDouble(fields[idxRefQy], rq[2]) ||
-			!ReadDouble(fields[idxRefQz], rq[3]) ||
-			!ReadDouble(fields[idxTgtTx], tt[0]) ||
-			!ReadDouble(fields[idxTgtTy], tt[1]) ||
-			!ReadDouble(fields[idxTgtTz], tt[2]) ||
-			!ReadDouble(fields[idxTgtQw], tq[0]) ||
-			!ReadDouble(fields[idxTgtQx], tq[1]) ||
-			!ReadDouble(fields[idxTgtQy], tq[2]) ||
-			!ReadDouble(fields[idxTgtQz], tq[3])) {
+		if (!ReadDouble(fields[idxRefTx], rt[0]) || !ReadDouble(fields[idxRefTy], rt[1]) ||
+		    !ReadDouble(fields[idxRefTz], rt[2]) || !ReadDouble(fields[idxRefQw], rq[0]) ||
+		    !ReadDouble(fields[idxRefQx], rq[1]) || !ReadDouble(fields[idxRefQy], rq[2]) ||
+		    !ReadDouble(fields[idxRefQz], rq[3]) || !ReadDouble(fields[idxTgtTx], tt[0]) ||
+		    !ReadDouble(fields[idxTgtTy], tt[1]) || !ReadDouble(fields[idxTgtTz], tt[2]) ||
+		    !ReadDouble(fields[idxTgtQw], tq[0]) || !ReadDouble(fields[idxTgtQx], tq[1]) ||
+		    !ReadDouble(fields[idxTgtQy], tq[2]) || !ReadDouble(fields[idxTgtQz], tq[3])) {
 			continue;
 		}
 
@@ -216,7 +229,8 @@ LoadedRecording LoadRecording(const std::string& path) {
 	return rec;
 }
 
-ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
+ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
+{
 	ReplayResult res;
 	if (!rec.error.empty()) {
 		res.error = rec.error;
@@ -230,12 +244,9 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 	CalibrationCalc calc;
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = false;
-	const bool boundedContinuous =
-		opts.continuous && opts.maxContinuousSamples > 0;
-	const std::size_t continuousWindow =
-		boundedContinuous ? opts.maxContinuousSamples : 0;
-	const std::size_t continuousDrop =
-		boundedContinuous ? std::max<std::size_t>(1, continuousWindow / 10) : 0;
+	const bool boundedContinuous = opts.continuous && opts.maxContinuousSamples > 0;
+	const std::size_t continuousWindow = boundedContinuous ? opts.maxContinuousSamples : 0;
+	const std::size_t continuousDrop = boundedContinuous ? std::max<std::size_t>(1, continuousWindow / 10) : 0;
 
 	res.trace.reserve(rec.rows.size());
 
@@ -247,8 +258,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 				calc.ShiftSample();
 			}
 		}
-		res.maxSamplesInWindow = std::max(res.maxSamplesInWindow,
-			static_cast<int>(calc.SampleCount()));
+		res.maxSamplesInWindow = std::max(res.maxSamplesInWindow, static_cast<int>(calc.SampleCount()));
 
 		ReplayTickResult tick;
 		tick.timestamp = row.timestamp;
@@ -261,10 +271,12 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 			}
 
 			bool lerp = false;
-			const bool ok = calc.ComputeIncremental(lerp, opts.threshold,
-				opts.maxRelError, opts.ignoreOutliers);
+			const bool ok = calc.ComputeIncremental(lerp, opts.threshold, opts.maxRelError, opts.ignoreOutliers);
 			tick.accepted = ok;
-			if (ok) ++res.accepts; else ++res.rejects;
+			if (ok)
+				++res.accepts;
+			else
+				++res.rejects;
 			// CalibrationCalc doesn't expose its post-validate prior error
 			// directly, so use the public Validate path against the current
 			// estimate — only valid after the first accept, otherwise we
@@ -283,7 +295,8 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 					calc.ShiftSample();
 				}
 			}
-		} else {
+		}
+		else {
 			// Oneshot mode just keeps appending samples. The single Compute below
 			// runs after the loop. Per-tick trace stays as samples-only.
 		}
@@ -293,7 +306,10 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 
 	if (!opts.continuous) {
 		const bool ok = calc.ComputeOneshot(opts.ignoreOutliers);
-		if (ok) ++res.accepts; else ++res.rejects;
+		if (ok)
+			++res.accepts;
+		else
+			++res.rejects;
 	}
 
 	res.rowsReplayed = (int)rec.rows.size();
@@ -310,7 +326,8 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts) {
 	return res;
 }
 
-std::vector<LogFileEntry> ListRecordings() {
+std::vector<LogFileEntry> ListRecordings()
+{
 	std::vector<LogFileEntry> out;
 	const std::wstring dir = GetLogsDir();
 	if (dir.empty()) return out;
@@ -332,8 +349,8 @@ std::vector<LogFileEntry> ListRecordings() {
 		}
 		entry.fullPath = dir + L"\\" + find.cFileName;
 		entry.sizeBytes = ((uint64_t)find.nFileSizeHigh << 32) | (uint64_t)find.nFileSizeLow;
-		entry.mtimeFileTime = ((uint64_t)find.ftLastWriteTime.dwHighDateTime << 32)
-			| (uint64_t)find.ftLastWriteTime.dwLowDateTime;
+		entry.mtimeFileTime =
+		    ((uint64_t)find.ftLastWriteTime.dwHighDateTime << 32) | (uint64_t)find.ftLastWriteTime.dwLowDateTime;
 		out.push_back(std::move(entry));
 	} while (FindNextFileW(h, &find));
 	FindClose(h);
@@ -346,7 +363,8 @@ std::vector<LogFileEntry> ListRecordings() {
 	return out;
 }
 
-RecordingPruneResult PruneRecordings(const RecordingRetentionPolicy& policy) {
+RecordingPruneResult PruneRecordings(const RecordingRetentionPolicy& policy)
+{
 	RecordingPruneResult result;
 	const std::vector<LogFileEntry> entries = ListRecordings();
 	result.totalFiles = entries.size();
@@ -361,15 +379,14 @@ RecordingPruneResult PruneRecordings(const RecordingRetentionPolicy& policy) {
 		if (DeleteFileW(entry.fullPath.c_str())) {
 			++result.deletedFiles;
 			result.freedBytes = detail::SaturatingAdd(result.freedBytes, entry.sizeBytes);
-		} else {
+		}
+		else {
 			++result.failedDeletes;
 		}
 	}
 
 	result.keptFiles = result.totalFiles - result.deletedFiles;
-	result.keptBytes = (result.totalBytes >= result.freedBytes)
-		? (result.totalBytes - result.freedBytes)
-		: 0;
+	result.keptBytes = (result.totalBytes >= result.freedBytes) ? (result.totalBytes - result.freedBytes) : 0;
 	return result;
 }
 

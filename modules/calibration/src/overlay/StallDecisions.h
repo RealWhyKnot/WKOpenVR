@@ -39,9 +39,9 @@ namespace spacecal::stall {
 // Parameters are unused but kept in the signature so call sites remain
 // idiomatic ("decide based on the stall count") and so any future change
 // has a place for new state without restructuring the caller.
-constexpr bool ShouldDemoteOnHmdStall(int /*consecutiveStalls*/,
-                                      int /*maxStalls*/) {
-    return false;
+constexpr bool ShouldDemoteOnHmdStall(int /*consecutiveStalls*/, int /*maxStalls*/)
+{
+	return false;
 }
 
 } // namespace spacecal::stall

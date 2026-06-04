@@ -17,27 +17,26 @@ struct whisper_full_params;
 class WhisperEngine
 {
 public:
-    WhisperEngine();
-    ~WhisperEngine();
+	WhisperEngine();
+	~WhisperEngine();
 
-    // Load model from file. Returns false on failure.
-    bool Load(const std::string &model_path, int n_threads = 4, bool use_gpu = false);
+	// Load model from file. Returns false on failure.
+	bool Load(const std::string& model_path, int n_threads = 4, bool use_gpu = false);
 
-    void Unload();
+	void Unload();
 
-    bool IsLoaded() const noexcept { return ctx_ != nullptr; }
+	bool IsLoaded() const noexcept { return ctx_ != nullptr; }
 
-    // Set source language. "auto" = whisper auto-detect (adds ~50-100 ms).
-    void SetLanguage(const std::string &lang);
+	// Set source language. "auto" = whisper auto-detect (adds ~50-100 ms).
+	void SetLanguage(const std::string& lang);
 
-    // Transcribe `frames` of 16 kHz mono float32 PCM.
-    // Returns the concatenated segment text. Writes the detected language
-    // BCP-47 code to `*detected_lang_out` if non-null.
-    std::string Transcribe(const std::vector<float> &pcm16k,
-                           std::string *detected_lang_out = nullptr);
+	// Transcribe `frames` of 16 kHz mono float32 PCM.
+	// Returns the concatenated segment text. Writes the detected language
+	// BCP-47 code to `*detected_lang_out` if non-null.
+	std::string Transcribe(const std::vector<float>& pcm16k, std::string* detected_lang_out = nullptr);
 
 private:
-    whisper_context *ctx_ = nullptr;
-    std::string      language_hint_; // "" -> "auto"
-    int              n_threads_ = 4;
+	whisper_context* ctx_ = nullptr;
+	std::string language_hint_; // "" -> "auto"
+	int n_threads_ = 4;
 };

@@ -21,13 +21,14 @@ namespace openvr_pair::overlay {
 // name to SubmitTexture each frame the dashboard is visible. This
 // keeps the host stateless about rendering and the shell stateless
 // about OpenVR.
-class VrOverlayHost {
+class VrOverlayHost
+{
 public:
 	VrOverlayHost();
 	~VrOverlayHost();
 
-	VrOverlayHost(const VrOverlayHost &) = delete;
-	VrOverlayHost &operator=(const VrOverlayHost &) = delete;
+	VrOverlayHost(const VrOverlayHost&) = delete;
+	VrOverlayHost& operator=(const VrOverlayHost&) = delete;
 
 	// Per-frame pump. Retries VR_Init on a 1-second cadence until
 	// SteamVR is up; creates the dashboard overlay once VR is

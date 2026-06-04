@@ -12,20 +12,20 @@
 
 namespace inputhealth {
 
-inline uint64_t Fnv1a64(const char *bytes, size_t len)
+inline uint64_t Fnv1a64(const char* bytes, size_t len)
 {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    constexpr uint64_t kPrime = 0x100000001b3ULL;
-    for (size_t i = 0; i < len; ++i) {
-        h ^= static_cast<uint8_t>(bytes[i]);
-        h *= kPrime;
-    }
-    return h;
+	uint64_t h = 0xcbf29ce484222325ULL;
+	constexpr uint64_t kPrime = 0x100000001b3ULL;
+	for (size_t i = 0; i < len; ++i) {
+		h ^= static_cast<uint8_t>(bytes[i]);
+		h *= kPrime;
+	}
+	return h;
 }
 
-inline uint64_t Fnv1a64(const std::string &s)
+inline uint64_t Fnv1a64(const std::string& s)
 {
-    return Fnv1a64(s.data(), s.size());
+	return Fnv1a64(s.data(), s.size());
 }
 
 // Sentinel used in InputHealthResetStats.device_serial_hash to mean

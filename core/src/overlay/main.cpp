@@ -66,19 +66,18 @@ std::unique_ptr<FeaturePlugin> CreateCaptionsPlugin();
 std::unique_ptr<FeaturePlugin> CreatePhantomPlugin();
 #endif
 #if OPENVR_PAIR_HAS_DEV_OVERLAY
-std::unique_ptr<FeaturePlugin> CreateDevPlugin(std::vector<FeaturePlugin *> plugins);
+std::unique_ptr<FeaturePlugin> CreateDevPlugin(std::vector<FeaturePlugin*> plugins);
 #endif
 
 } // namespace openvr_pair::overlay
 
 namespace {
 
-void GlfwErrorCallback(int code, const char *description)
+void GlfwErrorCallback(int code, const char* description)
 {
 	fprintf(stderr, "[glfw] error %d: %s\n", code, description ? description : "(null)");
-	openvr_pair::common::DiagnosticLog(
-		"overlay", "glfw_error code=%d description='%s'",
-		code, description ? description : "(null)");
+	openvr_pair::common::DiagnosticLog("overlay", "glfw_error code=%d description='%s'", code,
+	                                   description ? description : "(null)");
 }
 
 std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins()
@@ -110,9 +109,9 @@ std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins(
 	plugins.push_back(CreatePhantomPlugin());
 #endif
 #if OPENVR_PAIR_HAS_DEV_OVERLAY
-	std::vector<FeaturePlugin *> devPluginSources;
+	std::vector<FeaturePlugin*> devPluginSources;
 	devPluginSources.reserve(plugins.size());
-	for (auto &plugin : plugins) {
+	for (auto& plugin : plugins) {
 		devPluginSources.push_back(plugin.get());
 	}
 	plugins.push_back(CreateDevPlugin(std::move(devPluginSources)));
@@ -120,12 +119,12 @@ std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins(
 	return plugins;
 }
 
-class CompositorTimingSampler {
+class CompositorTimingSampler
+{
 public:
 	void MaybeSample(double nowSeconds)
 	{
-		if (lastSampleSeconds_ > 0.0 && nowSeconds >= lastSampleSeconds_
-			&& nowSeconds - lastSampleSeconds_ < 1.0) {
+		if (lastSampleSeconds_ > 0.0 && nowSeconds >= lastSampleSeconds_ && nowSeconds - lastSampleSeconds_ < 1.0) {
 			return;
 		}
 		lastSampleSeconds_ = nowSeconds;
@@ -138,9 +137,7 @@ public:
 			timing.m_nSize = sizeof(vr::Compositor_FrameTiming);
 		}
 
-		const uint32_t count = compositor->GetFrameTimings(
-			timings.data(),
-			static_cast<uint32_t>(timings.size()));
+		const uint32_t count = compositor->GetFrameTimings(timings.data(), static_cast<uint32_t>(timings.size()));
 		if (count == 0) return;
 
 		uint32_t maxFrameIndex = lastFrameIndex_;
@@ -180,7 +177,7 @@ private:
 
 } // namespace
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
 	using namespace openvr_pair::overlay;
 
@@ -193,23 +190,18 @@ int main(int argc, char **argv)
 	bool testHarness = false;
 	for (int i = 1; i < argc; ++i) {
 		const std::string_view arg(argv[i]);
-		if (arg == "--register-only")   registerOnly = true;
+		if (arg == "--register-only") registerOnly = true;
 		if (arg == "--unregister-only") unregisterOnly = true;
-		if (arg == "--test-harness")    testHarness = true;
+		if (arg == "--test-harness") testHarness = true;
 	}
 
-	openvr_pair::common::DiagnosticLog(
-		"overlay",
-		"startup version=%s build=%s channel=%s argc=%d register_only=%d unregister_only=%d test_harness=%d debug_enabled=%d debug_forced=%d",
-		OPENVR_PAIR_VERSION_STRING,
-		WKOPENVR_BUILD_STAMP,
-		WKOPENVR_BUILD_CHANNEL,
-		argc,
-		registerOnly ? 1 : 0,
-		unregisterOnly ? 1 : 0,
-		testHarness ? 1 : 0,
-		openvr_pair::common::IsDebugLoggingEnabled() ? 1 : 0,
-		openvr_pair::common::IsDebugLoggingForcedOn() ? 1 : 0);
+	openvr_pair::common::DiagnosticLog("overlay",
+	                                   "startup version=%s build=%s channel=%s argc=%d register_only=%d "
+	                                   "unregister_only=%d test_harness=%d debug_enabled=%d debug_forced=%d",
+	                                   OPENVR_PAIR_VERSION_STRING, WKOPENVR_BUILD_STAMP, WKOPENVR_BUILD_CHANNEL, argc,
+	                                   registerOnly ? 1 : 0, unregisterOnly ? 1 : 0, testHarness ? 1 : 0,
+	                                   openvr_pair::common::IsDebugLoggingEnabled() ? 1 : 0,
+	                                   openvr_pair::common::IsDebugLoggingForcedOn() ? 1 : 0);
 
 #if WKOPENVR_BUILD_IS_DEV
 	if (testHarness) {
@@ -220,7 +212,7 @@ int main(int argc, char **argv)
 	if (testHarness) {
 		openvr_pair::common::DiagnosticLog("overlay", "test harness requested on non-dev build");
 		fprintf(stderr, "--test-harness is only available on dev builds (current channel: %s)\n",
-			WKOPENVR_BUILD_CHANNEL);
+		        WKOPENVR_BUILD_CHANNEL);
 		return 2;
 	}
 #endif
@@ -258,7 +250,7 @@ int main(int argc, char **argv)
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-	GLFWwindow *window = glfwCreateWindow(1200, 780, "WKOpenVR", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow(1200, 780, "WKOpenVR", nullptr, nullptr);
 	if (!window) {
 		openvr_pair::common::DiagnosticLog("overlay", "glfw_create_window_failed size=1200x780");
 		glfwTerminate();
@@ -281,11 +273,10 @@ int main(int argc, char **argv)
 	{
 		HWND hwnd = glfwGetWin32Window(window);
 		HINSTANCE hinst = GetModuleHandleW(nullptr);
-		HICON iconBig = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(1), IMAGE_ICON,
-			0, 0, LR_DEFAULTSIZE | LR_SHARED);
-		HICON iconSmall = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(1), IMAGE_ICON,
-			GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
-		if (hwnd && iconBig)   SendMessageW(hwnd, WM_SETICON, ICON_BIG,   (LPARAM)iconBig);
+		HICON iconBig = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
+		HICON iconSmall = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+		                                    GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+		if (hwnd && iconBig) SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)iconBig);
 		if (hwnd && iconSmall) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)iconSmall);
 	}
 #endif
@@ -323,11 +314,10 @@ int main(int argc, char **argv)
 	constexpr int kVrFboWidth = 1200;
 	constexpr int kVrFboHeight = 780;
 
-	auto allocFboTexture = [](GLuint &fbo, GLuint &tex, int w, int h) {
+	auto allocFboTexture = [](GLuint& fbo, GLuint& tex, int w, int h) {
 		glGenTextures(1, &tex);
 		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
-			GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -335,7 +325,7 @@ int main(int argc, char **argv)
 		glGenFramebuffers(1, &fbo);
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0);
-		GLenum drawBuffers[1] = { GL_COLOR_ATTACHMENT0 };
+		GLenum drawBuffers[1] = {GL_COLOR_ATTACHMENT0};
 		glDrawBuffers(1, drawBuffers);
 		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 			fprintf(stderr, "[WKOpenVR] framebuffer incomplete (%dx%d)\n", w, h);
@@ -360,8 +350,7 @@ int main(int argc, char **argv)
 		// the texture attachment stay valid because the binding tracks
 		// the texture name, not its dimensions.
 		glBindTexture(GL_TEXTURE_2D, winTexture);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
-			GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 		curWinFbW = w;
 		curWinFbH = h;
 	};
@@ -370,10 +359,8 @@ int main(int argc, char **argv)
 	openvr_pair::overlay::ui::ApplyOverlayStyle();
 	openvr_pair::overlay::ui::InitThemeFromDisk(context);
 	openvr_pair::common::DiagnosticLog(
-		"overlay", "shell_context_ready driver_resource_dirs=%zu log_root_set=%d profile_root_set=%d",
-		context.driverResourceDirs.size(),
-		context.logRoot.empty() ? 0 : 1,
-		context.profileRoot.empty() ? 0 : 1);
+	    "overlay", "shell_context_ready driver_resource_dirs=%zu log_root_set=%d profile_root_set=%d",
+	    context.driverResourceDirs.size(), context.logRoot.empty() ? 0 : 1, context.profileRoot.empty() ? 0 : 1);
 
 	// Fire the GitHub-release probe once. The worker is non-blocking; the
 	// ShellFooter polls GetUpdateNoticeState() and renders an indicator
@@ -384,18 +371,14 @@ int main(int argc, char **argv)
 
 	auto plugins = CreatePlugins();
 	openvr_pair::common::DiagnosticLog("overlay", "plugins_created count=%zu", plugins.size());
-	for (auto &plugin : plugins) {
+	for (auto& plugin : plugins) {
 		const bool installed = plugin->IsInstalled(context);
-		openvr_pair::common::DiagnosticLog(
-			"overlay", "plugin_state name='%s' flag='%s' pipe='%s' installed=%d",
-			plugin->Name(),
-			plugin->FlagFileName(),
-			plugin->PipeName(),
-			installed ? 1 : 0);
+		openvr_pair::common::DiagnosticLog("overlay", "plugin_state name='%s' flag='%s' pipe='%s' installed=%d",
+		                                   plugin->Name(), plugin->FlagFileName(), plugin->PipeName(),
+		                                   installed ? 1 : 0);
 		plugin->OnStart(context);
-		openvr_pair::common::DiagnosticLog(
-			"overlay", "plugin_started name='%s' installed=%d",
-			plugin->Name(), installed ? 1 : 0);
+		openvr_pair::common::DiagnosticLog("overlay", "plugin_started name='%s' installed=%d", plugin->Name(),
+		                                   installed ? 1 : 0);
 	}
 
 	auto vrOverlay = std::make_unique<VrOverlayHost>();
@@ -410,8 +393,7 @@ int main(int argc, char **argv)
 		if (perfSampler.MaybeSample(perfSample)) {
 			openvr_pair::common::RecordRuntimeProcessSample("overlay", perfSample);
 			if (openvr_pair::common::IsDebugLoggingEnabled()) {
-				const std::string line =
-					openvr_pair::common::FormatProcessPerfSample("overlay", perfSample);
+				const std::string line = openvr_pair::common::FormatProcessPerfSample("overlay", perfSample);
 				openvr_pair::common::DiagnosticLog("perf", "%s", line.c_str());
 			}
 			openvr_pair::common::MaybeWriteRuntimeHealthSummary();
@@ -434,33 +416,29 @@ int main(int argc, char **argv)
 		if (context.vrConnected) {
 			compositorSampler.MaybeSample(glfwGetTime());
 		}
-		if (!haveVrState
-			|| dashboardVisible != prevDashboardVisible
-			|| context.vrConnected != prevVrConnected) {
-			openvr_pair::common::DiagnosticLog(
-				"overlay", "vr_state dashboard_visible=%d vr_connected=%d",
-				dashboardVisible ? 1 : 0,
-				context.vrConnected ? 1 : 0);
+		if (!haveVrState || dashboardVisible != prevDashboardVisible || context.vrConnected != prevVrConnected) {
+			openvr_pair::common::DiagnosticLog("overlay", "vr_state dashboard_visible=%d vr_connected=%d",
+			                                   dashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0);
 			haveVrState = true;
 			prevDashboardVisible = dashboardVisible;
 			prevVrConnected = context.vrConnected;
 		}
 
-		for (auto &plugin : plugins) {
+		for (auto& plugin : plugins) {
 			if (plugin->IsInstalled(context)) plugin->Tick(context);
 		}
 
-		ImGuiIO &io = ImGui::GetIO();
+		ImGuiIO& io = ImGui::GetIO();
 		if (dashboardVisible) {
 			// VR render target is fixed-resolution; override what GLFW
 			// reported so ImGui lays out at the FBO size and the VR mouse
 			// coords (which are in submitted-texture pixel space) map back
 			// onto ImGui widgets correctly.
-			io.DisplaySize = ImVec2(static_cast<float>(kVrFboWidth),
-				static_cast<float>(kVrFboHeight));
+			io.DisplaySize = ImVec2(static_cast<float>(kVrFboWidth), static_cast<float>(kVrFboHeight));
 			io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 			io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-		} else {
+		}
+		else {
 			// Let ImGui_ImplGlfw_NewFrame's DisplaySize / FramebufferScale
 			// stand. They reflect the live GLFW window so layout reflows
 			// at the actual size instead of stretching a fixed FBO blit.
@@ -497,15 +475,14 @@ int main(int argc, char **argv)
 			if (fbw > 0 && fbh > 0) {
 				glBindFramebuffer(GL_READ_FRAMEBUFFER, vrFbo);
 				glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-				glBlitFramebuffer(0, 0, kVrFboWidth, kVrFboHeight,
-					0, 0, fbw, fbh,
-					GL_COLOR_BUFFER_BIT, GL_LINEAR);
+				glBlitFramebuffer(0, 0, kVrFboWidth, kVrFboHeight, 0, 0, fbw, fbh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 				glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 				glfwSwapBuffers(window);
 			}
 
 			vrOverlay->SubmitTexture(vrTexture, kVrFboWidth, kVrFboHeight);
-		} else if (fbw > 0 && fbh > 0) {
+		}
+		else if (fbw > 0 && fbh > 0) {
 			// Desktop path: keep the window FBO sized to the actual
 			// framebuffer so the 1:1 blit below preserves pixel sharpness
 			// and ImGui's layout (already taken at GLFW's DisplaySize)
@@ -523,8 +500,7 @@ int main(int argc, char **argv)
 
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, winFbo);
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-			glBlitFramebuffer(0, 0, fbw, fbh, 0, 0, fbw, fbh,
-				GL_COLOR_BUFFER_BIT, GL_NEAREST);
+			glBlitFramebuffer(0, 0, fbw, fbh, 0, 0, fbw, fbh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 			glfwSwapBuffers(window);
 		}
@@ -535,9 +511,7 @@ int main(int argc, char **argv)
 		// process idle cheaply.
 		constexpr double kDashboardFrameSeconds = 1.0 / 90.0;
 		constexpr double kIdleFrameSeconds = 1.0 / 30.0;
-		const double waitSeconds = dashboardVisible
-			? kDashboardFrameSeconds
-			: kIdleFrameSeconds;
+		const double waitSeconds = dashboardVisible ? kDashboardFrameSeconds : kIdleFrameSeconds;
 		glfwWaitEventsTimeout(waitSeconds);
 	}
 

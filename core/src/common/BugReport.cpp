@@ -17,14 +17,14 @@ namespace openvr_pair::common {
 
 namespace {
 
-constexpr const char* kIssueBase =
-	"https://github.com/RealWhyKnot/WKOpenVR/issues/new";
+constexpr const char* kIssueBase = "https://github.com/RealWhyKnot/WKOpenVR/issues/new";
 
 std::string RegexReplace(std::string text, const char* pattern, const char* replacement)
 {
 	try {
 		return std::regex_replace(text, std::regex(pattern), replacement);
-	} catch (const std::regex_error&) {
+	}
+	catch (const std::regex_error&) {
 		return text;
 	}
 }
@@ -37,7 +37,8 @@ std::string UrlEncode(std::string_view text)
 	for (unsigned char c : text) {
 		if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
 			out.push_back(static_cast<char>(c));
-		} else {
+		}
+		else {
 			out.push_back('%');
 			out.push_back(kHex[(c >> 4) & 0x0f]);
 			out.push_back(kHex[c & 0x0f]);
@@ -57,9 +58,8 @@ std::string TimestampForFileName()
 	gmtime_r(&tt, &tm);
 #endif
 	char buf[32];
-	std::snprintf(buf, sizeof buf, "%04d%02d%02d-%02d%02d%02d",
-		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-		tm.tm_hour, tm.tm_min, tm.tm_sec);
+	std::snprintf(buf, sizeof buf, "%04d%02d%02d-%02d%02d%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+	              tm.tm_hour, tm.tm_min, tm.tm_sec);
 	return buf;
 }
 
@@ -74,9 +74,8 @@ std::string TimestampForReport()
 	gmtime_r(&tt, &tm);
 #endif
 	char buf[40];
-	std::snprintf(buf, sizeof buf, "%04d-%02d-%02d %02d:%02d:%02d UTC",
-		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-		tm.tm_hour, tm.tm_min, tm.tm_sec);
+	std::snprintf(buf, sizeof buf, "%04d-%02d-%02d %02d:%02d:%02d UTC", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+	              tm.tm_hour, tm.tm_min, tm.tm_sec);
 	return buf;
 }
 
@@ -98,12 +97,10 @@ std::wstring ReportRootFromLogs(const std::wstring& logRoot)
 			return (p.parent_path() / L"BugReports").wstring();
 		}
 	}
-	return (std::filesystem::path(WkOpenVrLogsPath(true)).parent_path()
-		/ L"BugReports").wstring();
+	return (std::filesystem::path(WkOpenVrLogsPath(true)).parent_path() / L"BugReports").wstring();
 }
 
-std::vector<std::filesystem::directory_entry> FindLatestLogs(const std::wstring& logRoot,
-                                                             size_t maxLogFiles)
+std::vector<std::filesystem::directory_entry> FindLatestLogs(const std::wstring& logRoot, size_t maxLogFiles)
 {
 	std::vector<std::filesystem::directory_entry> entries;
 	if (logRoot.empty()) return entries;
@@ -118,15 +115,14 @@ std::vector<std::filesystem::directory_entry> FindLatestLogs(const std::wstring&
 		entries.push_back(entry);
 	}
 
-	std::sort(entries.begin(), entries.end(),
-		[](const auto& a, const auto& b) {
-			std::error_code ea;
-			std::error_code eb;
-			const auto ta = a.last_write_time(ea);
-			const auto tb = b.last_write_time(eb);
-			if (ea || eb) return a.path().filename().wstring() > b.path().filename().wstring();
-			return ta > tb;
-		});
+	std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+		std::error_code ea;
+		std::error_code eb;
+		const auto ta = a.last_write_time(ea);
+		const auto tb = b.last_write_time(eb);
+		if (ea || eb) return a.path().filename().wstring() > b.path().filename().wstring();
+		return ta > tb;
+	});
 
 	if (entries.size() > maxLogFiles) {
 		entries.resize(maxLogFiles);
@@ -157,57 +153,36 @@ std::string SanitizeBugReportText(std::string_view text)
 {
 	std::string out(text);
 
-	out = RegexReplace(out,
-		R"(([A-Za-z]:[\\/]+Users[\\/]+)[^\\/\s:'"]+)",
-		"$1<user>");
-	out = RegexReplace(out,
-		R"((%USERPROFILE%[\\/]+)[^\\/\s:'"]+)",
-		"$1<user>");
-	out = RegexReplace(out,
-		R"(\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b)",
-		"<email>");
-	out = RegexReplace(out,
-		R"(\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[0-1]))(?:\.[0-9]{1,3}){2}\b)",
-		"<private-ip>");
-	out = RegexReplace(out,
-		R"(\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b)",
-		"<github-token>");
-	out = RegexReplace(out,
-		R"(\bgithub_pat_[A-Za-z0-9_]{20,}\b)",
-		"<github-token>");
-	out = RegexReplace(out,
-		R"((serial\s*=\s*')[^']+('))",
-		"$1<device-serial>$2");
-	out = RegexReplace(out,
-		R"re((serial\s*=\s*")[^"]+("))re",
-		"$1<device-serial>$2");
-	out = RegexReplace(out,
-		R"(\bLHR-[A-Za-z0-9_-]+\b)",
-		"<device-serial>");
-	out = RegexReplace(out,
-		R"(\b(?:access|auth|refresh|secret|token)[_-]?token\s*[:=]\s*[A-Za-z0-9._\-+/=]{12,}\b)",
-		"<token>");
+	out = RegexReplace(out, R"(([A-Za-z]:[\\/]+Users[\\/]+)[^\\/\s:'"]+)", "$1<user>");
+	out = RegexReplace(out, R"((%USERPROFILE%[\\/]+)[^\\/\s:'"]+)", "$1<user>");
+	out = RegexReplace(out, R"(\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b)", "<email>");
+	out = RegexReplace(out, R"(\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[0-1]))(?:\.[0-9]{1,3}){2}\b)", "<private-ip>");
+	out = RegexReplace(out, R"(\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b)", "<github-token>");
+	out = RegexReplace(out, R"(\bgithub_pat_[A-Za-z0-9_]{20,}\b)", "<github-token>");
+	out = RegexReplace(out, R"((serial\s*=\s*')[^']+('))", "$1<device-serial>$2");
+	out = RegexReplace(out, R"re((serial\s*=\s*")[^"]+("))re", "$1<device-serial>$2");
+	out = RegexReplace(out, R"(\bLHR-[A-Za-z0-9_-]+\b)", "<device-serial>");
+	out = RegexReplace(out, R"(\b(?:access|auth|refresh|secret|token)[_-]?token\s*[:=]\s*[A-Za-z0-9._\-+/=]{12,}\b)",
+	                   "<token>");
 
 	return out;
 }
 
-std::string BuildBugReportIssueUrl(std::string_view version,
-                                   std::string_view logExcerpt)
+std::string BuildBugReportIssueUrl(std::string_view version, std::string_view logExcerpt)
 {
 	const std::string title = "[bug] ";
-	const std::string whatHappened =
-		"Created with the in-app Report bug button.\n\n"
-		"Steps to reproduce:\n"
-		"1. \n"
-		"2. \n\n"
-		"Expected:\n\n"
-		"Actual:\n";
-	const std::string environment =
-		"WKOpenVR version: " + std::string(version) + "\n"
-		"SteamVR / headset / tracker details: ";
+	const std::string whatHappened = "Created with the in-app Report bug button.\n\n"
+	                                 "Steps to reproduce:\n"
+	                                 "1. \n"
+	                                 "2. \n\n"
+	                                 "Expected:\n\n"
+	                                 "Actual:\n";
+	const std::string environment = "WKOpenVR version: " + std::string(version) +
+	                                "\n"
+	                                "SteamVR / headset / tracker details: ";
 	const std::string extra =
-		"The in-app report flow prepared a sanitized report text file from the newest logs. "
-		"Attach that generated .txt file before submitting if the browser did not include enough detail here.";
+	    "The in-app report flow prepared a sanitized report text file from the newest logs. "
+	    "Attach that generated .txt file before submitting if the browser did not include enough detail here.";
 
 	std::string url(kIssueBase);
 	AddQueryParam(url, "template", "bug_report.yml");
@@ -227,9 +202,9 @@ BugReportResult CreateBugReport(const BugReportOptions& options)
 	const std::wstring reportRoot = ReportRootFromLogs(options.logRoot);
 	const std::string stamp = TimestampForFileName();
 	const std::wstring reportDir =
-		(std::filesystem::path(reportRoot) / Utf8ToWide("WKOpenVR-bug-report-" + stamp)).wstring();
+	    (std::filesystem::path(reportRoot) / Utf8ToWide("WKOpenVR-bug-report-" + stamp)).wstring();
 	const std::wstring reportFile =
-		(std::filesystem::path(reportDir) / Utf8ToWide("WKOpenVR-bug-report-" + stamp + ".txt")).wstring();
+	    (std::filesystem::path(reportDir) / Utf8ToWide("WKOpenVR-bug-report-" + stamp + ".txt")).wstring();
 
 	std::error_code ec;
 	std::filesystem::create_directories(reportDir, ec);
@@ -250,7 +225,8 @@ BugReportResult CreateBugReport(const BugReportOptions& options)
 	if (logs.empty()) {
 		report << "No log files were found.\n";
 		issueLogs << "No log files were found.\n";
-	} else {
+	}
+	else {
 		report << "Included logs:\n";
 		for (const auto& entry : logs) {
 			result.sourceLogs.push_back(entry.path().wstring());
@@ -280,9 +256,8 @@ BugReportResult CreateBugReport(const BugReportOptions& options)
 	}
 
 	result.issueBody = report.str();
-	result.issueUrl = BuildBugReportIssueUrl(
-		options.version,
-		TruncateForIssue(issueLogs.str(), options.maxIssueLogChars));
+	result.issueUrl =
+	    BuildBugReportIssueUrl(options.version, TruncateForIssue(issueLogs.str(), options.maxIssueLogChars));
 
 	std::ofstream out(reportFile, std::ios::binary);
 	if (!out) {

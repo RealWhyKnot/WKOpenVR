@@ -18,9 +18,9 @@ namespace phantom {
 // matching but does not pollute extrapolation inputs.
 struct PoseSample
 {
-    int64_t qpc_ns = 0;
-    vr::DriverPose_t pose{};
-    bool was_real = false;
+	int64_t qpc_ns = 0;
+	vr::DriverPose_t pose{};
+	bool was_real = false;
 };
 
 } // namespace phantom

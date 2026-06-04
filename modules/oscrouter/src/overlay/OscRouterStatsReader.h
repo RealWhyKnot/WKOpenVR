@@ -8,28 +8,25 @@
 class OscRouterStatsReader
 {
 public:
-    OscRouterStatsReader() = default;
-    ~OscRouterStatsReader() { Close(); }
+	OscRouterStatsReader() = default;
+	~OscRouterStatsReader() { Close(); }
 
-    // Attempt to open the shmem segment. Returns false if the driver has not
-    // created it yet (oscrouter not enabled or driver not running).
-    bool TryOpen();
+	// Attempt to open the shmem segment. Returns false if the driver has not
+	// created it yet (oscrouter not enabled or driver not running).
+	bool TryOpen();
 
-    void Close();
+	void Close();
 
-    bool IsOpen() const { return shmem_; }
+	bool IsOpen() const { return shmem_; }
 
-    // Snapshot global stats. Returns false if not open.
-    bool ReadGlobal(protocol::OscRouterStats &out) const;
+	// Snapshot global stats. Returns false if not open.
+	bool ReadGlobal(protocol::OscRouterStats& out) const;
 
-    // Read one route slot. Returns false if the slot is inactive or unreadable.
-    bool ReadRoute(uint32_t index, protocol::OscRouterRouteSlot &out) const;
+	// Read one route slot. Returns false if the slot is inactive or unreadable.
+	bool ReadRoute(uint32_t index, protocol::OscRouterRouteSlot& out) const;
 
-    static uint32_t RouteSlotCount()
-    {
-        return protocol::OSC_ROUTER_ROUTE_SLOTS;
-    }
+	static uint32_t RouteSlotCount() { return protocol::OSC_ROUTER_ROUTE_SLOTS; }
 
 private:
-    protocol::OscRouterStatsShmem shmem_;
+	protocol::OscRouterStatsShmem shmem_;
 };

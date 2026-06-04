@@ -13,12 +13,13 @@ struct Pose
 	Eigen::Matrix3d rot;
 	Eigen::Vector3d trans;
 
-	Pose() { }
-	Pose(const Eigen::AffineCompact3d& transform) {
+	Pose() {}
+	Pose(const Eigen::AffineCompact3d& transform)
+	{
 		rot = transform.rotation();
 		trans = transform.translation();
 	}
-	
+
 	Pose(vr::HmdMatrix34_t hmdMatrix)
 	{
 		for (int i = 0; i < 3; i++) {
@@ -28,13 +29,15 @@ struct Pose
 		}
 		trans = Eigen::Vector3d(hmdMatrix.m[0][3], hmdMatrix.m[1][3], hmdMatrix.m[2][3]);
 	}
-	Pose(vr::HmdQuaternion_t rot, const double *trans) {
+	Pose(vr::HmdQuaternion_t rot, const double* trans)
+	{
 		this->rot = Eigen::Matrix3d(Eigen::Quaterniond(rot.w, rot.x, rot.y, rot.z));
 		this->trans = Eigen::Vector3d(trans[0], trans[1], trans[2]);
 	}
-	Pose(double x, double y, double z) : trans(Eigen::Vector3d(x, y, z)) { }
+	Pose(double x, double y, double z) : trans(Eigen::Vector3d(x, y, z)) {}
 
-	Eigen::Matrix4d ToAffine() const {
+	Eigen::Matrix4d ToAffine() const
+	{
 		Eigen::Matrix4d matrix = Eigen::Matrix4d::Identity();
 
 		for (int i = 0; i < 3; i++) {
@@ -70,11 +73,12 @@ struct Sample
 	double targetPoseGapMs = 0.0;
 	bool trackingPoseStale = false;
 	bool trackingPoseJump = false;
-	Sample() : valid(false), timestamp(0) { }
-	Sample(Pose ref, Pose target, double timestamp) : valid(true), ref(ref), target(target), timestamp(timestamp){ }
+	Sample() : valid(false), timestamp(0) {}
+	Sample(Pose ref, Pose target, double timestamp) : valid(true), ref(ref), target(target), timestamp(timestamp) {}
 };
 
-struct CalibrationResidualStats {
+struct CalibrationResidualStats
+{
 	int count = 0;
 	double medianM = std::numeric_limits<double>::infinity();
 	double madSigmaM = std::numeric_limits<double>::infinity();
@@ -85,7 +89,8 @@ struct CalibrationResidualStats {
 	double outlierFraction = 0.0;
 };
 
-struct CalibrationQualityReport {
+struct CalibrationQualityReport
+{
 	size_t sampleCount = 0;
 	int validSampleCount = 0;
 	int pairedSampleCount = 0;
@@ -114,38 +119,33 @@ struct CalibrationQualityReport {
 	CalibrationResidualStats holdoutResiduals;
 };
 
-struct CalibrationQualityVerdict {
+struct CalibrationQualityVerdict
+{
 	bool wouldAccept = false;
 	const char* reason = "unknown";
 };
 
-CalibrationQualityVerdict EvaluateCalibrationQualityVerdict(
-	const CalibrationQualityReport& report);
+CalibrationQualityVerdict EvaluateCalibrationQualityVerdict(const CalibrationQualityReport& report);
 
-class CalibrationCalc {
+class CalibrationCalc
+{
 public:
 	static const double AxisVarianceThreshold;
 
 	bool enableStaticRecalibration;
 	bool lockRelativePosition = false;
-	
-	const Eigen::AffineCompact3d Transformation() const 
-	{
-		return m_estimatedTransformation;
-	}
 
-	const Eigen::Vector3d EulerRotation() const {
+	const Eigen::AffineCompact3d Transformation() const { return m_estimatedTransformation; }
+
+	const Eigen::Vector3d EulerRotation() const
+	{
 		auto rot = m_estimatedTransformation.rotation();
 		return rot.eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
 	}
 
-	bool isValid() const {
-		return m_isValid;
-	}
+	bool isValid() const { return m_isValid; }
 
-	bool LastComputeUsedRelPose() const {
-		return m_lastComputeUsedRelPose;
-	}
+	bool LastComputeUsedRelPose() const { return m_lastComputeUsedRelPose; }
 
 	// Most recent RMS retargeting error of the applied calibration (the
 	// `priorCalibrationError` computed inside ComputeIncremental and
@@ -156,23 +156,13 @@ public:
 	// INFINITY when no incremental compute has produced a validated
 	// result yet (the value is initialized to INFINITY and only
 	// overwritten by a successful ValidateCalibration path).
-	double LastPriorErrorM() const {
-		return m_lastPriorRetargetingErrorM;
-	}
+	double LastPriorErrorM() const { return m_lastPriorRetargetingErrorM; }
 
-	double LastCandidateErrorM() const {
-		return m_lastCandidateRetargetingErrorM;
-	}
+	double LastCandidateErrorM() const { return m_lastCandidateRetargetingErrorM; }
 
-	const Eigen::AffineCompact3d RelativeTransformation() const
-	{
-		return m_refToTargetPose;
-	}
+	const Eigen::AffineCompact3d RelativeTransformation() const { return m_refToTargetPose; }
 
-	bool isRelativeTransformationCalibrated() const
-	{
-		return m_relativePosCalibrated;
-	}
+	bool isRelativeTransformationCalibrated() const { return m_relativePosCalibrated; }
 
 	void setRelativeTransformation(const Eigen::AffineCompact3d transform, bool calibrated)
 	{
@@ -215,13 +205,12 @@ public:
 	Eigen::Vector3d TranslationAxisRangesCm() const;
 
 	bool ComputeOneshot(const bool ignoreOutliers);
-	bool ComputeIncremental(bool &lerp, double threshold, double relPoseMaxError, const bool ignoreOutliers);
+	bool ComputeIncremental(bool& lerp, double threshold, double relPoseMaxError, const bool ignoreOutliers);
 
-	size_t SampleCount() const {
-		return m_samples.size();
-	}
+	size_t SampleCount() const { return m_samples.size(); }
 
-	void ShiftSample() {
+	void ShiftSample()
+	{
 		if (!m_samples.empty()) m_samples.pop_front();
 	}
 
@@ -273,7 +262,6 @@ private:
 	double m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 
 private:
-
 	/*
 	 * This affine transform estimates the pose of the target within the reference device's local pose space.
 	 * That is to say, it's given by transforming the target world pose by the inverse reference pose.
@@ -290,7 +278,7 @@ private:
 
 	std::vector<bool> DetectOutliers() const;
 	Eigen::Vector3d CalibrateRotation(const bool ignoreOutliers) const;
-	Eigen::Vector3d CalibrateTranslation(const Eigen::Matrix3d &rotation) const;
+	Eigen::Vector3d CalibrateTranslation(const Eigen::Matrix3d& rotation) const;
 
 	Eigen::AffineCompact3d ComputeCalibration(const bool ignoreOutliers) const;
 
@@ -302,20 +290,16 @@ private:
 	void ComputeInstantOffset();
 
 	Eigen::AffineCompact3d EstimateRefToTargetPose(const Eigen::AffineCompact3d& calibration) const;
-	bool CalibrateByRelPose(Eigen::AffineCompact3d &out) const;
+	bool CalibrateByRelPose(Eigen::AffineCompact3d& out) const;
 
 public:
 	// Hoisted to public so the in-app replay panel + the standalone replay
 	// CLI can score arbitrary candidate transforms against the current sample
 	// buffer without needing to call the private ComputeIncremental flow.
-	[[nodiscard]] bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr, Eigen::Vector3d* posOffsetV = nullptr);
-	CalibrationQualityReport EvaluateCalibrationQuality(
-		const Eigen::AffineCompact3d& calibration,
-		bool includeHoldout = true,
-		bool ignoreOutliers = false) const;
-	void LogCalibrationQualitySnapshot(
-		const char* label,
-		const Eigen::AffineCompact3d& calibration,
-		bool includeHoldout,
-		bool ignoreOutliers) const;
+	[[nodiscard]] bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double* errorOut = nullptr,
+	                                       Eigen::Vector3d* posOffsetV = nullptr);
+	CalibrationQualityReport EvaluateCalibrationQuality(const Eigen::AffineCompact3d& calibration,
+	                                                    bool includeHoldout = true, bool ignoreOutliers = false) const;
+	void LogCalibrationQualitySnapshot(const char* label, const Eigen::AffineCompact3d& calibration,
+	                                   bool includeHoldout, bool ignoreOutliers) const;
 };

@@ -4,11 +4,11 @@ using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using WKOpenVR.FaceModuleHost.Logging;
-using WKOpenVR.FaceTracking.Registry;
 using VRCFaceTracking.Core.Library;
 using VRCFaceTracking.Core.Sandboxing;
 using VRCFaceTracking.Core.Sandboxing.IPC;
+using WKOpenVR.FaceModuleHost.Logging;
+using WKOpenVR.FaceTracking.Registry;
 
 namespace WKOpenVR.FaceModuleHost.Workers;
 
@@ -45,7 +45,10 @@ public sealed class SubprocessManager : IDisposable
         public bool Exited { get; private set; }
         public DateTime SpawnTime { get; init; } = DateTime.UtcNow;
 
-        public void MarkExited() => Exited = true;
+        public void MarkExited()
+        {
+            Exited = true;
+        }
 
         public bool TerminateProcessTree()
         {
@@ -68,7 +71,10 @@ public sealed class SubprocessManager : IDisposable
                 }
 
                 if (Process.HasExited)
+                {
                     MarkExited();
+                }
+
                 return Process.HasExited;
             }
             catch
@@ -91,21 +97,20 @@ public sealed class SubprocessManager : IDisposable
     private const string LegacyOpenVrPairVrcftCompatAdapterType =
         "OpenVRPair.FaceTracking.VrcftCompat.ReflectingExtTrackingModuleAdapter";
 
-    private readonly HostOptions    _opts;
-    private readonly HostLogger     _logger;
+    private readonly HostOptions _opts;
+    private readonly HostLogger _logger;
     private readonly VrcftSandboxServer _server;
-    private readonly string         _subprocessExePath;
+    private readonly string _subprocessExePath;
 
     private readonly List<DiscoveredModule> _loaded = [];
-    private DiscoveredModule?   _activeModule;
-    private ActiveSubprocess?   _activeProcess;
-    private readonly object     _statusLock = new();
-    private string              _phase = "starting";
-    private string              _lastError = "";
-    private long                _framesWritten;
-    private long                _framesWithData;
-    private int                 _lastExitCode;
-    private DateTime?           _lastRestartTime;
+    private ActiveSubprocess? _activeProcess;
+    private readonly Lock _statusLock = new();
+    private string _phase = "starting";
+    private string _lastError = "";
+    private long _framesWritten;
+    private long _framesWithData;
+    private int _lastExitCode;
+    private DateTime? _lastRestartTime;
 
     // Host activity classification mirrored into the shmem header so the
     // driver-side supervisor can interpret heartbeat-age. Updated in
@@ -113,15 +118,17 @@ public sealed class SubprocessManager : IDisposable
     // Values match FrameWriter.HostState* constants.
     private int _hostState = (int)FrameWriter.HostStateLegacy;
     public uint CurrentHostState => (uint)Volatile.Read(ref _hostState);
-    public void SetHostStateDraining() =>
+    public void SetHostStateDraining()
+    {
         Volatile.Write(ref _hostState, (int)FrameWriter.HostStateDraining);
+    }
 
     // Serializes SelectActive calls: teardown must finish before next spawn.
     private readonly SemaphoreSlim _selectLock = new(1, 1);
 
     // Circuit breaker state: track consecutive fast-exit crashes per module uuid.
     private string? _breakerUuid;
-    private int     _breakerCount;
+    private int _breakerCount;
     private const int CrashHaltThreshold = 3;
     private static readonly TimeSpan FastExitThreshold = TimeSpan.FromSeconds(5);
 
@@ -131,10 +138,10 @@ public sealed class SubprocessManager : IDisposable
     private static readonly IReadOnlyDictionary<int, string> ExitCodeNames =
         new Dictionary<int, string>
         {
-            [  0 ] = "OK",
-            [ -1 ] = "INVALID_ARGS",
-            [ -2 ] = "NETWORK_CONNECTION_TIMED_OUT",
-            [ -3 ] = "EXCEPTION_CRASH",
+            [0] = "OK",
+            [-1] = "INVALID_ARGS",
+            [-2] = "NETWORK_CONNECTION_TIMED_OUT",
+            [-3] = "EXCEPTION_CRASH",
         };
 
     // Minimal logger factory for VrcftSandboxServer.
@@ -143,7 +150,7 @@ public sealed class SubprocessManager : IDisposable
 
     public SubprocessManager(HostOptions opts, HostLogger logger)
     {
-        _opts   = opts;
+        _opts = opts;
         _logger = logger;
         _subprocessExePath = Path.Combine(
             Path.GetDirectoryName(typeof(SubprocessManager).Assembly.Location)!,
@@ -153,8 +160,10 @@ public sealed class SubprocessManager : IDisposable
                      $"exists={File.Exists(_subprocessExePath)}");
 
         if (!File.Exists(_subprocessExePath))
+        {
             throw new FileNotFoundException(
                 $"[ftp/spawn] FATAL: subprocess exe not found at {_subprocessExePath}");
+        }
 
         _server = new VrcftSandboxServer(_nullLoggerFactory, reservedPorts: []);
         _server.OnPacketReceived += OnServerPacket;
@@ -165,7 +174,7 @@ public sealed class SubprocessManager : IDisposable
     // Public surface
     // -------------------------------------------------------------------------
 
-    public DiscoveredModule? Active => _activeModule;
+    public DiscoveredModule? Active { get; private set; }
     public IReadOnlyList<DiscoveredModule> Loaded => _loaded;
 
     public HostRuntimeStatus SnapshotStatus()
@@ -218,19 +227,25 @@ public sealed class SubprocessManager : IDisposable
     {
         await TeardownActiveAsync(ct: CancellationToken.None);
         _loaded.Clear();
-        _activeModule = null;
+        Active = null;
     }
 
-    private static bool IsInvalidSignal(float value) =>
-        !float.IsFinite(value)
+    private static bool IsInvalidSignal(float value)
+    {
+        return !float.IsFinite(value)
         || value == InvalidFloatSentinel
         || value >= LargeInvalidSignalMin;
+    }
 
     private static bool TryUnitSignal(float value, out float clamped, out bool wasClamped)
     {
         clamped = 0.0f;
         wasClamped = false;
-        if (IsInvalidSignal(value)) return false;
+        if (IsInvalidSignal(value))
+        {
+            return false;
+        }
+
         clamped = Math.Clamp(value, 0.0f, 1.0f);
         wasClamped = clamped != value;
         return true;
@@ -240,7 +255,11 @@ public sealed class SubprocessManager : IDisposable
     {
         clamped = 0.0f;
         wasClamped = false;
-        if (IsInvalidSignal(value)) return false;
+        if (IsInvalidSignal(value))
+        {
+            return false;
+        }
+
         clamped = Math.Clamp(value, -1.0f, 1.0f);
         wasClamped = clamped != value;
         return true;
@@ -249,7 +268,11 @@ public sealed class SubprocessManager : IDisposable
     private static bool TryPositiveSignal(float value, out float sanitized)
     {
         sanitized = 0.0f;
-        if (IsInvalidSignal(value) || value <= 0.0f || value > 100.0f) return false;
+        if (IsInvalidSignal(value) || value <= 0.0f || value > 100.0f)
+        {
+            return false;
+        }
+
         sanitized = value;
         return true;
     }
@@ -263,23 +286,28 @@ public sealed class SubprocessManager : IDisposable
             : new Vector3(0.0f, 0.0f, -1.0f);
     }
 
-    private static bool SameModuleIdentity(DiscoveredModule a, DiscoveredModule b) =>
-        string.Equals(a.Uuid, b.Uuid, StringComparison.Ordinal)
+    private static bool SameModuleIdentity(DiscoveredModule a, DiscoveredModule b)
+    {
+        return string.Equals(a.Uuid, b.Uuid, StringComparison.Ordinal)
         && string.Equals(a.ModuleDllPath, b.ModuleDllPath, StringComparison.OrdinalIgnoreCase)
         && string.Equals(a.Manifest.Version, b.Manifest.Version, StringComparison.Ordinal)
         && a.ModuleLastWriteUtc == b.ModuleLastWriteUtc
         && a.ModuleFileSize == b.ModuleFileSize;
+    }
 
     public void SelectActive(string uuid)
     {
         uuid ??= "";
-        _logger.Info($"[ftp/spawn] SelectActive(uuid={uuid}) -- current active: {_activeModule?.Uuid ?? "none"}");
+        _logger.Info($"[ftp/spawn] SelectActive(uuid={uuid}) -- current active: {Active?.Uuid ?? "none"}");
 
         if (string.IsNullOrWhiteSpace(uuid))
         {
-            if (_activeModule is not null)
-                _logger.Info($"[ftp/spawn] disabling active module {_activeModule.Manifest.Name} ({_activeModule.Uuid})");
-            _activeModule = null;
+            if (Active is not null)
+            {
+                _logger.Info($"[ftp/spawn] disabling active module {Active.Manifest.Name} ({Active.Uuid})");
+            }
+
+            Active = null;
             _breakerUuid = null;
             _breakerCount = 0;
             SetPhase(_loaded.Count == 0 ? "no-modules" : "module-disabled");
@@ -299,14 +327,17 @@ public sealed class SubprocessManager : IDisposable
             _logger.Warn($"[ftp/spawn] module rescan failed before selection: {ex.Message}");
         }
 
-        var previous = _activeModule;
-        var m = _loaded.FirstOrDefault(m => m.Uuid == uuid);
+        DiscoveredModule? previous = Active;
+        DiscoveredModule? m = _loaded.FirstOrDefault(m => m.Uuid == uuid);
         if (m is null)
         {
             string msg = $"SelectActive: module {uuid} not found in loaded list " +
                          $"(loaded={string.Join(",", _loaded.Select(x => x.Uuid[..8]))})";
-            if (_activeModule?.Uuid == uuid)
-                _activeModule = null;
+            if (Active?.Uuid == uuid)
+            {
+                Active = null;
+            }
+
             SetPhase("module-select-failed", msg);
             _logger.Warn($"[ftp/spawn] {msg}");
             return;
@@ -317,7 +348,7 @@ public sealed class SubprocessManager : IDisposable
             _logger.Info($"[ftp/spawn] active module unchanged: {m.Manifest.Name} v{m.Manifest.Version} ({uuid})");
             return;
         }
-        _activeModule = m;
+        Active = m;
         if (_breakerUuid == uuid)
         {
             _breakerUuid = null;
@@ -340,14 +371,14 @@ public sealed class SubprocessManager : IDisposable
         {
             while (!ct.IsCancellationRequested)
             {
-                if (_activeModule is null)
+                if (Active is null)
                 {
                     SetPhase(_loaded.Count == 0 ? "no-modules" : "waiting-for-module-selection");
                     await Task.Delay(250, ct);
                     continue;
                 }
 
-                var module = _activeModule;
+                DiscoveredModule module = Active;
 
                 // Circuit-breaker: stop respawning if this module keeps crashing fast.
                 if (_breakerUuid == module.Uuid && _breakerCount >= CrashHaltThreshold)
@@ -355,7 +386,7 @@ public sealed class SubprocessManager : IDisposable
                     _logger.Error($"[ftp/spawn] CIRCUIT BREAKER: halting respawn for {module.Uuid} " +
                                   $"({module.Manifest.Name}); {CrashHaltThreshold} consecutive fast exits");
                     SetPhase("module-circuit-breaker", $"Module {module.Manifest.Name} exited too quickly.");
-                    _activeModule = null;
+                    Active = null;
                     continue;
                 }
 
@@ -373,9 +404,15 @@ public sealed class SubprocessManager : IDisposable
         if (_activeProcess is not null)
         {
             if (!_activeProcess.Exited && !_activeProcess.Process.HasExited)
+            {
                 _logger.Warn($"[ftp/teardown] disposing active subprocess PID={_activeProcess.Process.Id}; forcing process tree kill");
+            }
+
             if (!_activeProcess.TerminateProcessTree())
+            {
                 _logger.Error($"[ftp/teardown] process tree kill did not confirm exit for PID={_activeProcess.Process.Id}");
+            }
+
             _activeProcess.Process.Dispose();
         }
         _activeProcess = null;
@@ -399,7 +436,7 @@ public sealed class SubprocessManager : IDisposable
         Manifest manifest;
         try
         {
-            await using var f = File.OpenRead(manifestPath);
+            await using FileStream f = File.OpenRead(manifestPath);
             manifest = await JsonSerializer.DeserializeAsync<Manifest>(f, JsonOpts)
                 ?? throw new InvalidDataException("Null manifest.");
         }
@@ -424,8 +461,8 @@ public sealed class SubprocessManager : IDisposable
             }
             try
             {
-                await using var f = File.OpenRead(bridgePath);
-                var cfg = await JsonSerializer.DeserializeAsync<BridgeConfig>(f, JsonOpts)
+                await using FileStream f = File.OpenRead(bridgePath);
+                BridgeConfig cfg = await JsonSerializer.DeserializeAsync<BridgeConfig>(f, JsonOpts)
                     ?? throw new InvalidDataException("Null bridge config.");
                 moduleDllPath = Path.Combine(dir, "assemblies", cfg.UpstreamAssembly);
                 _logger.Info($"[ftp/spawn] module dir {Path.GetFileName(Path.GetDirectoryName(dir))}/{Path.GetFileName(dir)}: " +
@@ -464,9 +501,11 @@ public sealed class SubprocessManager : IDisposable
                       $"dll={Path.GetFileName(moduleDllPath)} uuid_hash=0x{hash:X16}");
     }
 
-    private static bool IsVrcftCompatAdapter(string entryType) =>
-        string.Equals(entryType, VrcftCompatAdapterType, StringComparison.Ordinal) ||
+    private static bool IsVrcftCompatAdapter(string entryType)
+    {
+        return string.Equals(entryType, VrcftCompatAdapterType, StringComparison.Ordinal) ||
         string.Equals(entryType, LegacyOpenVrPairVrcftCompatAdapterType, StringComparison.Ordinal);
+    }
 
     // -------------------------------------------------------------------------
     // Internal: subprocess lifecycle
@@ -558,11 +597,11 @@ public sealed class SubprocessManager : IDisposable
         CancellationToken ct)
     {
         // Reset per-run TCS objects.
-        _handshakeTcs  = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        _supportedTcs  = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        _initTcs       = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        _teardownTcs   = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        _latestUpdate  = null;
+        _handshakeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _supportedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _initTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _teardownTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _latestUpdate = null;
         _activePort = 0;
         Interlocked.Exchange(ref _replyUpdatesReceived, 0);
         Interlocked.Exchange(ref _sendDroppedNoPort, 0);
@@ -583,9 +622,9 @@ public sealed class SubprocessManager : IDisposable
 
         var psi = new ProcessStartInfo(_subprocessExePath)
         {
-            UseShellExecute   = false,
-            CreateNoWindow    = true,
-            Arguments         = argv,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            Arguments = argv,
         };
 
         var spawnSw = Stopwatch.StartNew();
@@ -611,12 +650,12 @@ public sealed class SubprocessManager : IDisposable
 
         _logger.Info($"[ftp/spawn] spawned PID={proc.Id} in {spawnSw.ElapsedMilliseconds}ms");
 
-        var spawnTime = DateTime.UtcNow;
+        DateTime spawnTime = DateTime.UtcNow;
         var active = new ActiveSubprocess
         {
-            Process   = proc,
-            Port      = serverPort,
-            Module    = module,
+            Process = proc,
+            Port = serverPort,
+            Module = module,
             SpawnTime = spawnTime,
         };
         _activeProcess = active;
@@ -714,7 +753,7 @@ public sealed class SubprocessManager : IDisposable
             // upstream UnifiedExpressions array straight through to the
             // wire; the driver remaps to our 63-slot ordering on read.
             float[] upstreamShapes = new float[FrameWriter.UpstreamShapeCount];
-            var eyeSink  = new EyeFrameSink();
+            var eyeSink = new EyeFrameSink();
             var diag = new PullLoopDiagnostics(
                 _logger,
                 module.Manifest.Name,
@@ -724,10 +763,10 @@ public sealed class SubprocessManager : IDisposable
 
             _logger.Info($"[ftp/data] pull loop started for {module.Manifest.Name} PID={proc.Id}");
             SetPhase("publishing-frames");
-            var nextModuleDiskCheck = DateTime.UtcNow + TimeSpan.FromSeconds(1);
+            DateTime nextModuleDiskCheck = DateTime.UtcNow + TimeSpan.FromSeconds(1);
 
             while (!ct.IsCancellationRequested && !active.Exited &&
-                   ReferenceEquals(_activeModule, module))
+                   ReferenceEquals(Active, module))
             {
                 if (DateTime.UtcNow >= nextModuleDiskCheck)
                 {
@@ -736,8 +775,11 @@ public sealed class SubprocessManager : IDisposable
                     {
                         string msg = $"active module disappeared from disk: {module.ModuleDllPath}";
                         _logger.Warn($"[ftp/spawn] {msg}");
-                        if (ReferenceEquals(_activeModule, module))
-                            _activeModule = null;
+                        if (ReferenceEquals(Active, module))
+                        {
+                            Active = null;
+                        }
+
                         SetPhase("module-uninstalled", msg);
                         break;
                     }
@@ -748,11 +790,11 @@ public sealed class SubprocessManager : IDisposable
                 // Brief yield to let the server's async receive thread deliver the reply.
                 await Task.Delay(8, ct); // ~120 Hz
 
-                var snap = _latestUpdate;
+                ReplyUpdatePacket? snap = _latestUpdate;
                 if (snap is null)
                 {
                     // Warn if no update has arrived for >2s while subprocess is still alive.
-                    var noReplyNow = DateTime.UtcNow;
+                    DateTime noReplyNow = DateTime.UtcNow;
                     if (diag.ShouldWarnNoReply(noReplyNow) && !active.Exited)
                     {
                         _logger.Warn($"[ftp/data] no ReplyUpdate from subprocess for >2s; " +
@@ -763,7 +805,7 @@ public sealed class SubprocessManager : IDisposable
                 }
                 diag.RecordReply(snap, DateTime.UtcNow);
 
-                var decoded = snap.DecodedData;
+                ReplyUpdatePacket.UpdateDataContiguous decoded = snap.DecodedData;
                 float[]? shapes = decoded.GetExpressionShapes();
                 int validExprSignals = 0;
                 int invalidExprSignals = 0;
@@ -777,7 +819,10 @@ public sealed class SubprocessManager : IDisposable
                         {
                             upstreamShapes[i] = value;
                             validExprSignals++;
-                            if (wasClamped) clampedSignals++;
+                            if (wasClamped)
+                            {
+                                clampedSignals++;
+                            }
                         }
                         else
                         {
@@ -795,7 +840,10 @@ public sealed class SubprocessManager : IDisposable
                     eyeSink.LeftOpenness = leftOpenValue;
                     eyeSink.Left.Confidence = 1.0f;
                     validEyeSignals++;
-                    if (leftOpenClamped) clampedSignals++;
+                    if (leftOpenClamped)
+                    {
+                        clampedSignals++;
+                    }
                 }
                 else
                 {
@@ -807,7 +855,10 @@ public sealed class SubprocessManager : IDisposable
                     eyeSink.RightOpenness = rightOpenValue;
                     eyeSink.Right.Confidence = 1.0f;
                     validEyeSignals++;
-                    if (rightOpenClamped) clampedSignals++;
+                    if (rightOpenClamped)
+                    {
+                        clampedSignals++;
+                    }
                 }
                 else
                 {
@@ -828,7 +879,10 @@ public sealed class SubprocessManager : IDisposable
                     eyeSink.Left.DirHmd = GazeDirection(leftGazeX, leftGazeY);
                     eyeSink.Left.Confidence = 1.0f;
                     validEyeSignals += 2;
-                    if (leftGazeXClamped || leftGazeYClamped) clampedSignals++;
+                    if (leftGazeXClamped || leftGazeYClamped)
+                    {
+                        clampedSignals++;
+                    }
                 }
                 else
                 {
@@ -849,7 +903,10 @@ public sealed class SubprocessManager : IDisposable
                     eyeSink.Right.DirHmd = GazeDirection(rightGazeX, rightGazeY);
                     eyeSink.Right.Confidence = 1.0f;
                     validEyeSignals += 2;
-                    if (rightGazeXClamped || rightGazeYClamped) clampedSignals++;
+                    if (rightGazeXClamped || rightGazeYClamped)
+                    {
+                        clampedSignals++;
+                    }
                 }
                 else
                 {
@@ -862,10 +919,13 @@ public sealed class SubprocessManager : IDisposable
                 if (TryPositiveSignal(decoded.GetEyeLeftPupilMM(), out float leftPupilMm))
                 {
                     if (haveDilationRange)
+                    {
                         eyeSink.PupilDilationLeft = Math.Clamp(
                             (leftPupilMm - minDilation) / (maxDilation - minDilation),
                             0.0f,
                             1.0f);
+                    }
+
                     validEyeSignals++;
                 }
                 else
@@ -875,10 +935,13 @@ public sealed class SubprocessManager : IDisposable
                 if (TryPositiveSignal(decoded.GetEyeRightPupilMM(), out float rightPupilMm))
                 {
                     if (haveDilationRange)
+                    {
                         eyeSink.PupilDilationRight = Math.Clamp(
                             (rightPupilMm - minDilation) / (maxDilation - minDilation),
                             0.0f,
                             1.0f);
+                    }
+
                     validEyeSignals++;
                 }
                 else
@@ -899,7 +962,9 @@ public sealed class SubprocessManager : IDisposable
                     validEyeSignals);
 
                 if (currentFrameHasData)
+                {
                     Interlocked.Increment(ref _framesWithData);
+                }
 
                 diag.MaybeLogPeriod(
                     Interlocked.Read(ref _replyUpdatesReceived),
@@ -915,7 +980,7 @@ public sealed class SubprocessManager : IDisposable
 
             _logger.Info($"[ftp/data] pull loop ended for {module.Manifest.Name}: " +
                          $"ct={ct.IsCancellationRequested} exited={active.Exited} " +
-                         $"moduleChanged={!ReferenceEquals(_activeModule, module)}");
+                         $"moduleChanged={!ReferenceEquals(Active, module)}");
         }
         catch (OperationCanceledException)
         {
@@ -932,14 +997,16 @@ public sealed class SubprocessManager : IDisposable
             await TeardownActiveAsync(ct: CancellationToken.None);
 
             // Circuit-breaker logic.
-            var lifetime = DateTime.UtcNow - spawnTime;
+            TimeSpan lifetime = DateTime.UtcNow - spawnTime;
             if (lifetime < FastExitThreshold)
             {
                 if (_breakerUuid == module.Uuid)
+                {
                     _breakerCount++;
+                }
                 else
                 {
-                    _breakerUuid  = module.Uuid;
+                    _breakerUuid = module.Uuid;
                     _breakerCount = 1;
                 }
                 int raw = TryGetExitCode(proc);
@@ -963,14 +1030,19 @@ public sealed class SubprocessManager : IDisposable
         }
     }
 
-    private sealed class PullLoopDiagnostics
+    private sealed class PullLoopDiagnostics(
+        HostLogger logger,
+        string moduleName,
+        int pid,
+        int shapeCount,
+        long replyUpdatesAtPeriodStart)
     {
         private const int UpstreamJawOpenIndex = 22;
 
-        private readonly HostLogger _logger;
-        private readonly string _moduleName;
-        private readonly int _pid;
-        private readonly int _shapeCount;
+        private readonly HostLogger _logger = logger;
+        private readonly string _moduleName = moduleName;
+        private readonly int _pid = pid;
+        private readonly int _shapeCount = shapeCount;
         private readonly Stopwatch _period = Stopwatch.StartNew();
 
         private int _noDataRun;
@@ -982,7 +1054,7 @@ public sealed class SubprocessManager : IDisposable
         private long _invalidEyeInPeriod;
         private long _clampedInPeriod;
         private long _staleReusesInPeriod;
-        private long _replyUpdatesAtPeriodStart;
+        private long _replyUpdatesAtPeriodStart = replyUpdatesAtPeriodStart;
         private DateTime _lastUpdateTime = DateTime.UtcNow;
         private ReplyUpdatePacket? _lastProcessedUpdate;
 
@@ -1000,30 +1072,24 @@ public sealed class SubprocessManager : IDisposable
         public bool SawEyeData { get; private set; }
         public long FrameNumber { get; private set; }
 
-        public PullLoopDiagnostics(
-            HostLogger logger,
-            string moduleName,
-            int pid,
-            int shapeCount,
-            long replyUpdatesAtPeriodStart)
+        public bool ShouldWarnNoReply(DateTime now)
         {
-            _logger = logger;
-            _moduleName = moduleName;
-            _pid = pid;
-            _shapeCount = shapeCount;
-            _replyUpdatesAtPeriodStart = replyUpdatesAtPeriodStart;
+            return (now - _lastUpdateTime).TotalSeconds > 2.0;
         }
 
-        public bool ShouldWarnNoReply(DateTime now) =>
-            (now - _lastUpdateTime).TotalSeconds > 2.0;
-
-        public void MarkNoReplyWarning(DateTime now) => _lastUpdateTime = now;
+        public void MarkNoReplyWarning(DateTime now)
+        {
+            _lastUpdateTime = now;
+        }
 
         public void RecordReply(ReplyUpdatePacket packet, DateTime now)
         {
             _lastUpdateTime = now;
             if (ReferenceEquals(packet, _lastProcessedUpdate))
+            {
                 _staleReusesInPeriod++;
+            }
+
             _lastProcessedUpdate = packet;
         }
 
@@ -1034,8 +1100,15 @@ public sealed class SubprocessManager : IDisposable
             int invalidEyeSignals,
             int clampedSignals)
         {
-            if (validExprSignals > 0) SawExpressionData = true;
-            if (validEyeSignals > 0) SawEyeData = true;
+            if (validExprSignals > 0)
+            {
+                SawExpressionData = true;
+            }
+
+            if (validEyeSignals > 0)
+            {
+                SawEyeData = true;
+            }
 
             _invalidExprInPeriod += invalidExprSignals;
             _invalidEyeInPeriod += invalidEyeSignals;
@@ -1062,7 +1135,10 @@ public sealed class SubprocessManager : IDisposable
             int nonZero = 0;
             foreach (float value in upstreamShapes)
             {
-                if (value != 0f) nonZero++;
+                if (value != 0f)
+                {
+                    nonZero++;
+                }
             }
 
             float jawOpen = upstreamShapes.Length > UpstreamJawOpenIndex
@@ -1093,8 +1169,10 @@ public sealed class SubprocessManager : IDisposable
                 _noDataRun++;
                 _zeroFramesInPeriod++;
                 if (_noDataRun % 60 == 0)
+                {
                     _logger.Warn($"[ftp/data] no-data for {_noDataRun} frames " +
                                  $"(module={_moduleName} pid={_pid})");
+                }
             }
             else
             {
@@ -1106,7 +1184,10 @@ public sealed class SubprocessManager : IDisposable
 
         public void MaybeLogPeriod(long replyUpdatesReceived, long noPortDrops)
         {
-            if (_period.Elapsed.TotalSeconds < 5.0) return;
+            if (_period.Elapsed.TotalSeconds < 5.0)
+            {
+                return;
+            }
 
             long replyUpdatesInPeriod = replyUpdatesReceived - _replyUpdatesAtPeriodStart;
             _logger.Info($"[ftp/data] period: published {_framesInPeriod} frames in last " +
@@ -1134,9 +1215,12 @@ public sealed class SubprocessManager : IDisposable
 
     private async Task TeardownActiveAsync(CancellationToken ct)
     {
-        var proc = _activeProcess;
+        ActiveSubprocess? proc = _activeProcess;
         _activeProcess = null;
-        if (proc is null) return;
+        if (proc is null)
+        {
+            return;
+        }
 
         if (!proc.Exited && !proc.Process.HasExited)
         {
@@ -1184,7 +1268,9 @@ public sealed class SubprocessManager : IDisposable
         {
             _logger.Warn($"[ftp/teardown] forcing process tree kill for PID={proc.Process.Id}");
             if (!proc.TerminateProcessTree())
+            {
                 _logger.Error($"[ftp/teardown] process tree kill did not confirm exit for PID={proc.Process.Id}");
+            }
         }
 
         int code = TryGetExitCode(proc.Process);
@@ -1202,7 +1288,10 @@ public sealed class SubprocessManager : IDisposable
         {
             previous = _phase;
             _phase = phase;
-            if (error is not null) _lastError = error;
+            if (error is not null)
+            {
+                _lastError = error;
+            }
             else if (!phase.EndsWith("failed", StringComparison.OrdinalIgnoreCase) &&
                      !phase.EndsWith("timeout", StringComparison.OrdinalIgnoreCase) &&
                      phase != "module-circuit-breaker")
@@ -1233,12 +1322,15 @@ public sealed class SubprocessManager : IDisposable
     /// host is alive but quiet -> Idle. Failure phases stay Idle because
     /// the supervisor is already tracking failures via exit codes.
     /// </summary>
-    private static uint MapPhaseToHostState(string phase) => phase switch
+    private static uint MapPhaseToHostState(string phase)
     {
-        "publishing-frames" => FrameWriter.HostStatePublishing,
-        "module-active"     => FrameWriter.HostStatePublishing,
-        _                   => FrameWriter.HostStateIdle,
-    };
+        return phase switch
+        {
+            "publishing-frames" => FrameWriter.HostStatePublishing,
+            "module-active" => FrameWriter.HostStatePublishing,
+            _ => FrameWriter.HostStateIdle,
+        };
+    }
 
     private void RecordExit(int exitCode)
     {
@@ -1254,8 +1346,8 @@ public sealed class SubprocessManager : IDisposable
         if (_activePort == 0)
         {
             long dropped = Interlocked.Increment(ref _sendDroppedNoPort);
-            var type = packet.GetPacketType();
-            var now = DateTime.UtcNow;
+            IpcPacket.PacketType type = packet.GetPacketType();
+            DateTime now = DateTime.UtcNow;
             if (type != IpcPacket.PacketType.EventUpdate ||
                 (now - _lastNoPortSendLog) >= TimeSpan.FromSeconds(5))
             {
@@ -1266,7 +1358,10 @@ public sealed class SubprocessManager : IDisposable
         }
         // EventUpdate is sent at ~120 Hz; log only non-update traffic to avoid flooding.
         if (packet.GetPacketType() != IpcPacket.PacketType.EventUpdate)
+        {
             _logger.Info($"[ftp/ipc] SEND {packet.GetPacketType()} -> port={_activePort}");
+        }
+
         _server.SendData(packet, _activePort);
     }
 
@@ -1278,7 +1373,7 @@ public sealed class SubprocessManager : IDisposable
     private static ulong Fnv1a64(string s)
     {
         const ulong OffsetBasis = 14695981039346656037UL;
-        const ulong Prime       = 1099511628211UL;
+        const ulong Prime = 1099511628211UL;
 
         ulong hash = OffsetBasis;
         foreach (byte b in Encoding.UTF8.GetBytes(s))

@@ -21,7 +21,7 @@ public:
 
 	// Send a request and read the response in one call. Transparently
 	// reconnects (once) if the pipe is broken between SteamVR restarts.
-	protocol::Response SendCompensationEntry(const protocol::InputHealthCompensationEntry &entry);
+	protocol::Response SendCompensationEntry(const protocol::InputHealthCompensationEntry& entry);
 
 	using openvr_pair::overlay::IpcClientBase::Close;
 	using openvr_pair::overlay::IpcClientBase::ConnectionGeneration;

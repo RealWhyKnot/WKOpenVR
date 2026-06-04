@@ -18,8 +18,7 @@ namespace {
 
 uint64_t FileTimeToUint64(const FILETIME& ft)
 {
-	return (static_cast<uint64_t>(ft.dwHighDateTime) << 32)
-		| static_cast<uint64_t>(ft.dwLowDateTime);
+	return (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | static_cast<uint64_t>(ft.dwLowDateTime);
 }
 
 std::vector<LogFileEntry> ListLogFiles()
@@ -42,17 +41,14 @@ std::vector<LogFileEntry> ListLogFiles()
 		LogFileEntry entry;
 		entry.fullPath = directory + data.cFileName;
 		entry.name = openvr_pair::common::WideToUtf8(data.cFileName);
-		entry.sizeBytes =
-			(static_cast<uint64_t>(data.nFileSizeHigh) << 32)
-			| static_cast<uint64_t>(data.nFileSizeLow);
+		entry.sizeBytes = (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | static_cast<uint64_t>(data.nFileSizeLow);
 		entry.mtimeFileTime = FileTimeToUint64(data.ftLastWriteTime);
 		files.push_back(entry);
 	} while (FindNextFileW(find, &data));
 
 	FindClose(find);
-	std::sort(files.begin(), files.end(), [](const LogFileEntry& a, const LogFileEntry& b) {
-		return a.mtimeFileTime > b.mtimeFileTime;
-	});
+	std::sort(files.begin(), files.end(),
+	          [](const LogFileEntry& a, const LogFileEntry& b) { return a.mtimeFileTime > b.mtimeFileTime; });
 	return files;
 }
 
@@ -101,10 +97,9 @@ void DrawLogFileList(LogsPanelState& state)
 		for (int i = 0; i < static_cast<int>(state.files.size()); ++i) {
 			const auto& f = state.files[i];
 			char label[512];
-			snprintf(label, sizeof label, "%s   (%s, %s)",
-				f.name.c_str(),
-				openvr_pair::overlay::ui::FormatByteCount(f.sizeBytes).c_str(),
-				openvr_pair::overlay::ui::FormatFileAgeFromFileTime(f.mtimeFileTime).c_str());
+			snprintf(label, sizeof label, "%s   (%s, %s)", f.name.c_str(),
+			         openvr_pair::overlay::ui::FormatByteCount(f.sizeBytes).c_str(),
+			         openvr_pair::overlay::ui::FormatFileAgeFromFileTime(f.mtimeFileTime).c_str());
 
 			const float deleteBtnWidth = 70.0f;
 			const float rowWidth = ImGui::GetContentRegionAvail().x - deleteBtnWidth - 8.0f;
@@ -118,7 +113,8 @@ void DrawLogFileList(LogsPanelState& state)
 				const BOOL ok = DeleteFileW(state.files[i].fullPath.c_str());
 				if (ok) {
 					state.copyHint = "Deleted " + state.files[i].name;
-				} else {
+				}
+				else {
 					state.copyHint = "Could not delete (file may be in use)";
 				}
 				state.copyHintExpireTime = ImGui::GetTime() + 2.5;
@@ -132,19 +128,18 @@ void DrawLogFileList(LogsPanelState& state)
 
 void DrawSelectedLogActions(LogsPanelState& state)
 {
-	const bool haveSelection = state.selectedIdx >= 0
-		&& state.selectedIdx < static_cast<int>(state.files.size());
+	const bool haveSelection = state.selectedIdx >= 0 && state.selectedIdx < static_cast<int>(state.files.size());
 	ImGui::BeginDisabled(!haveSelection);
 	if (ImGui::Button("Open selected##logs")) {
-		ShellExecuteW(nullptr, L"open",
-			state.files[state.selectedIdx].fullPath.c_str(),
-			nullptr, nullptr, SW_SHOWNORMAL);
+		ShellExecuteW(nullptr, L"open", state.files[state.selectedIdx].fullPath.c_str(), nullptr, nullptr,
+		              SW_SHOWNORMAL);
 	}
 	ImGui::SameLine();
 	if (ImGui::Button("Copy path##logs")) {
 		if (openvr_pair::overlay::ui::CopyWideTextToClipboard(state.files[state.selectedIdx].fullPath)) {
 			state.copyHint = "Path copied to clipboard";
-		} else {
+		}
+		else {
 			state.copyHint = "Failed to copy path (clipboard busy?)";
 		}
 		state.copyHintExpireTime = ImGui::GetTime() + 2.5;
@@ -156,7 +151,8 @@ void DrawSelectedLogActions(LogsPanelState& state)
 		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 		ImGui::TextUnformatted(state.copyHint.c_str());
 		ImGui::PopStyleColor();
-	} else if (!state.copyHint.empty()) {
+	}
+	else if (!state.copyHint.empty()) {
 		state.copyHint.clear();
 	}
 }

@@ -13,14 +13,17 @@
 // Logging stubs (used by the LOG() macro in Logging.h).
 // ---------------------------------------------------------------------------
 
-FILE *LogFile = nullptr;
+FILE* LogFile = nullptr;
 
-void OpenLogFile()   {}
-bool EnsureLogFileOpen() { return false; }
-void LogFlush()      {}
+void OpenLogFile() {}
+bool EnsureLogFileOpen()
+{
+	return false;
+}
+void LogFlush() {}
 
 tm TimeForLog()
 {
-    tm t{};
-    return t;
+	tm t{};
+	return t;
 }

@@ -5,17 +5,19 @@
 
 namespace wkopenvr::questapp {
 
-struct QuestAppConfig {
-    std::string pairingKey;
-    std::string pairedDeviceSerial;
-    std::string companionHost;
-    bool companionInstalled = false;
+struct QuestAppConfig
+{
+	std::string pairingKey;
+	std::string pairedDeviceSerial;
+	std::string companionHost;
+	bool companionInstalled = false;
 };
 
-struct QuestCompanionSettings {
-    bool autoLaunchEnabled = false;
-    std::string selectedPackage;
-    std::string selectedActivity;
+struct QuestCompanionSettings
+{
+	bool autoLaunchEnabled = false;
+	std::string selectedPackage;
+	std::string selectedActivity;
 };
 
 QuestAppConfig LoadQuestAppConfig();

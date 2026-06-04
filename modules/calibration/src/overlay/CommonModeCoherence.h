@@ -27,9 +27,10 @@ namespace spacecal::coherence {
 //
 // The value is a diagnostic label only; the coherence score formula and
 // kSuppressThreshold / kMinExtrasForCoherence thresholds are unchanged.
-enum class CorroborationSource : uint8_t {
-    kExtraPairs          = 0,  // default: extras from additionalCalibrations
-    kHeadMountCorroboration = 1,  // head-mount tracker displacement vs velocity estimate
+enum class CorroborationSource : uint8_t
+{
+	kExtraPairs = 0,             // default: extras from additionalCalibrations
+	kHeadMountCorroboration = 1, // head-mount tracker displacement vs velocity estimate
 };
 
 // Threshold above which a multi-pair spike is treated as common-mode.
@@ -65,20 +66,19 @@ constexpr int kMinExtrasForCoherence = 1;
 //   - primaryRatio is non-positive (spike ratio undefined; e.g. the
 //     rolling median was below the noise floor and the detector
 //     skipped the per-pair ratio computation).
-inline double ComputeCoherenceScore(double primaryRatio,
-                                     const std::vector<double>& extraRatios)
+inline double ComputeCoherenceScore(double primaryRatio, const std::vector<double>& extraRatios)
 {
-    if (extraRatios.empty()) return 0.0;
-    if (!(primaryRatio > 0.0)) return 0.0;
+	if (extraRatios.empty()) return 0.0;
+	if (!(primaryRatio > 0.0)) return 0.0;
 
-    std::vector<double> sorted = extraRatios;
-    std::sort(sorted.begin(), sorted.end());
-    const double median = sorted[sorted.size() / 2];
+	std::vector<double> sorted = extraRatios;
+	std::sort(sorted.begin(), sorted.end());
+	const double median = sorted[sorted.size() / 2];
 
-    double score = median / primaryRatio;
-    if (score < 0.0) score = 0.0;
-    if (score > 1.0) score = 1.0;
-    return score;
+	double score = median / primaryRatio;
+	if (score < 0.0) score = 0.0;
+	if (score > 1.0) score = 1.0;
+	return score;
 }
 
 // True iff coherence is high enough AND there are enough extras to
@@ -86,8 +86,7 @@ inline double ComputeCoherenceScore(double primaryRatio,
 // primary detector should be suppressed as common-mode.
 inline bool ShouldSuppressFire(double coherenceScore, int extrasCount)
 {
-    return extrasCount >= kMinExtrasForCoherence
-        && coherenceScore >= kSuppressThreshold;
+	return extrasCount >= kMinExtrasForCoherence && coherenceScore >= kSuppressThreshold;
 }
 
-}  // namespace spacecal::coherence
+} // namespace spacecal::coherence

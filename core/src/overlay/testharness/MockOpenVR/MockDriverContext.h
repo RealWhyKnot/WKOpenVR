@@ -18,20 +18,20 @@ class MockOpenVRRuntime;
 // IVRDriverLog, IVRResources) via GetGenericInterface. Our context routes
 // each requested version string to the matching mock instance owned by
 // MockOpenVRRuntime.
-class MockDriverContext : public vr::IVRDriverContext {
+class MockDriverContext : public vr::IVRDriverContext
+{
 public:
-	explicit MockDriverContext(MockOpenVRRuntime &owner);
+	explicit MockDriverContext(MockOpenVRRuntime& owner);
 
-	void RegisterInterface(std::string version, void *iface);
+	void RegisterInterface(std::string version, void* iface);
 
 	// vr::IVRDriverContext
-	void *GetGenericInterface(const char *pchInterfaceVersion,
-		vr::EVRInitError *peError = nullptr) override;
+	void* GetGenericInterface(const char* pchInterfaceVersion, vr::EVRInitError* peError = nullptr) override;
 	vr::DriverHandle_t GetDriverHandle() override;
 
 private:
-	MockOpenVRRuntime &owner_;
-	std::unordered_map<std::string, void *> interfaces_;
+	MockOpenVRRuntime& owner_;
+	std::unordered_map<std::string, void*> interfaces_;
 };
 
 } // namespace openvr_pair::overlay::testharness

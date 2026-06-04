@@ -3,5 +3,5 @@
 class FacetrackingPlugin;
 
 namespace facetracking::ui {
-void DrawSettingsTab(FacetrackingPlugin &plugin);
+void DrawSettingsTab(FacetrackingPlugin& plugin);
 } // namespace facetracking::ui

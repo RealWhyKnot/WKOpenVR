@@ -8,6 +8,6 @@
 
 class ServerTrackedDeviceProvider;
 
-extern std::atomic<ServerTrackedDeviceProvider *> g_driver;
+extern std::atomic<ServerTrackedDeviceProvider*> g_driver;
 extern std::unordered_map<vr::VRInputComponentHandle_t, inputhealth::ComponentStats> g_componentStats;
 extern std::mutex g_componentMutex;

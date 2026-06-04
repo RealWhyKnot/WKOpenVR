@@ -22,23 +22,23 @@ namespace facetracking {
 class VergenceLock
 {
 public:
-    // Apply vergence lock in-place.  Strength 0 = no-op, 100 = full lock.
-    // Leaves the frame untouched if the eye fields are invalid (flags bit 0
-    // not set) or if parallel-gaze is detected.
-    void Apply(protocol::FaceTrackingFrameBody &frame, uint8_t strength_0_to_100);
+	// Apply vergence lock in-place.  Strength 0 = no-op, 100 = full lock.
+	// Leaves the frame untouched if the eye fields are invalid (flags bit 0
+	// not set) or if parallel-gaze is detected.
+	void Apply(protocol::FaceTrackingFrameBody& frame, uint8_t strength_0_to_100);
 
-    // Distance (metres) to the last successfully computed focus point.
-    // Returns 0 if vergence has never fired or the last frame was discarded
-    // (parallel gaze, dropout, etc.).
-    float LastFocusDistanceM() const noexcept { return last_focus_m_; }
+	// Distance (metres) to the last successfully computed focus point.
+	// Returns 0 if vergence has never fired or the last frame was discarded
+	// (parallel gaze, dropout, etc.).
+	float LastFocusDistanceM() const noexcept { return last_focus_m_; }
 
-    // IPD (metres) estimated from the last frame where both eye origins were
-    // valid.  Returns 0 until at least one frame has been processed.
-    float LastIpdM() const noexcept { return last_ipd_m_; }
+	// IPD (metres) estimated from the last frame where both eye origins were
+	// valid.  Returns 0 until at least one frame has been processed.
+	float LastIpdM() const noexcept { return last_ipd_m_; }
 
 private:
-    float last_focus_m_ = 0.f;
-    float last_ipd_m_   = 0.f;
+	float last_focus_m_ = 0.f;
+	float last_ipd_m_ = 0.f;
 };
 
 } // namespace facetracking

@@ -8,7 +8,8 @@
 
 namespace openvr_pair::overlay::testharness {
 
-struct SteamVRConflictResult {
+struct SteamVRConflictResult
+{
 	bool ok = true;
 	std::string error;
 };

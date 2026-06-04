@@ -12,25 +12,29 @@
 #include "imgui_extensions.h"
 
 // Forward decl for DrawVectorElement defined in UserInterface.cpp
-void DrawVectorElement(const std::string id, const char* text, double* value, int defaultValue = 0, const char* defaultValueStr = " 0 ");
+void DrawVectorElement(const std::string id, const char* text, double* value, int defaultValue = 0,
+                       const char* defaultValueStr = " 0 ");
 
-static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max, int flags = ImGuiSliderFlags_AlwaysClamp) {
-	float v = (float) (f * scale);
+static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max,
+                            int flags = ImGuiSliderFlags_AlwaysClamp)
+{
+	float v = (float)(f * scale);
 	std::string labelStr = std::string(label);
 
 	// If starts with ##, just do a normal SliderFloat
 	if (labelStr.size() > 2 && labelStr[0] == '#' && labelStr[1] == '#') {
 		ImGui::SliderFloat(label, &v, (float)min, (float)max, "%1.2f", flags);
-	} else {
+	}
+	else {
 		// Otherwise do funny
 		ImGui::Text("%s", label);
 		ImGui::SameLine();
 		ImGui::PushID((std::string(label) + "_id").c_str());
 		// Line up to a column, multiples of 100
 		constexpr uint32_t LABEL_CURSOR = 100;
-		uint32_t cursorPosX = (int) ImGui::GetCursorPosX();
+		uint32_t cursorPosX = (int)ImGui::GetCursorPosX();
 		uint32_t roundedPosition = ((cursorPosX + LABEL_CURSOR / 2) / LABEL_CURSOR) * LABEL_CURSOR;
-		ImGui::SetCursorPosX((float) roundedPosition);
+		ImGui::SetCursorPosX((float)roundedPosition);
 		ImGui::SliderFloat((std::string("##") + label).c_str(), &v, (float)min, (float)max, "%1.2f", flags);
 		ImGui::PopID();
 	}
@@ -42,8 +46,8 @@ static void ScaledDragFloat(const char* label, double& f, double scale, double m
 // the settings split. Always pops up on right-click of the slider that called
 // AddDefaultsContextMenu() last (i.e. the previous widget in submission order).
 // resetFn is run when the user picks "Reset to default".
-template<typename Fn>
-static void AddResetContextMenu(const char* popupId, Fn resetFn) {
+template <typename Fn> static void AddResetContextMenu(const char* popupId, Fn resetFn)
+{
 	if (ImGui::BeginPopupContextItem(popupId)) {
 		if (ImGui::MenuItem("Reset to default")) {
 			resetFn();
@@ -55,97 +59,111 @@ static void AddResetContextMenu(const char* popupId, Fn resetFn) {
 // Render the watchdog / HMD-stall diagnostic counters wrapped in a group panel.
 // Lives in Advanced (not Basic) since these are bug-report breadcrumbs, not
 // something a casual user needs to see while running.
-static void DrawDiagnosticsPanel(ImVec2 panelSize) {
-	openvr_pair::overlay::ui::DrawPanel("Diagnostics", [&] {
-	const auto &pal = openvr_pair::overlay::ui::GetPalette();
+static void DrawDiagnosticsPanel(ImVec2 panelSize)
+{
+	openvr_pair::overlay::ui::DrawPanel(
+	    "Diagnostics",
+	    [&] {
+		    const auto& pal = openvr_pair::overlay::ui::GetPalette();
 
-	// Watchdog reset tracking. We reflect whether the count has changed
-	// recently (within ~15 s) by colouring the line amber, matching the
-	// continuous-recalibration banner pattern.
-	static int s_lastSeenWatchdog = -1;
-	static double s_lastWatchdogResetTime = 0.0;
-	static int s_lastSeenStallCount = 0;
-	static int s_stallPurgeCount = 0;
-	static double s_lastStallPurgeTime = 0.0;
+		    // Watchdog reset tracking. We reflect whether the count has changed
+		    // recently (within ~15 s) by colouring the line amber, matching the
+		    // continuous-recalibration banner pattern.
+		    static int s_lastSeenWatchdog = -1;
+		    static double s_lastWatchdogResetTime = 0.0;
+		    static int s_lastSeenStallCount = 0;
+		    static int s_stallPurgeCount = 0;
+		    static double s_lastStallPurgeTime = 0.0;
 
-	const int wdResets = GetWatchdogResetCount();
-	const double now = ImGui::GetTime();
-	if (s_lastSeenWatchdog < 0) {
-		s_lastSeenWatchdog = wdResets;
-	} else if (wdResets != s_lastSeenWatchdog) {
-		s_lastSeenWatchdog = wdResets;
-		s_lastWatchdogResetTime = now;
-	}
+		    const int wdResets = GetWatchdogResetCount();
+		    const double now = ImGui::GetTime();
+		    if (s_lastSeenWatchdog < 0) {
+			    s_lastSeenWatchdog = wdResets;
+		    }
+		    else if (wdResets != s_lastSeenWatchdog) {
+			    s_lastSeenWatchdog = wdResets;
+			    s_lastWatchdogResetTime = now;
+		    }
 
-	// Long-stall counter: HMD stalled for >=30 ticks (~1.5 s). Previously the
-	// calibration tick purged the sample buffer at this point; reverted
-	// 2026-05-04 because the purge + warm-start re-anchor caused cumulative
-	// drift on every HMD off/on cycle. The counter remains as a diagnostic
-	// -- frequent long-stalls still indicate a tracking-environment problem.
-	const int kHmdLongStallThreshold = 30;
-	const int curStalls = CalCtx.consecutiveHmdStalls;
-	if (curStalls >= kHmdLongStallThreshold && s_lastSeenStallCount < kHmdLongStallThreshold) {
-		s_stallPurgeCount++;
-		s_lastStallPurgeTime = now;
-	}
-	s_lastSeenStallCount = curStalls;
+		    // Long-stall counter: HMD stalled for >=30 ticks (~1.5 s). Previously the
+		    // calibration tick purged the sample buffer at this point; reverted
+		    // 2026-05-04 because the purge + warm-start re-anchor caused cumulative
+		    // drift on every HMD off/on cycle. The counter remains as a diagnostic
+		    // -- frequent long-stalls still indicate a tracking-environment problem.
+		    const int kHmdLongStallThreshold = 30;
+		    const int curStalls = CalCtx.consecutiveHmdStalls;
+		    if (curStalls >= kHmdLongStallThreshold && s_lastSeenStallCount < kHmdLongStallThreshold) {
+			    s_stallPurgeCount++;
+			    s_lastStallPurgeTime = now;
+		    }
+		    s_lastSeenStallCount = curStalls;
 
-	const bool wdRecent = wdResets > 0 && (now - s_lastWatchdogResetTime) < 15.0 && s_lastWatchdogResetTime > 0.0;
-	if (wdRecent) {
-		ImGui::PushStyleColor(ImGuiCol_Text, pal.statusPending);
-		ImGui::Text("Watchdog reset %.0fs ago - recollecting samples (count: %d)",
-			now - s_lastWatchdogResetTime, wdResets);
-		ImGui::PopStyleColor();
-	} else if (wdResets == 0) {
-		ImGui::TextDisabled("Watchdog resets: 0 (last: never)");
-	} else {
-		ImGui::TextDisabled("Watchdog resets: %d (last: %.0fs ago)", wdResets,
-			s_lastWatchdogResetTime > 0.0 ? (now - s_lastWatchdogResetTime) : 0.0);
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Stuck-loop watchdog: fires when continuous calibration has been rejecting every new\n"
-		                  "sample for ~25 seconds. When it fires, the current estimate is discarded and\n"
-		                  "we recollect from scratch. A high count here usually means motion conditioning is\n"
-		                  "poor (move slower, rotate around more axes) or trackers are drifting against each\n"
-		                  "other faster than the solver can keep up.");
-	}
+		    const bool wdRecent =
+		        wdResets > 0 && (now - s_lastWatchdogResetTime) < 15.0 && s_lastWatchdogResetTime > 0.0;
+		    if (wdRecent) {
+			    ImGui::PushStyleColor(ImGuiCol_Text, pal.statusPending);
+			    ImGui::Text("Watchdog reset %.0fs ago - recollecting samples (count: %d)",
+			                now - s_lastWatchdogResetTime, wdResets);
+			    ImGui::PopStyleColor();
+		    }
+		    else if (wdResets == 0) {
+			    ImGui::TextDisabled("Watchdog resets: 0 (last: never)");
+		    }
+		    else {
+			    ImGui::TextDisabled("Watchdog resets: %d (last: %.0fs ago)", wdResets,
+			                        s_lastWatchdogResetTime > 0.0 ? (now - s_lastWatchdogResetTime) : 0.0);
+		    }
+		    if (ImGui::IsItemHovered()) {
+			    ImGui::SetTooltip(
+			        "Stuck-loop watchdog: fires when continuous calibration has been rejecting every new\n"
+			        "sample for ~25 seconds. When it fires, the current estimate is discarded and\n"
+			        "we recollect from scratch. A high count here usually means motion conditioning is\n"
+			        "poor (move slower, rotate around more axes) or trackers are drifting against each\n"
+			        "other faster than the solver can keep up.");
+		    }
 
-	const bool stallRecent = s_stallPurgeCount > 0 && (now - s_lastStallPurgeTime) < 15.0;
-	if (stallRecent) {
-		ImGui::PushStyleColor(ImGuiCol_Text, pal.statusPending);
-		ImGui::Text("HMD long-stall %.0fs ago (count: %d)",
-			now - s_lastStallPurgeTime, s_stallPurgeCount);
-		ImGui::PopStyleColor();
-	} else if (s_stallPurgeCount == 0) {
-		ImGui::TextDisabled("HMD long-stalls: 0 (last: never)");
-	} else {
-		ImGui::TextDisabled("HMD long-stalls: %d (last: %.0fs ago)", s_stallPurgeCount,
-			now - s_lastStallPurgeTime);
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("HMD long-stall: the headset stopped reporting fresh poses for ~1.5 seconds or more\n"
-		                  "(SteamVR hiccup, tracking loss, headset taken off). Diagnostic counter only --\n"
-		                  "calibration is no longer disturbed during a stall (rolling sample buffer ages out\n"
-		                  "stale samples naturally on recovery). Frequent long-stalls suggest a tracking-\n"
-		                  "environment problem (lighting, USB bandwidth, etc).");
-	}
-
-	}, panelSize);
+		    const bool stallRecent = s_stallPurgeCount > 0 && (now - s_lastStallPurgeTime) < 15.0;
+		    if (stallRecent) {
+			    ImGui::PushStyleColor(ImGuiCol_Text, pal.statusPending);
+			    ImGui::Text("HMD long-stall %.0fs ago (count: %d)", now - s_lastStallPurgeTime, s_stallPurgeCount);
+			    ImGui::PopStyleColor();
+		    }
+		    else if (s_stallPurgeCount == 0) {
+			    ImGui::TextDisabled("HMD long-stalls: 0 (last: never)");
+		    }
+		    else {
+			    ImGui::TextDisabled("HMD long-stalls: %d (last: %.0fs ago)", s_stallPurgeCount,
+			                        now - s_lastStallPurgeTime);
+		    }
+		    if (ImGui::IsItemHovered()) {
+			    ImGui::SetTooltip("HMD long-stall: the headset stopped reporting fresh poses for ~1.5 seconds or more\n"
+			                      "(SteamVR hiccup, tracking loss, headset taken off). Diagnostic counter only --\n"
+			                      "calibration is no longer disturbed during a stall (rolling sample buffer ages out\n"
+			                      "stale samples naturally on recovery). Frequent long-stalls suggest a tracking-\n"
+			                      "environment problem (lighting, USB bandwidth, etc).");
+		    }
+	    },
+	    panelSize);
 }
 
 // Tip strip for both tabs. Reminds the user that hover = tooltip and
 // right-click on sliders = reset to default. Light-weight, identical between
 // Basic and Advanced so the hint is always reachable.
-static void DrawTipPanel(ImVec2 panelSize) {
-	openvr_pair::overlay::ui::DrawPanel("Tip", [&] {
-		ImGui::TextWrapped("Hover over any setting to learn more about it. Right-click any slider to reset it to its default value.");
-	}, panelSize);
+static void DrawTipPanel(ImVec2 panelSize)
+{
+	openvr_pair::overlay::ui::DrawPanel(
+	    "Tip",
+	    [&] {
+		    ImGui::TextWrapped("Hover over any setting to learn more about it. Right-click any slider to reset it to "
+		                       "its default value.");
+	    },
+	    panelSize);
 }
 
-void CCal_DrawSettings() {
-
+void CCal_DrawSettings()
+{
 	// panel size for boxes
-	ImVec2 panel_size { ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0 };
+	ImVec2 panel_size{ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0};
 
 	// Non-continuous and continuous Advanced read as two different surfaces.
 	// Continuous owns the long-session refinement knobs (recalibration
@@ -154,8 +172,7 @@ void CCal_DrawSettings() {
 	// Everything that only does something while continuous calibration is
 	// running is gated on this flag and hidden in one-shot.
 	const bool kInContinuous =
-		CalCtx.state == CalibrationState::Continuous
-		|| CalCtx.state == CalibrationState::ContinuousStandby;
+	    CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby;
 
 	// Diagnostics panel: continuous-only watchdog + HMD-stall counters. Both
 	// only tick during the continuous-cal refiner; rendering them outside
@@ -170,12 +187,12 @@ void CCal_DrawSettings() {
 	// while a continuous-cal run is active.
 	if (kInContinuous) {
 		ImGui::BeginGroupPanel("Toggles", panel_size);
-		const bool headMountOwnsTargetHide =
-			CalCtx.headMount.mode >= HeadMountMode::AutoPaired
-			&& wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx);
+		const bool headMountOwnsTargetHide = CalCtx.headMount.mode >= HeadMountMode::AutoPaired &&
+		                                     wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx);
 		if (headMountOwnsTargetHide) {
 			ImGui::TextDisabled("Tracker visibility is controlled on the Play Space tab.");
-		} else {
+		}
+		else {
 			if (ImGui::Checkbox("Hide calibration target tracker in OpenVR", &CalCtx.quashTargetInContinuous)) {
 				if (wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx)) {
 					CalCtx.headMount.hideTracker = CalCtx.quashTargetInContinuous;
@@ -183,16 +200,18 @@ void CCal_DrawSettings() {
 				SaveProfile(CalCtx);
 			}
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Suppress the calibration target tracker's pose in OpenVR while continuous calibration runs.\n"
-				                  "Use when the target tracker would otherwise show up as a duplicate of the reference.");
+				ImGui::SetTooltip(
+				    "Suppress the calibration target tracker's pose in OpenVR while continuous calibration runs.\n"
+				    "Use when the target tracker would otherwise show up as a duplicate of the reference.");
 			}
 		}
 		ImGui::SameLine();
 		ImGui::Checkbox("Ignore outliers", &CalCtx.ignoreOutliers);
 		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Drop sample pairs whose rotation axis disagrees with the consensus before the LS solve.\n"
-			                  "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
-			                  "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
+			ImGui::SetTooltip(
+			    "Drop sample pairs whose rotation axis disagrees with the consensus before the LS solve.\n"
+			    "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
+			    "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
 		}
 		ImGui::EndGroupPanel();
 		ImGui::Spacing();
@@ -203,7 +222,6 @@ void CCal_DrawSettings() {
 	// itself is now the gate.  A user clicking "Advanced" is signalling
 	// they want to see everything at once, so flatten the hierarchy.
 	{
-
 		// Calibration speed radio + speed-threshold matrix. The whole
 		// speed-tuning surface is continuous-only: it tunes the rate at which
 		// continuous calibration drags the offset back into place. One-shot
@@ -214,10 +232,10 @@ void CCal_DrawSettings() {
 
 			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 			ImGui::TextWrapped(
-				"SpaceCalibrator uses up to three different speeds at which it drags the calibration back into "
-				"position when drift occurs. These settings control how far off the calibration should be before going back to low speed (for "
-				"Decel) or going to higher speeds (for Slow and Fast)."
-			);
+			    "SpaceCalibrator uses up to three different speeds at which it drags the calibration back into "
+			    "position when drift occurs. These settings control how far off the calibration should be before going "
+			    "back to low speed (for "
+			    "Decel) or going to higher speeds (for Slow and Fast).");
 			ImGui::PopStyleColor();
 
 			// Calibration Speed radio. Also rendered in the one-shot Settings
@@ -234,11 +252,12 @@ void CCal_DrawSettings() {
 					SaveProfile(CalCtx);
 				}
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Pick the speed automatically based on calibration fit RMS.\n"
-					                  "<5mm -> Fast.  5-10mm -> Slow.  >10mm -> Very Slow.\n"
-					                  "Re-evaluates while continuous calibration runs; sticky so it doesn't oscillate.\n"
-					                  "Recommended for continuous mode. (One-shot mode hides Auto because\n"
-					                  "it has no second chance to switch.)");
+					ImGui::SetTooltip(
+					    "Pick the speed automatically based on calibration fit RMS.\n"
+					    "<5mm -> Fast.  5-10mm -> Slow.  >10mm -> Very Slow.\n"
+					    "Re-evaluates while continuous calibration runs; sticky so it doesn't oscillate.\n"
+					    "Recommended for continuous mode. (One-shot mode hides Auto because\n"
+					    "it has no second chance to switch.)");
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Fast          ", speed == CalibrationContext::FAST)) {
@@ -273,24 +292,20 @@ void CCal_DrawSettings() {
 				// what the program decided. Faded text so it doesn't draw the eye.
 				if (speed == CalibrationContext::AUTO) {
 					const auto resolved = CalCtx.ResolvedCalibrationSpeed();
-					const char* resolvedName =
-						resolved == CalibrationContext::FAST ? "Fast" :
-						resolved == CalibrationContext::SLOW ? "Slow" :
-						resolved == CalibrationContext::VERY_SLOW ? "Very Slow" : "?";
+					const char* resolvedName = resolved == CalibrationContext::FAST        ? "Fast"
+					                           : resolved == CalibrationContext::SLOW      ? "Slow"
+					                           : resolved == CalibrationContext::VERY_SLOW ? "Very Slow"
+					                                                                       : "?";
 					const double fitRmsMm = spacecal::calibration_speed::SelectObservedFitRmsMm(
-						Metrics::error_rawComputed.last(),
-						Metrics::error_currentCal.last());
+					    Metrics::error_rawComputed.last(), Metrics::error_currentCal.last());
 					const bool haveFitRms =
-						Metrics::error_rawComputed.size() > 0 ||
-						Metrics::error_currentCal.size() > 0;
+					    Metrics::error_rawComputed.size() > 0 || Metrics::error_currentCal.size() > 0;
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 					if (haveFitRms) {
-						ImGui::Text("    Currently resolved to: %s  (fit RMS %.2f mm)",
-						            resolvedName,
-						            fitRmsMm);
-					} else {
-						ImGui::Text("    Currently resolved to: %s  (waiting for first fit)",
-						            resolvedName);
+						ImGui::Text("    Currently resolved to: %s  (fit RMS %.2f mm)", resolvedName, fitRmsMm);
+					}
+					else {
+						ImGui::Text("    Currently resolved to: %s  (waiting for first fit)", resolvedName);
 					}
 					ImGui::PopStyleColor();
 				}
@@ -305,40 +320,48 @@ void CCal_DrawSettings() {
 				ImGui::TableSetColumnIndex(2);
 				ImGui::Text("Rotation (degrees)");
 
-
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text("Decel");
 				ImGui::TableSetColumnIndex(1);
 				ScaledDragFloat("##TransDecel", CalCtx.alignmentSpeedParams.thr_trans_tiny, 1000.0, 0, 20.0);
-				AddResetContextMenu("trans_decel_ctx", [] { CalCtx.alignmentSpeedParams.thr_trans_tiny = 0.98f / 1000.0f; });
+				AddResetContextMenu("trans_decel_ctx",
+				                    [] { CalCtx.alignmentSpeedParams.thr_trans_tiny = 0.98f / 1000.0f; });
 				ImGui::TableSetColumnIndex(2);
 				ScaledDragFloat("##RotDecel", CalCtx.alignmentSpeedParams.thr_rot_tiny, 180.0 / EIGEN_PI, 0, 5.0);
-				AddResetContextMenu("rot_decel_ctx", [] { CalCtx.alignmentSpeedParams.thr_rot_tiny = 0.49f * (float)(EIGEN_PI / 180.0f); });
+				AddResetContextMenu("rot_decel_ctx", [] {
+					CalCtx.alignmentSpeedParams.thr_rot_tiny = 0.49f * (float)(EIGEN_PI / 180.0f);
+				});
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text("Slow");
 				ImGui::TableSetColumnIndex(1);
 				ScaledDragFloat("##TransSlow", CalCtx.alignmentSpeedParams.thr_trans_small, 1000.0,
-					CalCtx.alignmentSpeedParams.thr_trans_tiny * 1000.0, 20.0);
-				AddResetContextMenu("trans_slow_ctx", [] { CalCtx.alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0f; });
+				                CalCtx.alignmentSpeedParams.thr_trans_tiny * 1000.0, 20.0);
+				AddResetContextMenu("trans_slow_ctx",
+				                    [] { CalCtx.alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0f; });
 				ImGui::TableSetColumnIndex(2);
 				ScaledDragFloat("##RotSlow", CalCtx.alignmentSpeedParams.thr_rot_small, 180.0 / EIGEN_PI,
-					CalCtx.alignmentSpeedParams.thr_rot_tiny * (180.0 / EIGEN_PI), 10.0);
-				AddResetContextMenu("rot_slow_ctx", [] { CalCtx.alignmentSpeedParams.thr_rot_small = 0.5f * (float)(EIGEN_PI / 180.0f); });
+				                CalCtx.alignmentSpeedParams.thr_rot_tiny * (180.0 / EIGEN_PI), 10.0);
+				AddResetContextMenu("rot_slow_ctx", [] {
+					CalCtx.alignmentSpeedParams.thr_rot_small = 0.5f * (float)(EIGEN_PI / 180.0f);
+				});
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::Text("Fast");
 				ImGui::TableSetColumnIndex(1);
 				ScaledDragFloat("##TransFast", CalCtx.alignmentSpeedParams.thr_trans_large, 1000.0,
-					CalCtx.alignmentSpeedParams.thr_trans_small * 1000.0, 50.0);
-				AddResetContextMenu("trans_fast_ctx", [] { CalCtx.alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0f; });
+				                CalCtx.alignmentSpeedParams.thr_trans_small * 1000.0, 50.0);
+				AddResetContextMenu("trans_fast_ctx",
+				                    [] { CalCtx.alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0f; });
 				ImGui::TableSetColumnIndex(2);
 				ScaledDragFloat("##RotFast", CalCtx.alignmentSpeedParams.thr_rot_large, 180.0 / EIGEN_PI,
-					CalCtx.alignmentSpeedParams.thr_rot_small * (180.0 / EIGEN_PI), 20.0);
-				AddResetContextMenu("rot_fast_ctx", [] { CalCtx.alignmentSpeedParams.thr_rot_large = 5.0f * (float)(EIGEN_PI / 180.0f); });
+				                CalCtx.alignmentSpeedParams.thr_rot_small * (180.0 / EIGEN_PI), 20.0);
+				AddResetContextMenu("rot_fast_ctx", [] {
+					CalCtx.alignmentSpeedParams.thr_rot_large = 5.0f * (float)(EIGEN_PI / 180.0f);
+				});
 
 				ImGui::EndTable();
 			}
@@ -371,7 +394,7 @@ void CCal_DrawSettings() {
 			// label/control via a 2-col table so they line up cleanly with
 			// the other thresholds.
 			if (ImGui::BeginTable("##advanced_thresholds_grid", 2,
-					ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody)) {
+			                      ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody)) {
 				ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 230.0f);
 				ImGui::TableSetupColumn("##control", ImGuiTableColumnFlags_WidthStretch);
 
@@ -384,8 +407,9 @@ void CCal_DrawSettings() {
 				ImGui::SetNextItemWidth(-FLT_MIN);
 				ImGui::SliderFloat("##adv_jitter_threshold_slider", &CalCtx.jitterThreshold, 0.1f, 10.0f, "%1.1f", 0);
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Controls how much jitter will be allowed for calibration.\n"
-						"Higher values allow worse tracking to calibrate, but may result in poorer tracking.");
+					ImGui::SetTooltip(
+					    "Controls how much jitter will be allowed for calibration.\n"
+					    "Higher values allow worse tracking to calibrate, but may result in poorer tracking.");
 				}
 				AddResetContextMenu("adv_jitter_threshold_ctx", [] { CalCtx.jitterThreshold = 3.0f; });
 				ImGui::PopID();
@@ -400,12 +424,15 @@ void CCal_DrawSettings() {
 					ImGui::TableSetColumnIndex(1);
 					ImGui::PushID("adv_recalibration_threshold");
 					ImGui::SetNextItemWidth(-FLT_MIN);
-					ImGui::SliderFloat("##adv_recalibration_threshold_slider", &CalCtx.continuousCalibrationThreshold, 1.01f, 10.0f, "%1.1f", 0);
+					ImGui::SliderFloat("##adv_recalibration_threshold_slider", &CalCtx.continuousCalibrationThreshold,
+					                   1.01f, 10.0f, "%1.1f", 0);
 					if (ImGui::IsItemHovered()) {
 						ImGui::SetTooltip("Controls how good the calibration must be before realigning the trackers.\n"
-							"Higher values cause calibration to happen less often, and may be useful for systems with lots of tracking drift.");
+						                  "Higher values cause calibration to happen less often, and may be useful for "
+						                  "systems with lots of tracking drift.");
 					}
-					AddResetContextMenu("adv_recalibration_threshold_ctx", [] { CalCtx.continuousCalibrationThreshold = 1.5f; });
+					AddResetContextMenu("adv_recalibration_threshold_ctx",
+					                    [] { CalCtx.continuousCalibrationThreshold = 1.5f; });
 					ImGui::PopID();
 
 					ImGui::TableNextRow();
@@ -415,9 +442,11 @@ void CCal_DrawSettings() {
 					ImGui::TableSetColumnIndex(1);
 					ImGui::PushID("adv_max_relative_error_threshold");
 					ImGui::SetNextItemWidth(-FLT_MIN);
-					ImGui::SliderFloat("##adv_max_relative_error_threshold_slider", &CalCtx.maxRelativeErrorThreshold, 0.01f, 1.0f, "%1.1f", 0);
+					ImGui::SliderFloat("##adv_max_relative_error_threshold_slider", &CalCtx.maxRelativeErrorThreshold,
+					                   0.01f, 1.0f, "%1.1f", 0);
 					if (ImGui::IsItemHovered()) {
-						ImGui::SetTooltip("Controls the maximum acceptable relative error. If the error from the relative calibration is too poor, the calibration will be discarded.");
+						ImGui::SetTooltip("Controls the maximum acceptable relative error. If the error from the "
+						                  "relative calibration is too poor, the calibration will be discarded.");
 					}
 					AddResetContextMenu("adv_max_rel_err_ctx", [] { CalCtx.maxRelativeErrorThreshold = 0.005f; });
 					ImGui::PopID();
@@ -432,7 +461,7 @@ void CCal_DrawSettings() {
 		// it via continuousCalibrationOffset. Hide outside continuous so the
 		// one-shot Advanced tab isn't padded with a knob that does nothing.
 		if (kInContinuous) {
-			ImVec2 panel_size_inner { panel_size.x - 11 * 2, 0};
+			ImVec2 panel_size_inner{panel_size.x - 11 * 2, 0};
 			ImGui::BeginGroupPanel("Tracker offset", panel_size_inner);
 			DrawVectorElement("cc_tracker_offset", "X", &CalCtx.continuousCalibrationOffset.x());
 			DrawVectorElement("cc_tracker_offset", "Y", &CalCtx.continuousCalibrationOffset.y());
@@ -441,7 +470,7 @@ void CCal_DrawSettings() {
 		}
 
 		{
-			ImVec2 panel_size_inner{ panel_size.x - 11 * 2, 0 };
+			ImVec2 panel_size_inner{panel_size.x - 11 * 2, 0};
 			ImGui::BeginGroupPanel("Playspace scale", panel_size_inner);
 			DrawVectorElement("cc_playspace_scale", "Playspace Scale", &CalCtx.calibratedScale, 1, " 1 ");
 			ImGui::EndGroupPanel();
@@ -464,9 +493,8 @@ void CCal_DrawSettings() {
 		spacecal::wizard::Open();
 	}
 	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip(
-			"Re-run the first-run setup wizard. Useful after changing your hardware\n"
-			"(adding/removing a tracking system) or if you want to start fresh.");
+		ImGui::SetTooltip("Re-run the first-run setup wizard. Useful after changing your hardware\n"
+		                  "(adding/removing a tracking system) or if you want to start fresh.");
 	}
 	ImGui::EndGroupPanel();
 

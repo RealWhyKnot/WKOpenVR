@@ -6,14 +6,16 @@
 
 namespace spacecal::ui_logs {
 
-struct LogFileEntry {
+struct LogFileEntry
+{
 	std::wstring fullPath;
 	std::string name;
 	uint64_t sizeBytes = 0;
 	uint64_t mtimeFileTime = 0;
 };
 
-struct LogsPanelState {
+struct LogsPanelState
+{
 	std::vector<LogFileEntry> files;
 	bool listBuilt = false;
 	int selectedIdx = -1;

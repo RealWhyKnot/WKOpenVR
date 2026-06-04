@@ -33,11 +33,11 @@ namespace inputhealth {
 
 struct EWMARollingMinState
 {
-	double value       = 0.0;
-	bool   initialized = false;
+	double value = 0.0;
+	bool initialized = false;
 };
 
-inline void EWMARollingMinUpdate(EWMARollingMinState &s, double x, double decay)
+inline void EWMARollingMinUpdate(EWMARollingMinState& s, double x, double decay)
 {
 	if (decay < 0.0) decay = 0.0;
 	if (decay > 1.0) decay = 1.0;
@@ -48,18 +48,19 @@ inline void EWMARollingMinUpdate(EWMARollingMinState &s, double x, double decay)
 	}
 	if (x < s.value) {
 		s.value = x;
-	} else {
+	}
+	else {
 		s.value = (1.0 - decay) * s.value + decay * x;
 	}
 }
 
-inline void EWMARollingMinReset(EWMARollingMinState &s)
+inline void EWMARollingMinReset(EWMARollingMinState& s)
 {
 	s.value = 0.0;
 	s.initialized = false;
 }
 
-inline double EWMARollingMinValue(const EWMARollingMinState &s)
+inline double EWMARollingMinValue(const EWMARollingMinState& s)
 {
 	return s.initialized ? s.value : 0.0;
 }

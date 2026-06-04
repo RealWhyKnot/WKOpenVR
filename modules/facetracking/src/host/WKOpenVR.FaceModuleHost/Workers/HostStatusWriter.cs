@@ -29,8 +29,8 @@ public sealed class HostStatusWriter(
     HostOptions options)
 {
     private readonly Stopwatch _uptime = Stopwatch.StartNew();
-    private readonly DateTime  _startedAt = DateTime.UtcNow;
-    private readonly int       _pid = Environment.ProcessId;
+    private readonly DateTime _startedAt = DateTime.UtcNow;
+    private readonly int _pid = Environment.ProcessId;
 
     public static void WriteStartupFailure(
         string statusFilePath,
@@ -42,26 +42,29 @@ public sealed class HostStatusWriter(
         try
         {
             string? dir = Path.GetDirectoryName(statusFilePath);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
 
             var status = new HostStatus
             {
-                SchemaVersion      = 1,
-                HostPid            = Environment.ProcessId,
-                HostStartedAt      = DateTime.UtcNow,
-                HostUptimeSeconds  = 0,
-                HostShuttingDown   = true,
-                Phase              = phase,
-                LastError          = lastError,
-                ModuleCount        = 0,
-                InstalledModules   = [],
-                ModulesInstallDir  = options.ModulesInstallDir,
-                FramesWritten      = 0,
-                FramesWithData     = 0,
-                FramesRead         = 0,
-                OscMessagesSent    = 0,
-                LastExitCode       = 0,
-                LastRestartTime    = "",
+                SchemaVersion = 1,
+                HostPid = Environment.ProcessId,
+                HostStartedAt = DateTime.UtcNow,
+                HostUptimeSeconds = 0,
+                HostShuttingDown = true,
+                Phase = phase,
+                LastError = lastError,
+                ModuleCount = 0,
+                InstalledModules = [],
+                ModulesInstallDir = options.ModulesInstallDir,
+                FramesWritten = 0,
+                FramesWithData = 0,
+                FramesRead = 0,
+                OscMessagesSent = 0,
+                LastExitCode = 0,
+                LastRestartTime = "",
             };
             string json = JsonSerializer.Serialize(
                 status,
@@ -86,26 +89,29 @@ public sealed class HostStatusWriter(
         try
         {
             string? dir = Path.GetDirectoryName(statusFilePath);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
 
             var status = new HostStatus
             {
-                SchemaVersion      = 1,
-                HostPid            = Environment.ProcessId,
-                HostStartedAt      = DateTime.UtcNow,
-                HostUptimeSeconds  = 0,
-                HostShuttingDown   = phase.EndsWith("complete", StringComparison.OrdinalIgnoreCase),
-                Phase              = phase,
-                LastError          = "",
-                ModuleCount        = 0,
-                InstalledModules   = [],
-                ModulesInstallDir  = options.ModulesInstallDir,
-                FramesWritten      = framesWritten,
-                FramesWithData     = 0,
-                FramesRead         = 0,
-                OscMessagesSent    = 0,
-                LastExitCode       = 0,
-                LastRestartTime    = "",
+                SchemaVersion = 1,
+                HostPid = Environment.ProcessId,
+                HostStartedAt = DateTime.UtcNow,
+                HostUptimeSeconds = 0,
+                HostShuttingDown = phase.EndsWith("complete", StringComparison.OrdinalIgnoreCase),
+                Phase = phase,
+                LastError = "",
+                ModuleCount = 0,
+                InstalledModules = [],
+                ModulesInstallDir = options.ModulesInstallDir,
+                FramesWritten = framesWritten,
+                FramesWithData = 0,
+                FramesRead = 0,
+                OscMessagesSent = 0,
+                LastExitCode = 0,
+                LastRestartTime = "",
             };
             string json = JsonSerializer.Serialize(
                 status,
@@ -159,28 +165,28 @@ public sealed class HostStatusWriter(
 
     private void WriteOnce(bool shuttingDown = false)
     {
-        var runtime = loader.SnapshotStatus();
+        HostRuntimeStatus runtime = loader.SnapshotStatus();
         var status = new HostStatus
         {
-            SchemaVersion       = 1,
-            HostPid             = _pid,
-            HostStartedAt       = _startedAt,
-            HostUptimeSeconds   = (int)_uptime.Elapsed.TotalSeconds,
-            HostShuttingDown    = shuttingDown,
-            Phase               = runtime.Phase,
-            LastError           = runtime.LastError,
-            ModuleCount         = loader.Loaded.Count,
-            ActiveModule        = BuildActiveModule(),
-            InstalledModules    = ScanInstalledModules(),
-            ModulesInstallDir   = options.ModulesInstallDir,
-            ActiveModuleUuid    = loader.Active?.Uuid ?? "",
-            ActiveModuleName    = loader.Active?.Manifest.Name ?? "",
-            FramesWritten       = runtime.FramesWritten,
-            FramesWithData      = runtime.FramesWithData,
-            FramesRead          = 0,
-            OscMessagesSent     = 0,
-            LastExitCode        = runtime.LastExitCode,
-            LastRestartTime     = runtime.LastRestartTime?.ToString("O") ?? "",
+            SchemaVersion = 1,
+            HostPid = _pid,
+            HostStartedAt = _startedAt,
+            HostUptimeSeconds = (int)_uptime.Elapsed.TotalSeconds,
+            HostShuttingDown = shuttingDown,
+            Phase = runtime.Phase,
+            LastError = runtime.LastError,
+            ModuleCount = loader.Loaded.Count,
+            ActiveModule = BuildActiveModule(),
+            InstalledModules = ScanInstalledModules(),
+            ModulesInstallDir = options.ModulesInstallDir,
+            ActiveModuleUuid = loader.Active?.Uuid ?? "",
+            ActiveModuleName = loader.Active?.Manifest.Name ?? "",
+            FramesWritten = runtime.FramesWritten,
+            FramesWithData = runtime.FramesWithData,
+            FramesRead = 0,
+            OscMessagesSent = 0,
+            LastExitCode = runtime.LastExitCode,
+            LastRestartTime = runtime.LastRestartTime?.ToString("O") ?? "",
         };
 
         string json = JsonSerializer.Serialize(
@@ -195,13 +201,17 @@ public sealed class HostStatusWriter(
 
     private ActiveModuleStatus? BuildActiveModule()
     {
-        var m = loader.Active;
-        if (m is null) return null;
+        DiscoveredModule? m = loader.Active;
+        if (m is null)
+        {
+            return null;
+        }
+
         return new ActiveModuleStatus
         {
-            Uuid    = m.Manifest.Uuid,
-            Name    = m.Manifest.Name,
-            Vendor  = m.Manifest.Vendor,
+            Uuid = m.Manifest.Uuid,
+            Name = m.Manifest.Name,
+            Vendor = m.Manifest.Vendor,
             Version = m.Manifest.Version?.ToString() ?? "",
         };
     }
@@ -209,7 +219,10 @@ public sealed class HostStatusWriter(
     private List<InstalledModule> ScanInstalledModules()
     {
         var result = new List<InstalledModule>();
-        if (!Directory.Exists(options.ModulesInstallDir)) return result;
+        if (!Directory.Exists(options.ModulesInstallDir))
+        {
+            return result;
+        }
 
         foreach (var uuidDir in Directory.EnumerateDirectories(options.ModulesInstallDir))
         {
@@ -223,12 +236,15 @@ public sealed class HostStatusWriter(
                 DateTime mtime = Directory.GetLastWriteTimeUtc(versionDir);
                 if (mtime > newestMtime)
                 {
-                    newestMtime    = mtime;
-                    newestVersion  = version;
+                    newestMtime = mtime;
+                    newestVersion = version;
                 }
             }
 
-            if (newestVersion is null) continue;
+            if (newestVersion is null)
+            {
+                continue;
+            }
 
             // Pull manifest fields from the per-version manifest.json if present.
             string manifestPath = Path.Combine(uuidDir, newestVersion, "manifest.json");
@@ -238,17 +254,24 @@ public sealed class HostStatusWriter(
                 try
                 {
                     using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
-                    if (doc.RootElement.TryGetProperty("name", out var n))   name   = n.GetString();
-                    if (doc.RootElement.TryGetProperty("vendor", out var v)) vendor = v.GetString();
+                    if (doc.RootElement.TryGetProperty("name", out JsonElement n))
+                    {
+                        name = n.GetString();
+                    }
+
+                    if (doc.RootElement.TryGetProperty("vendor", out JsonElement v))
+                    {
+                        vendor = v.GetString();
+                    }
                 }
                 catch { /* malformed manifest -- skip the extras, keep the listing */ }
             }
 
             result.Add(new InstalledModule
             {
-                Uuid    = uuid,
-                Name    = name   ?? uuid,
-                Vendor  = vendor ?? "",
+                Uuid = uuid,
+                Name = name ?? uuid,
+                Vendor = vendor ?? "",
                 Version = newestVersion,
             });
         }
@@ -260,40 +283,40 @@ public sealed class HostStatusWriter(
 
 public sealed class HostStatus
 {
-    [JsonPropertyName("schema_version")]    public int       SchemaVersion     { get; init; }
-    [JsonPropertyName("host_pid")]          public int       HostPid           { get; init; }
-    [JsonPropertyName("host_started_at")]   public DateTime  HostStartedAt     { get; init; }
-    [JsonPropertyName("host_uptime_s")]     public int       HostUptimeSeconds { get; init; }
-    [JsonPropertyName("host_shutting_down")] public bool     HostShuttingDown  { get; init; }
-    [JsonPropertyName("phase")]             public string    Phase             { get; init; } = "";
-    [JsonPropertyName("last_error")]        public string    LastError         { get; init; } = "";
-    [JsonPropertyName("module_count")]      public int       ModuleCount       { get; init; }
-    [JsonPropertyName("active_module_uuid")] public string   ActiveModuleUuid  { get; init; } = "";
-    [JsonPropertyName("active_module_name")] public string   ActiveModuleName  { get; init; } = "";
-    [JsonPropertyName("frames_written")]    public long      FramesWritten     { get; init; }
-    [JsonPropertyName("frames_with_data")]  public long      FramesWithData    { get; init; }
-    [JsonPropertyName("frames_read")]       public long      FramesRead        { get; init; }
-    [JsonPropertyName("osc_messages_sent")] public long      OscMessagesSent   { get; init; }
-    [JsonPropertyName("last_exit_code")]    public int       LastExitCode      { get; init; }
-    [JsonPropertyName("last_restart_time")] public string    LastRestartTime   { get; init; } = "";
-    [JsonPropertyName("modules_install_dir")] public string  ModulesInstallDir { get; init; } = "";
-    [JsonPropertyName("active_module")]     public ActiveModuleStatus? ActiveModule { get; init; }
+    [JsonPropertyName("schema_version")] public int SchemaVersion { get; init; }
+    [JsonPropertyName("host_pid")] public int HostPid { get; init; }
+    [JsonPropertyName("host_started_at")] public DateTime HostStartedAt { get; init; }
+    [JsonPropertyName("host_uptime_s")] public int HostUptimeSeconds { get; init; }
+    [JsonPropertyName("host_shutting_down")] public bool HostShuttingDown { get; init; }
+    [JsonPropertyName("phase")] public string Phase { get; init; } = "";
+    [JsonPropertyName("last_error")] public string LastError { get; init; } = "";
+    [JsonPropertyName("module_count")] public int ModuleCount { get; init; }
+    [JsonPropertyName("active_module_uuid")] public string ActiveModuleUuid { get; init; } = "";
+    [JsonPropertyName("active_module_name")] public string ActiveModuleName { get; init; } = "";
+    [JsonPropertyName("frames_written")] public long FramesWritten { get; init; }
+    [JsonPropertyName("frames_with_data")] public long FramesWithData { get; init; }
+    [JsonPropertyName("frames_read")] public long FramesRead { get; init; }
+    [JsonPropertyName("osc_messages_sent")] public long OscMessagesSent { get; init; }
+    [JsonPropertyName("last_exit_code")] public int LastExitCode { get; init; }
+    [JsonPropertyName("last_restart_time")] public string LastRestartTime { get; init; } = "";
+    [JsonPropertyName("modules_install_dir")] public string ModulesInstallDir { get; init; } = "";
+    [JsonPropertyName("active_module")] public ActiveModuleStatus? ActiveModule { get; init; }
     [JsonPropertyName("installed_modules")] public IList<InstalledModule> InstalledModules { get; init; } = [];
 }
 
 public sealed class ActiveModuleStatus
 {
-    [JsonPropertyName("uuid")]    public string Uuid    { get; init; } = "";
-    [JsonPropertyName("name")]    public string Name    { get; init; } = "";
-    [JsonPropertyName("vendor")]  public string Vendor  { get; init; } = "";
+    [JsonPropertyName("uuid")] public string Uuid { get; init; } = "";
+    [JsonPropertyName("name")] public string Name { get; init; } = "";
+    [JsonPropertyName("vendor")] public string Vendor { get; init; } = "";
     [JsonPropertyName("version")] public string Version { get; init; } = "";
 }
 
 public sealed class InstalledModule
 {
-    [JsonPropertyName("uuid")]    public string Uuid    { get; init; } = "";
-    [JsonPropertyName("name")]    public string Name    { get; init; } = "";
-    [JsonPropertyName("vendor")]  public string Vendor  { get; init; } = "";
+    [JsonPropertyName("uuid")] public string Uuid { get; init; } = "";
+    [JsonPropertyName("name")] public string Name { get; init; } = "";
+    [JsonPropertyName("vendor")] public string Vendor { get; init; } = "";
     [JsonPropertyName("version")] public string Version { get; init; } = "";
 }
 

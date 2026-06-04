@@ -9,11 +9,13 @@ namespace {
 
 constexpr float kLegacyFallbackThreshold = 0.75f;
 
-bool TriggerButtonPressed(const vr::VRControllerState_t& state) {
+bool TriggerButtonPressed(const vr::VRControllerState_t& state)
+{
 	return (state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Trigger)) != 0;
 }
 
-void NoteAnalogValue(TriggerReading* reading, int axis, float value) {
+void NoteAnalogValue(TriggerReading* reading, int axis, float value)
+{
 	if (!reading) return;
 	if (axis < 0) return;
 	if (reading->analogAxis < 0 || value > reading->analogValue) {
@@ -22,10 +24,7 @@ void NoteAnalogValue(TriggerReading* reading, int axis, float value) {
 	}
 }
 
-bool LegacyAxisFallback(
-	const vr::VRControllerState_t& state,
-	float analogThreshold,
-	TriggerReading* reading)
+bool LegacyAxisFallback(const vr::VRControllerState_t& state, float analogThreshold, TriggerReading* reading)
 {
 	const float threshold = std::max(analogThreshold, kLegacyFallbackThreshold);
 	for (uint32_t axis = 0; axis < vr::k_unControllerStateAxisCount; ++axis) {
@@ -39,14 +38,10 @@ bool LegacyAxisFallback(
 	return false;
 }
 
-}  // namespace
+} // namespace
 
-bool IsTriggerHeldFromAxisTypes(
-	const vr::VRControllerState_t& state,
-	const int32_t* axisTypes,
-	size_t axisCount,
-	float analogThreshold,
-	TriggerReading* reading)
+bool IsTriggerHeldFromAxisTypes(const vr::VRControllerState_t& state, const int32_t* axisTypes, size_t axisCount,
+                                float analogThreshold, TriggerReading* reading)
 {
 	if (reading) {
 		*reading = TriggerReading{};
@@ -80,12 +75,8 @@ bool IsTriggerHeldFromAxisTypes(
 	return false;
 }
 
-bool IsTriggerHeld(
-	vr::IVRSystem* vrs,
-	vr::TrackedDeviceIndex_t deviceId,
-	const vr::VRControllerState_t& state,
-	float analogThreshold,
-	TriggerReading* reading)
+bool IsTriggerHeld(vr::IVRSystem* vrs, vr::TrackedDeviceIndex_t deviceId, const vr::VRControllerState_t& state,
+                   float analogThreshold, TriggerReading* reading)
 {
 	if (reading) {
 		*reading = TriggerReading{};
@@ -101,25 +92,22 @@ bool IsTriggerHeld(
 	if (vrs) {
 		for (uint32_t axis = 0; axis < vr::k_unControllerStateAxisCount; ++axis) {
 			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-			const auto prop = static_cast<vr::ETrackedDeviceProperty>(
-				static_cast<int>(vr::Prop_Axis0Type_Int32) + static_cast<int>(axis));
+			const auto prop = static_cast<vr::ETrackedDeviceProperty>(static_cast<int>(vr::Prop_Axis0Type_Int32) +
+			                                                          static_cast<int>(axis));
 			axisTypes[axis] = vrs->GetInt32TrackedDeviceProperty(deviceId, prop, &err);
 			if (err != vr::TrackedProp_Success) {
 				axisTypes[axis] = static_cast<int32_t>(vr::k_eControllerAxis_None);
 				++propertyErrors;
 			}
 		}
-	} else {
+	}
+	else {
 		propertyErrors = static_cast<int>(vr::k_unControllerStateAxisCount);
 	}
 
 	TriggerReading typedReading;
-	const bool held = IsTriggerHeldFromAxisTypes(
-		state,
-		axisTypes,
-		vr::k_unControllerStateAxisCount,
-		analogThreshold,
-		&typedReading);
+	const bool held =
+	    IsTriggerHeldFromAxisTypes(state, axisTypes, vr::k_unControllerStateAxisCount, analogThreshold, &typedReading);
 
 	if (reading) {
 		*reading = typedReading;
@@ -137,11 +125,8 @@ bool IsTriggerHeld(
 	return false;
 }
 
-size_t FillControllerIdsForTrackingSystem(
-	const std::vector<VRDevice>& devices,
-	const std::string& trackingSystem,
-	int32_t* outControllerIds,
-	size_t outCount)
+size_t FillControllerIdsForTrackingSystem(const std::vector<VRDevice>& devices, const std::string& trackingSystem,
+                                          int32_t* outControllerIds, size_t outCount)
 {
 	if (!outControllerIds || outCount == 0) {
 		return 0;
@@ -166,10 +151,7 @@ size_t FillControllerIdsForTrackingSystem(
 	return written;
 }
 
-int32_t ChoosePreferredController(
-	const ControllerSelectionChoice* choices,
-	size_t choiceCount,
-	int32_t currentDeviceId)
+int32_t ChoosePreferredController(const ControllerSelectionChoice* choices, size_t choiceCount, int32_t currentDeviceId)
 {
 	if (!choices || choiceCount == 0) {
 		return -1;
@@ -205,4 +187,4 @@ int32_t ChoosePreferredController(
 	return choices[0].deviceId;
 }
 
-}  // namespace wkopenvr::controller_input
+} // namespace wkopenvr::controller_input

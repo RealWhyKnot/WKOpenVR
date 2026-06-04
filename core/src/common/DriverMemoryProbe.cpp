@@ -5,7 +5,7 @@
 
 namespace openvr_pair::common {
 
-bool IsReadableMemoryRange(const void *addr, size_t bytes)
+bool IsReadableMemoryRange(const void* addr, size_t bytes)
 {
 	if (!addr) return false;
 
@@ -17,13 +17,13 @@ bool IsReadableMemoryRange(const void *addr, size_t bytes)
 	if (prot == 0 || (prot & PAGE_NOACCESS) || (prot & PAGE_GUARD)) return false;
 
 	const auto regionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
-	const auto needEnd   = reinterpret_cast<uintptr_t>(addr) + bytes;
+	const auto needEnd = reinterpret_cast<uintptr_t>(addr) + bytes;
 	return needEnd <= regionEnd;
 }
 
-std::string DescribeVirtualQueryRegion(const char *tag, const void *addr)
+std::string DescribeVirtualQueryRegion(const char* tag, const void* addr)
 {
-	const char *label = tag ? tag : "(null)";
+	const char* label = tag ? tag : "(null)";
 	char buffer[384]{};
 
 	if (!addr) {
@@ -33,15 +33,13 @@ std::string DescribeVirtualQueryRegion(const char *tag, const void *addr)
 
 	MEMORY_BASIC_INFORMATION mbi{};
 	if (!VirtualQuery(addr, &mbi, sizeof mbi)) {
-		std::snprintf(buffer, sizeof buffer, "%s: addr=%p VirtualQuery FAILED (err=%lu)",
-			label, addr, GetLastError());
+		std::snprintf(buffer, sizeof buffer, "%s: addr=%p VirtualQuery FAILED (err=%lu)", label, addr, GetLastError());
 		return buffer;
 	}
 
-	std::snprintf(buffer, sizeof buffer,
-		"%s: addr=%p base=%p size=0x%llx state=0x%lx prot=0x%lx type=0x%lx",
-		label, addr, mbi.BaseAddress, static_cast<unsigned long long>(mbi.RegionSize),
-		mbi.State, mbi.Protect, mbi.Type);
+	std::snprintf(buffer, sizeof buffer, "%s: addr=%p base=%p size=0x%llx state=0x%lx prot=0x%lx type=0x%lx", label,
+	              addr, mbi.BaseAddress, static_cast<unsigned long long>(mbi.RegionSize), mbi.State, mbi.Protect,
+	              mbi.Type);
 	return buffer;
 }
 

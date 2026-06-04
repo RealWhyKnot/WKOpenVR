@@ -12,5 +12,5 @@
 class SmoothingIPCClient : public openvr_pair::overlay::IpcClientBase
 {
 public:
-    void Connect();
+	void Connect();
 };

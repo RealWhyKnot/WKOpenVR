@@ -19,19 +19,14 @@ namespace phantom {
 class BlendController
 {
 public:
-    BlendController() = default;
+	BlendController() = default;
 
-    // Lerp between two poses; alpha=0 returns `a`, alpha=1 returns `b`.
-    // Positions linearly, rotations slerp on the shortest arc.
-    static void Lerp(
-        const vr::DriverPose_t& a,
-        const vr::DriverPose_t& b,
-        double alpha,
-        vr::DriverPose_t& out);
+	// Lerp between two poses; alpha=0 returns `a`, alpha=1 returns `b`.
+	// Positions linearly, rotations slerp on the shortest arc.
+	static void Lerp(const vr::DriverPose_t& a, const vr::DriverPose_t& b, double alpha, vr::DriverPose_t& out);
 
-    // Public helper for tests: dot-product of two quaternions.
-    static double QuatDot(const vr::HmdQuaternion_t& a,
-                          const vr::HmdQuaternion_t& b);
+	// Public helper for tests: dot-product of two quaternions.
+	static double QuatDot(const vr::HmdQuaternion_t& a, const vr::HmdQuaternion_t& b);
 };
 
 } // namespace phantom

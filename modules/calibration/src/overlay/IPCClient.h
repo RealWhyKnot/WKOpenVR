@@ -20,7 +20,7 @@ public:
 
 protected:
 	void OnPipeOpenAttempt(HANDLE pipe, DWORD lastError) override;
-	void OnHandshakeResponse(const protocol::Response &response) override;
+	void OnHandshakeResponse(const protocol::Response& response) override;
 	void OnBrokenPipe(DWORD error) override;
 	void OnReconnectSucceeded() override;
 };

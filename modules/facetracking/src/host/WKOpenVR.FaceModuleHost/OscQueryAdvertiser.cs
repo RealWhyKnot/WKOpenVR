@@ -19,21 +19,21 @@ public sealed class OscQueryAdvertiser : IDisposable
     private readonly string _suffix;
     private readonly string _serviceName;
 
-    private HttpListener?      _http;
-    private UdpClient?         _udp;
-    private MulticastService?  _mdns;
-    private ServiceDiscovery?  _sd;
-    private int                _httpPort;
-    private int                _oscUdpPort;
-    private CancellationToken  _ct;
-    private Task?              _httpLoop;
-    private Task?              _udpLoop;
+    private HttpListener? _http;
+    private UdpClient? _udp;
+    private MulticastService? _mdns;
+    private ServiceDiscovery? _sd;
+    private int _httpPort;
+    private int _oscUdpPort;
+    private CancellationToken _ct;
+    private Task? _httpLoop;
+    private Task? _udpLoop;
 
     private int _inboundOscCount;
 
     public OscQueryAdvertiser()
     {
-        _suffix      = Guid.NewGuid().ToString("N")[..8];
+        _suffix = Guid.NewGuid().ToString("N")[..8];
         _serviceName = $"WKOpenVR-FT-{_suffix}";
     }
 
@@ -61,22 +61,22 @@ public sealed class OscQueryAdvertiser : IDisposable
         try
         {
             _mdns = new MulticastService();
-            _sd   = new ServiceDiscovery(_mdns);
+            _sd = new ServiceDiscovery(_mdns);
 
             // _oscjson._tcp.local -- the OSCQuery HTTP service
             var oscJson = new ServiceProfile(
                 instanceName: _serviceName,
-                serviceName:  "_oscjson._tcp",
-                port:         (ushort)_httpPort,
-                addresses:    [IPAddress.Loopback]);
+                serviceName: "_oscjson._tcp",
+                port: (ushort)_httpPort,
+                addresses: [IPAddress.Loopback]);
             oscJson.AddProperty("txtvers", "1");
 
             // _osc._udp.local -- the OSC UDP receiver
             var oscUdp = new ServiceProfile(
                 instanceName: _serviceName,
-                serviceName:  "_osc._udp",
-                port:         (ushort)_oscUdpPort,
-                addresses:    [IPAddress.Loopback]);
+                serviceName: "_osc._udp",
+                port: (ushort)_oscUdpPort,
+                addresses: [IPAddress.Loopback]);
             oscUdp.AddProperty("txtvers", "1");
 
             _sd.Advertise(oscJson);
@@ -97,20 +97,23 @@ public sealed class OscQueryAdvertiser : IDisposable
 
     public void Stop()
     {
-        try { _sd?.Dispose();   } catch { }
-        try { _mdns?.Stop();    } catch { }
+        try { _sd?.Dispose(); } catch { }
+        try { _mdns?.Stop(); } catch { }
         try { _mdns?.Dispose(); } catch { }
-        try { _udp?.Close();    } catch { }
-        try { _udp?.Dispose();  } catch { }
-        try { _http?.Stop();    } catch { }
-        try { _http?.Close();   } catch { }
-        _sd   = null;
+        try { _udp?.Close(); } catch { }
+        try { _udp?.Dispose(); } catch { }
+        try { _http?.Stop(); } catch { }
+        try { _http?.Close(); } catch { }
+        _sd = null;
         _mdns = null;
-        _udp  = null;
+        _udp = null;
         _http = null;
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        Stop();
+    }
 
     // -------------------------------------------------------------------------
     // HTTP handler
@@ -188,7 +191,7 @@ public sealed class OscQueryAdvertiser : IDisposable
 
             string json = isHostInfo ? BuildHostInfoJson() : BuildRootJson();
             byte[] bytes = Encoding.UTF8.GetBytes(json);
-            ctx.Response.ContentType    = "application/json";
+            ctx.Response.ContentType = "application/json";
             ctx.Response.ContentLength64 = bytes.Length;
             ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
         }
@@ -206,8 +209,9 @@ public sealed class OscQueryAdvertiser : IDisposable
     // JSON builders
     // -------------------------------------------------------------------------
 
-    private string BuildHostInfoJson() =>
-        $$"""
+    private string BuildHostInfoJson()
+    {
+        return $$"""
         {
           "NAME": "{{_serviceName}}",
           "OSC_IP": "127.0.0.1",
@@ -216,11 +220,14 @@ public sealed class OscQueryAdvertiser : IDisposable
           "EXTENSIONS": { "ACCESS": true, "CLIPMODE": false, "RANGE": true, "VALUE": true, "TYPE": true }
         }
         """;
+    }
 
-    private static string BuildRootJson() =>
-        """
+    private static string BuildRootJson()
+    {
+        return """
         {"DESCRIPTION":"WKOpenVR Face Tracking","FULL_PATH":"/","ACCESS":0,"CONTENTS":{"avatar":{"FULL_PATH":"/avatar","ACCESS":0,"CONTENTS":{"change":{"FULL_PATH":"/avatar/change","ACCESS":2,"TYPE":"s","VALUE":[""]}}}}}
         """;
+    }
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -238,10 +245,16 @@ public sealed class OscQueryAdvertiser : IDisposable
 
     private static string TryReadOscAddress(byte[] packet)
     {
-        if (packet.Length == 0 || packet[0] != (byte)'/') return "(unknown)";
+        if (packet.Length == 0 || packet[0] != (byte)'/')
+        {
+            return "(unknown)";
+        }
 
         int end = Array.IndexOf(packet, (byte)0);
-        if (end <= 0) return "(unknown)";
+        if (end <= 0)
+        {
+            return "(unknown)";
+        }
 
         try
         {
@@ -256,20 +269,42 @@ public sealed class OscQueryAdvertiser : IDisposable
     private static string TryReadFirstOscStringArgument(byte[] packet)
     {
         int offset = 0;
-        if (!TryReadOscString(packet, ref offset, out _)) return "";
-        if (!TryReadOscString(packet, ref offset, out string typeTags)) return "";
-        if (!typeTags.Contains('s')) return "";
-        if (!TryReadOscString(packet, ref offset, out string value)) return "";
+        if (!TryReadOscString(packet, ref offset, out _))
+        {
+            return "";
+        }
+
+        if (!TryReadOscString(packet, ref offset, out string typeTags))
+        {
+            return "";
+        }
+
+        if (!typeTags.Contains('s'))
+        {
+            return "";
+        }
+
+        if (!TryReadOscString(packet, ref offset, out string value))
+        {
+            return "";
+        }
+
         return value;
     }
 
     private static bool TryReadOscString(byte[] packet, ref int offset, out string value)
     {
         value = "";
-        if (offset < 0 || offset >= packet.Length) return false;
+        if (offset < 0 || offset >= packet.Length)
+        {
+            return false;
+        }
 
         int end = Array.IndexOf(packet, (byte)0, offset);
-        if (end < offset) return false;
+        if (end < offset)
+        {
+            return false;
+        }
 
         try
         {

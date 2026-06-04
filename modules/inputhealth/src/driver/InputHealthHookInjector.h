@@ -42,7 +42,7 @@ namespace inputhealth {
 // Cache the driver pointer for InputHealth config access from inside future
 // detour bodies. Called once from InjectHooks() in InterfaceHookInjector.cpp
 // during driver Init when kFeatureInputHealth is set.
-void Init(ServerTrackedDeviceProvider *driver);
+void Init(ServerTrackedDeviceProvider* driver);
 
 // Tear down the subsystem. Called from DisableHooks(). The IHook registry
 // drops any installed hooks on its own; this hook resets cached driver-
@@ -57,6 +57,6 @@ void Shutdown();
 // (slot indices to be confirmed against headers/openvr_driver.h at the time;
 // the public IVRDriverInput_003 layout has them at slots 1 and 3 but that is
 // not load-bearing on this commit).
-void TryInstallScalarBooleanHooks(void *iface);
+void TryInstallScalarBooleanHooks(void* iface);
 
 } // namespace inputhealth

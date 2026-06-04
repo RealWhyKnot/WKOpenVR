@@ -93,24 +93,20 @@ bool SetDebugLoggingEnabled(bool enabled)
 
 	bool ok = false;
 	if (enabled) {
-		HANDLE file = CreateFileW(
-			path.c_str(),
-			GENERIC_WRITE,
-			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-			nullptr,
-			CREATE_ALWAYS,
-			FILE_ATTRIBUTE_NORMAL,
-			nullptr);
+		HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		                          nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (file != INVALID_HANDLE_VALUE) {
 			const char body[] = "1\n";
 			DWORD written = 0;
 			ok = WriteFile(file, body, static_cast<DWORD>(sizeof(body) - 1), &written, nullptr) != FALSE;
 			CloseHandle(file);
 		}
-	} else {
+	}
+	else {
 		if (DeleteFileW(path.c_str()) != FALSE) {
 			ok = true;
-		} else {
+		}
+		else {
 			const DWORD err = GetLastError();
 			ok = err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
 		}

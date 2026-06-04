@@ -43,11 +43,9 @@ bool EnsureDiagnosticsLogOpen()
 	SetLowLatencyLogMode(g_logFile);
 
 	tm now = LocalTimeForLog();
-	fprintf(g_logFile,
-		"[%02d:%02d:%02d][pid=%lu][tid=%lu][diagnostics] opened build=%s channel=%s\n",
-		now.tm_hour, now.tm_min, now.tm_sec,
-		GetCurrentProcessId(), GetCurrentThreadId(),
-		WKOPENVR_BUILD_STAMP, WKOPENVR_BUILD_CHANNEL);
+	fprintf(g_logFile, "[%02d:%02d:%02d][pid=%lu][tid=%lu][diagnostics] opened build=%s channel=%s\n", now.tm_hour,
+	        now.tm_min, now.tm_sec, GetCurrentProcessId(), GetCurrentThreadId(), WKOPENVR_BUILD_STAMP,
+	        WKOPENVR_BUILD_CHANNEL);
 	FlushDiagnosticsFile();
 	return true;
 }
@@ -68,10 +66,8 @@ void DiagnosticLogV(const char* component, const char* fmt, va_list args)
 	if (!EnsureDiagnosticsLogOpen()) return;
 
 	tm now = LocalTimeForLog();
-	fprintf(g_logFile, "[%02d:%02d:%02d][pid=%lu][tid=%lu][%s] ",
-		now.tm_hour, now.tm_min, now.tm_sec,
-		GetCurrentProcessId(), GetCurrentThreadId(),
-		component ? component : "general");
+	fprintf(g_logFile, "[%02d:%02d:%02d][pid=%lu][tid=%lu][%s] ", now.tm_hour, now.tm_min, now.tm_sec,
+	        GetCurrentProcessId(), GetCurrentThreadId(), component ? component : "general");
 	vfprintf(g_logFile, fmt ? fmt : "", args);
 	fputc('\n', g_logFile);
 	FlushDiagnosticsFile();

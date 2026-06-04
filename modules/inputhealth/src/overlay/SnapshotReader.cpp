@@ -18,13 +18,13 @@ bool SnapshotReader::TryOpen()
 		last_publish_tick_change_ = std::chrono::steady_clock::now();
 		LOG("[snapshot] opened '%s'", OPENVR_PAIRDRIVER_INPUTHEALTH_SHMEM_NAME);
 		return true;
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		last_error_ = e.what();
 		// Distinguish a driver/overlay version-skew from a transient "not
 		// ready yet" state. The shmem Open() throws with "mismatch" in the
 		// message for both magic and version failures.
-		last_error_is_version_mismatch_ =
-			std::string_view(last_error_).find("mismatch") != std::string_view::npos;
+		last_error_is_version_mismatch_ = std::string_view(last_error_).find("mismatch") != std::string_view::npos;
 		return false;
 	}
 }
@@ -52,8 +52,9 @@ void SnapshotReader::Refresh()
 	if (publish_tick != last_publish_tick_) {
 		last_publish_tick_ = publish_tick;
 		last_publish_tick_change_ = now;
-	} else if (last_publish_tick_change_ != std::chrono::steady_clock::time_point{} &&
-		now - last_publish_tick_change_ > std::chrono::seconds(2)) {
+	}
+	else if (last_publish_tick_change_ != std::chrono::steady_clock::time_point{} &&
+	         now - last_publish_tick_change_ > std::chrono::seconds(2)) {
 		LOG("[snapshot] publish tick stale for >2s; closing mapping so it can reopen after driver restart");
 		last_error_ = "InputHealth shmem stale; waiting for driver restart";
 		Close();
@@ -65,7 +66,7 @@ void SnapshotReader::Refresh()
 		protocol::InputHealthSnapshotBody body;
 		if (!shmem_.TryReadSlot(i, body)) continue;
 		if (body.handle == 0) continue;
-		auto &entry = entries_by_handle_[body.handle];
+		auto& entry = entries_by_handle_[body.handle];
 		std::memcpy(&entry.body, &body, sizeof(body));
 		entry.last_seen_publish_tick = last_publish_tick_;
 	}

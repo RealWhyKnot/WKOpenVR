@@ -23,33 +23,33 @@ class ServerTrackedDeviceProvider;
 class IPCServer
 {
 public:
-	IPCServer(ServerTrackedDeviceProvider *driver,
-	          const char *pipeName,
-	          uint32_t featureMask)
-		: driver(driver), pipeName(pipeName), featureMask(featureMask) { }
+	IPCServer(ServerTrackedDeviceProvider* driver, const char* pipeName, uint32_t featureMask)
+	    : driver(driver), pipeName(pipeName), featureMask(featureMask)
+	{
+	}
 	~IPCServer();
 
 	void Run();
 	void Stop();
 
 private:
-	void HandleRequest(const protocol::Request &request, protocol::Response &response);
+	void HandleRequest(const protocol::Request& request, protocol::Response& response);
 
 	struct PipeInstance
 	{
 		OVERLAPPED overlap; // Used by the API
 		HANDLE pipe;
-		IPCServer *server;
+		IPCServer* server;
 
 		protocol::Request request;
 		protocol::Response response;
 	};
 
-	PipeInstance *CreatePipeInstance(HANDLE pipe);
-	void ClosePipeInstance(PipeInstance *pipeInst);
+	PipeInstance* CreatePipeInstance(HANDLE pipe);
+	void ClosePipeInstance(PipeInstance* pipeInst);
 
-	static void RunThread(IPCServer *_this);
-	BOOL CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE &pipe);
+	static void RunThread(IPCServer* _this);
+	BOOL CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE& pipe);
 	static void WINAPI CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED overlap);
 	static void WINAPI CompletedWriteCallback(DWORD err, DWORD bytesWritten, LPOVERLAPPED overlap);
 
@@ -62,16 +62,16 @@ private:
 	// is naturally atomic there) but is technically a data race per the
 	// C++ memory model. Relaxed ordering is sufficient: there's no other
 	// state these flags need to fence against.
-	std::atomic<bool> running { false };
-	std::atomic<bool> stop { false };
+	std::atomic<bool> running{false};
+	std::atomic<bool> stop{false};
 
-	std::set<PipeInstance *> pipes;
+	std::set<PipeInstance*> pipes;
 	// Created by RunThread on entry, signalled by Stop() to break the wait,
 	// and closed in Stop() once the worker has joined so the kernel handle
 	// doesn't leak across driver reload.
 	HANDLE connectEvent = nullptr;
 
-	ServerTrackedDeviceProvider *driver;
+	ServerTrackedDeviceProvider* driver;
 	std::string pipeName;
 	uint32_t featureMask;
 };

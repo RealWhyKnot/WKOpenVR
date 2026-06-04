@@ -28,17 +28,19 @@ namespace {
 // Wizard state machine. All state lives in this single static struct so the
 // wizard can be opened, dismissed, and reopened without leaking partial state
 // between sessions.
-enum class Step {
-	Inactive,           // wizard not running
-	Welcome,            // intro screen
-	NoCalibrationNeeded,// detected only one tracking system; nothing to do
-	PickTarget,         // user picks the target tracker for the current system
-	Calibrating,        // continuous calibration is running for the current system
-	SystemDone,         // current system done; offer to do another or finish
-	AllDone,            // all systems calibrated
+enum class Step
+{
+	Inactive,            // wizard not running
+	Welcome,             // intro screen
+	NoCalibrationNeeded, // detected only one tracking system; nothing to do
+	PickTarget,          // user picks the target tracker for the current system
+	Calibrating,         // continuous calibration is running for the current system
+	SystemDone,          // current system done; offer to do another or finish
+	AllDone,             // all systems calibrated
 };
 
-struct State {
+struct State
+{
 	Step step = Step::Inactive;
 	// True iff we have already called ImGui::OpenPopup for the current
 	// activation. Cleared on close so the next Open() re-arms.
@@ -70,14 +72,16 @@ struct State {
 	bool firstSystem = true;
 };
 
-State& S() {
+State& S()
+{
 	static State s;
 	return s;
 }
 
 // Pretty-print a tracking system name. Falls through to GetPrettyTrackingSystemName
 // when defined; otherwise echoes the raw name.
-const char* Pretty(const std::string& sys) {
+const char* Pretty(const std::string& sys)
+{
 	return GetPrettyTrackingSystemName(sys);
 }
 
@@ -90,16 +94,17 @@ const char* Pretty(const std::string& sys) {
 // frame's OpenPopup would partially re-arm the popup stack and ImGui would
 // keep the dimming overlay visible while reporting BeginPopupModal=false,
 // leaving the user staring at a grey unresponsive window.
-void ApplyPopupSizing(ImVec2 size) {
+void ApplyPopupSizing(ImVec2 size)
+{
 	ImVec2 vp = ImGui::GetMainViewport()->Size;
-	ImGui::SetNextWindowPos(ImVec2((vp.x - size.x) * 0.5f, (vp.y - size.y) * 0.5f),
-	                       ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImVec2((vp.x - size.x) * 0.5f, (vp.y - size.y) * 0.5f), ImGuiCond_Appearing);
 	ImGui::SetNextWindowSize(size, ImGuiCond_Always);
 }
 
 // Step transitions.
 
-void EnterPickTarget() {
+void EnterPickTarget()
+{
 	auto& s = S();
 	s.vrState = VRState::Load();
 	s.selectedDeviceIdx = -1;
@@ -107,17 +112,20 @@ void EnterPickTarget() {
 	s.step = Step::PickTarget;
 }
 
-void EnterSystemDone() {
+void EnterSystemDone()
+{
 	S().step = Step::SystemDone;
 }
 
-void EnterAllDone() {
+void EnterAllDone()
+{
 	S().step = Step::AllDone;
 	CalCtx.wizardCompleted = true;
 	SaveProfile(CalCtx);
 }
 
-void EnterNextSystem() {
+void EnterNextSystem()
+{
 	auto& s = S();
 	if (s.pendingSystems.empty()) {
 		EnterAllDone();
@@ -128,17 +136,15 @@ void EnterNextSystem() {
 
 // Drawn step-by-step.
 
-void DrawWelcome() {
-	ImGui::TextWrapped(
-		"Welcome to Space Calibrator!");
+void DrawWelcome()
+{
+	ImGui::TextWrapped("Welcome to Space Calibrator!");
 	ImGui::Spacing();
-	ImGui::TextWrapped(
-		"This wizard will set you up in a few clicks.  We'll detect what tracking "
-		"systems you have, walk you through aligning each one to your headset, and "
-		"keep them aligned automatically afterwards.");
+	ImGui::TextWrapped("This wizard will set you up in a few clicks.  We'll detect what tracking "
+	                   "systems you have, walk you through aligning each one to your headset, and "
+	                   "keep them aligned automatically afterwards.");
 	ImGui::Spacing();
-	ImGui::TextWrapped(
-		"You can skip this and configure things yourself in the tabs below at any time.");
+	ImGui::TextWrapped("You can skip this and configure things yourself in the tabs below at any time.");
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
@@ -152,9 +158,8 @@ void DrawWelcome() {
 		if (auto vrSystem = vr::VRSystem()) {
 			char buf[vr::k_unMaxPropertyStringSize] = {};
 			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-			vrSystem->GetStringTrackedDeviceProperty(
-				vr::k_unTrackedDeviceIndex_Hmd,
-				vr::Prop_TrackingSystemName_String, buf, sizeof buf, &err);
+			vrSystem->GetStringTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String,
+			                                         buf, sizeof buf, &err);
 			if (err == vr::TrackedProp_Success) s.hmdSystem = buf;
 		}
 		for (const auto& sys : s.vrState.trackingSystems) {
@@ -165,7 +170,8 @@ void DrawWelcome() {
 
 		if (s.pendingSystems.empty()) {
 			s.step = Step::NoCalibrationNeeded;
-		} else {
+		}
+		else {
 			EnterPickTarget();
 		}
 	}
@@ -177,15 +183,14 @@ void DrawWelcome() {
 	}
 }
 
-void DrawNoCalibrationNeeded() {
+void DrawNoCalibrationNeeded()
+{
 	const char* hmd = S().hmdSystem.empty() ? "your HMD" : Pretty(S().hmdSystem);
-	ImGui::TextWrapped(
-		"Only one tracking system detected (%s).", hmd);
+	ImGui::TextWrapped("Only one tracking system detected (%s).", hmd);
 	ImGui::Spacing();
-	ImGui::TextWrapped(
-		"All your tracked devices share a single coordinate space already, so "
-		"calibration would not help and could actually add noise.  You can close "
-		"this app -- it is not needed for this setup.");
+	ImGui::TextWrapped("All your tracked devices share a single coordinate space already, so "
+	                   "calibration would not help and could actually add noise.  You can close "
+	                   "this app -- it is not needed for this setup.");
 	ImGui::Spacing();
 	ImGui::Spacing();
 	if (ImGui::Button("Got it -- close wizard", ImVec2(220, 0))) {
@@ -195,7 +200,8 @@ void DrawNoCalibrationNeeded() {
 	}
 }
 
-void DrawPickTarget() {
+void DrawPickTarget()
+{
 	auto& s = S();
 	if (s.pendingSystems.empty()) {
 		EnterAllDone();
@@ -203,11 +209,10 @@ void DrawPickTarget() {
 	}
 	const std::string& currentSys = s.pendingSystems.front();
 
-	ImGui::TextWrapped(
-		"Pick a device from the %s system to use as the target.  We will align "
-		"this device to your %s headset, and that alignment automatically applies "
-		"to every other device in the same system (so you only need to pick one).",
-		Pretty(currentSys), Pretty(s.hmdSystem));
+	ImGui::TextWrapped("Pick a device from the %s system to use as the target.  We will align "
+	                   "this device to your %s headset, and that alignment automatically applies "
+	                   "to every other device in the same system (so you only need to pick one).",
+	                   Pretty(currentSys), Pretty(s.hmdSystem));
 	ImGui::Spacing();
 
 	// Device list -- only devices in the currently selected system.
@@ -222,23 +227,21 @@ void DrawPickTarget() {
 
 	if (candidates.empty()) {
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.45f, 1.0f));
-		ImGui::TextWrapped(
-			"No devices available in this system right now.  Make sure the trackers "
-			"are powered on and visible to SteamVR, then refresh.");
+		ImGui::TextWrapped("No devices available in this system right now.  Make sure the trackers "
+		                   "are powered on and visible to SteamVR, then refresh.");
 		ImGui::PopStyleColor();
 		if (ImGui::Button("Refresh##wiz_pick")) {
 			s.vrState = VRState::Load();
 		}
 		ImGui::SameLine();
-	} else {
-		ImGui::BeginChild("##wiz_devices",
-			ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 6.0f),
-			ImGuiChildFlags_Border);
+	}
+	else {
+		ImGui::BeginChild("##wiz_devices", ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 6.0f),
+		                  ImGuiChildFlags_Border);
 		for (int idx : candidates) {
 			const auto& d = s.vrState.devices[idx];
 			char label[256];
-			snprintf(label, sizeof label, "%s (%s)",
-				d.model.c_str(), d.serial.c_str());
+			snprintf(label, sizeof label, "%s (%s)", d.model.c_str(), d.serial.c_str());
 			if (ImGui::Selectable(label, s.selectedDeviceIdx == idx)) {
 				s.selectedDeviceIdx = idx;
 			}
@@ -273,7 +276,7 @@ void DrawPickTarget() {
 		if (s.firstSystem) {
 			// Set up primary.
 			CalCtx.referenceTrackingSystem = hmd.trackingSystem;
-			CalCtx.targetTrackingSystem    = d.trackingSystem;
+			CalCtx.targetTrackingSystem = d.trackingSystem;
 			CalCtx.referenceStandby.trackingSystem = hmd.trackingSystem;
 			CalCtx.referenceStandby.model = hmd.model;
 			CalCtx.referenceStandby.serial = hmd.serial;
@@ -283,7 +286,8 @@ void DrawPickTarget() {
 			CalCtx.referenceID = hmd.id;
 			CalCtx.targetID = d.id;
 			StartContinuousCalibration("wizard_complete");
-		} else {
+		}
+		else {
 			// Append a new entry. The continuous tick processes it in
 			// parallel with the primary.
 			AdditionalCalibration extra;
@@ -314,15 +318,15 @@ void DrawPickTarget() {
 	}
 }
 
-void DrawCalibrating() {
+void DrawCalibrating()
+{
 	auto& s = S();
 	const std::string currentSys = s.pendingSystems.empty() ? "" : s.pendingSystems.front();
 
-	ImGui::TextWrapped(
-		"Calibrating %s.  Slowly move and rotate the chosen tracker (or walk "
-		"around if it is on your body) for ~30 seconds.  The math figures out "
-		"the alignment from your motion.",
-		Pretty(currentSys));
+	ImGui::TextWrapped("Calibrating %s.  Slowly move and rotate the chosen tracker (or walk "
+	                   "around if it is on your body) for ~30 seconds.  The math figures out "
+	                   "the alignment from your motion.",
+	                   Pretty(currentSys));
 	ImGui::Spacing();
 
 	// Progress is a soft estimate -- there is no fixed end-of-calibration in
@@ -330,14 +334,15 @@ void DrawCalibrating() {
 	bool hasResult = false;
 	if (s.firstSystem) {
 		hasResult = CalCtx.validProfile && CalCtx.enabled;
-	} else if (!CalCtx.additionalCalibrations.empty()) {
+	}
+	else if (!CalCtx.additionalCalibrations.empty()) {
 		hasResult = CalCtx.additionalCalibrations.back().valid;
 	}
 
 	if (hasResult) {
-		ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
-			"Calibration accepted.");
-	} else {
+		ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "Calibration accepted.");
+	}
+	else {
 		ImGui::TextDisabled("Waiting for first valid calibration...");
 	}
 
@@ -357,18 +362,16 @@ void DrawCalibrating() {
 	}
 }
 
-void DrawSystemDone() {
+void DrawSystemDone()
+{
 	auto& s = S();
 	if (s.pendingSystems.empty()) {
 		EnterAllDone();
 		return;
 	}
 	const std::string& nextSys = s.pendingSystems.front();
-	ImGui::TextWrapped(
-		"Done!  We still see %s waiting to be calibrated.  Want to do that next?",
-		Pretty(nextSys));
-	ImGui::TextWrapped("(%d system(s) still pending after this one.)",
-		(int)s.pendingSystems.size() - 1);
+	ImGui::TextWrapped("Done!  We still see %s waiting to be calibrated.  Want to do that next?", Pretty(nextSys));
+	ImGui::TextWrapped("(%d system(s) still pending after this one.)", (int)s.pendingSystems.size() - 1);
 	ImGui::Spacing();
 	if (ImGui::Button("Yes, calibrate next", ImVec2(200, 0))) {
 		EnterNextSystem();
@@ -379,16 +382,15 @@ void DrawSystemDone() {
 	}
 }
 
-void DrawAllDone() {
-	ImGui::TextWrapped(
-		"All set!  Continuous calibration is now running for every system you "
-		"chose; it will keep them aligned automatically as long as the overlay "
-		"is open.");
+void DrawAllDone()
+{
+	ImGui::TextWrapped("All set!  Continuous calibration is now running for every system you "
+	                   "chose; it will keep them aligned automatically as long as the overlay "
+	                   "is open.");
 	ImGui::Spacing();
-	ImGui::TextWrapped(
-		"You can re-run this wizard from the Advanced tab if you change your "
-		"hardware setup, and tweak individual settings in the Basic / Advanced "
-		"tabs at any time.");
+	ImGui::TextWrapped("You can re-run this wizard from the Advanced tab if you change your "
+	                   "hardware setup, and tweak individual settings in the Basic / Advanced "
+	                   "tabs at any time.");
 	ImGui::Spacing();
 	if (ImGui::Button("Close", ImVec2(140, 0))) {
 		S().step = Step::Inactive;
@@ -397,11 +399,13 @@ void DrawAllDone() {
 
 } // namespace
 
-bool IsActive() {
+bool IsActive()
+{
 	return S().step != Step::Inactive;
 }
 
-void Open() {
+void Open()
+{
 	auto& s = S();
 	s = State{}; // reset (popupOpened false, step Inactive)
 	s.step = Step::Welcome;
@@ -411,7 +415,8 @@ void Open() {
 	// place every time. Draw() will pick this up on its next call.
 }
 
-void Draw() {
+void Draw()
+{
 	auto& s = S();
 	const char* popupId = "##spacecal_wizard";
 
@@ -432,8 +437,7 @@ void Draw() {
 	ApplyPopupSizing(ImVec2(640, 380));
 
 	if (ImGui::BeginPopupModal(popupId, nullptr,
-		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
-	{
+	                           ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
 		// Header banner.
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 1.0f, 1.0f));
 		ImGui::Text("Space Calibrator -- Setup Wizard");
@@ -442,13 +446,26 @@ void Draw() {
 		ImGui::Spacing();
 
 		switch (s.step) {
-		case Step::Welcome:              DrawWelcome();              break;
-		case Step::NoCalibrationNeeded:  DrawNoCalibrationNeeded();  break;
-		case Step::PickTarget:           DrawPickTarget();           break;
-		case Step::Calibrating:          DrawCalibrating();          break;
-		case Step::SystemDone:           DrawSystemDone();           break;
-		case Step::AllDone:              DrawAllDone();              break;
-		default: break;
+			case Step::Welcome:
+				DrawWelcome();
+				break;
+			case Step::NoCalibrationNeeded:
+				DrawNoCalibrationNeeded();
+				break;
+			case Step::PickTarget:
+				DrawPickTarget();
+				break;
+			case Step::Calibrating:
+				DrawCalibrating();
+				break;
+			case Step::SystemDone:
+				DrawSystemDone();
+				break;
+			case Step::AllDone:
+				DrawAllDone();
+				break;
+			default:
+				break;
 		}
 
 		// If a button click set step to Inactive mid-frame, close the popup
@@ -460,7 +477,8 @@ void Draw() {
 		}
 
 		ImGui::EndPopup();
-	} else {
+	}
+	else {
 		// BeginPopupModal returned false. Either the user pressed Esc and
 		// ImGui auto-closed the popup, or some external state change closed
 		// it. Either way, our tracking flag is now stale -- sync it. Force

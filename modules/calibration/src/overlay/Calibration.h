@@ -13,7 +13,7 @@
 
 #include "Protocol.h"
 #include "HeadMountDriverSynthConfig.h"
-#include "WarmRestart.h"  // ValidationOutcome enum
+#include "WarmRestart.h" // ValidationOutcome enum
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -38,7 +38,8 @@ enum class CalibrationState
 // vr device ID after restart / reconnection by matching serial. Defined
 // here (above AdditionalCalibration) so the additional-calibration struct
 // can hold one without a forward-decl dance.
-struct StandbyDevice {
+struct StandbyDevice
+{
 	std::string trackingSystem;
 	std::string model, serial;
 };
@@ -57,7 +58,8 @@ struct StandbyDevice {
 // via per-tracking-system fallback transforms -- it doesn't care how many
 // entries the overlay tracks; it just applies whatever fallbacks arrive over
 // IPC, one per tracking system name.
-struct AdditionalCalibration {
+struct AdditionalCalibration
+{
 	// Identification.
 	std::string targetTrackingSystem;
 
@@ -138,14 +140,16 @@ struct AdditionalCalibration {
 // Operating mode for the head-mounted tracker feature. Off disables the
 // entire subsystem. Higher modes are cumulative: DriverSynth implies
 // Corroborate which implies AutoPaired.
-enum class HeadMountMode : uint8_t {
-	Off          = 0,
-	AutoPaired   = 1,
-	Corroborate  = 2,
-	DriverSynth  = 3,
+enum class HeadMountMode : uint8_t
+{
+	Off = 0,
+	AutoPaired = 1,
+	Corroborate = 2,
+	DriverSynth = 3,
 };
 
-enum class HeadMountSampleSource : uint8_t {
+enum class HeadMountSampleSource : uint8_t
+{
 	Unknown = 0,
 	PhysicalTracker,
 	HeadProxy,
@@ -155,10 +159,11 @@ enum class HeadMountSampleSource : uint8_t {
 // zip-tied to a Quest headset). headFromTracker is the rigid offset from the
 // tracker's local frame to the HMD's local frame, solved by the offset
 // calibration wizard.
-struct HeadMountConfig {
+struct HeadMountConfig
+{
 	HeadMountMode mode = HeadMountMode::Off;
 	std::string trackerSerial;
-	std::string trackerModel;          // persisted; needed for VRState::FindDevice
+	std::string trackerModel; // persisted; needed for VRState::FindDevice
 	std::string trackerTrackingSystem;
 	Eigen::AffineCompact3d headFromTracker = Eigen::AffineCompact3d::Identity();
 	bool hideTracker = true;
@@ -171,7 +176,10 @@ struct HeadMountConfig {
 };
 
 // One vertex of the safety boundary polygon.
-struct BoundaryVertex { double x = 0, y = 0, z = 0; };
+struct BoundaryVertex
+{
+	double x = 0, y = 0, z = 0;
+};
 
 // Safety boundary for SteamVR chaperone. Target-space boundaries follow the
 // calibrated tracker space and transform into standing space before push;
@@ -179,7 +187,8 @@ struct BoundaryVertex { double x = 0, y = 0, z = 0; };
 // priorChaperone snapshots the user's pre-existing SteamVR chaperone before
 // our first push so the "Restore original" action returns the user to where
 // they started.
-struct BoundaryConfig {
+struct BoundaryConfig
+{
 	bool enabled = false;
 	std::vector<BoundaryVertex> vertices;
 	double floorY = 0.0;
@@ -192,7 +201,8 @@ struct BoundaryConfig {
 	bool priorChaperoneCaptured = false;
 };
 
-struct CalibrationProfileSnapshot {
+struct CalibrationProfileSnapshot
+{
 	bool captured = false;
 	bool enabled = false;
 	bool validProfile = false;
@@ -262,7 +272,7 @@ struct CalibrationContext
 	double headMountLastSourceResetTime = -1e9;
 	uint64_t driverSynthFallbackTotal = 0;
 	// Safety boundary: captured chaperone outline + floor/ceiling for re-push.
-	BoundaryConfig  boundary;
+	BoundaryConfig boundary;
 	double timeLastTick = 0, timeLastScan = 0, timeLastAssign = 0;
 	// Default ON: drop sample pairs whose rotation axis disagrees with the
 	// consensus before the LS solve. Helps with intermittent USB glitches or
@@ -299,14 +309,14 @@ struct CalibrationContext
 	// overlay case). Seeded on the first sample of a calibration run and
 	// reset to unseeded whenever calibration is restarted (StartCalibration,
 	// StartContinuousCalibration, Clear()).
-	bool        pairedMotionPosSeeded = false;
-	Eigen::Vector3d pairedMotionPrevRefPos {0, 0, 0};
-	Eigen::Vector3d pairedMotionPrevTgtPos {0, 0, 0};
+	bool pairedMotionPosSeeded = false;
+	Eigen::Vector3d pairedMotionPrevRefPos{0, 0, 0};
+	Eigen::Vector3d pairedMotionPrevTgtPos{0, 0, 0};
 	// Rolling count of "one moved, other did not" samples in the recent
 	// window. Surfaced via Metrics::pairedMotionWarningCount to the popup
 	// so the user sees a banner when their headset pose is frozen but the
 	// target tracker keeps reporting motion.
-	int         pairedMotionMismatchCount = 0;
+	int pairedMotionMismatchCount = 0;
 
 	float continuousCalibrationThreshold;
 	float maxRelativeErrorThreshold = 0.005f;
@@ -332,7 +342,12 @@ struct CalibrationContext
 	//           ~1deg rotation) for a sustained window of accepted samples.
 	//           Flips back to unlocked if the variance climbs again, e.g.
 	//           the user repositioned the tracker.
-	enum class LockMode : int { OFF = 0, ON = 1, AUTO = 2 };
+	enum class LockMode : int
+	{
+		OFF = 0,
+		ON = 1,
+		AUTO = 2
+	};
 	LockMode lockRelativePositionMode = LockMode::AUTO;
 
 	// Resolved/effective lock state -- recomputed each tick from
@@ -398,8 +413,8 @@ struct CalibrationContext
 	// convergence duration and first relPoseError; this lets a reader tie
 	// the physical jump severity to the time it took the cal to recover a
 	// usable relative-pose constraint. Both fields zero out after emission.
-	double recoveryWaitingSince = 0.0;     // Metrics::CurrentTime basis
-	double recoveryHmdDeltaAtStart = 0.0;  // metres of the originating jump
+	double recoveryWaitingSince = 0.0;    // Metrics::CurrentTime basis
+	double recoveryHmdDeltaAtStart = 0.0; // metres of the originating jump
 
 	// Geometry-shift detector grace deadline. Set by StartCalibration to
 	// `now + kGeometryShiftGraceSeconds` so the detector is skipped while the
@@ -481,7 +496,7 @@ struct CalibrationContext
 	// when the validation gate trips (see WarmRestart.h::EvaluateValidation).
 	// Reset on Clear().
 	spacecal::warm_restart::ValidationOutcome warmRestartValidationState =
-		spacecal::warm_restart::ValidationOutcome::Inconclusive;
+	    spacecal::warm_restart::ValidationOutcome::Inconclusive;
 
 	// Post-snap retargeting-error accumulator for the warm-restart
 	// validation phase. The validator's MAD floor (`autoLockMadFloor`)
@@ -495,7 +510,7 @@ struct CalibrationContext
 	// stored in `error_currentCal`; the mean is converted to metres at
 	// the call site before being passed to EvaluateValidation.
 	double postSnapErrorSumMm = 0.0;
-	int    postSnapErrorSampleCount = 0;
+	int postSnapErrorSampleCount = 0;
 	double warmRestartLastConsumedErrTs = 0.0;
 
 	// Snap wall-time and source-of-floor tracking. `warmRestartSnapTime`
@@ -524,8 +539,7 @@ struct CalibrationContext
 	// Computes the relative pose (ref^-1 * target), appends it to the
 	// history, and re-evaluates rigidity.  Called from the calibration tick
 	// each time a new sample is collected.
-	void UpdateAutoLockDetector(const Eigen::AffineCompact3d& refWorld,
-	                            const Eigen::AffineCompact3d& targetWorld);
+	void UpdateAutoLockDetector(const Eigen::AffineCompact3d& refWorld, const Eigen::AffineCompact3d& targetWorld);
 
 	// Resolve `lockRelativePosition` from `lockRelativePositionMode` + the
 	// auto-lock detector.  Cheap; safe to call every tick.  Math code reads
@@ -597,27 +611,30 @@ struct CalibrationContext
 	// driver shared-memory ring.
 	LARGE_INTEGER devicePoseSampleTimes[vr::k_unMaxTrackedDeviceCount];
 
-	CalibrationContext() {
+	CalibrationContext()
+	{
 		calibratedScale = 1.0;
 		memset(devicePoses, 0, sizeof(devicePoses));
 		memset(devicePoseSampleTimes, 0, sizeof(devicePoseSampleTimes));
 		ResetConfig();
 	}
 
-	void NoteHeadMountOffsetChanged() {
+	void NoteHeadMountOffsetChanged()
+	{
 		++headMountOffsetVersion;
 		if (headMountOffsetVersion == 0) {
 			headMountOffsetVersion = 1;
 		}
 	}
 
-	void ResetConfig() {
+	void ResetConfig()
+	{
 		alignmentSpeedParams.thr_rot_tiny = 0.49f * (EIGEN_PI / 180.0f);
 		alignmentSpeedParams.thr_rot_small = 0.5f * (EIGEN_PI / 180.0f);
 		alignmentSpeedParams.thr_rot_large = 5.0f * (EIGEN_PI / 180.0f);
 
-		alignmentSpeedParams.thr_trans_tiny = 0.98f / 1000.0; // mm
-		alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0; // mm
+		alignmentSpeedParams.thr_trans_tiny = 0.98f / 1000.0;  // mm
+		alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0;  // mm
 		alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0; // mm
 
 		alignmentSpeedParams.align_speed_tiny = 1.0f;
@@ -650,16 +667,12 @@ struct CalibrationContext
 		bool autoApply = true;
 		std::vector<vr::HmdQuad_t> geometry;
 		vr::HmdMatrix34_t standingCenter = {
-			1.0f, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
+		    1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
 		};
-		vr::HmdVector2_t playSpaceSize = { 0.0f, 0.0f };
+		vr::HmdVector2_t playSpaceSize = {0.0f, 0.0f};
 	} chaperone;
 
-	void ClearLogOnMessage() {
-		clearOnLog = true;
-	}
+	void ClearLogOnMessage() { clearOnLog = true; }
 
 	void Clear()
 	{
@@ -710,8 +723,7 @@ struct CalibrationContext
 		hmdLastKnownPosWhenAway = Eigen::Vector3d::Zero();
 		hmdLastKnownPosValid = false;
 		warmRestartMadAtSnap = 0.0;
-		warmRestartValidationState =
-			spacecal::warm_restart::ValidationOutcome::Inconclusive;
+		warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
 		postSnapErrorSumMm = 0.0;
 		postSnapErrorSampleCount = 0;
 		warmRestartLastConsumedErrTs = 0.0;
@@ -793,10 +805,9 @@ struct CalibrationContext
 
 	Speed ActiveCalibrationSpeed() const
 	{
-		return (state == CalibrationState::Continuous
-			|| state == CalibrationState::ContinuousStandby)
-			? continuousCalibrationSpeed
-			: oneShotCalibrationSpeed;
+		return (state == CalibrationState::Continuous || state == CalibrationState::ContinuousStandby)
+		           ? continuousCalibrationSpeed
+		           : oneShotCalibrationSpeed;
 	}
 
 	// Resolve the user's selected speed to a concrete FAST/SLOW/VERY_SLOW. When
@@ -813,20 +824,19 @@ struct CalibrationContext
 
 	size_t SampleCount()
 	{
-		switch (ResolvedCalibrationSpeed())
-		{
-		case FAST:
-			// 30 samples at ~18 Hz = ~1.7s buffer fill. The direct O(N) translation
-			// solve converges with N >= ~20 when the per-axis ranges are >= 10cm;
-			// the diversity gate already enforces that, so 30 is comfortably above
-			// the math floor.
-			return 30;
-		case SLOW:
-			return 100;
-		case VERY_SLOW:
-			return 200;
-		default:
-			return 30;
+		switch (ResolvedCalibrationSpeed()) {
+			case FAST:
+				// 30 samples at ~18 Hz = ~1.7s buffer fill. The direct O(N) translation
+				// solve converges with N >= ~20 when the per-axis ranges are >= 10cm;
+				// the diversity gate already enforces that, so 30 is comfortably above
+				// the math floor.
+				return 30;
+			case SLOW:
+				return 100;
+			case VERY_SLOW:
+				return 200;
+			default:
+				return 30;
 		}
 	}
 
@@ -838,7 +848,7 @@ struct CalibrationContext
 			Progress
 		} type = String;
 
-		Message(Type type) : type(type), progress(0), target(0) { }
+		Message(Type type) : type(type), progress(0), target(0) {}
 
 		std::string str;
 		int progress, target;
@@ -846,41 +856,44 @@ struct CalibrationContext
 
 	std::deque<Message> messages;
 
-	void Log(const std::string &msg)
+	void Log(const std::string& msg)
 	{
 		if (clearOnLog) {
 			messages.clear();
 			clearOnLog = false;
 		}
 
-		if (messages.empty() || messages.back().type == Message::Progress)
-			messages.push_back(Message(Message::String));
+		if (messages.empty() || messages.back().type == Message::Progress) messages.push_back(Message(Message::String));
 
 		OutputDebugStringA(msg.c_str());
 
 		messages.back().str += msg;
 		std::cerr << msg;
 
-		while (messages.size() > 15) messages.pop_front();
+		while (messages.size() > 15)
+			messages.pop_front();
 	}
 
 	void Progress(int current, int target)
 	{
-		if (messages.empty() || messages.back().type == Message::String)
-			messages.push_back(Message(Message::Progress));
+		if (messages.empty() || messages.back().type == Message::String) messages.push_back(Message(Message::Progress));
 
 		messages.back().progress = current;
 		messages.back().target = target;
 	}
 
-	bool TargetPoseIsValidSimple() const {
-		return targetID >= 0 && targetID < (int32_t)vr::k_unMaxTrackedDeviceCount
-			&& devicePoses[targetID].poseIsValid && devicePoses[targetID].result == vr::ETrackingResult::TrackingResult_Running_OK;
+	bool TargetPoseIsValidSimple() const
+	{
+		return targetID >= 0 && targetID < (int32_t)vr::k_unMaxTrackedDeviceCount &&
+		       devicePoses[targetID].poseIsValid &&
+		       devicePoses[targetID].result == vr::ETrackingResult::TrackingResult_Running_OK;
 	}
 
-	bool ReferencePoseIsValidSimple() const {
-		return referenceID >= 0 && referenceID < (int32_t)vr::k_unMaxTrackedDeviceCount
-			&& devicePoses[referenceID].poseIsValid && devicePoses[referenceID].result == vr::ETrackingResult::TrackingResult_Running_OK;
+	bool ReferencePoseIsValidSimple() const
+	{
+		return referenceID >= 0 && referenceID < (int32_t)vr::k_unMaxTrackedDeviceCount &&
+		       devicePoses[referenceID].poseIsValid &&
+		       devicePoses[referenceID].result == vr::ETrackingResult::TrackingResult_Running_OK;
 	}
 };
 
@@ -925,8 +938,7 @@ int GetWatchdogResetCount();
 // since the event (seconds), the translation magnitude (meters), and the
 // rotation magnitude (degrees). Returns false if the detector hasn't fired
 // at all this session.
-bool LastDetectedRelocalization(double& outAgeSeconds, double& outDeltaMeters,
-                                double& outDeltaDegrees);
+bool LastDetectedRelocalization(double& outAgeSeconds, double& outDeltaMeters, double& outDeltaDegrees);
 
 // Recent auto-recovery info: returns true if auto-recovery clobbered the
 // calibration in the last 60 seconds AND the user hasn't dismissed the

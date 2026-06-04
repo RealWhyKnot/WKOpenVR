@@ -28,10 +28,9 @@ struct CalibrationDeviceLock
 
 // Set the current calibration device locks. Pass an empty vector when the
 // calibration module is not running continuous calibration.
-void SetCalibrationDeviceLocks(const std::vector<CalibrationDeviceLock> &locks);
+void SetCalibrationDeviceLocks(const std::vector<CalibrationDeviceLock>& locks);
 
 // Return true when the serial is currently locked by continuous calibration.
-bool TryGetCalibrationDeviceLockKind(const std::string &serial,
-	CalibrationDeviceLockKind &kind);
+bool TryGetCalibrationDeviceLockKind(const std::string& serial, CalibrationDeviceLockKind& kind);
 
 } // namespace openvr_pair::overlay

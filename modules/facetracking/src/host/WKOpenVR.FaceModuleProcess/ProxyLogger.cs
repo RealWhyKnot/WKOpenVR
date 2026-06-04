@@ -12,19 +12,20 @@ namespace WKOpenVR.FaceModuleProcess;
 
 public delegate void OnLog(LogLevel level, string msg);
 
-public class ProxyLogger : ILogger
+public class ProxyLogger(string categoryName) : ILogger
 {
-    private readonly string _categoryName;
+    private readonly string _categoryName = categoryName;
     public static OnLog OnLog;
 
-    public ProxyLogger(string categoryName)
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull
     {
-        _categoryName = categoryName;
+        return default!;
     }
 
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => default!;
-
-    public bool IsEnabled(LogLevel logLevel) => true;
+    public bool IsEnabled(LogLevel logLevel)
+    {
+        return true;
+    }
 
     public void Log<TState>(
         LogLevel logLevel,
@@ -33,9 +34,6 @@ public class ProxyLogger : ILogger
         Exception? exception,
         Func<TState, Exception?, string> formatter)
     {
-        if ( OnLog != null )
-        {
-            OnLog(logLevel, $"[{_categoryName}] {logLevel}: {formatter(state, exception)}");
-        }
+        OnLog?.Invoke(logLevel, $"[{_categoryName}] {logLevel}: {formatter(state, exception)}");
     }
 }

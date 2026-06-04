@@ -24,21 +24,22 @@ namespace openvr_pair::overlay::testharness {
 // constructs one of these, passes the contained MockDriverContext into
 // driver_wkopenvr.dll's HmdDriverFactory entry, and exposes per-interface
 // pointers via accessors so scenarios can read recorded calls + seed state.
-class MockOpenVRRuntime {
+class MockOpenVRRuntime
+{
 public:
 	explicit MockOpenVRRuntime(std::filesystem::path driver_resources);
 
-	BarrierQueue &recorder() noexcept { return recorder_; }
-	const std::filesystem::path &driver_resources() const noexcept { return driver_resources_; }
+	BarrierQueue& recorder() noexcept { return recorder_; }
+	const std::filesystem::path& driver_resources() const noexcept { return driver_resources_; }
 
-	MockDriverContext &context() noexcept { return *context_; }
-	MockServerDriverHost &server_driver_host() noexcept { return *server_driver_host_; }
-	MockDriverInput &driver_input() noexcept { return *driver_input_; }
-	MockProperties &properties() noexcept { return *properties_; }
-	MockSettings &settings() noexcept { return *settings_; }
-	MockDriverLog &driver_log() noexcept { return *driver_log_; }
-	MockResources &resources() noexcept { return *resources_; }
-	MockDriverManager &driver_manager() noexcept { return *driver_manager_; }
+	MockDriverContext& context() noexcept { return *context_; }
+	MockServerDriverHost& server_driver_host() noexcept { return *server_driver_host_; }
+	MockDriverInput& driver_input() noexcept { return *driver_input_; }
+	MockProperties& properties() noexcept { return *properties_; }
+	MockSettings& settings() noexcept { return *settings_; }
+	MockDriverLog& driver_log() noexcept { return *driver_log_; }
+	MockResources& resources() noexcept { return *resources_; }
+	MockDriverManager& driver_manager() noexcept { return *driver_manager_; }
 
 private:
 	std::filesystem::path driver_resources_;
@@ -62,13 +63,14 @@ private:
 // TrackedDevicePoseUpdated -> MinHook detour -> driver's internal pose
 // pipeline. The mock records every pose into the BarrierQueue so scenarios
 // can also assert on what the driver eventually emits.
-class MockPoseSource {
+class MockPoseSource
+{
 public:
-	explicit MockPoseSource(MockOpenVRRuntime &runtime);
+	explicit MockPoseSource(MockOpenVRRuntime& runtime);
 
 	// Register a synthetic tracked device. Returns the assigned device id
 	// (the driver receives this id in subsequent pose updates).
-	uint32_t AddDevice(const std::string &serial, vr::ETrackedDeviceClass device_class);
+	uint32_t AddDevice(const std::string& serial, vr::ETrackedDeviceClass device_class);
 
 	// Push a pose for the named device. Pose timestamps + qpcOffset are
 	// auto-filled if zero on the input.
@@ -79,7 +81,7 @@ public:
 	static vr::DriverPose_t MakeIdentityPose(double x, double y, double z);
 
 private:
-	MockOpenVRRuntime &runtime_;
+	MockOpenVRRuntime& runtime_;
 	std::mutex mu_;
 };
 

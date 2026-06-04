@@ -26,11 +26,7 @@ replay::LogFileEntry Entry(uint64_t sizeBytes)
 TEST(MotionRecordingRetentionTest, KeepsNewestFilesWithinFileLimit)
 {
 	std::vector<replay::LogFileEntry> entries = {
-		Entry(100),
-		Entry(200),
-		Entry(300),
-		Entry(400),
-		Entry(500),
+	    Entry(100), Entry(200), Entry(300), Entry(400), Entry(500),
 	};
 	const replay::RecordingRetentionPolicy policy{3, 5000};
 
@@ -45,11 +41,7 @@ TEST(MotionRecordingRetentionTest, KeepsNewestFilesWithinFileLimit)
 TEST(MotionRecordingRetentionTest, PrunesOldestFilesToStayUnderByteLimit)
 {
 	std::vector<replay::LogFileEntry> entries = {
-		Entry(30),
-		Entry(30),
-		Entry(30),
-		Entry(30),
-		Entry(30),
+	    Entry(30), Entry(30), Entry(30), Entry(30), Entry(30),
 	};
 	const replay::RecordingRetentionPolicy policy{5, 100};
 
@@ -64,9 +56,9 @@ TEST(MotionRecordingRetentionTest, PrunesOldestFilesToStayUnderByteLimit)
 TEST(MotionRecordingRetentionTest, KeepsNewestOversizedRecording)
 {
 	std::vector<replay::LogFileEntry> entries = {
-		Entry(250),
-		Entry(25),
-		Entry(25),
+	    Entry(250),
+	    Entry(25),
+	    Entry(25),
 	};
 	const replay::RecordingRetentionPolicy policy{5, 100};
 
@@ -88,10 +80,9 @@ TEST(MotionRecordingReplayTest, ContinuousReplayCapsSampleWindow)
 		row.timestamp = static_cast<double>(i) / 90.0;
 		row.ref.rot.setIdentity();
 		row.target.rot.setIdentity();
-		row.ref.trans = Eigen::Vector3d(
-			static_cast<double>(i % 50) * 0.001,
-			1.60 + static_cast<double>((i / 50) % 10) * 0.001,
-			static_cast<double>((i * 3) % 70) * 0.001);
+		row.ref.trans =
+		    Eigen::Vector3d(static_cast<double>(i % 50) * 0.001, 1.60 + static_cast<double>((i / 50) % 10) * 0.001,
+		                    static_cast<double>((i * 3) % 70) * 0.001);
 		row.target.trans = row.ref.trans + Eigen::Vector3d(0.15, 0.0, -0.05);
 		recording.rows.push_back(std::move(row));
 	}
@@ -132,23 +123,18 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 		ASSERT_TRUE(recording.error.empty()) << recording.error;
 		if (recording.rows.empty()) {
 			++skippedEmpty;
-			std::cout << "[replay] " << file.name
-				<< " skipped=no_replayable_rows\n";
+			std::cout << "[replay] " << file.name << " skipped=no_replayable_rows\n";
 			continue;
 		}
 
 		const auto result = replay::RunReplay(recording, options);
 		EXPECT_TRUE(result.succeeded) << result.error;
 		EXPECT_GT(result.rowsReplayed, 0);
-		std::cout << "[replay] " << file.name
-			<< " rows=" << result.rowsReplayed
-			<< " accepts=" << result.accepts
-			<< " rejects=" << result.rejects
-			<< " final_error_mm=" << result.finalErrorMm
-			<< "\n";
+		std::cout << "[replay] " << file.name << " rows=" << result.rowsReplayed << " accepts=" << result.accepts
+		          << " rejects=" << result.rejects << " final_error_mm=" << result.finalErrorMm << "\n";
 		++replayed;
 	}
 
-	EXPECT_GT(replayed, 0u) << "No retained recordings contained replayable rows; skipped "
-		<< skippedEmpty << " empty recordings.";
+	EXPECT_GT(replayed, 0u) << "No retained recordings contained replayable rows; skipped " << skippedEmpty
+	                        << " empty recordings.";
 }

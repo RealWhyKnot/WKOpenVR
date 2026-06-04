@@ -7,7 +7,8 @@
 
 namespace openvr_pair::common {
 
-struct RuntimeCompositorTimingSample {
+struct RuntimeCompositorTimingSample
+{
 	uint32_t frameIndex = 0;
 	uint32_t framePresents = 0;
 	uint32_t droppedFrames = 0;
@@ -22,7 +23,8 @@ struct RuntimeCompositorTimingSample {
 	int hmdTrackingResult = 0;
 };
 
-struct RuntimePoseHealthSample {
+struct RuntimePoseHealthSample
+{
 	double refPoseAgeMs = 0.0;
 	double targetPoseAgeMs = 0.0;
 	double refPoseGapMs = 0.0;
@@ -34,7 +36,8 @@ struct RuntimePoseHealthSample {
 	int targetTrackingResult = 0;
 };
 
-struct RuntimeCalibrationHealthSample {
+struct RuntimeCalibrationHealthSample
+{
 	bool valid = false;
 	int sampleCount = 0;
 	int validSampleCount = 0;
@@ -52,9 +55,8 @@ void RecordRuntimePoseHealth(const RuntimePoseHealthSample& sample);
 void RecordRuntimeCalibrationHealth(const RuntimeCalibrationHealthSample& sample);
 
 bool WriteRuntimeHealthSummary(const wchar_t* fileName = L"runtime_health_summary.json");
-bool MaybeWriteRuntimeHealthSummary(
-	uint64_t intervalMs = 10000,
-	const wchar_t* fileName = L"runtime_health_summary.json");
+bool MaybeWriteRuntimeHealthSummary(uint64_t intervalMs = 10000,
+                                    const wchar_t* fileName = L"runtime_health_summary.json");
 
 void ResetRuntimeHealthSummaryForTests();
 std::string FormatRuntimeHealthSummaryForTests();

@@ -12,7 +12,8 @@
 
 namespace {
 
-vr::HmdQuaternion_t convert(const Eigen::Quaterniond& q) {
+vr::HmdQuaternion_t convert(const Eigen::Quaterniond& q)
+{
 	vr::HmdQuaternion_t result;
 	result.w = q.w();
 	result.x = q.x();
@@ -21,9 +22,12 @@ vr::HmdQuaternion_t convert(const Eigen::Quaterniond& q) {
 	return result;
 }
 
-IsoTransform toIsoWorldTransform(const vr::DriverPose_t& pose) {
-	Eigen::Quaterniond rot(pose.qWorldFromDriverRotation.w, pose.qWorldFromDriverRotation.x, pose.qWorldFromDriverRotation.y, pose.qWorldFromDriverRotation.z);
-	Eigen::Vector3d trans(pose.vecWorldFromDriverTranslation[0], pose.vecWorldFromDriverTranslation[1], pose.vecWorldFromDriverTranslation[2]);
+IsoTransform toIsoWorldTransform(const vr::DriverPose_t& pose)
+{
+	Eigen::Quaterniond rot(pose.qWorldFromDriverRotation.w, pose.qWorldFromDriverRotation.x,
+	                       pose.qWorldFromDriverRotation.y, pose.qWorldFromDriverRotation.z);
+	Eigen::Vector3d trans(pose.vecWorldFromDriverTranslation[0], pose.vecWorldFromDriverTranslation[1],
+	                      pose.vecWorldFromDriverTranslation[2]);
 	return IsoTransform(rot, trans);
 }
 
@@ -32,12 +36,10 @@ IsoTransform toIsoWorldTransform(const vr::DriverPose_t& pose) {
  * This function heuristically evaluates the amount of drift between the src and target playspace transforms,
  * evaluated centered on the `pose` device transform. This is then used to control the speed of realignment.
  */
-ServerTrackedDeviceProvider::DeltaSize ServerTrackedDeviceProvider::GetTransformDeltaSize(
-	DeltaSize prior_delta,
-	const IsoTransform& deviceWorldPose,
-	const IsoTransform& src,
-	const IsoTransform& target
-) const {
+ServerTrackedDeviceProvider::DeltaSize
+ServerTrackedDeviceProvider::GetTransformDeltaSize(DeltaSize prior_delta, const IsoTransform& deviceWorldPose,
+                                                   const IsoTransform& src, const IsoTransform& target) const
+{
 	const auto src_pose = src * deviceWorldPose;
 	const auto target_pose = target * deviceWorldPose;
 
@@ -55,23 +57,35 @@ ServerTrackedDeviceProvider::DeltaSize ServerTrackedDeviceProvider::GetTransform
 
 	DeltaSize trans_level, rot_level;
 
-	if (trans_delta > alignmentSpeedParams.thr_trans_large) trans_level = DeltaSize::LARGE;
-	else if (trans_delta > alignmentSpeedParams.thr_trans_small) trans_level = DeltaSize::SMALL;
-	else trans_level = DeltaSize::TINY;
+	if (trans_delta > alignmentSpeedParams.thr_trans_large)
+		trans_level = DeltaSize::LARGE;
+	else if (trans_delta > alignmentSpeedParams.thr_trans_small)
+		trans_level = DeltaSize::SMALL;
+	else
+		trans_level = DeltaSize::TINY;
 
-	if (rot_delta > alignmentSpeedParams.thr_rot_large) rot_level = DeltaSize::LARGE;
-	else if (rot_delta > alignmentSpeedParams.thr_rot_small) rot_level = DeltaSize::SMALL;
-	else rot_level = DeltaSize::TINY;
+	if (rot_delta > alignmentSpeedParams.thr_rot_large)
+		rot_level = DeltaSize::LARGE;
+	else if (rot_delta > alignmentSpeedParams.thr_rot_small)
+		rot_level = DeltaSize::SMALL;
+	else
+		rot_level = DeltaSize::TINY;
 
-	if (trans_level == DeltaSize::TINY && rot_level == DeltaSize::TINY) return DeltaSize::TINY;
-	else return std::max(prior_delta, std::max(trans_level, rot_level));
+	if (trans_level == DeltaSize::TINY && rot_level == DeltaSize::TINY)
+		return DeltaSize::TINY;
+	else
+		return std::max(prior_delta, std::max(trans_level, rot_level));
 }
 
-double ServerTrackedDeviceProvider::GetTransformRate(DeltaSize delta) const {
+double ServerTrackedDeviceProvider::GetTransformRate(DeltaSize delta) const
+{
 	switch (delta) {
-	case DeltaSize::TINY: return alignmentSpeedParams.align_speed_tiny;
-	case DeltaSize::SMALL: return alignmentSpeedParams.align_speed_small;
-	default: return alignmentSpeedParams.align_speed_large;
+		case DeltaSize::TINY:
+			return alignmentSpeedParams.align_speed_tiny;
+		case DeltaSize::SMALL:
+			return alignmentSpeedParams.align_speed_small;
+		default:
+			return alignmentSpeedParams.align_speed_large;
 	}
 }
 
@@ -81,7 +95,8 @@ double ServerTrackedDeviceProvider::GetTransformRate(DeltaSize delta) const {
  * tracking discontinuities (chi-square reanchor, Quest re-localization) still snap
  * via the direct-assign paths in SetDeviceTransform / first-fallback-activation.
  */
-void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const IsoTransform &deviceWorldPose) const {
+void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const IsoTransform& deviceWorldPose) const
+{
 	LARGE_INTEGER timestamp;
 	QueryPerformanceCounter(&timestamp);
 
@@ -93,15 +108,14 @@ void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const 
 
 	double lerp = dt * GetTransformRate(device.currentRate);
 
-	if (lerp > 1.0)
-		lerp = 1.0;
-	if (lerp < 0 || isnan(lerp))
-		lerp = 0;
+	if (lerp > 1.0) lerp = 1.0;
+	if (lerp < 0 || isnan(lerp)) lerp = 0;
 
 	device.transform = device.transform.interpolateAround(lerp, device.targetTransform, deviceWorldPose.translation);
 }
 
-void ServerTrackedDeviceProvider::ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const {
+void ServerTrackedDeviceProvider::ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const
+{
 	auto deviceWorldTransform = toIsoWorldTransform(devicePose);
 	deviceWorldTransform = device.transform * deviceWorldTransform;
 	devicePose.vecWorldFromDriverTranslation[0] = deviceWorldTransform.translation(0);
@@ -118,20 +132,22 @@ ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::FindFall
 		// Compare the full buffer length so a shorter prefix can't accidentally
 		// match a longer occupant. The buffer is NUL-padded after assignment so
 		// `len` bytes followed by a sentinel NUL is sufficient to distinguish.
-		if (memcmp(systemFallbacks[i].system_name, name, len) == 0
-			&& (len == protocol::MaxTrackingSystemNameLen || systemFallbacks[i].system_name[len] == '\0')) {
+		if (memcmp(systemFallbacks[i].system_name, name, len) == 0 &&
+		    (len == protocol::MaxTrackingSystemNameLen || systemFallbacks[i].system_name[len] == '\0')) {
 			return &systemFallbacks[i];
 		}
 	}
 	return nullptr;
 }
 
-const ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::FindFallbackSlot(const char* name, size_t len) const
+const ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::FindFallbackSlot(const char* name,
+                                                                                               size_t len) const
 {
 	return const_cast<ServerTrackedDeviceProvider*>(this)->FindFallbackSlot(name, len);
 }
 
-ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::AcquireFallbackSlot(const char* name, size_t len)
+ServerTrackedDeviceProvider::FallbackSlot* ServerTrackedDeviceProvider::AcquireFallbackSlot(const char* name,
+                                                                                            size_t len)
 {
 	if (len == 0 || len > protocol::MaxTrackingSystemNameLen) return nullptr;
 	if (auto* existing = FindFallbackSlot(name, len)) return existing;

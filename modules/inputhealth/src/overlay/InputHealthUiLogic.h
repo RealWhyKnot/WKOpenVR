@@ -7,11 +7,7 @@ inline bool ShouldShowDriverProblemBanner(bool hasDriverError, bool isDriverWait
 	return hasDriverError && !isDriverWaitError;
 }
 
-inline bool ShouldShowShmemProblemText(
-	bool vrConnected,
-	bool shmemOpen,
-	bool hasShmemError,
-	bool isVersionMismatch)
+inline bool ShouldShowShmemProblemText(bool vrConnected, bool shmemOpen, bool hasShmemError, bool isVersionMismatch)
 {
 	return !shmemOpen && hasShmemError && (vrConnected || isVersionMismatch);
 }

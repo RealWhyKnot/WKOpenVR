@@ -1,14 +1,14 @@
 #include "Configuration.h"
-#include "BoundaryRePush.h"       // ScheduleBoundaryStartupPush -- startup push on load.
-#include "CalibrationMetrics.h"   // WriteLogAnnotation -- profile_loaded_calibration
-                                  // diagnostic line on launch.
-#include "WedgeDetector.h"        // kMaxPlausibleCalibrationMagnitudeCm -- shared
-                                  // with the runtime wedge detector in Calibration.cpp.
+#include "BoundaryRePush.h"     // ScheduleBoundaryStartupPush -- startup push on load.
+#include "CalibrationMetrics.h" // WriteLogAnnotation -- profile_loaded_calibration
+                                // diagnostic line on launch.
+#include "WedgeDetector.h"      // kMaxPlausibleCalibrationMagnitudeCm -- shared
+                                // with the runtime wedge detector in Calibration.cpp.
 
 #include <picojson.h>
 
-#include <cmath>     // std::sqrt for magnitude computation in the launch log
-#include <cstdio>    // snprintf for the profile_loaded_calibration log buffer
+#include <cmath>  // std::sqrt for magnitude computation in the launch log
+#include <cstdio> // snprintf for the profile_loaded_calibration log buffer
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -66,10 +66,13 @@ static const int kProfileSchemaVersion = 5;
 static const char* HeadMountSampleSourceName(HeadMountSampleSource source)
 {
 	switch (source) {
-	case HeadMountSampleSource::PhysicalTracker: return "physical_tracker";
-	case HeadMountSampleSource::HeadProxy: return "head_proxy";
-	case HeadMountSampleSource::Unknown:
-	default: return "unknown";
+		case HeadMountSampleSource::PhysicalTracker:
+			return "physical_tracker";
+		case HeadMountSampleSource::HeadProxy:
+			return "head_proxy";
+		case HeadMountSampleSource::Unknown:
+		default:
+			return "unknown";
 	}
 }
 
@@ -128,17 +131,11 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 		auto it = profile.find("calibration_speed");
 		if (it != profile.end() && it->second.is<double>()) {
 			const int raw = (int)it->second.get<double>();
-			const bool valid =
-				raw >= CalibrationContext::FAST
-				&& raw <= CalibrationContext::AUTO;
-			const int oneShot = (!valid || raw == CalibrationContext::AUTO)
-				? CalibrationContext::FAST
-				: raw;
-			const int continuous =
-				(valid && (raw == CalibrationContext::SLOW
-					|| raw == CalibrationContext::VERY_SLOW))
-					? raw
-					: CalibrationContext::AUTO;
+			const bool valid = raw >= CalibrationContext::FAST && raw <= CalibrationContext::AUTO;
+			const int oneShot = (!valid || raw == CalibrationContext::AUTO) ? CalibrationContext::FAST : raw;
+			const int continuous = (valid && (raw == CalibrationContext::SLOW || raw == CalibrationContext::VERY_SLOW))
+			                           ? raw
+			                           : CalibrationContext::AUTO;
 			if (profile.find("one_shot_calibration_speed") == profile.end()) {
 				double v = (double)oneShot;
 				profile["one_shot_calibration_speed"].set<double>(v);
@@ -151,8 +148,7 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 	}
 }
 
-
-static picojson::array FloatArray(const float *buf, size_t numFloats)
+static picojson::array FloatArray(const float* buf, size_t numFloats)
 {
 	picojson::array arr;
 
@@ -163,29 +159,30 @@ static picojson::array FloatArray(const float *buf, size_t numFloats)
 	return arr;
 }
 
-static void LoadFloatArray(const picojson::value &obj, float *buf, size_t numFloats)
+static void LoadFloatArray(const picojson::value& obj, float* buf, size_t numFloats)
 {
 	if (!obj.is<picojson::array>()) {
 		throw std::runtime_error("expected array, got " + obj.to_str());
 	}
 
-	auto &arr = obj.get<picojson::array>();
+	auto& arr = obj.get<picojson::array>();
 	if (arr.size() != numFloats) {
 		throw std::runtime_error("wrong buffer size");
 	}
 
 	for (int i = 0; i < numFloats; i++) {
-		buf[i] = (float) arr[i].get<double>();
+		buf[i] = (float)arr[i].get<double>();
 	}
 }
 
-static void LoadStandby(StandbyDevice& device, picojson::value& value) {
+static void LoadStandby(StandbyDevice& device, picojson::value& value)
+{
 	if (!value.is<picojson::object>()) {
 		return;
 	}
 	auto& obj = value.get<picojson::object>();
-	
-	const auto &system = obj["tracking_system"];
+
+	const auto& system = obj["tracking_system"];
 	if (system.is<std::string>()) {
 		device.trackingSystem = system.get<std::string>();
 	}
@@ -201,7 +198,8 @@ static void LoadStandby(StandbyDevice& device, picojson::value& value) {
 	}
 }
 
-static void VisitAlignmentParams(CalibrationContext& ctx, std::function<void(const char *, double&)> MapParam) {
+static void VisitAlignmentParams(CalibrationContext& ctx, std::function<void(const char*, double&)> MapParam)
+{
 #define P(s) MapParam(#s, ctx.alignmentSpeedParams.s)
 	P(align_speed_tiny);
 	P(align_speed_small);
@@ -218,14 +216,15 @@ static void VisitAlignmentParams(CalibrationContext& ctx, std::function<void(con
 	ctx.continuousCalibrationThreshold = (float)tmp;
 }
 
-static void LoadAlignmentParams(CalibrationContext& ctx, picojson::value& value) {
+static void LoadAlignmentParams(CalibrationContext& ctx, picojson::value& value)
+{
 	ctx.ResetConfig();
-	
+
 	if (!value.is<picojson::object>()) {
 		return;
 	}
 	auto& obj = value.get<picojson::object>();
-	
+
 	VisitAlignmentParams(ctx, [&](auto name, auto& param) {
 		const picojson::value& node = obj[name];
 		if (node.is<double>()) {
@@ -234,12 +233,11 @@ static void LoadAlignmentParams(CalibrationContext& ctx, picojson::value& value)
 	});
 }
 
-static picojson::object SaveAlignmentParams(CalibrationContext& ctx) {
+static picojson::object SaveAlignmentParams(CalibrationContext& ctx)
+{
 	picojson::object obj;
 
-	VisitAlignmentParams(ctx, [&](auto name, auto& param) {
-		obj[name].set<double>(param);
-	});
+	VisitAlignmentParams(ctx, [&](auto name, auto& param) { obj[name].set<double>(param); });
 
 	return obj;
 }
@@ -247,7 +245,8 @@ static picojson::object SaveAlignmentParams(CalibrationContext& ctx) {
 // Hex-encode a byte buffer to a std::string. Used for prior_chaperone bytes
 // because picojson carries no base64 helper and a hex string is readable,
 // round-trip exact, and requires no external dependency.
-static std::string BytesToHex(const std::vector<uint8_t>& bytes) {
+static std::string BytesToHex(const std::vector<uint8_t>& bytes)
+{
 	static const char kHex[] = "0123456789abcdef";
 	std::string out;
 	out.reserve(bytes.size() * 2);
@@ -260,7 +259,8 @@ static std::string BytesToHex(const std::vector<uint8_t>& bytes) {
 
 // Decode a hex string produced by BytesToHex. Non-hex characters cause the
 // pair to be skipped (tolerant of whitespace or minor corruption).
-static std::vector<uint8_t> HexToBytes(const std::string& hex) {
+static std::vector<uint8_t> HexToBytes(const std::string& hex)
+{
 	std::vector<uint8_t> out;
 	out.reserve(hex.size() / 2);
 	for (size_t i = 0; i + 1 < hex.size(); i += 2) {
@@ -271,50 +271,38 @@ static std::vector<uint8_t> HexToBytes(const std::string& hex) {
 			return -1;
 		};
 		int hi = hval(hex[i]), lo = hval(hex[i + 1]);
-		if (hi >= 0 && lo >= 0)
-			out.push_back((uint8_t)((hi << 4) | lo));
+		if (hi >= 0 && lo >= 0) out.push_back((uint8_t)((hi << 4) | lo));
 	}
 	return out;
 }
 
-static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value) {
+static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
+{
 	if (!value.is<picojson::object>()) return;
 	auto& obj = value.get<picojson::object>();
 
 	if (obj["mode"].is<double>()) {
 		int raw = (int)obj["mode"].get<double>();
-		if (raw >= 0 && raw <= 3)
-			hm.mode = (HeadMountMode)raw;
+		if (raw >= 0 && raw <= 3) hm.mode = (HeadMountMode)raw;
 	}
-	if (obj["tracker_serial"].is<std::string>())
-		hm.trackerSerial = obj["tracker_serial"].get<std::string>();
-	if (obj["tracker_model"].is<std::string>())
-		hm.trackerModel = obj["tracker_model"].get<std::string>();
+	if (obj["tracker_serial"].is<std::string>()) hm.trackerSerial = obj["tracker_serial"].get<std::string>();
+	if (obj["tracker_model"].is<std::string>()) hm.trackerModel = obj["tracker_model"].get<std::string>();
 	if (obj["tracker_tracking_system"].is<std::string>())
 		hm.trackerTrackingSystem = obj["tracker_tracking_system"].get<std::string>();
-	if (obj["hide_tracker"].is<bool>())
-		hm.hideTracker = obj["hide_tracker"].get<bool>();
-	if (obj["offset_calibrated"].is<bool>())
-		hm.offsetCalibrated = obj["offset_calibrated"].get<bool>();
-	if (obj["auto_correct_offset"].is<bool>())
-		hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
+	if (obj["hide_tracker"].is<bool>()) hm.hideTracker = obj["hide_tracker"].get<bool>();
+	if (obj["offset_calibrated"].is<bool>()) hm.offsetCalibrated = obj["offset_calibrated"].get<bool>();
+	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
 	if (obj["driver_synth_stale_limit_ms"].is<double>())
-		hm.driverSynthTiming.staleLimitMs =
-			(int)obj["driver_synth_stale_limit_ms"].get<double>();
+		hm.driverSynthTiming.staleLimitMs = (int)obj["driver_synth_stale_limit_ms"].get<double>();
 	if (obj["driver_synth_grace_hold_ms"].is<double>())
-		hm.driverSynthTiming.graceHoldMs =
-			(int)obj["driver_synth_grace_hold_ms"].get<double>();
+		hm.driverSynthTiming.graceHoldMs = (int)obj["driver_synth_grace_hold_ms"].get<double>();
 	if (obj["driver_synth_blend_to_fallback_ms"].is<double>())
-		hm.driverSynthTiming.blendToFallbackMs =
-			(int)obj["driver_synth_blend_to_fallback_ms"].get<double>();
+		hm.driverSynthTiming.blendToFallbackMs = (int)obj["driver_synth_blend_to_fallback_ms"].get<double>();
 	if (obj["driver_synth_stable_before_synth_ms"].is<double>())
-		hm.driverSynthTiming.stableBeforeSynthMs =
-			(int)obj["driver_synth_stable_before_synth_ms"].get<double>();
+		hm.driverSynthTiming.stableBeforeSynthMs = (int)obj["driver_synth_stable_before_synth_ms"].get<double>();
 	if (obj["driver_synth_blend_to_synth_ms"].is<double>())
-		hm.driverSynthTiming.blendToSynthMs =
-			(int)obj["driver_synth_blend_to_synth_ms"].get<double>();
-	hm.driverSynthTiming =
-		wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
+		hm.driverSynthTiming.blendToSynthMs = (int)obj["driver_synth_blend_to_synth_ms"].get<double>();
+	hm.driverSynthTiming = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 
 	// head_from_tracker: quaternion + translation, same pattern as relative_transform.
 	if (obj["head_from_tracker"].is<picojson::object>()) {
@@ -331,7 +319,8 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value) {
 		}
 		if (xf["rotation"].is<picojson::array>()) {
 			auto& arr = xf["rotation"].get<picojson::array>();
-			if (arr.size() == 4 && arr[0].is<double>() && arr[1].is<double>() && arr[2].is<double>() && arr[3].is<double>()) {
+			if (arr.size() == 4 && arr[0].is<double>() && arr[1].is<double>() && arr[2].is<double>() &&
+			    arr[3].is<double>()) {
 				q.x() = arr[0].get<double>();
 				q.y() = arr[1].get<double>();
 				q.z() = arr[2].get<double>();
@@ -345,7 +334,8 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value) {
 	}
 }
 
-static picojson::object SaveHeadMount(const HeadMountConfig& hm) {
+static picojson::object SaveHeadMount(const HeadMountConfig& hm)
+{
 	picojson::object obj;
 	double mode = (double)(uint8_t)hm.mode;
 	obj["mode"].set<double>(mode);
@@ -358,8 +348,7 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm) {
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
-	const auto timing =
-		wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
+	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	double staleMs = (double)timing.staleLimitMs;
 	double graceMs = (double)timing.graceHoldMs;
 	double blendFallbackMs = (double)timing.blendToFallbackMs;
@@ -375,7 +364,10 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm) {
 	q.normalize();
 	Eigen::Vector3d t = hm.headFromTracker.translation();
 	picojson::array transArr, rotArr;
-	for (int i = 0; i < 3; ++i) { double v = t(i); transArr.push_back(picojson::value(v)); }
+	for (int i = 0; i < 3; ++i) {
+		double v = t(i);
+		transArr.push_back(picojson::value(v));
+	}
 	double qx = q.x(), qy = q.y(), qz = q.z(), qw = q.w();
 	rotArr.push_back(picojson::value(qx));
 	rotArr.push_back(picojson::value(qy));
@@ -388,18 +380,15 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm) {
 	return obj;
 }
 
-static void LoadBoundary(BoundaryConfig& bc, picojson::value& value) {
+static void LoadBoundary(BoundaryConfig& bc, picojson::value& value)
+{
 	if (!value.is<picojson::object>()) return;
 	auto& obj = value.get<picojson::object>();
 
-	if (obj["enabled"].is<bool>())
-		bc.enabled = obj["enabled"].get<bool>();
-	if (obj["floor_y"].is<double>())
-		bc.floorY = obj["floor_y"].get<double>();
-	if (obj["ceiling_y"].is<double>())
-		bc.ceilingY = obj["ceiling_y"].get<double>();
-	if (obj["standing_space"].is<bool>())
-		bc.standingSpace = obj["standing_space"].get<bool>();
+	if (obj["enabled"].is<bool>()) bc.enabled = obj["enabled"].get<bool>();
+	if (obj["floor_y"].is<double>()) bc.floorY = obj["floor_y"].get<double>();
+	if (obj["ceiling_y"].is<double>()) bc.ceilingY = obj["ceiling_y"].get<double>();
+	if (obj["standing_space"].is<bool>()) bc.standingSpace = obj["standing_space"].get<bool>();
 	if (obj["prior_chaperone_captured"].is<bool>())
 		bc.priorChaperoneCaptured = obj["prior_chaperone_captured"].get<bool>();
 	if (obj["prior_chaperone"].is<std::string>())
@@ -419,7 +408,8 @@ static void LoadBoundary(BoundaryConfig& bc, picojson::value& value) {
 	}
 }
 
-static picojson::object SaveBoundary(const BoundaryConfig& bc) {
+static picojson::object SaveBoundary(const BoundaryConfig& bc)
+{
 	picojson::object obj;
 	bool en = bc.enabled;
 	obj["enabled"].set<bool>(en);
@@ -447,7 +437,7 @@ static picojson::object SaveBoundary(const BoundaryConfig& bc) {
 	return obj;
 }
 
-void ParseProfile(CalibrationContext &ctx, std::istream &stream)
+void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 {
 	picojson::value v;
 	std::string err = picojson::parse(v, stream);
@@ -474,8 +464,8 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 
 	if (profileVersion > kProfileSchemaVersion) {
 		std::cerr << "Refusing to load profile: schema_version " << profileVersion
-			<< " is newer than this build supports (" << kProfileSchemaVersion << ")."
-			<< " Update WKOpenVR-SpaceCalibrator to use this profile." << std::endl;
+		          << " is newer than this build supports (" << kProfileSchemaVersion << ")."
+		          << " Update WKOpenVR-SpaceCalibrator to use this profile." << std::endl;
 		ctx.validProfile = false;
 		return;
 	}
@@ -505,13 +495,13 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		const double tx = ctx.calibratedTranslation(0);
 		const double ty = ctx.calibratedTranslation(1);
 		const double tz = ctx.calibratedTranslation(2);
-		const double magnitude = std::sqrt(tx*tx + ty*ty + tz*tz);
+		const double magnitude = std::sqrt(tx * tx + ty * ty + tz * tz);
 		char loadbuf[256];
 		snprintf(loadbuf, sizeof loadbuf,
-			"profile_loaded_calibration: t=(%.3f,%.3f,%.3f) magnitude=%.3f rot_deg=(roll=%.2f, yaw=%.2f, pitch=%.2f) ref_system='%s' tgt_system='%s'",
-			tx, ty, tz, magnitude,
-			ctx.calibratedRotation(0), ctx.calibratedRotation(1), ctx.calibratedRotation(2),
-			ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
+		         "profile_loaded_calibration: t=(%.3f,%.3f,%.3f) magnitude=%.3f rot_deg=(roll=%.2f, yaw=%.2f, "
+		         "pitch=%.2f) ref_system='%s' tgt_system='%s'",
+		         tx, ty, tz, magnitude, ctx.calibratedRotation(0), ctx.calibratedRotation(1), ctx.calibratedRotation(2),
+		         ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
 		Metrics::WriteLogAnnotation(loadbuf);
 
 		// Load-time wedge guard DISABLED 2026-05-05 — caused reset loops on
@@ -536,8 +526,7 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		ctx.quashTargetInContinuous = obj["quash_target_in_continuous"].get<bool>();
 	if (obj["require_trigger_press_to_apply"].is<bool>())
 		ctx.requireTriggerPressToApply = obj["require_trigger_press_to_apply"].get<bool>();
-	if (obj["ignore_outliers"].is<bool>())
-		ctx.ignoreOutliers = obj["ignore_outliers"].get<bool>();
+	if (obj["ignore_outliers"].is<bool>()) ctx.ignoreOutliers = obj["ignore_outliers"].get<bool>();
 	ctx.continuousCalibrationOffset(0) = obj["continuous_calibration_target_offset_x"].get<double>();
 	ctx.continuousCalibrationOffset(1) = obj["continuous_calibration_target_offset_y"].get<double>();
 	ctx.continuousCalibrationOffset(2) = obj["continuous_calibration_target_offset_z"].get<double>();
@@ -551,8 +540,7 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 	// were redundant at best and had at least one bug -- jitter_threshold's
 	// missing-key fallback was 0.1f, contradicting the 3.0f default set by
 	// ResetConfig.
-	if (obj["jitter_threshold"].is<double>())
-		ctx.jitterThreshold = (float)obj["jitter_threshold"].get<double>();
+	if (obj["jitter_threshold"].is<double>()) ctx.jitterThreshold = (float)obj["jitter_threshold"].get<double>();
 	if (obj["max_relative_error_threshold"].is<double>())
 		ctx.maxRelativeErrorThreshold = (float)obj["max_relative_error_threshold"].get<double>();
 	// Native prediction-suppression settings.
@@ -576,7 +564,8 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 
 	if (obj["recalibrate_on_movement"].is<bool>()) {
 		ctx.recalibrateOnMovement = obj["recalibrate_on_movement"].get<bool>();
-	} else {
+	}
+	else {
 		ctx.recalibrateOnMovement = true;
 	}
 
@@ -585,27 +574,28 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 	// having to know it exists. Persists across launches.
 	if (obj["base_station_drift_correction"].is<bool>()) {
 		ctx.baseStationDriftCorrectionEnabled = obj["base_station_drift_correction"].get<bool>();
-	} else {
+	}
+	else {
 		ctx.baseStationDriftCorrectionEnabled = true;
 	}
 
 	if (obj["scale"].is<double>()) {
 		ctx.calibratedScale = obj["scale"].get<double>();
-	} else {
+	}
+	else {
 		ctx.calibratedScale = 1.0;
 	}
 
 	if (obj["floor_offset_meters_y"].is<double>()) {
 		ctx.floorOffsetMetersY = obj["floor_offset_meters_y"].get<double>();
-		ctx.floorEnabled = obj["floor_enabled"].is<bool>()
-			? obj["floor_enabled"].get<bool>()
-			: (std::fabs(ctx.floorOffsetMetersY) > 1e-9);
-	} else {
+		ctx.floorEnabled = obj["floor_enabled"].is<bool>() ? obj["floor_enabled"].get<bool>()
+		                                                   : (std::fabs(ctx.floorOffsetMetersY) > 1e-9);
+	}
+	else {
 		ctx.floorOffsetMetersY = 0.0;
 	}
 
-	auto readSpeed = [](const picojson::value& v,
-	                    CalibrationContext::Speed fallback,
+	auto readSpeed = [](const picojson::value& v, CalibrationContext::Speed fallback,
 	                    bool allowAuto) -> CalibrationContext::Speed {
 		if (!v.is<double>()) return fallback;
 		const int raw = (int)v.get<double>();
@@ -617,28 +607,18 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		}
 		return (CalibrationContext::Speed)raw;
 	};
-	ctx.oneShotCalibrationSpeed = readSpeed(
-		obj["one_shot_calibration_speed"],
-		CalibrationContext::FAST,
-		/*allowAuto=*/false);
-	ctx.continuousCalibrationSpeed = readSpeed(
-		obj["continuous_calibration_speed"],
-		CalibrationContext::AUTO,
-		/*allowAuto=*/true);
-	if (!obj["one_shot_calibration_speed"].is<double>()
-		&& !obj["continuous_calibration_speed"].is<double>()
-		&& obj["calibration_speed"].is<double>()) {
-		const auto legacy = readSpeed(
-			obj["calibration_speed"],
-			CalibrationContext::AUTO,
-			/*allowAuto=*/true);
-		ctx.oneShotCalibrationSpeed =
-			legacy == CalibrationContext::AUTO ? CalibrationContext::FAST : legacy;
-		ctx.continuousCalibrationSpeed =
-			(legacy == CalibrationContext::SLOW
-				|| legacy == CalibrationContext::VERY_SLOW)
-				? legacy
-				: CalibrationContext::AUTO;
+	ctx.oneShotCalibrationSpeed = readSpeed(obj["one_shot_calibration_speed"], CalibrationContext::FAST,
+	                                        /*allowAuto=*/false);
+	ctx.continuousCalibrationSpeed = readSpeed(obj["continuous_calibration_speed"], CalibrationContext::AUTO,
+	                                           /*allowAuto=*/true);
+	if (!obj["one_shot_calibration_speed"].is<double>() && !obj["continuous_calibration_speed"].is<double>() &&
+	    obj["calibration_speed"].is<double>()) {
+		const auto legacy = readSpeed(obj["calibration_speed"], CalibrationContext::AUTO,
+		                              /*allowAuto=*/true);
+		ctx.oneShotCalibrationSpeed = legacy == CalibrationContext::AUTO ? CalibrationContext::FAST : legacy;
+		ctx.continuousCalibrationSpeed = (legacy == CalibrationContext::SLOW || legacy == CalibrationContext::VERY_SLOW)
+		                                     ? legacy
+		                                     : CalibrationContext::AUTO;
 	}
 
 	// "view_mode" was a per-profile UI density preference (BASIC/GRAPH/ADVANCED).
@@ -652,17 +632,14 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 
 		LoadFloatArray(chaperone["play_space_size"], ctx.chaperone.playSpaceSize.v, 2);
 
-		LoadFloatArray(
-			chaperone["standing_center"],
-			(float *) ctx.chaperone.standingCenter.m,
-			sizeof(ctx.chaperone.standingCenter.m) / sizeof(float)
-		);
+		LoadFloatArray(chaperone["standing_center"], (float*)ctx.chaperone.standingCenter.m,
+		               sizeof(ctx.chaperone.standingCenter.m) / sizeof(float));
 
 		if (!chaperone["geometry"].is<picojson::array>()) {
 			throw std::runtime_error("chaperone geometry is not an array");
 		}
 
-		auto &geometry = chaperone["geometry"].get<picojson::array>();
+		auto& geometry = chaperone["geometry"].get<picojson::array>();
 
 		// Each chaperone quad is HmdQuad_t = 4 corners * 3 floats = 12 floats. A
 		// geometry array whose length isn't a multiple of 12 is corrupt — almost
@@ -672,11 +649,12 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		// boundary). Better to skip the chaperone load and warn.
 		if (geometry.size() > 0 && (geometry.size() % 12) != 0) {
 			std::cerr << "Chaperone geometry length (" << geometry.size()
-				<< ") is not a multiple of 12 -- skipping chaperone load." << std::endl;
+			          << ") is not a multiple of 12 -- skipping chaperone load." << std::endl;
 			g_chaperoneGeometrySizeMismatch = true;
-		} else if (geometry.size() > 0) {
+		}
+		else if (geometry.size() > 0) {
 			ctx.chaperone.geometry.resize(geometry.size() * sizeof(float) / sizeof(ctx.chaperone.geometry[0]));
-			LoadFloatArray(chaperone["geometry"], (float *) ctx.chaperone.geometry.data(), geometry.size());
+			LoadFloatArray(chaperone["geometry"], (float*)ctx.chaperone.geometry.data(), geometry.size());
 
 			ctx.chaperone.valid = true;
 		}
@@ -693,10 +671,10 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		if (raw >= 0 && raw <= 2) {
 			ctx.lockRelativePositionMode = (CalibrationContext::LockMode)raw;
 		}
-	} else if (obj["lock_relative_position"].is<bool>()) {
-		ctx.lockRelativePositionMode = obj["lock_relative_position"].get<bool>()
-			? CalibrationContext::LockMode::ON
-			: CalibrationContext::LockMode::AUTO;
+	}
+	else if (obj["lock_relative_position"].is<bool>()) {
+		ctx.lockRelativePositionMode = obj["lock_relative_position"].get<bool>() ? CalibrationContext::LockMode::ON
+		                                                                         : CalibrationContext::LockMode::AUTO;
 	}
 	if (obj["relative_transform"].is<picojson::object>()) {
 		auto relTransform = obj["relative_transform"].get<picojson::object>();
@@ -712,29 +690,24 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 		// eulerAngles can return values in unexpected ranges/branches when the
 		// rotation passes near gimbal-lock, so a save→load round-trip can silently
 		// drift. Quaternions round-trip exactly.
-		if (relTransform["quat_w"].is<double>() && relTransform["quat_x"].is<double>()
-			&& relTransform["quat_y"].is<double>() && relTransform["quat_z"].is<double>())
-		{
-			Eigen::Quaterniond q(
-				relTransform["quat_w"].get<double>(),
-				relTransform["quat_x"].get<double>(),
-				relTransform["quat_y"].get<double>(),
-				relTransform["quat_z"].get<double>());
+		if (relTransform["quat_w"].is<double>() && relTransform["quat_x"].is<double>() &&
+		    relTransform["quat_y"].is<double>() && relTransform["quat_z"].is<double>()) {
+			Eigen::Quaterniond q(relTransform["quat_w"].get<double>(), relTransform["quat_x"].get<double>(),
+			                     relTransform["quat_y"].get<double>(), relTransform["quat_z"].get<double>());
 			q.normalize();
 			rotationMatrix = q.toRotationMatrix();
 		}
-		else if (relTransform["roll"].is<double>() && relTransform["yaw"].is<double>() && relTransform["pitch"].is<double>())
-		{
+		else if (relTransform["roll"].is<double>() && relTransform["yaw"].is<double>() &&
+		         relTransform["pitch"].is<double>()) {
 			// Legacy Euler form. Kept for backward compat with profiles written by
 			// older overlay builds; we never write it again.
 			Eigen::Vector3d refToTargetRotation;
 			refToTargetRotation(0) = relTransform["roll"].get<double>();
 			refToTargetRotation(1) = relTransform["yaw"].get<double>();
 			refToTargetRotation(2) = relTransform["pitch"].get<double>();
-			rotationMatrix =
-				Eigen::AngleAxisd(refToTargetRotation[0], Eigen::Vector3d::UnitX()) *
-				Eigen::AngleAxisd(refToTargetRotation[1], Eigen::Vector3d::UnitY()) *
-				Eigen::AngleAxisd(refToTargetRotation[2], Eigen::Vector3d::UnitZ());
+			rotationMatrix = Eigen::AngleAxisd(refToTargetRotation[0], Eigen::Vector3d::UnitX()) *
+			                 Eigen::AngleAxisd(refToTargetRotation[1], Eigen::Vector3d::UnitY()) *
+			                 Eigen::AngleAxisd(refToTargetRotation[2], Eigen::Vector3d::UnitZ());
 		}
 
 		ctx.refToTargetPose = Eigen::AffineCompact3d::Identity();
@@ -758,8 +731,8 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 			if (extraObj["target_device"].is<picojson::object>()) {
 				LoadStandby(extra.targetStandby, extraObj["target_device"]);
 			}
-			if (extraObj["roll"].is<double>())  extra.calibratedRotation(0) = extraObj["roll"].get<double>();
-			if (extraObj["yaw"].is<double>())   extra.calibratedRotation(1) = extraObj["yaw"].get<double>();
+			if (extraObj["roll"].is<double>()) extra.calibratedRotation(0) = extraObj["roll"].get<double>();
+			if (extraObj["yaw"].is<double>()) extra.calibratedRotation(1) = extraObj["yaw"].get<double>();
 			if (extraObj["pitch"].is<double>()) extra.calibratedRotation(2) = extraObj["pitch"].get<double>();
 			if (extraObj["x"].is<double>()) extra.calibratedTranslation(0) = extraObj["x"].get<double>();
 			if (extraObj["y"].is<double>()) extra.calibratedTranslation(1) = extraObj["y"].get<double>();
@@ -782,10 +755,8 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 
 	// v4: head-mounted tracker and safety boundary. All sections
 	// are optional (skip-if-absent); absent means default (disabled).
-	if (obj["head_mount"].is<picojson::object>())
-		LoadHeadMount(ctx.headMount, obj["head_mount"]);
-	if (obj["boundary"].is<picojson::object>())
-		LoadBoundary(ctx.boundary, obj["boundary"]);
+	if (obj["head_mount"].is<picojson::object>()) LoadHeadMount(ctx.headMount, obj["head_mount"]);
+	if (obj["boundary"].is<picojson::object>()) LoadBoundary(ctx.boundary, obj["boundary"]);
 
 	// Load-time wedge guard, completion. The relative-pose state and
 	// refToTargetPose are read further down in ParseProfile, so we can only
@@ -800,8 +771,8 @@ void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 	ctx.validProfile = true;
 }
 
-
-static void WriteStandby(StandbyDevice& device, picojson::value& value) {
+static void WriteStandby(StandbyDevice& device, picojson::value& value)
+{
 	auto obj = picojson::object();
 
 	obj["tracking_system"].set<std::string>(device.trackingSystem);
@@ -811,8 +782,7 @@ static void WriteStandby(StandbyDevice& device, picojson::value& value) {
 	value.set<picojson::object>(obj);
 }
 
-
-void WriteProfile(CalibrationContext &ctx, std::ostream &out)
+void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 {
 	if (!ctx.validProfile) {
 		return;
@@ -859,8 +829,8 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	profile["continuous_calibration_target_offset_z"].set<double>(ctx.continuousCalibrationOffset(2));
 
 	// --- State that's tied to the profile (not really a "default-able" knob) --
-	bool isInContinuousCalibrationMode = ctx.state == CalibrationState::Continuous
-		|| ctx.state == CalibrationState::ContinuousStandby;
+	bool isInContinuousCalibrationMode =
+	    ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby;
 	if (isInContinuousCalibrationMode) {
 		// Only write the autostart flag when it's true; absent => don't autostart.
 		// picojson's set<bool> is only specialized for the const-ref overload --
@@ -876,20 +846,30 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	// set<T> takes a non-const T& (no rvalue overload), so the value must be
 	// bound to a local before the call -- the inner braces also hide the local
 	// from the caller's scope.
-#define WRITE_IF_CHANGED_BOOL(KEY, FIELD) \
-	do { if (ctx.FIELD != defaults.FIELD) { bool _v = ctx.FIELD; profile[KEY].set<bool>(_v); } } while (0)
-#define WRITE_IF_CHANGED_DOUBLE(KEY, FIELD) \
-	do { if (ctx.FIELD != defaults.FIELD) { double _v = (double)ctx.FIELD; profile[KEY].set<double>(_v); } } while (0)
+#define WRITE_IF_CHANGED_BOOL(KEY, FIELD)                                                                              \
+	do {                                                                                                               \
+		if (ctx.FIELD != defaults.FIELD) {                                                                             \
+			bool _v = ctx.FIELD;                                                                                       \
+			profile[KEY].set<bool>(_v);                                                                                \
+		}                                                                                                              \
+	} while (0)
+#define WRITE_IF_CHANGED_DOUBLE(KEY, FIELD)                                                                            \
+	do {                                                                                                               \
+		if (ctx.FIELD != defaults.FIELD) {                                                                             \
+			double _v = (double)ctx.FIELD;                                                                             \
+			profile[KEY].set<double>(_v);                                                                              \
+		}                                                                                                              \
+	} while (0)
 
-	WRITE_IF_CHANGED_BOOL  ("quash_target_in_continuous",   quashTargetInContinuous);
-	WRITE_IF_CHANGED_BOOL  ("require_trigger_press_to_apply", requireTriggerPressToApply);
-	WRITE_IF_CHANGED_BOOL  ("ignore_outliers",              ignoreOutliers);
-	WRITE_IF_CHANGED_BOOL  ("static_calibration",           enableStaticRecalibration);
-	WRITE_IF_CHANGED_DOUBLE("jitter_threshold",             jitterThreshold);
+	WRITE_IF_CHANGED_BOOL("quash_target_in_continuous", quashTargetInContinuous);
+	WRITE_IF_CHANGED_BOOL("require_trigger_press_to_apply", requireTriggerPressToApply);
+	WRITE_IF_CHANGED_BOOL("ignore_outliers", ignoreOutliers);
+	WRITE_IF_CHANGED_BOOL("static_calibration", enableStaticRecalibration);
+	WRITE_IF_CHANGED_DOUBLE("jitter_threshold", jitterThreshold);
 	WRITE_IF_CHANGED_DOUBLE("max_relative_error_threshold", maxRelativeErrorThreshold);
-	WRITE_IF_CHANGED_BOOL  ("recalibrate_on_movement",      recalibrateOnMovement);
-	WRITE_IF_CHANGED_BOOL  ("base_station_drift_correction", baseStationDriftCorrectionEnabled);
-	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed",   oneShotCalibrationSpeed);
+	WRITE_IF_CHANGED_BOOL("recalibrate_on_movement", recalibrateOnMovement);
+	WRITE_IF_CHANGED_BOOL("base_station_drift_correction", baseStationDriftCorrectionEnabled);
+	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed", oneShotCalibrationSpeed);
 	WRITE_IF_CHANGED_DOUBLE("continuous_calibration_speed", continuousCalibrationSpeed);
 
 	// finger_smoothing_* and tracker_smoothness moved out of SC profiles
@@ -905,15 +885,12 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 		chaperone["auto_apply"].set<bool>(ctx.chaperone.autoApply);
 		chaperone["play_space_size"].set<picojson::array>(FloatArray(ctx.chaperone.playSpaceSize.v, 2));
 
-		chaperone["standing_center"].set<picojson::array>(FloatArray(
-			(float *) ctx.chaperone.standingCenter.m,
-			sizeof(ctx.chaperone.standingCenter.m) / sizeof(float)
-		));
+		chaperone["standing_center"].set<picojson::array>(
+		    FloatArray((float*)ctx.chaperone.standingCenter.m, sizeof(ctx.chaperone.standingCenter.m) / sizeof(float)));
 
-		chaperone["geometry"].set<picojson::array>(FloatArray(
-			(float *) ctx.chaperone.geometry.data(),
-			sizeof(ctx.chaperone.geometry[0]) / sizeof(float) * ctx.chaperone.geometry.size()
-		));
+		chaperone["geometry"].set<picojson::array>(
+		    FloatArray((float*)ctx.chaperone.geometry.data(),
+		               sizeof(ctx.chaperone.geometry[0]) / sizeof(float) * ctx.chaperone.geometry.size()));
 
 		profile["chaperone"].set<picojson::object>(chaperone);
 	}
@@ -987,16 +964,12 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	// when the subsystem has been activated (mode != Off / enabled != false /
 	// boundary data present) so profiles for the typical no-Quest setup
 	// remain identical to v3 except for the schema_version bump.
-	if (ctx.headMount.mode != HeadMountMode::Off
-		|| !ctx.headMount.trackerSerial.empty()
-		|| ctx.headMount.offsetCalibrated
-		|| !ctx.headMount.autoCorrectOffset
-		|| !wkopenvr::headmount::DriverSynthTimingIsDefault(
-			ctx.headMount.driverSynthTiming)) {
+	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
+	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset ||
+	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}
-	if (ctx.boundary.enabled || ctx.boundary.priorChaperoneCaptured
-		|| !ctx.boundary.vertices.empty()) {
+	if (ctx.boundary.enabled || ctx.boundary.priorChaperoneCaptured || !ctx.boundary.vertices.empty()) {
 		profile["boundary"].set<picojson::object>(SaveBoundary(ctx.boundary));
 	}
 	picojson::value profileV;
@@ -1013,12 +986,13 @@ void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 
 static void LogRegistryResult(LSTATUS result)
 {
-	char *message;
-	FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER, 0, result, LANG_USER_DEFAULT, (LPSTR)&message, 0, nullptr);
+	char* message;
+	FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER, 0, result, LANG_USER_DEFAULT,
+	               (LPSTR)&message, 0, nullptr);
 	std::cerr << "Opening registry key: " << message << std::endl;
 }
 
-static const char *RegistryKey = "Software\\WKOpenVR-SpaceCalibrator";
+static const char* RegistryKey = "Software\\WKOpenVR-SpaceCalibrator";
 
 // Strip the trailing null terminator that RegGetValueA reports as part of
 // the byte count for REG_SZ. Pure for testability — see
@@ -1031,7 +1005,8 @@ static const char *RegistryKey = "Software\\WKOpenVR-SpaceCalibrator";
 // through LoadProfile and crashing the overlay before ParseProfile could
 // even run. Returns 0 on size==0 (caller treats as "no profile, bootstrap
 // fresh"); otherwise returns size-1 (drop the null).
-size_t StripRegistryNullTerminator(DWORD reportedSize) {
+size_t StripRegistryNullTerminator(DWORD reportedSize)
+{
 	return reportedSize > 0 ? (size_t)reportedSize - 1 : 0;
 }
 
@@ -1039,10 +1014,11 @@ size_t StripRegistryNullTerminator(DWORD reportedSize) {
 // absent (first run)" from "key present but value read failed (I/O error,
 // permissions)". Callers use this to decide whether to surface an error
 // banner vs. silently bootstrapping a fresh profile.
-enum class RegistryReadOutcome {
-	Absent,       // Key or value not found -- normal first-run condition.
-	ReadFailed,   // Key found but data read failed -- surface to user.
-	Success,      // Data read successfully.
+enum class RegistryReadOutcome
+{
+	Absent,     // Key or value not found -- normal first-run condition.
+	ReadFailed, // Key found but data read failed -- surface to user.
+	Success,    // Data read successfully.
 };
 static RegistryReadOutcome g_lastRegistryReadOutcome = RegistryReadOutcome::Absent;
 
@@ -1056,7 +1032,8 @@ static std::string ReadRegistryKey()
 		// failure that should be surfaced to the user.
 		if (result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND) {
 			g_lastRegistryReadOutcome = RegistryReadOutcome::Absent;
-		} else {
+		}
+		else {
 			g_lastRegistryReadOutcome = RegistryReadOutcome::ReadFailed;
 			std::cerr << "Registry size query failed (not a first-run absence): ";
 			LogRegistryResult(result);
@@ -1095,7 +1072,8 @@ static std::string ReadRegistryKey()
 static void WriteRegistryKey(std::string str)
 {
 	HKEY hkey;
-	auto result = RegCreateKeyExA(HKEY_CURRENT_USER_LOCAL_SETTINGS, RegistryKey, 0, REG_NONE, 0, KEY_ALL_ACCESS, 0, &hkey, 0);
+	auto result =
+	    RegCreateKeyExA(HKEY_CURRENT_USER_LOCAL_SETTINGS, RegistryKey, 0, REG_NONE, 0, KEY_ALL_ACCESS, 0, &hkey, 0);
 	if (result != ERROR_SUCCESS) {
 		LogRegistryResult(result);
 		return;
@@ -1111,12 +1089,13 @@ static void WriteRegistryKey(std::string str)
 	RegCloseKey(hkey);
 }
 
-void LoadProfile(CalibrationContext &ctx)
+void LoadProfile(CalibrationContext& ctx)
 {
 	// @TODO: Rewrite this to migrate configs from the registry to the spacecal directory
 	//        I don't know why whoever wrote this thought writing to the registry in the 2020s was a good idea...
 	//        NOTE: HKEY_CURRENT_USER_LOCAL_SETTINGS evaluates to	HKCU\Software\Classes\Local Settings
-	//              Settings are currently stored at				HKCU\Software\Classes\Local Settings\Software\WKOpenVR-SpaceCalibrator
+	//              Settings are currently stored at				HKCU\Software\Classes\Local
+	//              Settings\Software\WKOpenVR-SpaceCalibrator
 	//
 	//        Profiles stored at this registry path are now versioned via the top-level
 	//        "schema_version" integer (see kProfileSchemaVersion). Legacy registry blobs
@@ -1131,9 +1110,11 @@ void LoadProfile(CalibrationContext &ctx)
 			// ACL change, corruption). Warn visibly rather than silently
 			// zeroing the calibration.
 			std::cerr << "LoadProfile: failed to read saved calibration from registry; "
-				"running with empty profile. Check registry permissions at "
-				"HKCU\\Software\\Classes\\Local Settings\\" << RegistryKey << std::endl;
-		} else {
+			             "running with empty profile. Check registry permissions at "
+			             "HKCU\\Software\\Classes\\Local Settings\\"
+			          << RegistryKey << std::endl;
+		}
+		else {
 			std::cout << "Profile is empty" << std::endl;
 		}
 		ctx.Clear();
@@ -1158,28 +1139,26 @@ void LoadProfile(CalibrationContext &ctx)
 		// NOTE: ctx.calibratedTranslation is stored in centimetres (see
 		// Calibration.cpp:2800 -- "convert to cm units for profile storage").
 		// Do NOT multiply by 100; the value is already in cm.
-		const double transMagCm =
-			std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x()
-			        + ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y()
-			        + ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
+		const double transMagCm = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
+		                                    ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
+		                                    ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
 		char loadBuf[320];
 		snprintf(loadBuf, sizeof loadBuf,
-			"profile_loaded: bytes=%zu valid=%d trans_mag_cm=%.2f euler_deg=(%.2f,%.2f,%.2f)"
-			" ref_sys=%s tgt_sys=%s",
-			str.size(), (int)ctx.validProfile, transMagCm,
-			ctx.calibratedRotation.x(), ctx.calibratedRotation.y(), ctx.calibratedRotation.z(),
-			ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
+		         "profile_loaded: bytes=%zu valid=%d trans_mag_cm=%.2f euler_deg=(%.2f,%.2f,%.2f)"
+		         " ref_sys=%s tgt_sys=%s",
+		         str.size(), (int)ctx.validProfile, transMagCm, ctx.calibratedRotation.x(), ctx.calibratedRotation.y(),
+		         ctx.calibratedRotation.z(), ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
 		Metrics::WriteLogAnnotation(loadBuf);
-	} catch (const std::runtime_error &e) {
+	}
+	catch (const std::runtime_error& e) {
 		std::cerr << "Error loading profile: " << e.what() << std::endl;
 		char errBuf[256];
-		snprintf(errBuf, sizeof errBuf,
-			"profile_load_failed: bytes=%zu reason=%s", str.size(), e.what());
+		snprintf(errBuf, sizeof errBuf, "profile_load_failed: bytes=%zu reason=%s", str.size(), e.what());
 		Metrics::WriteLogAnnotation(errBuf);
 	}
 }
 
-void SaveProfile(CalibrationContext &ctx)
+void SaveProfile(CalibrationContext& ctx)
 {
 	std::stringstream io;
 	WriteProfile(ctx, io);
@@ -1210,9 +1189,8 @@ void SaveProfile(CalibrationContext &ctx)
 		if ((nowSec - s_lastSkipLogTime) >= 30.0) {
 			s_lastSkipLogTime = nowSec;
 			char skipBuf[200];
-			snprintf(skipBuf, sizeof skipBuf,
-				"[profile-save][skipped] count_since_last_log=%d hash_unchanged=1",
-				s_skipBurstCount);
+			snprintf(skipBuf, sizeof skipBuf, "[profile-save][skipped] count_since_last_log=%d hash_unchanged=1",
+			         s_skipBurstCount);
 			Metrics::WriteLogAnnotation(skipBuf);
 			s_skipBurstCount = 0;
 		}
@@ -1228,15 +1206,12 @@ void SaveProfile(CalibrationContext &ctx)
 	// bug from 2026-05-03 was hard to debug because saves were silent; this
 	// closes that gap. Includes the magnitude of what we just persisted so
 	// a "saved a wedged cal at time T" question can be spot-checked.
-	const double transMagCm =
-		std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x()
-		        + ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y()
-		        + ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
+	const double transMagCm = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
+	                                    ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
+	                                    ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
 	char saveBuf[256];
-	snprintf(saveBuf, sizeof saveBuf,
-		"profile_saved: bytes=%zu valid=%d trans_mag_cm=%.2f hash=0x%016llx",
-		serialized.size(), (int)ctx.validProfile, transMagCm,
-		(unsigned long long)hash);
+	snprintf(saveBuf, sizeof saveBuf, "profile_saved: bytes=%zu valid=%d trans_mag_cm=%.2f hash=0x%016llx",
+	         serialized.size(), (int)ctx.validProfile, transMagCm, (unsigned long long)hash);
 	Metrics::WriteLogAnnotation(saveBuf);
 
 	// Anomaly detection: when the saved magnitude differs from the previous
@@ -1250,25 +1225,19 @@ void SaveProfile(CalibrationContext &ctx)
 	// itself is not blocked -- the hash-skip path will catch repeats.
 	static double s_lastSavedTransMagCm = 0.0;
 	constexpr double kProfileSaveDeltaWarnCm = 5.0;
-	if (s_lastSavedTransMagCm > 0.0
-		&& std::abs(transMagCm - s_lastSavedTransMagCm) > kProfileSaveDeltaWarnCm) {
+	if (s_lastSavedTransMagCm > 0.0 && std::abs(transMagCm - s_lastSavedTransMagCm) > kProfileSaveDeltaWarnCm) {
 		char anomBuf[640];
 		snprintf(anomBuf, sizeof anomBuf,
-			"[profile-save][anomaly] trans_mag_cm=%.2f prev_trans_mag_cm=%.2f"
-			" delta_cm=%.2f bytes=%zu valid=%d mode=%d source=%s"
-			" offset_version=%u relPosCal=%d needsFreshRelPose=%d"
-			" head_tracker_serial='%s' target_serial='%s'"
-			" (large_delta_warning)",
-			transMagCm, s_lastSavedTransMagCm,
-			std::abs(transMagCm - s_lastSavedTransMagCm),
-			serialized.size(), (int)ctx.validProfile,
-			(int)ctx.headMount.mode,
-			HeadMountSampleSourceName(ctx.headMountLastSampleSource),
-			(unsigned)ctx.headMountOffsetVersion,
-			(int)ctx.relativePosCalibrated,
-			(int)ctx.headMountNeedsFreshRelativePose,
-			ctx.headMount.trackerSerial.c_str(),
-			ctx.targetStandby.serial.c_str());
+		         "[profile-save][anomaly] trans_mag_cm=%.2f prev_trans_mag_cm=%.2f"
+		         " delta_cm=%.2f bytes=%zu valid=%d mode=%d source=%s"
+		         " offset_version=%u relPosCal=%d needsFreshRelPose=%d"
+		         " head_tracker_serial='%s' target_serial='%s'"
+		         " (large_delta_warning)",
+		         transMagCm, s_lastSavedTransMagCm, std::abs(transMagCm - s_lastSavedTransMagCm), serialized.size(),
+		         (int)ctx.validProfile, (int)ctx.headMount.mode,
+		         HeadMountSampleSourceName(ctx.headMountLastSampleSource), (unsigned)ctx.headMountOffsetVersion,
+		         (int)ctx.relativePosCalibrated, (int)ctx.headMountNeedsFreshRelativePose,
+		         ctx.headMount.trackerSerial.c_str(), ctx.targetStandby.serial.c_str());
 		Metrics::WriteLogAnnotation(anomBuf);
 	}
 	s_lastSavedTransMagCm = transMagCm;

@@ -32,17 +32,23 @@ public sealed class RegistryClient(HttpClient http)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, "/v1/index");
         if (_indexETag is not null)
+        {
             req.Headers.TryAddWithoutValidation("If-None-Match", _indexETag);
+        }
 
-        using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        using HttpResponseMessage resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (resp.StatusCode == System.Net.HttpStatusCode.NotModified)
+        {
             return null;
+        }
 
         resp.EnsureSuccessStatusCode();
 
         if (resp.Headers.ETag is { } etag)
+        {
             _indexETag = etag.Tag;
+        }
 
         return await resp.Content.ReadFromJsonAsync<IndexDocument>(JsonOpts, ct);
     }
@@ -55,7 +61,7 @@ public sealed class RegistryClient(HttpClient http)
             ? $"/v1/modules/{Uri.EscapeDataString(uuid)}/manifest"
             : $"/v1/modules/{Uri.EscapeDataString(uuid)}/versions/{Uri.EscapeDataString(version)}/manifest";
 
-        var result = await http.GetFromJsonAsync<Manifest>(path, JsonOpts, ct);
+        Manifest? result = await http.GetFromJsonAsync<Manifest>(path, JsonOpts, ct);
         return result ?? throw new InvalidDataException($"Registry returned null manifest for {uuid}");
     }
 

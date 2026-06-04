@@ -27,28 +27,21 @@ constexpr double kFirstContinuousSnapJumpCm = 3.0;
 //      lands discontinuously.
 //
 // Otherwise returns true (smooth blend via BlendTransform).
-constexpr bool ShouldBlendCycle(bool inContinuousState,
-                                bool isFreshlyAdopted,
-                                bool snapThisCycle) {
-    return inContinuousState && !isFreshlyAdopted && !snapThisCycle;
+constexpr bool ShouldBlendCycle(bool inContinuousState, bool isFreshlyAdopted, bool snapThisCycle)
+{
+	return inContinuousState && !isFreshlyAdopted && !snapThisCycle;
 }
 
 // First accepted continuous candidate after entering continuous mode gets
 // special handling: if it differs from the profile that was just loaded by
 // more than the solve's own noise floor, snap so the user sees the calibration
 // take effect immediately instead of waiting on a blend from stale state.
-constexpr bool ShouldSnapFirstContinuousCandidate(bool inContinuousState,
-                                                  bool hasAcceptedSnapshot,
-                                                  bool hasGuardBaseline,
-                                                  double jumpCm,
-                                                  double solveUncertaintyCm) {
-    const double snapThresholdCm = solveUncertaintyCm > kFirstContinuousSnapJumpCm
-        ? solveUncertaintyCm
-        : kFirstContinuousSnapJumpCm;
-    return inContinuousState
-        && !hasAcceptedSnapshot
-        && hasGuardBaseline
-        && jumpCm >= snapThresholdCm;
+constexpr bool ShouldSnapFirstContinuousCandidate(bool inContinuousState, bool hasAcceptedSnapshot,
+                                                  bool hasGuardBaseline, double jumpCm, double solveUncertaintyCm)
+{
+	const double snapThresholdCm =
+	    solveUncertaintyCm > kFirstContinuousSnapJumpCm ? solveUncertaintyCm : kFirstContinuousSnapJumpCm;
+	return inContinuousState && !hasAcceptedSnapshot && hasGuardBaseline && jumpCm >= snapThresholdCm;
 }
 
-}  // namespace spacecal::motiongate
+} // namespace spacecal::motiongate

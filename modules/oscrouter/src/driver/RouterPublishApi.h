@@ -19,10 +19,6 @@
 
 namespace pairdriver::oscrouter {
 
-bool PublishOsc(const char *source_id,
-                const char *address,
-                const char *typetag,
-                const void *args,
-                size_t      arg_len);
+bool PublishOsc(const char* source_id, const char* address, const char* typetag, const void* args, size_t arg_len);
 
 } // namespace pairdriver::oscrouter

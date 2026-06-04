@@ -37,23 +37,21 @@
 // Uses raw Win32 only -- no C runtime, no statics, no malloc.
 // ---------------------------------------------------------------------------
 
-static void WriteEarlyCrashLog(const char *msg)
+static void WriteEarlyCrashLog(const char* msg)
 {
-    std::wstring path = openvr_pair::common::WkOpenVrLogsPath(true);
-    if (path.empty()) return;
+	std::wstring path = openvr_pair::common::WkOpenVrLogsPath(true);
+	if (path.empty()) return;
 
-    DWORD pid = GetCurrentProcessId();
-    std::wstring fname = path + L"\\captions_host_crash_" +
-        std::to_wstring((unsigned long)pid) + L".txt";
+	DWORD pid = GetCurrentProcessId();
+	std::wstring fname = path + L"\\captions_host_crash_" + std::to_wstring((unsigned long)pid) + L".txt";
 
-    HANDLE h = CreateFileW(fname.c_str(),
-        GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return;
+	HANDLE h = CreateFileW(fname.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+	                       nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
 
-    DWORD written = 0;
-    WriteFile(h, msg, (DWORD)strlen(msg), &written, nullptr);
-    CloseHandle(h);
+	DWORD written = 0;
+	WriteFile(h, msg, (DWORD)strlen(msg), &written, nullptr);
+	CloseHandle(h);
 }
 
 // ---------------------------------------------------------------------------
@@ -68,20 +66,20 @@ static void WriteEarlyCrashLog(const char *msg)
 
 static FARPROC WINAPI DelayLoadFailureHook(unsigned dliNotify, PDelayLoadInfo pdli)
 {
-    if (dliNotify == dliFailLoadLib) {
-        const char *dll = (pdli && pdli->szDll) ? pdli->szDll : "<unknown>";
-        DWORD err = pdli ? pdli->dwLastError : GetLastError();
-        char msg[768];
-        _snprintf_s(msg, sizeof msg,
-            "[captions-host] FATAL: delay-load failed for '%s' (err=%lu)\n"
-            "  Cause: an optional captions runtime DLL is missing from the per-user\n"
-            "  captions runtime folder or from PATH. Install the relevant Captions\n"
-            "  pack from the overlay, then restart the host.\n",
-            dll, (unsigned long)err);
-        WriteEarlyCrashLog(msg);
-        ExitProcess(0xCEE0DC00 | (err & 0xFF));
-    }
-    return nullptr;
+	if (dliNotify == dliFailLoadLib) {
+		const char* dll = (pdli && pdli->szDll) ? pdli->szDll : "<unknown>";
+		DWORD err = pdli ? pdli->dwLastError : GetLastError();
+		char msg[768];
+		_snprintf_s(msg, sizeof msg,
+		            "[captions-host] FATAL: delay-load failed for '%s' (err=%lu)\n"
+		            "  Cause: an optional captions runtime DLL is missing from the per-user\n"
+		            "  captions runtime folder or from PATH. Install the relevant Captions\n"
+		            "  pack from the overlay, then restart the host.\n",
+		            dll, (unsigned long)err);
+		WriteEarlyCrashLog(msg);
+		ExitProcess(0xCEE0DC00 | (err & 0xFF));
+	}
+	return nullptr;
 }
 
 // The MSVC linker resolves this symbol from delayimp.lib. Declaring it
@@ -93,19 +91,19 @@ extern "C" const PfnDliHook __pfnDliFailureHook2 = DelayLoadFailureHook;
 // or during main() -- e.g., an access violation in whisper's CUDA init path.
 // ---------------------------------------------------------------------------
 
-static LONG WINAPI TopLevelSehFilter(EXCEPTION_POINTERS *ep)
+static LONG WINAPI TopLevelSehFilter(EXCEPTION_POINTERS* ep)
 {
-    if (!ep) return EXCEPTION_EXECUTE_HANDLER;
-    DWORD code = ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
-    void *addr = ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : nullptr;
-    char msg[512];
-    _snprintf_s(msg, sizeof msg,
-        "[captions-host] FATAL SEH: code=0x%08lX addr=%p\n"
-        "  This is likely a crash inside a native inference library (whisper/ORT/CT2).\n"
-        "  Check the captions driver log for 'dll-probe' lines to identify missing DLLs.\n",
-        (unsigned long)code, addr);
-    WriteEarlyCrashLog(msg);
-    return EXCEPTION_EXECUTE_HANDLER;
+	if (!ep) return EXCEPTION_EXECUTE_HANDLER;
+	DWORD code = ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+	void* addr = ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : nullptr;
+	char msg[512];
+	_snprintf_s(msg, sizeof msg,
+	            "[captions-host] FATAL SEH: code=0x%08lX addr=%p\n"
+	            "  This is likely a crash inside a native inference library (whisper/ORT/CT2).\n"
+	            "  Check the captions driver log for 'dll-probe' lines to identify missing DLLs.\n",
+	            (unsigned long)code, addr);
+	WriteEarlyCrashLog(msg);
+	return EXCEPTION_EXECUTE_HANDLER;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,127 +111,129 @@ static LONG WINAPI TopLevelSehFilter(EXCEPTION_POINTERS *ep)
 // Logs to the host log (call after CaptionsHostOpenLogFile).
 // ---------------------------------------------------------------------------
 
-static void ProbeDll(const wchar_t *dll_name)
+static void ProbeDll(const wchar_t* dll_name)
 {
-    HMODULE h = LoadLibraryW(dll_name);
-    if (h) {
-        wchar_t fullpath[MAX_PATH] = {};
-        GetModuleFileNameW(h, fullpath, MAX_PATH);
-        FreeLibrary(h);
-        TH_LOG("[captions-host] dll-probe: %ls -> FOUND at %ls",
-            dll_name, fullpath[0] ? fullpath : L"(path unavailable)");
-    } else {
-        DWORD err = GetLastError();
-        TH_LOG("[captions-host] dll-probe: %ls -> MISSING (err=%lu)",
-            dll_name, (unsigned long)err);
-    }
+	HMODULE h = LoadLibraryW(dll_name);
+	if (h) {
+		wchar_t fullpath[MAX_PATH] = {};
+		GetModuleFileNameW(h, fullpath, MAX_PATH);
+		FreeLibrary(h);
+		TH_LOG("[captions-host] dll-probe: %ls -> FOUND at %ls", dll_name,
+		       fullpath[0] ? fullpath : L"(path unavailable)");
+	}
+	else {
+		DWORD err = GetLastError();
+		TH_LOG("[captions-host] dll-probe: %ls -> MISSING (err=%lu)", dll_name, (unsigned long)err);
+	}
 }
 
-static bool FileExistsA(const std::string &path);
+static bool FileExistsA(const std::string& path);
 
-static std::string HostFilePath(const char *filename)
+static std::string HostFilePath(const char* filename)
 {
-    char buf[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    std::string path(buf);
-    size_t sep = path.find_last_of("/\\");
-    if (sep != std::string::npos) path.resize(sep + 1);
-    else path.clear();
-    path += filename;
-    return path;
+	char buf[MAX_PATH] = {};
+	GetModuleFileNameA(nullptr, buf, MAX_PATH);
+	std::string path(buf);
+	size_t sep = path.find_last_of("/\\");
+	if (sep != std::string::npos)
+		path.resize(sep + 1);
+	else
+		path.clear();
+	path += filename;
+	return path;
 }
 
 static void RegisterCaptionsManifest()
 {
-    auto *apps = vr::VRApplications();
-    if (!apps) {
-        TH_LOG("[actions] VRApplications unavailable; captions app manifest not registered");
-        return;
-    }
+	auto* apps = vr::VRApplications();
+	if (!apps) {
+		TH_LOG("[actions] VRApplications unavailable; captions app manifest not registered");
+		return;
+	}
 
-    // Remove the legacy key from SteamVR's vrappconfig on upgrade.
-    const char *legacyKey = "wk.wkopenvr.translator";
-    if (apps->IsApplicationInstalled(legacyKey)) {
-        std::string legacyManifest = HostFilePath("translator.vrmanifest");
-        if (FileExistsA(legacyManifest)) {
-            vr::EVRApplicationError rmErr = apps->RemoveApplicationManifest(legacyManifest.c_str());
-            TH_LOG("[actions] RemoveApplicationManifest (legacy translator) -> %d", (int)rmErr);
-        } else {
-            // Manifest file already gone; unregister by key directly if API supports it.
-            // VRApplications has no RemoveApplicationManifestByKey; log and continue.
-            TH_LOG("[actions] legacy translator manifest file not present; stale vrappconfig entry may persist");
-        }
-    }
+	// Remove the legacy key from SteamVR's vrappconfig on upgrade.
+	const char* legacyKey = "wk.wkopenvr.translator";
+	if (apps->IsApplicationInstalled(legacyKey)) {
+		std::string legacyManifest = HostFilePath("translator.vrmanifest");
+		if (FileExistsA(legacyManifest)) {
+			vr::EVRApplicationError rmErr = apps->RemoveApplicationManifest(legacyManifest.c_str());
+			TH_LOG("[actions] RemoveApplicationManifest (legacy translator) -> %d", (int)rmErr);
+		}
+		else {
+			// Manifest file already gone; unregister by key directly if API supports it.
+			// VRApplications has no RemoveApplicationManifestByKey; log and continue.
+			TH_LOG("[actions] legacy translator manifest file not present; stale vrappconfig entry may persist");
+		}
+	}
 
-    const char *appKey = "wk.wkopenvr.captions";
-    std::string manifest = HostFilePath("captions.vrmanifest");
-    if (!FileExistsA(manifest)) {
-        TH_LOG("[actions] captions app manifest missing: %s", manifest.c_str());
-        return;
-    }
+	const char* appKey = "wk.wkopenvr.captions";
+	std::string manifest = HostFilePath("captions.vrmanifest");
+	if (!FileExistsA(manifest)) {
+		TH_LOG("[actions] captions app manifest missing: %s", manifest.c_str());
+		return;
+	}
 
-    if (!apps->IsApplicationInstalled(appKey)) {
-        vr::EVRApplicationError err = apps->AddApplicationManifest(manifest.c_str());
-        TH_LOG("[actions] AddApplicationManifest(%s) -> %d", manifest.c_str(), (int)err);
-    } else {
-        TH_LOG("[actions] captions app manifest already installed");
-    }
+	if (!apps->IsApplicationInstalled(appKey)) {
+		vr::EVRApplicationError err = apps->AddApplicationManifest(manifest.c_str());
+		TH_LOG("[actions] AddApplicationManifest(%s) -> %d", manifest.c_str(), (int)err);
+	}
+	else {
+		TH_LOG("[actions] captions app manifest already installed");
+	}
 }
 
-static bool FileExistsA(const std::string &path)
+static bool FileExistsA(const std::string& path)
 {
-    if (path.empty()) return false;
-    DWORD attr = GetFileAttributesA(path.c_str());
-    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+	if (path.empty()) return false;
+	DWORD attr = GetFileAttributesA(path.c_str());
+	return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
-static bool DirectoryExistsA(const std::string &path)
+static bool DirectoryExistsA(const std::string& path)
 {
-    if (path.empty()) return false;
-    DWORD attr = GetFileAttributesA(path.c_str());
-    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	if (path.empty()) return false;
+	DWORD attr = GetFileAttributesA(path.c_str());
+	return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
-static void EnsureDirectoryTreeA(const std::string &path)
+static void EnsureDirectoryTreeA(const std::string& path)
 {
-    if (path.empty()) return;
-    std::string current;
-    current.reserve(path.size());
-    for (size_t i = 0; i < path.size(); ++i) {
-        current.push_back(path[i]);
-        const bool separator = path[i] == '\\' || path[i] == '/';
-        if (!separator && i + 1 != path.size()) continue;
-        if (current.size() <= 3) continue; // skip "C:\" prefix
-        while (!current.empty() &&
-               (current.back() == '\\' || current.back() == '/')) {
-            current.pop_back();
-        }
-        if (!current.empty()) CreateDirectoryA(current.c_str(), nullptr);
-        if (separator) current.push_back('\\');
-    }
+	if (path.empty()) return;
+	std::string current;
+	current.reserve(path.size());
+	for (size_t i = 0; i < path.size(); ++i) {
+		current.push_back(path[i]);
+		const bool separator = path[i] == '\\' || path[i] == '/';
+		if (!separator && i + 1 != path.size()) continue;
+		if (current.size() <= 3) continue; // skip "C:\" prefix
+		while (!current.empty() && (current.back() == '\\' || current.back() == '/')) {
+			current.pop_back();
+		}
+		if (!current.empty()) CreateDirectoryA(current.c_str(), nullptr);
+		if (separator) current.push_back('\\');
+	}
 }
 
 static std::string CaptionsDataDir()
 {
-    std::wstring root = openvr_pair::common::WkOpenVrSubdirectoryPath(
-        L"captions", true);
-    return openvr_pair::common::WideToUtf8(root);
+	std::wstring root = openvr_pair::common::WkOpenVrSubdirectoryPath(L"captions", true);
+	return openvr_pair::common::WideToUtf8(root);
 }
 
 static std::string CaptionsRuntimeDir()
 {
-    std::string dir = CaptionsDataDir();
-    if (dir.empty()) return {};
-    return dir + "\\runtime";
+	std::string dir = CaptionsDataDir();
+	if (dir.empty()) return {};
+	return dir + "\\runtime";
 }
 
 static void AddCaptionsRuntimeSearchPath()
 {
-    std::string dir = CaptionsRuntimeDir();
-    if (dir.empty()) return;
-    EnsureDirectoryTreeA(dir);
-    SetDllDirectoryA(dir.c_str());
-    TH_LOG("[captions-host] runtime DLL directory: %s", dir.c_str());
+	std::string dir = CaptionsRuntimeDir();
+	if (dir.empty()) return;
+	EnsureDirectoryTreeA(dir);
+	SetDllDirectoryA(dir.c_str());
+	TH_LOG("[captions-host] runtime DLL directory: %s", dir.c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -242,20 +242,20 @@ static void AddCaptionsRuntimeSearchPath()
 
 struct HostConfig
 {
-    std::string source_lang       = "auto";
-    std::string target_lang       = "";           // empty = transcribe only
-    std::string chatbox_address   = "/chatbox/input";
-    uint16_t    chatbox_port      = 9000;
-    bool        transcript_logging = false;
-    int         mode              = 0;            // 0=PTT, 1=always-on
+	std::string source_lang = "auto";
+	std::string target_lang = ""; // empty = transcribe only
+	std::string chatbox_address = "/chatbox/input";
+	uint16_t chatbox_port = 9000;
+	bool transcript_logging = false;
+	int mode = 0; // 0=PTT, 1=always-on
 
-    // Paths: resolved once at startup. Overrideable via command-line.
-    std::string whisper_model_path;
-    std::string silero_model_path;
+	// Paths: resolved once at startup. Overrideable via command-line.
+	std::string whisper_model_path;
+	std::string silero_model_path;
 };
 
-static std::mutex  g_config_mutex;
-static HostConfig  g_config;
+static std::mutex g_config_mutex;
+static HostConfig g_config;
 
 // ---------------------------------------------------------------------------
 // Control pipe listener (receives config updates from the driver)
@@ -263,84 +263,87 @@ static HostConfig  g_config;
 
 #define HOST_CONTROL_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-Captions.host"
 
-static std::atomic<bool> g_shutdown{ false };
+static std::atomic<bool> g_shutdown{false};
 
-static void DispatchControlMessage(char *buf, DWORD got)
+static void DispatchControlMessage(char* buf, DWORD got)
 {
-    buf[got] = '\0'; // caller guarantees buf has room for one extra byte
-    std::string msg(buf, got);
-    TH_LOG("[control] received: %s", msg.c_str());
-    if (msg.rfind("config:", 0) != 0) return;
+	buf[got] = '\0'; // caller guarantees buf has room for one extra byte
+	std::string msg(buf, got);
+	TH_LOG("[control] received: %s", msg.c_str());
+	if (msg.rfind("config:", 0) != 0) return;
 
-    std::lock_guard<std::mutex> lk(g_config_mutex);
-    std::string body = msg.substr(7);
-    size_t pos = 0;
-    while (pos < body.size()) {
-        size_t eq = body.find('=', pos);
-        if (eq == std::string::npos) break;
-        size_t comma = body.find(',', eq);
-        std::string key = body.substr(pos, eq - pos);
-        std::string val = body.substr(eq + 1,
-            comma == std::string::npos ? std::string::npos : comma - eq - 1);
-        while (!val.empty() && (val.back() == '\n' || val.back() == '\r'))
-            val.pop_back();
+	std::lock_guard<std::mutex> lk(g_config_mutex);
+	std::string body = msg.substr(7);
+	size_t pos = 0;
+	while (pos < body.size()) {
+		size_t eq = body.find('=', pos);
+		if (eq == std::string::npos) break;
+		size_t comma = body.find(',', eq);
+		std::string key = body.substr(pos, eq - pos);
+		std::string val = body.substr(eq + 1, comma == std::string::npos ? std::string::npos : comma - eq - 1);
+		while (!val.empty() && (val.back() == '\n' || val.back() == '\r'))
+			val.pop_back();
 
-        if      (key == "src")  g_config.source_lang          = val;
-        else if (key == "tgt")  g_config.target_lang          = val;
-        else if (key == "mode") g_config.mode                  = std::stoi(val);
-        else if (key == "addr") g_config.chatbox_address      = val;
-        else if (key == "port") g_config.chatbox_port         = (uint16_t)std::stoi(val);
-        else if (key == "log")  g_config.transcript_logging   = (val != "0");
+		if (key == "src")
+			g_config.source_lang = val;
+		else if (key == "tgt")
+			g_config.target_lang = val;
+		else if (key == "mode")
+			g_config.mode = std::stoi(val);
+		else if (key == "addr")
+			g_config.chatbox_address = val;
+		else if (key == "port")
+			g_config.chatbox_port = (uint16_t)std::stoi(val);
+		else if (key == "log")
+			g_config.transcript_logging = (val != "0");
 
-        if (comma == std::string::npos) break;
-        pos = comma + 1;
-    }
+		if (comma == std::string::npos) break;
+		pos = comma + 1;
+	}
 }
 
 static void ControlPipeThread()
 {
-    // Create the pipe server once. Driver only sends one config message per
-    // connection; after each message we disconnect and wait for the next
-    // client without destroying the server handle -- this avoids the race
-    // window where a second host process could steal the server slot.
-    HANDLE pipe = CreateNamedPipeA(
-        HOST_CONTROL_PIPE_NAME,
-        PIPE_ACCESS_INBOUND,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-        2,      // max 2 instances: tolerates brief driver reconnect overlap
-        0, 4096, 1000, nullptr);
+	// Create the pipe server once. Driver only sends one config message per
+	// connection; after each message we disconnect and wait for the next
+	// client without destroying the server handle -- this avoids the race
+	// window where a second host process could steal the server slot.
+	HANDLE pipe =
+	    CreateNamedPipeA(HOST_CONTROL_PIPE_NAME, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+	                     2, // max 2 instances: tolerates brief driver reconnect overlap
+	                     0, 4096, 1000, nullptr);
 
-    if (pipe == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
-        if (err == ERROR_PIPE_BUSY) {
-            // Another host process already owns the pipe; exit so the
-            // supervisor surfaces the conflict rather than silently spinning.
-            TH_LOG("[control] FATAL: pipe already owned by another host (ERROR_PIPE_BUSY); exiting (code 4)");
-            CaptionsHostFlushLog();
-            ExitProcess(4);
-        }
-        TH_LOG("[control] CreateNamedPipeA failed err=%lu; control pipe unavailable", (unsigned long)err);
-        return;
-    }
+	if (pipe == INVALID_HANDLE_VALUE) {
+		DWORD err = GetLastError();
+		if (err == ERROR_PIPE_BUSY) {
+			// Another host process already owns the pipe; exit so the
+			// supervisor surfaces the conflict rather than silently spinning.
+			TH_LOG("[control] FATAL: pipe already owned by another host (ERROR_PIPE_BUSY); exiting (code 4)");
+			CaptionsHostFlushLog();
+			ExitProcess(4);
+		}
+		TH_LOG("[control] CreateNamedPipeA failed err=%lu; control pipe unavailable", (unsigned long)err);
+		return;
+	}
 
-    char buf[4097] = {};
-    while (!g_shutdown.load(std::memory_order_acquire)) {
-        BOOL connected = ConnectNamedPipe(pipe, nullptr);
-        if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
-            if (g_shutdown.load(std::memory_order_acquire)) break;
-            Sleep(50);
-            continue;
-        }
+	char buf[4097] = {};
+	while (!g_shutdown.load(std::memory_order_acquire)) {
+		BOOL connected = ConnectNamedPipe(pipe, nullptr);
+		if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
+			if (g_shutdown.load(std::memory_order_acquire)) break;
+			Sleep(50);
+			continue;
+		}
 
-        DWORD got = 0;
-        if (ReadFile(pipe, buf, sizeof(buf) - 1, &got, nullptr) && got > 0) {
-            DispatchControlMessage(buf, got);
-        }
+		DWORD got = 0;
+		if (ReadFile(pipe, buf, sizeof(buf) - 1, &got, nullptr) && got > 0) {
+			DispatchControlMessage(buf, got);
+		}
 
-        DisconnectNamedPipe(pipe);
-    }
+		DisconnectNamedPipe(pipe);
+	}
 
-    CloseHandle(pipe);
+	CloseHandle(pipe);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,97 +352,101 @@ static void ControlPipeThread()
 
 static std::string DefaultWhisperModelPath()
 {
-    std::string dir = ModelDownloader::DefaultModelDir();
-    if (dir.empty()) return {};
-    return dir + "\\ggml-base.bin";
+	std::string dir = ModelDownloader::DefaultModelDir();
+	if (dir.empty()) return {};
+	return dir + "\\ggml-base.bin";
 }
 
 static std::string DefaultSileroModelPath()
 {
-    std::string dir = ModelDownloader::DefaultModelDir();
-    if (dir.empty()) return {};
-    return dir + "\\silero_vad.onnx";
+	std::string dir = ModelDownloader::DefaultModelDir();
+	if (dir.empty()) return {};
+	return dir + "\\silero_vad.onnx";
 }
 
-static std::string TranslationPair(const std::string &src, const std::string &tgt)
+static std::string TranslationPair(const std::string& src, const std::string& tgt)
 {
-    if (tgt.empty()) return {};
-    return (src == "auto" || src.empty() ? "en" : src) + "-" + tgt;
+	if (tgt.empty()) return {};
+	return (src == "auto" || src.empty() ? "en" : src) + "-" + tgt;
 }
 
-static std::string ResolveCaptionsModelDir(const std::string &src, const std::string &tgt)
+static std::string ResolveCaptionsModelDir(const std::string& src, const std::string& tgt)
 {
-    std::string dir = ModelDownloader::DefaultModelDir();
-    std::string pair = TranslationPair(src, tgt);
-    if (dir.empty() || pair.empty()) return {};
-    return dir + "\\ct2-opus-mt-" + pair;
+	std::string dir = ModelDownloader::DefaultModelDir();
+	std::string pair = TranslationPair(src, tgt);
+	if (dir.empty() || pair.empty()) return {};
+	return dir + "\\ct2-opus-mt-" + pair;
 }
 
-static void UpdatePackStatus(HostStatus &status, const HostConfig &cfg)
+static void UpdatePackStatus(HostStatus& status, const HostConfig& cfg)
 {
-    const bool whisper_model = FileExistsA(cfg.whisper_model_path);
-    const bool vad_model = FileExistsA(cfg.silero_model_path);
-    const bool speech_pack = whisper_model && vad_model;
-    const bool vad_runtime = SileroVad::RuntimeAvailable();
-    const bool translation_runtime = Captions::RuntimeAvailable();
+	const bool whisper_model = FileExistsA(cfg.whisper_model_path);
+	const bool vad_model = FileExistsA(cfg.silero_model_path);
+	const bool speech_pack = whisper_model && vad_model;
+	const bool vad_runtime = SileroVad::RuntimeAvailable();
+	const bool translation_runtime = Captions::RuntimeAvailable();
 
-    const std::string pair = TranslationPair(cfg.source_lang, cfg.target_lang);
-    const std::string tr_model_dir = ResolveCaptionsModelDir(cfg.source_lang, cfg.target_lang);
-    const bool tr_pack = pair.empty() ? true : DirectoryExistsA(tr_model_dir);
+	const std::string pair = TranslationPair(cfg.source_lang, cfg.target_lang);
+	const std::string tr_model_dir = ResolveCaptionsModelDir(cfg.source_lang, cfg.target_lang);
+	const bool tr_pack = pair.empty() ? true : DirectoryExistsA(tr_model_dir);
 
-    status.SetSpeechPackInstalled(speech_pack);
-    status.SetVadRuntimeAvailable(vad_runtime);
-    status.SetTranslationRuntimeAvailable(translation_runtime);
-    status.SetTranslationPackInstalled(tr_pack);
-    status.SetActiveTranslationPair(pair);
+	status.SetSpeechPackInstalled(speech_pack);
+	status.SetVadRuntimeAvailable(vad_runtime);
+	status.SetTranslationRuntimeAvailable(translation_runtime);
+	status.SetTranslationPackInstalled(tr_pack);
+	status.SetActiveTranslationPair(pair);
 
-    std::ostringstream err;
-    if (!whisper_model) {
-        err << "Whisper model not installed.";
-    } else if (!vad_model) {
-        err << "Speech VAD model not installed.";
-    } else if (!vad_runtime) {
-        err << "Speech detection runtime not installed.";
-    } else if (!pair.empty() && !translation_runtime) {
-        err << "Translation runtime not installed.";
-    } else if (!pair.empty() && !tr_pack) {
-        err << "Translation pack " << pair << " not installed.";
-    }
-    status.SetLastError(err.str());
+	std::ostringstream err;
+	if (!whisper_model) {
+		err << "Whisper model not installed.";
+	}
+	else if (!vad_model) {
+		err << "Speech VAD model not installed.";
+	}
+	else if (!vad_runtime) {
+		err << "Speech detection runtime not installed.";
+	}
+	else if (!pair.empty() && !translation_runtime) {
+		err << "Translation runtime not installed.";
+	}
+	else if (!pair.empty() && !tr_pack) {
+		err << "Translation pack " << pair << " not installed.";
+	}
+	status.SetLastError(err.str());
 }
 
-static int RunE2eFakePublish(const std::string &text, HostStatus &status)
+static int RunE2eFakePublish(const std::string& text, HostStatus& status)
 {
-    status.SetPhase("e2e-fake-publishing");
-    status.SetLastTranscript(text);
-    status.SetLastTranslation(text);
-    status.SetState(HostStatus::State::Sending);
-    status.Flush();
+	status.SetPhase("e2e-fake-publishing");
+	status.SetLastTranscript(text);
+	status.SetLastTranslation(text);
+	status.SetState(HostStatus::State::Sending);
+	status.Flush();
 
-    RouterPublisher publisher;
-    bool sent = false;
-    for (int i = 0; i < 8 && !sent; ++i) {
-        sent = publisher.PublishChatbox(text, true, false);
-        if (!sent) Sleep(100);
-    }
+	RouterPublisher publisher;
+	bool sent = false;
+	for (int i = 0; i < 8 && !sent; ++i) {
+		sent = publisher.PublishChatbox(text, true, false);
+		if (!sent) Sleep(100);
+	}
 
-    if (sent) {
-        status.IncrementPacketsSent();
-        status.SetState(HostStatus::State::Idle);
-        status.SetPhase("e2e-fake-complete");
-        status.Flush();
-        TH_LOG("[e2e] fake captions output published: %s", text.c_str());
-        CaptionsHostFlushLog();
-        return 0;
-    }
+	if (sent) {
+		status.IncrementPacketsSent();
+		status.SetState(HostStatus::State::Idle);
+		status.SetPhase("e2e-fake-complete");
+		status.Flush();
+		TH_LOG("[e2e] fake captions output published: %s", text.c_str());
+		CaptionsHostFlushLog();
+		return 0;
+	}
 
-    status.SetState(HostStatus::State::Error);
-    status.SetPhase("e2e-fake-failed");
-    status.SetLastError("OSC router publish pipe unavailable.");
-    status.Flush();
-    TH_LOG("[e2e] fake captions output failed: router publish pipe unavailable");
-    CaptionsHostFlushLog();
-    return 2;
+	status.SetState(HostStatus::State::Error);
+	status.SetPhase("e2e-fake-failed");
+	status.SetLastError("OSC router publish pipe unavailable.");
+	status.Flush();
+	TH_LOG("[e2e] fake captions output failed: router publish pipe unavailable");
+	CaptionsHostFlushLog();
+	return 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,466 +456,461 @@ static int RunE2eFakePublish(const std::string &text, HostStatus &status)
 // Derive a per-user discriminator from %USERNAME% (ASCII; safe for mutex names).
 static std::wstring GetUserSidString()
 {
-    wchar_t user[256] = {};
-    DWORD   len = 256;
-    if (!GetUserNameW(user, &len) || len == 0) return L"unknown";
-    // Truncate any trailing null GetUserNameW leaves inside len.
-    return std::wstring(user);
+	wchar_t user[256] = {};
+	DWORD len = 256;
+	if (!GetUserNameW(user, &len) || len == 0) return L"unknown";
+	// Truncate any trailing null GetUserNameW leaves inside len.
+	return std::wstring(user);
 }
 
 // Singleton mutex held for process lifetime; prevents two CaptionsHost
 // processes from coexisting under the same user session.
 static HANDLE g_singletonMutex = nullptr;
 
-int main(int argc, char **argv)
-try
-{
-    // Install SEH filter first -- catches crashes during early C++ init.
-    SetUnhandledExceptionFilter(TopLevelSehFilter);
+int main(int argc, char** argv)
+try {
+	// Install SEH filter first -- catches crashes during early C++ init.
+	SetUnhandledExceptionFilter(TopLevelSehFilter);
 
-    CaptionsHostOpenLogFile();
-    TH_LOG("[startup] phase=logger-open");
-    TH_LOG("[main] WKOpenVR.CaptionsHost starting");
+	CaptionsHostOpenLogFile();
+	TH_LOG("[startup] phase=logger-open");
+	TH_LOG("[main] WKOpenVR.CaptionsHost starting");
 
-    AddCaptionsRuntimeSearchPath();
+	AddCaptionsRuntimeSearchPath();
 
-    // Probe native dependencies before any inference library call.
-    // These log lines are the first thing to read when the host fails to start.
-    TH_LOG("[captions-host] startup-phase=dll-probe");
+	// Probe native dependencies before any inference library call.
+	// These log lines are the first thing to read when the host fails to start.
+	TH_LOG("[captions-host] startup-phase=dll-probe");
 #if defined(WKOPENVR_CAPTIONS_CUDA_ENABLED)
-    ProbeDll(L"cudart64_13.dll");
-    ProbeDll(L"cublas64_13.dll");
-    ProbeDll(L"cublasLt64_13.dll");
-    ProbeDll(L"nvcudart_hybrid64.dll");
-    ProbeDll(L"nvcuda.dll");
+	ProbeDll(L"cudart64_13.dll");
+	ProbeDll(L"cublas64_13.dll");
+	ProbeDll(L"cublasLt64_13.dll");
+	ProbeDll(L"nvcudart_hybrid64.dll");
+	ProbeDll(L"nvcuda.dll");
 #else
-    TH_LOG("[captions-host] dll-probe: CUDA backend disabled in this build");
+	TH_LOG("[captions-host] dll-probe: CUDA backend disabled in this build");
 #endif
-    ProbeDll(L"onnxruntime.dll");
-    ProbeDll(L"ctranslate2.dll");
-    TH_LOG("[captions-host] startup-phase=dll-probe-done");
+	ProbeDll(L"onnxruntime.dll");
+	ProbeDll(L"ctranslate2.dll");
+	TH_LOG("[captions-host] startup-phase=dll-probe-done");
 
-    bool self_test = false;
-    bool e2e_fake_publish = false;
-    std::string e2e_fake_text = "WKOpenVR fake captions";
-    std::wstring status_path_override;
+	bool self_test = false;
+	bool e2e_fake_publish = false;
+	std::string e2e_fake_text = "WKOpenVR fake captions";
+	std::wstring status_path_override;
 
-    // Parse optional command-line overrides: --model <path> --silero <path>
-    {
-        std::lock_guard<std::mutex> lk(g_config_mutex);
-        g_config.whisper_model_path = DefaultWhisperModelPath();
-        g_config.silero_model_path  = DefaultSileroModelPath();
-        for (int i = 1; i < argc; ++i) {
-            if (strcmp(argv[i], "--self-test") == 0 || strcmp(argv[i], "--healthcheck") == 0) {
-                self_test = true;
-            } else if (i + 1 < argc && (
-                    strcmp(argv[i], "--e2e-fake-chatbox") == 0 ||
-                    strcmp(argv[i], "--e2e-fake-captions-output") == 0 ||
-                    strcmp(argv[i], "--e2e-fake-translator-output") == 0)) {
-                if (strcmp(argv[i], "--e2e-fake-translator-output") == 0) {
-                    fprintf(stderr, "[captions-host] warning: --e2e-fake-translator-output is deprecated; use --e2e-fake-captions-output\n");
-                }
-                e2e_fake_publish = true;
-                e2e_fake_text = argv[i + 1];
-                ++i;
-            } else if (i + 1 < argc && strcmp(argv[i], "--status-file") == 0) {
-                status_path_override = openvr_pair::common::Utf8ToWide(argv[i + 1]);
-                ++i;
-            } else if (i + 1 < argc && strcmp(argv[i], "--model") == 0) {
-                g_config.whisper_model_path = argv[i + 1];
-                ++i;
-            } else if (i + 1 < argc && strcmp(argv[i], "--silero") == 0) {
-                g_config.silero_model_path = argv[i + 1];
-                ++i;
-            }
-        }
-    }
+	// Parse optional command-line overrides: --model <path> --silero <path>
+	{
+		std::lock_guard<std::mutex> lk(g_config_mutex);
+		g_config.whisper_model_path = DefaultWhisperModelPath();
+		g_config.silero_model_path = DefaultSileroModelPath();
+		for (int i = 1; i < argc; ++i) {
+			if (strcmp(argv[i], "--self-test") == 0 || strcmp(argv[i], "--healthcheck") == 0) {
+				self_test = true;
+			}
+			else if (i + 1 < argc && (strcmp(argv[i], "--e2e-fake-chatbox") == 0 ||
+			                          strcmp(argv[i], "--e2e-fake-captions-output") == 0 ||
+			                          strcmp(argv[i], "--e2e-fake-translator-output") == 0)) {
+				if (strcmp(argv[i], "--e2e-fake-translator-output") == 0) {
+					fprintf(stderr, "[captions-host] warning: --e2e-fake-translator-output is deprecated; use "
+					                "--e2e-fake-captions-output\n");
+				}
+				e2e_fake_publish = true;
+				e2e_fake_text = argv[i + 1];
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--status-file") == 0) {
+				status_path_override = openvr_pair::common::Utf8ToWide(argv[i + 1]);
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--model") == 0) {
+				g_config.whisper_model_path = argv[i + 1];
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--silero") == 0) {
+				g_config.silero_model_path = argv[i + 1];
+				++i;
+			}
+		}
+	}
 
-    HostStatus status(status_path_override);
-    status.SetPhase("config-loaded");
-    {
-        std::lock_guard<std::mutex> lk(g_config_mutex);
-        UpdatePackStatus(status, g_config);
-    }
-    status.SetState(HostStatus::State::Idle);
-    status.Flush();
+	HostStatus status(status_path_override);
+	status.SetPhase("config-loaded");
+	{
+		std::lock_guard<std::mutex> lk(g_config_mutex);
+		UpdatePackStatus(status, g_config);
+	}
+	status.SetState(HostStatus::State::Idle);
+	status.Flush();
 
-    if (e2e_fake_publish) {
-        return RunE2eFakePublish(e2e_fake_text, status);
-    }
+	if (e2e_fake_publish) {
+		return RunE2eFakePublish(e2e_fake_text, status);
+	}
 
-    if (self_test) {
-        status.SetPhase("self-test-complete");
-        status.Flush();
-        TH_LOG("[startup] self-test complete");
-        CaptionsHostFlushLog();
-        return 0;
-    }
+	if (self_test) {
+		status.SetPhase("self-test-complete");
+		status.Flush();
+		TH_LOG("[startup] self-test complete");
+		CaptionsHostFlushLog();
+		return 0;
+	}
 
-    // Layer 1: acquire system-wide singleton mutex before opening any IPC.
-    {
-        std::wstring user   = GetUserSidString();
-        wchar_t mname[512]  = {};
-        swprintf_s(mname, L"Global\\WKOpenVR-CaptionsHost-Singleton-%ls", user.c_str());
+	// Layer 1: acquire system-wide singleton mutex before opening any IPC.
+	{
+		std::wstring user = GetUserSidString();
+		wchar_t mname[512] = {};
+		swprintf_s(mname, L"Global\\WKOpenVR-CaptionsHost-Singleton-%ls", user.c_str());
 
-        g_singletonMutex = CreateMutexW(nullptr, TRUE, mname);
-        DWORD merr = GetLastError();
-        if (!g_singletonMutex) {
-            status.SetPhase("singleton-failed");
-            status.SetLastError("Captions singleton mutex could not be created.");
-            status.Flush();
-            TH_LOG("[singleton] CreateMutexW failed err=%lu; exiting", (unsigned long)merr);
-            CaptionsHostFlushLog();
-            return 1;
-        }
-        if (merr == ERROR_ALREADY_EXISTS) {
-            // Another instance already holds the mutex; exit cleanly.
-            status.SetPhase("singleton-owned");
-            status.SetLastError("Another captions host is already running.");
-            status.Flush();
-            TH_LOG("[singleton] another host already owns mutex; exiting cleanly (code 3)");
-            CaptionsHostFlushLog();
-            CloseHandle(g_singletonMutex);
-            return 3;
-        }
-        TH_LOG("[singleton] acquired mutex '%ls'; proceeding as sole instance", mname);
-    }
-    TH_LOG("[startup] phase=singleton-acquired");
-    status.SetPhase("singleton-acquired");
-    status.Flush();
+		g_singletonMutex = CreateMutexW(nullptr, TRUE, mname);
+		DWORD merr = GetLastError();
+		if (!g_singletonMutex) {
+			status.SetPhase("singleton-failed");
+			status.SetLastError("Captions singleton mutex could not be created.");
+			status.Flush();
+			TH_LOG("[singleton] CreateMutexW failed err=%lu; exiting", (unsigned long)merr);
+			CaptionsHostFlushLog();
+			return 1;
+		}
+		if (merr == ERROR_ALREADY_EXISTS) {
+			// Another instance already holds the mutex; exit cleanly.
+			status.SetPhase("singleton-owned");
+			status.SetLastError("Another captions host is already running.");
+			status.Flush();
+			TH_LOG("[singleton] another host already owns mutex; exiting cleanly (code 3)");
+			CaptionsHostFlushLog();
+			CloseHandle(g_singletonMutex);
+			return 3;
+		}
+		TH_LOG("[singleton] acquired mutex '%ls'; proceeding as sole instance", mname);
+	}
+	TH_LOG("[startup] phase=singleton-acquired");
+	status.SetPhase("singleton-acquired");
+	status.Flush();
 
-    TH_LOG("[startup] phase=opening-control-pipe");
-    status.SetPhase("opening-control-pipe");
-    status.Flush();
-    // Start control pipe thread.
-    std::thread ctrl_thread(ControlPipeThread);
+	TH_LOG("[startup] phase=opening-control-pipe");
+	status.SetPhase("opening-control-pipe");
+	status.Flush();
+	// Start control pipe thread.
+	std::thread ctrl_thread(ControlPipeThread);
 
-    // Initialise OpenVR with a short retry loop. The host can launch slightly
-    // ahead of SteamVR's IPC being ready, in which case the very first
-    // VR_Init returns VRInitError_Init_HmdNotFoundPresenceFailed (121) and
-    // PTT was silently unavailable for the rest of the session. Retry every
-    // 2 s for up to 30 s; bail out immediately on shutdown.
-    bool vr_ok = false;
-    {
-        constexpr int kMaxAttempts          = 15;
-        constexpr auto kAttemptInterval     = std::chrono::seconds(2);
-        vr::EVRInitError vr_err             = vr::VRInitError_None;
-        for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
-            vr_err = vr::VRInitError_None;
-            vr::VR_Init(&vr_err, vr::VRApplication_Background);
-            if (vr_err == vr::VRInitError_None) {
-                vr_ok = true;
-                if (attempt > 1) {
-                    TH_LOG("[main] VR_Init succeeded on attempt %d/%d",
-                           attempt, kMaxAttempts);
-                }
-                break;
-            }
-            TH_LOG("[main] VR_Init attempt %d/%d failed (%d: %s); will retry in %ds",
-                   attempt, kMaxAttempts, (int)vr_err,
-                   vr::VR_GetVRInitErrorAsSymbol(vr_err),
-                   (int)std::chrono::duration_cast<std::chrono::seconds>(kAttemptInterval).count());
-            if (g_shutdown.load(std::memory_order_acquire)) break;
-            // Sleep in 100 ms slices so a shutdown signal cuts the wait short.
-            const auto deadline = std::chrono::steady_clock::now() + kAttemptInterval;
-            while (std::chrono::steady_clock::now() < deadline) {
-                if (g_shutdown.load(std::memory_order_acquire)) break;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            if (g_shutdown.load(std::memory_order_acquire)) break;
-        }
-        if (!vr_ok) {
-            TH_LOG("[main] VR_Init gave up after %d attempts (last err=%d: %s); "
-                   "PTT will be unavailable for this session",
-                   kMaxAttempts, (int)vr_err,
-                   vr::VR_GetVRInitErrorAsSymbol(vr_err));
-        }
-    }
-    status.SetPttStatus(vr_ok, false, "", vr_ok ? "" : "VR_Init failed; push-to-talk unavailable.");
-    if (vr_ok) RegisterCaptionsManifest();
+	// Initialise OpenVR with a short retry loop. The host can launch slightly
+	// ahead of SteamVR's IPC being ready, in which case the very first
+	// VR_Init returns VRInitError_Init_HmdNotFoundPresenceFailed (121) and
+	// PTT was silently unavailable for the rest of the session. Retry every
+	// 2 s for up to 30 s; bail out immediately on shutdown.
+	bool vr_ok = false;
+	{
+		constexpr int kMaxAttempts = 15;
+		constexpr auto kAttemptInterval = std::chrono::seconds(2);
+		vr::EVRInitError vr_err = vr::VRInitError_None;
+		for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+			vr_err = vr::VRInitError_None;
+			vr::VR_Init(&vr_err, vr::VRApplication_Background);
+			if (vr_err == vr::VRInitError_None) {
+				vr_ok = true;
+				if (attempt > 1) {
+					TH_LOG("[main] VR_Init succeeded on attempt %d/%d", attempt, kMaxAttempts);
+				}
+				break;
+			}
+			TH_LOG("[main] VR_Init attempt %d/%d failed (%d: %s); will retry in %ds", attempt, kMaxAttempts,
+			       (int)vr_err, vr::VR_GetVRInitErrorAsSymbol(vr_err),
+			       (int)std::chrono::duration_cast<std::chrono::seconds>(kAttemptInterval).count());
+			if (g_shutdown.load(std::memory_order_acquire)) break;
+			// Sleep in 100 ms slices so a shutdown signal cuts the wait short.
+			const auto deadline = std::chrono::steady_clock::now() + kAttemptInterval;
+			while (std::chrono::steady_clock::now() < deadline) {
+				if (g_shutdown.load(std::memory_order_acquire)) break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
+			if (g_shutdown.load(std::memory_order_acquire)) break;
+		}
+		if (!vr_ok) {
+			TH_LOG("[main] VR_Init gave up after %d attempts (last err=%d: %s); "
+			       "PTT will be unavailable for this session",
+			       kMaxAttempts, (int)vr_err, vr::VR_GetVRInitErrorAsSymbol(vr_err));
+		}
+	}
+	status.SetPttStatus(vr_ok, false, "", vr_ok ? "" : "VR_Init failed; push-to-talk unavailable.");
+	if (vr_ok) RegisterCaptionsManifest();
 
-    TH_LOG("[startup] phase=initializing-vad");
-    status.SetPhase("initializing-vad");
-    status.Flush();
-    // Load Silero VAD.
-    std::unique_ptr<SileroVad> vad;
-    {
-        std::string silero_path;
-        {
-            std::lock_guard<std::mutex> lk(g_config_mutex);
-            silero_path = g_config.silero_model_path;
-        }
-        if (SileroVad::RuntimeAvailable()) {
-            vad = std::make_unique<SileroVad>();
-            if (!vad->Load(silero_path)) {
-                TH_LOG("[main] Silero VAD load failed; path='%s'", silero_path.c_str());
-            }
-        } else {
-            TH_LOG("[main] Silero VAD runtime missing; install the speech pack to enable always-on speech detection");
-        }
-    }
+	TH_LOG("[startup] phase=initializing-vad");
+	status.SetPhase("initializing-vad");
+	status.Flush();
+	// Load Silero VAD.
+	std::unique_ptr<SileroVad> vad;
+	{
+		std::string silero_path;
+		{
+			std::lock_guard<std::mutex> lk(g_config_mutex);
+			silero_path = g_config.silero_model_path;
+		}
+		if (SileroVad::RuntimeAvailable()) {
+			vad = std::make_unique<SileroVad>();
+			if (!vad->Load(silero_path)) {
+				TH_LOG("[main] Silero VAD load failed; path='%s'", silero_path.c_str());
+			}
+		}
+		else {
+			TH_LOG("[main] Silero VAD runtime missing; install the speech pack to enable always-on speech detection");
+		}
+	}
 
-    TH_LOG("[startup] phase=initializing-translation");
-    status.SetPhase("initializing-translation");
-    status.Flush();
-    // Load Whisper.
-    WhisperEngine whisper;
-    {
-        std::string model_path;
-        {
-            std::lock_guard<std::mutex> lk(g_config_mutex);
-            model_path = g_config.whisper_model_path;
-        }
-        if (!whisper.Load(model_path)) {
-            TH_LOG("[main] Whisper model load failed; path='%s'", model_path.c_str());
-        }
-    }
+	TH_LOG("[startup] phase=initializing-translation");
+	status.SetPhase("initializing-translation");
+	status.Flush();
+	// Load Whisper.
+	WhisperEngine whisper;
+	{
+		std::string model_path;
+		{
+			std::lock_guard<std::mutex> lk(g_config_mutex);
+			model_path = g_config.whisper_model_path;
+		}
+		if (!whisper.Load(model_path)) {
+			TH_LOG("[main] Whisper model load failed; path='%s'", model_path.c_str());
+		}
+	}
 
-    // Translation model loaded on demand when target_lang changes.
-    Captions captions_engine;
-    std::string loaded_src_lang;
-    std::string loaded_tgt_lang;
-    std::string loaded_model_dir;
+	// Translation model loaded on demand when target_lang changes.
+	Captions captions_engine;
+	std::string loaded_src_lang;
+	std::string loaded_tgt_lang;
+	std::string loaded_model_dir;
 
-    // Action bindings for PTT.
-    ActionBindings actions;
-    if (vr_ok) {
-        std::string manifest = ActionBindings::ResolveManifestPath();
-        if (!actions.Register(manifest)) {
-            TH_LOG("[main] PTT action binding failed; push-to-talk unavailable");
-        }
-        status.SetPttStatus(
-            true,
-            actions.IsRegistered(),
-            actions.ApplicationKey(),
-            actions.LastError());
-        status.Flush();
-    }
+	// Action bindings for PTT.
+	ActionBindings actions;
+	if (vr_ok) {
+		std::string manifest = ActionBindings::ResolveManifestPath();
+		if (!actions.Register(manifest)) {
+			TH_LOG("[main] PTT action binding failed; push-to-talk unavailable");
+		}
+		status.SetPttStatus(true, actions.IsRegistered(), actions.ApplicationKey(), actions.LastError());
+		status.Flush();
+	}
 
-    // Router publisher.
-    RouterPublisher publisher;
+	// Router publisher.
+	RouterPublisher publisher;
 
-    // Chatbox pacer (1.2 s minimum gap).
-    ChatboxPacer pacer(1.2);
+	// Chatbox pacer (1.2 s minimum gap).
+	ChatboxPacer pacer(1.2);
 
-    // VAD state machine.
-    constexpr float kSpeechThreshold    = 0.5f;
-    constexpr float kSilenceThreshold   = 0.35f;
-    constexpr int   kSilenceFrames      = 20; // ~600 ms of silence
-    int   silence_count = 0;
-    bool  in_speech = false;
-    bool  ptt_was_held = false;
-    std::vector<float> speech_buf;
+	// VAD state machine.
+	constexpr float kSpeechThreshold = 0.5f;
+	constexpr float kSilenceThreshold = 0.35f;
+	constexpr int kSilenceFrames = 20; // ~600 ms of silence
+	int silence_count = 0;
+	bool in_speech = false;
+	bool ptt_was_held = false;
+	std::vector<float> speech_buf;
 
-    TH_LOG("[startup] phase=initializing-audio-capture");
-    status.SetPhase("initializing-audio-capture");
-    status.Flush();
-    // WASAPI capture: 30 ms chunks fed through a thread-safe queue.
-    std::mutex              audio_mutex;
-    std::vector<std::vector<float>> audio_queue;
+	TH_LOG("[startup] phase=initializing-audio-capture");
+	status.SetPhase("initializing-audio-capture");
+	status.Flush();
+	// WASAPI capture: 30 ms chunks fed through a thread-safe queue.
+	std::mutex audio_mutex;
+	std::vector<std::vector<float>> audio_queue;
 
-    WasapiCapture capture;
-    bool cap_ok = capture.Start([&](const float *pcm, size_t n) {
-        std::lock_guard<std::mutex> lk(audio_mutex);
-        audio_queue.push_back(std::vector<float>(pcm, pcm + n));
-    });
+	WasapiCapture capture;
+	bool cap_ok = capture.Start([&](const float* pcm, size_t n) {
+		std::lock_guard<std::mutex> lk(audio_mutex);
+		audio_queue.push_back(std::vector<float>(pcm, pcm + n));
+	});
 
-    if (!cap_ok) TH_LOG("[main] WASAPI capture start failed");
+	if (!cap_ok) TH_LOG("[main] WASAPI capture start failed");
 
-    status.SetMicName(capture.DeviceName());
-    status.SetState(HostStatus::State::Idle);
+	status.SetMicName(capture.DeviceName());
+	status.SetState(HostStatus::State::Idle);
 
-    TH_LOG("[startup] phase=running");
-    status.SetPhase("running");
-    status.Flush();
+	TH_LOG("[startup] phase=running");
+	status.SetPhase("running");
+	status.Flush();
 
-    // ---------------------------------------------------------------------------
-    // Main loop
-    // ---------------------------------------------------------------------------
+	// ---------------------------------------------------------------------------
+	// Main loop
+	// ---------------------------------------------------------------------------
 
-    while (!g_shutdown.load(std::memory_order_acquire)) {
-        // Poll PTT action.
-        bool ptt_held = actions.Poll();
+	while (!g_shutdown.load(std::memory_order_acquire)) {
+		// Poll PTT action.
+		bool ptt_held = actions.Poll();
 
-        // Drain captured audio frames.
-        std::vector<std::vector<float>> frames;
-        {
-            std::lock_guard<std::mutex> lk(audio_mutex);
-            frames.swap(audio_queue);
-        }
+		// Drain captured audio frames.
+		std::vector<std::vector<float>> frames;
+		{
+			std::lock_guard<std::mutex> lk(audio_mutex);
+			frames.swap(audio_queue);
+		}
 
-        HostConfig cfg;
-        {
-            std::lock_guard<std::mutex> lk(g_config_mutex);
-            cfg = g_config;
-        }
-        UpdatePackStatus(status, cfg);
+		HostConfig cfg;
+		{
+			std::lock_guard<std::mutex> lk(g_config_mutex);
+			cfg = g_config;
+		}
+		UpdatePackStatus(status, cfg);
 
-        // Update whisper language hint.
-        whisper.SetLanguage(cfg.source_lang == "auto" ? "" : cfg.source_lang);
+		// Update whisper language hint.
+		whisper.SetLanguage(cfg.source_lang == "auto" ? "" : cfg.source_lang);
 
-        // Load/unload translation model as packs appear, disappear, or the
-        // selected pair changes. Pack install/uninstall can happen while this
-        // host is running, so target_lang alone is not enough to decide.
-        if (cfg.target_lang.empty()) {
-            if (captions_engine.IsLoaded()) {
-                captions_engine.Unload();
-                TH_LOG("[captions] unloaded model; target language disabled");
-            }
-            loaded_src_lang.clear();
-            loaded_tgt_lang.clear();
-            loaded_model_dir.clear();
-        } else {
-            std::string model_dir = ResolveCaptionsModelDir(
-                cfg.source_lang, cfg.target_lang);
-            const bool runtime_available = Captions::RuntimeAvailable();
-            const bool model_available =
-                !model_dir.empty() && DirectoryExistsA(model_dir);
+		// Load/unload translation model as packs appear, disappear, or the
+		// selected pair changes. Pack install/uninstall can happen while this
+		// host is running, so target_lang alone is not enough to decide.
+		if (cfg.target_lang.empty()) {
+			if (captions_engine.IsLoaded()) {
+				captions_engine.Unload();
+				TH_LOG("[captions] unloaded model; target language disabled");
+			}
+			loaded_src_lang.clear();
+			loaded_tgt_lang.clear();
+			loaded_model_dir.clear();
+		}
+		else {
+			std::string model_dir = ResolveCaptionsModelDir(cfg.source_lang, cfg.target_lang);
+			const bool runtime_available = Captions::RuntimeAvailable();
+			const bool model_available = !model_dir.empty() && DirectoryExistsA(model_dir);
 
-            if (!runtime_available || !model_available) {
-                if (captions_engine.IsLoaded()) {
-                    captions_engine.Unload();
-                    TH_LOG("[captions] unloaded model for %s->%s; runtime_available=%d model_available=%d",
-                        cfg.source_lang.c_str(), cfg.target_lang.c_str(),
-                        runtime_available ? 1 : 0, model_available ? 1 : 0);
-                }
-                loaded_src_lang.clear();
-                loaded_tgt_lang.clear();
-                loaded_model_dir.clear();
-            } else if (!captions_engine.IsLoaded() ||
-                       cfg.source_lang != loaded_src_lang ||
-                       cfg.target_lang != loaded_tgt_lang ||
-                       model_dir != loaded_model_dir) {
-                if (captions_engine.Load(model_dir)) {
-                    loaded_src_lang = cfg.source_lang;
-                    loaded_tgt_lang = cfg.target_lang;
-                    loaded_model_dir = model_dir;
-                } else {
-                    loaded_src_lang.clear();
-                    loaded_tgt_lang.clear();
-                    loaded_model_dir.clear();
-                }
-            }
-        }
+			if (!runtime_available || !model_available) {
+				if (captions_engine.IsLoaded()) {
+					captions_engine.Unload();
+					TH_LOG("[captions] unloaded model for %s->%s; runtime_available=%d model_available=%d",
+					       cfg.source_lang.c_str(), cfg.target_lang.c_str(), runtime_available ? 1 : 0,
+					       model_available ? 1 : 0);
+				}
+				loaded_src_lang.clear();
+				loaded_tgt_lang.clear();
+				loaded_model_dir.clear();
+			}
+			else if (!captions_engine.IsLoaded() || cfg.source_lang != loaded_src_lang ||
+			         cfg.target_lang != loaded_tgt_lang || model_dir != loaded_model_dir) {
+				if (captions_engine.Load(model_dir)) {
+					loaded_src_lang = cfg.source_lang;
+					loaded_tgt_lang = cfg.target_lang;
+					loaded_model_dir = model_dir;
+				}
+				else {
+					loaded_src_lang.clear();
+					loaded_tgt_lang.clear();
+					loaded_model_dir.clear();
+				}
+			}
+		}
 
-        const bool always_on = (cfg.mode == 1);
+		const bool always_on = (cfg.mode == 1);
 
-        for (const auto &frame : frames) {
-            // VAD gate (PTT mode skips it).
-            if (always_on && vad && vad->IsLoaded()) {
-                float prob = vad->Feed(frame.data(), frame.size());
-                if (prob >= kSpeechThreshold) {
-                    if (!in_speech) {
-                        in_speech = true;
-                        vad->Reset();
-                        speech_buf.clear();
-                        status.SetState(HostStatus::State::Listening);
-                    }
-                    silence_count = 0;
-                } else if (in_speech) {
-                    ++silence_count;
-                    if (silence_count >= kSilenceFrames) {
-                        in_speech = false;
-                        status.SetState(HostStatus::State::Transcribing);
-                        goto transcribe;
-                    }
-                }
-                if (in_speech) {
-                    speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
-                }
-                continue;
-            }
+		for (const auto& frame : frames) {
+			// VAD gate (PTT mode skips it).
+			if (always_on && vad && vad->IsLoaded()) {
+				float prob = vad->Feed(frame.data(), frame.size());
+				if (prob >= kSpeechThreshold) {
+					if (!in_speech) {
+						in_speech = true;
+						vad->Reset();
+						speech_buf.clear();
+						status.SetState(HostStatus::State::Listening);
+					}
+					silence_count = 0;
+				}
+				else if (in_speech) {
+					++silence_count;
+					if (silence_count >= kSilenceFrames) {
+						in_speech = false;
+						status.SetState(HostStatus::State::Transcribing);
+						goto transcribe;
+					}
+				}
+				if (in_speech) {
+					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
+				}
+				continue;
+			}
 
-            // PTT mode: collect while held, flush on release.
-            if (!always_on) {
-                if (ptt_held) {
-                    if (!ptt_was_held) {
-                        speech_buf.clear();
-                        status.SetState(HostStatus::State::Listening);
-                    }
-                    speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
-                    ptt_was_held = true;
-                } else if (ptt_was_held) {
-                    ptt_was_held = false;
-                    status.SetState(HostStatus::State::Transcribing);
-                    goto transcribe;
-                }
-            }
-            continue;
+			// PTT mode: collect while held, flush on release.
+			if (!always_on) {
+				if (ptt_held) {
+					if (!ptt_was_held) {
+						speech_buf.clear();
+						status.SetState(HostStatus::State::Listening);
+					}
+					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
+					ptt_was_held = true;
+				}
+				else if (ptt_was_held) {
+					ptt_was_held = false;
+					status.SetState(HostStatus::State::Transcribing);
+					goto transcribe;
+				}
+			}
+			continue;
 
-            transcribe:
-            if (speech_buf.size() < 1600) {
-                // Less than 100 ms of audio -- too short to transcribe.
-                speech_buf.clear();
-                status.SetState(HostStatus::State::Idle);
-                continue;
-            }
+		transcribe:
+			if (speech_buf.size() < 1600) {
+				// Less than 100 ms of audio -- too short to transcribe.
+				speech_buf.clear();
+				status.SetState(HostStatus::State::Idle);
+				continue;
+			}
 
-            {
-                std::string detected_lang;
-                std::string transcript = whisper.Transcribe(speech_buf, &detected_lang);
-                speech_buf.clear();
-                status.SetLastTranscript(transcript);
-                TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
+			{
+				std::string detected_lang;
+				std::string transcript = whisper.Transcribe(speech_buf, &detected_lang);
+				speech_buf.clear();
+				status.SetLastTranscript(transcript);
+				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
 
-                // Translation step.
-                std::string output = transcript;
-                if (!cfg.target_lang.empty() && captions_engine.IsLoaded()) {
-                    status.SetState(HostStatus::State::Translating);
-                    output = captions_engine.Translate(transcript,
-                        detected_lang.empty() ? cfg.source_lang : detected_lang,
-                        cfg.target_lang);
-                    status.SetLastTranslation(output);
-                    TH_LOG("[main] translation: %s", output.c_str());
-                }
+				// Translation step.
+				std::string output = transcript;
+				if (!cfg.target_lang.empty() && captions_engine.IsLoaded()) {
+					status.SetState(HostStatus::State::Translating);
+					output = captions_engine.Translate(
+					    transcript, detected_lang.empty() ? cfg.source_lang : detected_lang, cfg.target_lang);
+					status.SetLastTranslation(output);
+					TH_LOG("[main] translation: %s", output.c_str());
+				}
 
-                if (!output.empty()) {
-                    pacer.Enqueue(output, true, cfg.chatbox_port != 0);
-                }
-                status.SetState(HostStatus::State::Idle);
-            }
-        }
+				if (!output.empty()) {
+					pacer.Enqueue(output, true, cfg.chatbox_port != 0);
+				}
+				status.SetState(HostStatus::State::Idle);
+			}
+		}
 
-        // Drain pacer and publish.
-        ChatboxPacer::Entry entry;
-        while (pacer.Dequeue(entry)) {
-            status.SetState(HostStatus::State::Sending);
-            bool sent = publisher.PublishChatbox(entry.text, entry.send_immediate, entry.notify);
-            if (sent) {
-                status.IncrementPacketsSent();
-                TH_LOG("[main] published: '%s'", entry.text.c_str());
-            }
-            status.SetState(HostStatus::State::Idle);
-        }
+		// Drain pacer and publish.
+		ChatboxPacer::Entry entry;
+		while (pacer.Dequeue(entry)) {
+			status.SetState(HostStatus::State::Sending);
+			bool sent = publisher.PublishChatbox(entry.text, entry.send_immediate, entry.notify);
+			if (sent) {
+				status.IncrementPacketsSent();
+				TH_LOG("[main] published: '%s'", entry.text.c_str());
+			}
+			status.SetState(HostStatus::State::Idle);
+		}
 
-        status.SetMicName(capture.DeviceName());
-        status.MaybeFlush();
+		status.SetMicName(capture.DeviceName());
+		status.MaybeFlush();
 
-        Sleep(10); // 10 ms main-loop cadence
-    }
+		Sleep(10); // 10 ms main-loop cadence
+	}
 
-    TH_LOG("[main] shutting down");
-    capture.Stop();
-    status.SetState(HostStatus::State::Idle);
-    status.Flush();
+	TH_LOG("[main] shutting down");
+	capture.Stop();
+	status.SetState(HostStatus::State::Idle);
+	status.Flush();
 
-    if (vr_ok) vr::VR_Shutdown();
+	if (vr_ok) vr::VR_Shutdown();
 
-    g_shutdown.store(true, std::memory_order_release);
-    if (ctrl_thread.joinable()) ctrl_thread.join();
+	g_shutdown.store(true, std::memory_order_release);
+	if (ctrl_thread.joinable()) ctrl_thread.join();
 
-    CaptionsHostFlushLog();
-    return 0;
+	CaptionsHostFlushLog();
+	return 0;
 }
-catch (const std::exception &e)
-{
-    TH_LOG("[crash] main threw std::exception: %s", e.what());
-    CaptionsHostFlushLog();
-    return 1;
+catch (const std::exception& e) {
+	TH_LOG("[crash] main threw std::exception: %s", e.what());
+	CaptionsHostFlushLog();
+	return 1;
 }
-catch (...)
-{
-    TH_LOG("[crash] main threw unknown exception");
-    CaptionsHostFlushLog();
-    return 1;
+catch (...) {
+	TH_LOG("[crash] main threw unknown exception");
+	CaptionsHostFlushLog();
+	return 1;
 }

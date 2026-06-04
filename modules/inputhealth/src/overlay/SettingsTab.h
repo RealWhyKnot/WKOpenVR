@@ -3,5 +3,5 @@
 class InputHealthPlugin;
 
 namespace inputhealth::ui {
-void DrawSettingsTab(InputHealthPlugin &ui);
+void DrawSettingsTab(InputHealthPlugin& ui);
 }

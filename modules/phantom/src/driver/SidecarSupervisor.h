@@ -26,41 +26,41 @@ namespace phantom {
 class SidecarSupervisor
 {
 public:
-    SidecarSupervisor() = default;
-    ~SidecarSupervisor() { Stop(); }
-    SidecarSupervisor(const SidecarSupervisor&) = delete;
-    SidecarSupervisor& operator=(const SidecarSupervisor&) = delete;
+	SidecarSupervisor() = default;
+	~SidecarSupervisor() { Stop(); }
+	SidecarSupervisor(const SidecarSupervisor&) = delete;
+	SidecarSupervisor& operator=(const SidecarSupervisor&) = delete;
 
-    // Resolves the sidecar exe path relative to the loaded driver DLL,
-    // matching the face-tracking + translator host walk-up pattern. The
-    // walk-up is THREE segments (filename, win64, bin) to reach the
-    // driver root, then we append "\resources\phantom\host\<exe>".
-    // Returns false if the driver DLL path cannot be resolved.
-    bool Start();
-    void Stop();
+	// Resolves the sidecar exe path relative to the loaded driver DLL,
+	// matching the face-tracking + translator host walk-up pattern. The
+	// walk-up is THREE segments (filename, win64, bin) to reach the
+	// driver root, then we append "\resources\phantom\host\<exe>".
+	// Returns false if the driver DLL path cannot be resolved.
+	bool Start();
+	void Stop();
 
-    bool Running() const { return running_.load(std::memory_order_acquire); }
+	bool Running() const { return running_.load(std::memory_order_acquire); }
 
-    // Last observed child exit code; 0 if the supervisor has never seen
-    // an exit. Surfaced to the overlay's Diagnostics tab in a follow-up
-    // pass; for Phase 3 scaffold it is read-only.
-    uint32_t last_exit_code() const { return last_exit_code_.load(std::memory_order_acquire); }
+	// Last observed child exit code; 0 if the supervisor has never seen
+	// an exit. Surfaced to the overlay's Diagnostics tab in a follow-up
+	// pass; for Phase 3 scaffold it is read-only.
+	uint32_t last_exit_code() const { return last_exit_code_.load(std::memory_order_acquire); }
 
-    // Whether the circuit breaker has tripped (5 fast exits in 10 min).
-    // When true, the supervisor stops trying to respawn until Stop +
-    // Start cycles the state.
-    bool halted() const { return halted_.load(std::memory_order_acquire); }
+	// Whether the circuit breaker has tripped (5 fast exits in 10 min).
+	// When true, the supervisor stops trying to respawn until Stop +
+	// Start cycles the state.
+	bool halted() const { return halted_.load(std::memory_order_acquire); }
 
 private:
-    void SuperviseLoop();
-    std::wstring ResolveSidecarPath() const;
+	void SuperviseLoop();
+	std::wstring ResolveSidecarPath() const;
 
-    std::atomic<bool>     running_{false};
-    std::atomic<bool>     stop_requested_{false};
-    std::atomic<bool>     halted_{false};
-    std::atomic<uint32_t> last_exit_code_{0};
-    std::thread           worker_;
-    HANDLE                child_process_ = nullptr;
+	std::atomic<bool> running_{false};
+	std::atomic<bool> stop_requested_{false};
+	std::atomic<bool> halted_{false};
+	std::atomic<uint32_t> last_exit_code_{0};
+	std::thread worker_;
+	HANDLE child_process_ = nullptr;
 };
 
 } // namespace phantom

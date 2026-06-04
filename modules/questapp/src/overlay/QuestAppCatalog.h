@@ -5,11 +5,12 @@
 
 namespace wkopenvr::questapp {
 
-struct QuestLaunchTarget {
-    std::string label;
-    std::string packageName;
-    std::string activityName;
-    bool curated = false;
+struct QuestLaunchTarget
+{
+	std::string label;
+	std::string packageName;
+	std::string activityName;
+	bool curated = false;
 };
 
 const std::vector<QuestLaunchTarget>& CuratedLaunchTargets();

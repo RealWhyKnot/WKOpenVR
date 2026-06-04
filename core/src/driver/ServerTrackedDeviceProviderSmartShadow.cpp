@@ -25,12 +25,12 @@ namespace ss = prediction::smart_shadow;
 
 constexpr double kLogIntervalSeconds = 5.0;
 constexpr double kCandidateCheckSeconds = 5.0;
-constexpr double kMaxReasonableLinearSpeed = 15.0;   // m/s
-constexpr double kMaxReasonableAngularSpeed = 80.0;  // rad/s
+constexpr double kMaxReasonableLinearSpeed = 15.0;  // m/s
+constexpr double kMaxReasonableAngularSpeed = 80.0; // rad/s
 // Regime gates on the raw signal (reported IMU velocity preferred), so the
 // rest/move split does not depend on either filter's own behaviour.
-constexpr double kRestLinearSpeed = 0.05;  // m/s -- below this = "at rest"
-constexpr double kMoveLinearSpeed = 0.30;  // m/s -- above this = "moving"
+constexpr double kRestLinearSpeed = 0.05; // m/s -- below this = "at rest"
+constexpr double kMoveLinearSpeed = 0.30; // m/s -- above this = "moving"
 constexpr double kRad2Deg = 180.0 / ss::kPi;
 
 bool Finite3(const double v[3])
@@ -88,11 +88,9 @@ ss::CandidateKind ReadCandidateFromFlags()
 
 } // namespace
 
-void ServerTrackedDeviceProvider::UpdateSmartSmoothingShadow(
-	uint32_t openVRID,
-	DeviceTransform& device,
-	const vr::DriverPose_t& rawPose,
-	const vr::DriverPose_t& livePose) const
+void ServerTrackedDeviceProvider::UpdateSmartSmoothingShadow(uint32_t openVRID, DeviceTransform& device,
+                                                             const vr::DriverPose_t& rawPose,
+                                                             const vr::DriverPose_t& livePose) const
 {
 	auto& state = device.smartShadow;
 	const uint8_t smoothness = device.predictionSmoothness;
@@ -111,63 +109,47 @@ void ServerTrackedDeviceProvider::UpdateSmartSmoothingShadow(
 
 	auto maybeLogAndReset = [&]() {
 		const double elapsed = state.lastLog.QuadPart > 0
-			? (now.QuadPart - state.lastLog.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
-			: kLogIntervalSeconds;
+		                           ? (now.QuadPart - state.lastLog.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
+		                           : kLogIntervalSeconds;
 		if (elapsed < kLogIntervalSeconds || stats.samples == 0) return;
 
 		const auto& s = stats;
 		const double inv = 1.0 / static_cast<double>(s.samples);
 		LOG("[smart-shadow] id=%u smooth=%u cand=%s live_smart=%d samples=%llu rest=%llu move=%llu"
-			" rest_jit_mm raw=%.3f live=%.3f cand=%.3f rest_jit_deg raw=%.4f live=%.4f cand=%.4f"
-			" move_lag_mm live=%.2f cand=%.2f move_lag_max_mm live=%.2f cand=%.2f"
-			" move_lag_deg live=%.3f cand=%.3f"
-			" cand_release_pos=%.3f cand_cutoff_pos=%.2f cand_release_rot=%.3f cand_cutoff_rot=%.2f"
-			" div_mm cand_v_live=%.2f cand_v_live_max=%.2f cand_v_raw=%.2f"
-			" div_deg cand_v_live=%.3f cand_v_raw=%.3f"
-			" reseeds=%llu gap=%llu jump=%llu nonfinite=%llu bad_vel=%llu bad_ang=%llu",
-			openVRID,
-			static_cast<unsigned>(smoothness),
-			ss::CandidateKindName(state.candidate),
-			device.smartEnabled ? 1 : 0,
-			static_cast<unsigned long long>(s.samples),
-			static_cast<unsigned long long>(s.restSamples),
-			static_cast<unsigned long long>(s.moveSamples),
-			Rms(s.sumSqRestRawStepM, s.restSamples) * 1000.0,
-			Rms(s.sumSqRestLiveStepM, s.restSamples) * 1000.0,
-			Rms(s.sumSqRestCandStepM, s.restSamples) * 1000.0,
-			Rms(s.sumSqRestRawRotStepRad, s.restSamples) * kRad2Deg,
-			Rms(s.sumSqRestLiveRotStepRad, s.restSamples) * kRad2Deg,
-			Rms(s.sumSqRestCandRotStepRad, s.restSamples) * kRad2Deg,
-			Rms(s.sumSqMoveLiveLagM, s.moveSamples) * 1000.0,
-			Rms(s.sumSqMoveCandLagM, s.moveSamples) * 1000.0,
-			s.maxMoveLiveLagM * 1000.0,
-			s.maxMoveCandLagM * 1000.0,
-			Rms(s.sumSqMoveLiveLagRad, s.moveSamples) * kRad2Deg,
-			Rms(s.sumSqMoveCandLagRad, s.moveSamples) * kRad2Deg,
-			s.sumPosRelease * inv,
-			s.sumPosCutoffHz * inv,
-			s.sumRotRelease * inv,
-			s.sumRotCutoffHz * inv,
-			Rms(s.sumSqCandLiveErrM, s.samples) * 1000.0,
-			s.maxCandLiveErrM * 1000.0,
-			Rms(s.sumSqCandRawErrM, s.samples) * 1000.0,
-			Rms(s.sumSqCandLiveErrRad, s.samples) * kRad2Deg,
-			Rms(s.sumSqCandRawErrRad, s.samples) * kRad2Deg,
-			static_cast<unsigned long long>(s.reseeds),
-			static_cast<unsigned long long>(s.gapReseeds),
-			static_cast<unsigned long long>(s.jumpReseeds),
-			static_cast<unsigned long long>(s.nonFinitePoseResets),
-			static_cast<unsigned long long>(s.invalidReportedLinear),
-			static_cast<unsigned long long>(s.invalidReportedAngular));
+		    " rest_jit_mm raw=%.3f live=%.3f cand=%.3f rest_jit_deg raw=%.4f live=%.4f cand=%.4f"
+		    " move_lag_mm live=%.2f cand=%.2f move_lag_max_mm live=%.2f cand=%.2f"
+		    " move_lag_deg live=%.3f cand=%.3f"
+		    " cand_release_pos=%.3f cand_cutoff_pos=%.2f cand_release_rot=%.3f cand_cutoff_rot=%.2f"
+		    " div_mm cand_v_live=%.2f cand_v_live_max=%.2f cand_v_raw=%.2f"
+		    " div_deg cand_v_live=%.3f cand_v_raw=%.3f"
+		    " reseeds=%llu gap=%llu jump=%llu nonfinite=%llu bad_vel=%llu bad_ang=%llu",
+		    openVRID, static_cast<unsigned>(smoothness), ss::CandidateKindName(state.candidate),
+		    device.smartEnabled ? 1 : 0, static_cast<unsigned long long>(s.samples),
+		    static_cast<unsigned long long>(s.restSamples), static_cast<unsigned long long>(s.moveSamples),
+		    Rms(s.sumSqRestRawStepM, s.restSamples) * 1000.0, Rms(s.sumSqRestLiveStepM, s.restSamples) * 1000.0,
+		    Rms(s.sumSqRestCandStepM, s.restSamples) * 1000.0, Rms(s.sumSqRestRawRotStepRad, s.restSamples) * kRad2Deg,
+		    Rms(s.sumSqRestLiveRotStepRad, s.restSamples) * kRad2Deg,
+		    Rms(s.sumSqRestCandRotStepRad, s.restSamples) * kRad2Deg, Rms(s.sumSqMoveLiveLagM, s.moveSamples) * 1000.0,
+		    Rms(s.sumSqMoveCandLagM, s.moveSamples) * 1000.0, s.maxMoveLiveLagM * 1000.0, s.maxMoveCandLagM * 1000.0,
+		    Rms(s.sumSqMoveLiveLagRad, s.moveSamples) * kRad2Deg, Rms(s.sumSqMoveCandLagRad, s.moveSamples) * kRad2Deg,
+		    s.sumPosRelease * inv, s.sumPosCutoffHz * inv, s.sumRotRelease * inv, s.sumRotCutoffHz * inv,
+		    Rms(s.sumSqCandLiveErrM, s.samples) * 1000.0, s.maxCandLiveErrM * 1000.0,
+		    Rms(s.sumSqCandRawErrM, s.samples) * 1000.0, Rms(s.sumSqCandLiveErrRad, s.samples) * kRad2Deg,
+		    Rms(s.sumSqCandRawErrRad, s.samples) * kRad2Deg, static_cast<unsigned long long>(s.reseeds),
+		    static_cast<unsigned long long>(s.gapReseeds), static_cast<unsigned long long>(s.jumpReseeds),
+		    static_cast<unsigned long long>(s.nonFinitePoseResets),
+		    static_cast<unsigned long long>(s.invalidReportedLinear),
+		    static_cast<unsigned long long>(s.invalidReportedAngular));
 
 		stats = SmartSmoothingShadowStats{};
 		state.lastLog = now;
 	};
 
 	// Refresh the candidate selection at the log cadence (not per sample).
-	const double sinceCand = state.lastCandidateCheck.QuadPart > 0
-		? (now.QuadPart - state.lastCandidateCheck.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
-		: kCandidateCheckSeconds;
+	const double sinceCand =
+	    state.lastCandidateCheck.QuadPart > 0
+	        ? (now.QuadPart - state.lastCandidateCheck.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
+	        : kCandidateCheckSeconds;
 	if (sinceCand >= kCandidateCheckSeconds) {
 		state.candidate = ReadCandidateFromFlags();
 		state.lastCandidateCheck = now;
@@ -190,26 +172,28 @@ void ServerTrackedDeviceProvider::UpdateSmartSmoothingShadow(
 	}
 
 	const double dt = state.lastSample.QuadPart > 0
-		? (now.QuadPart - state.lastSample.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
-		: -1.0;
+	                      ? (now.QuadPart - state.lastSample.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
+	                      : -1.0;
 	state.lastSample = now;
 
 	double reportedLinear = 0.0;
 	const bool repLinValid = Finite3(rawPose.vecVelocity);
 	if (repLinValid) {
 		reportedLinear = std::min(ss::Length3(rawPose.vecVelocity), kMaxReasonableLinearSpeed);
-	} else {
+	}
+	else {
 		++stats.invalidReportedLinear;
 	}
 	double reportedAngular = 0.0;
 	if (Finite3(rawPose.vecAngularVelocity)) {
 		reportedAngular = std::min(ss::Length3(rawPose.vecAngularVelocity), kMaxReasonableAngularSpeed);
-	} else {
+	}
+	else {
 		++stats.invalidReportedAngular;
 	}
 
-	const ss::StepResult r = ss::FilterStep(
-		state.filter, candParams, rawPos, rawRotN, reportedLinear, reportedAngular, dt);
+	const ss::StepResult r =
+	    ss::FilterStep(state.filter, candParams, rawPos, rawRotN, reportedLinear, reportedAngular, dt);
 
 	// Live (applied) pose -> doubles.
 	double livePos[3] = {livePose.vecPosition[0], livePose.vecPosition[1], livePose.vecPosition[2]};
@@ -223,8 +207,10 @@ void ServerTrackedDeviceProvider::UpdateSmartSmoothingShadow(
 
 	if (r.reseeded) {
 		++stats.reseeds;
-		if (r.reseedReason == ss::ReseedReason::Gap) ++stats.gapReseeds;
-		else if (r.reseedReason == ss::ReseedReason::Jump) ++stats.jumpReseeds;
+		if (r.reseedReason == ss::ReseedReason::Gap)
+			++stats.gapReseeds;
+		else if (r.reseedReason == ss::ReseedReason::Jump)
+			++stats.jumpReseeds;
 		Copy3(state.prevRawPos, rawPos);
 		Copy3(state.prevLivePos, livePos);
 		Copy3(state.prevCandPos, candPos);
@@ -275,17 +261,18 @@ void ServerTrackedDeviceProvider::UpdateSmartSmoothingShadow(
 			stats.sumSqRestRawRotStepRad += rawRotStep * rawRotStep;
 			stats.sumSqRestLiveRotStepRad += liveRotStep * liveRotStep;
 			stats.sumSqRestCandRotStepRad += candRotStep * candRotStep;
-		} else if (rawSpeed > kMoveLinearSpeed) {
+		}
+		else if (rawSpeed > kMoveLinearSpeed) {
 			++stats.moveSamples;
 			const double liveLag = ss::Distance3(livePos, rawPos);
-			const double candLag = candRawErr;  // candidate output vs raw = candidate lag
+			const double candLag = candRawErr; // candidate output vs raw = candidate lag
 			stats.sumSqMoveLiveLagM += liveLag * liveLag;
 			stats.maxMoveLiveLagM = std::max(stats.maxMoveLiveLagM, liveLag);
 			stats.sumSqMoveCandLagM += candLag * candLag;
 			stats.maxMoveCandLagM = std::max(stats.maxMoveCandLagM, candLag);
 			const double liveLagRot = ss::QuatAngleRad(liveRotN, rawRotN);
 			stats.sumSqMoveLiveLagRad += liveLagRot * liveLagRot;
-			stats.sumSqMoveCandLagRad += candRawErrRot * candRawErrRot;  // candidate vs raw rot
+			stats.sumSqMoveCandLagRad += candRawErrRot * candRawErrRot; // candidate vs raw rot
 		}
 	}
 

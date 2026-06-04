@@ -9,7 +9,7 @@
 
 namespace smoothing::logging {
 
-FILE *LogFile = nullptr;
+FILE* LogFile = nullptr;
 
 void OpenLogFile()
 {

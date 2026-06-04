@@ -18,27 +18,27 @@ namespace captions {
 class HostSupervisor : public openvr_pair::common::HostSupervisorBase
 {
 public:
-    explicit HostSupervisor(const std::string &host_exe_path);
+	explicit HostSupervisor(const std::string& host_exe_path);
 
-    // Queue and send the current host config blob. If the control pipe is
-    // not available yet, retry after the next spawn/reconnect.
-    void SetHostConfigCommand(const std::string &command);
+	// Queue and send the current host config blob. If the control pipe is
+	// not available yet, retry after the next spawn/reconnect.
+	void SetHostConfigCommand(const std::string& command);
 
 protected:
-    std::string  ControlPipeName()    const override;
-    std::wstring SingletonMutexName() const override;
-    void         OnHostReady() override;
-    void         OnHostExited() override;
-    std::string  DescribeExitCode(DWORD code) const override;
-    void         LogV(const char* fmt, va_list args) override;
+	std::string ControlPipeName() const override;
+	std::wstring SingletonMutexName() const override;
+	void OnHostReady() override;
+	void OnHostExited() override;
+	std::string DescribeExitCode(DWORD code) const override;
+	void LogV(const char* fmt, va_list args) override;
 
 private:
-    bool TrySendCommand(const std::string &command);
+	bool TrySendCommand(const std::string& command);
 
-    std::mutex  command_mutex_;
-    std::string pending_command_;
-    bool        has_pending_command_ = false;
-    bool        command_sent_        = false;
+	std::mutex command_mutex_;
+	std::string pending_command_;
+	bool has_pending_command_ = false;
+	bool command_sent_ = false;
 };
 
 } // namespace captions

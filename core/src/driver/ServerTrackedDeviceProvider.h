@@ -27,20 +27,19 @@
 #include <unordered_map>
 #include <vector>
 
-
 class ServerTrackedDeviceProvider : public vr::IServerTrackedDeviceProvider
 {
 public:
 	////// Start vr::IServerTrackedDeviceProvider functions
 
 	/** initializes the driver. This will be called before any other methods are called. */
-	virtual vr::EVRInitError Init(vr::IVRDriverContext *pDriverContext) override;
+	virtual vr::EVRInitError Init(vr::IVRDriverContext* pDriverContext) override;
 
 	/** cleans up the driver right before it is unloaded */
 	virtual void Cleanup() override;
 
 	/** Returns the version of the ITrackedDeviceServerDriver interface used by this driver */
-	virtual const char * const *GetInterfaceVersions() { return vr::k_InterfaceVersions; }
+	virtual const char* const* GetInterfaceVersions() { return vr::k_InterfaceVersions; }
 
 	/** Allows the driver do to some work in the main loop of the server. */
 	virtual void RunFrame() override;
@@ -49,34 +48,32 @@ public:
 	virtual bool ShouldBlockStandbyMode() { return false; }
 
 	/** Called when the system is entering Standby mode. The driver should switch itself into whatever sort of low-power
-	* state it has. */
-	virtual void EnterStandby() { }
+	 * state it has. */
+	virtual void EnterStandby() {}
 
 	/** Called when the system is leaving Standby mode. The driver should switch itself back to
 	full operation. */
-	virtual void LeaveStandby() { }
+	virtual void LeaveStandby() {}
 
 	////// End vr::IServerTrackedDeviceProvider functions
 
 	ServerTrackedDeviceProvider() = default;
-	void SetDeviceTransform(const protocol::SetDeviceTransform &newTransform);
-	void SetTrackingSystemFallback(const protocol::SetTrackingSystemFallback &newFallback);
+	void SetDeviceTransform(const protocol::SetDeviceTransform& newTransform);
+	void SetTrackingSystemFallback(const protocol::SetTrackingSystemFallback& newFallback);
 	// v12: per-device pose-prediction push from the Smoothing overlay. Updates
 	// the predictionSmoothness + recalibrateOnMovement slots without touching
 	// transform/scale/enabled. SetDeviceTransform from SC stopped writing those
 	// slots when this message was introduced, so the two overlays no longer
 	// clobber each other.
-	void SetDevicePrediction(const protocol::SetDevicePrediction &cfg);
-	bool HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose);
+	void SetDevicePrediction(const protocol::SetDevicePrediction& cfg);
+	bool HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t& pose);
 	void HandleApplyRandomOffset();
-	void HandleSetAlignmentSpeedParams(const protocol::AlignmentSpeedParams params) {
-		alignmentSpeedParams = params;
-	}
+	void HandleSetAlignmentSpeedParams(const protocol::AlignmentSpeedParams params) { alignmentSpeedParams = params; }
 	// v25: head-mount tracker config from the overlay. Caches state used by
 	// the DriverSynth branch in HandleDevicePoseUpdated.
-	void SetHeadMountConfig(const protocol::SetHeadMountConfig &cfg);
-	bool HandleIpcRequest(uint32_t featureMask, const protocol::Request &request, protocol::Response &response);
-	void OnGetGenericInterface(const char *pchInterface, void *iface);
+	void SetHeadMountConfig(const protocol::SetHeadMountConfig& cfg);
+	bool HandleIpcRequest(uint32_t featureMask, const protocol::Request& request, protocol::Response& response);
+	void OnGetGenericInterface(const char* pchInterface, void* iface);
 
 	// Finger-smoothing config cache. Written by IPCServer when the overlay
 	// pushes a new config (rare -- only on UI changes). Read by the
@@ -84,32 +81,30 @@ public:
 	// rate (~340 Hz/hand). Held under its OWN mutex distinct from
 	// stateMutex so finger updates can never block the pose-update path,
 	// and vice-versa.
-	void SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig &cfg);
+	void SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig& cfg);
 	protocol::FingerSmoothingConfig GetFingerSmoothingConfig() const;
 
 	// Input-health config cache. Written by IPCServer when the WKOpenVR-InputHealth
 	// overlay pushes a new config (rare). Read by the boolean / scalar input
 	// detours on every component update once Stage 1B lands (same atomic-pack
 	// pattern as fingerCfgPacked so the per-tick read is a single relaxed load).
-	void SetInputHealthConfig(const protocol::InputHealthConfig &cfg);
+	void SetInputHealthConfig(const protocol::InputHealthConfig& cfg);
 	protocol::InputHealthConfig GetInputHealthConfig() const;
-	void SetInputHealthCompensation(const protocol::InputHealthCompensationEntry &entry);
-	bool LookupInputHealthCompensation(
-		uint64_t serial_hash,
-		const std::string &path,
-		protocol::InputHealthCompensationEntry &out) const;
+	void SetInputHealthCompensation(const protocol::InputHealthCompensationEntry& entry);
+	bool LookupInputHealthCompensation(uint64_t serial_hash, const std::string& path,
+	                                   protocol::InputHealthCompensationEntry& out) const;
 	void ClearInputHealthCompensation(uint64_t serial_hash);
 
 private:
 	struct ActiveDriverModule
 	{
 		std::unique_ptr<DriverModule> module;
-		const openvr_pair::common::module_safety::ModuleSpec *safety = nullptr;
+		const openvr_pair::common::module_safety::ModuleSpec* safety = nullptr;
 	};
 
-	void DisableActiveModuleAt(size_t index, const char *reason);
-	bool DisableActiveModuleByMask(uint32_t featureMask, const char *reason);
-	void DisableDetachedModule(ActiveDriverModule entry, const char *reason);
+	void DisableActiveModuleAt(size_t index, const char* reason);
+	bool DisableActiveModuleByMask(uint32_t featureMask, const char* reason);
+	void DisableDetachedModule(ActiveDriverModule entry, const char* reason);
 
 	// Per-feature IPC servers, allocated only when the matching enable_*.flag
 	// is detected at Init. Any may be null in feature-disabled builds; the
@@ -133,7 +128,8 @@ private:
 	// neither flag was present and the driver is running inert.
 	uint32_t featureFlags = 0;
 
-	enum DeltaSize {
+	enum DeltaSize
+	{
 		TINY,
 		SMALL,
 		LARGE
@@ -200,8 +196,7 @@ private:
 		// The candidate one-euro filter -- its own state, distinct from the live
 		// device.smartFilter -- plus the selected variant.
 		prediction::smart_shadow::FilterState filter;
-		prediction::smart_shadow::CandidateKind candidate =
-			prediction::smart_shadow::CandidateKind::Strong;
+		prediction::smart_shadow::CandidateKind candidate = prediction::smart_shadow::CandidateKind::Strong;
 
 		// Previous-frame outputs (raw / live / candidate) for per-frame step.
 		double prevRawPos[3] = {0.0, 0.0, 0.0};
@@ -305,7 +300,8 @@ private:
 	// because the overlay may not have called SetDeviceTransform for this slot
 	// yet; without throttling it gets re-issued on every single pose update for
 	// every empty slot up to k_unMaxTrackedDeviceCount.
-	enum class LookupState : uint8_t {
+	enum class LookupState : uint8_t
+	{
 		NotTried,
 		Cached,
 		Failed,
@@ -365,19 +361,20 @@ private:
 	// HeadMountDriverState mirrors the wire payload but uses fixed-size buffers
 	// that are trivially copyable; no std::string so the mutex-guarded copy
 	// does not allocate.
-	struct HeadMountDriverState {
-		int     mode          = 0;      // HeadMountMode value; 3 = DriverSynth
-		int32_t deviceId      = -1;     // -1 = unresolved
-		char    trackerSerial[protocol::MaxTrackingSystemNameLen]        = {};
-		char    trackerTrackingSystem[protocol::MaxTrackingSystemNameLen] = {};
-		double  headFromTrackerTrans[3] = {0.0, 0.0, 0.0};
-		double  headFromTrackerRot[4]   = {0.0, 0.0, 0.0, 1.0};  // xyzw
-		bool    hideTracker       = true;
-		bool    offsetCalibrated  = false;
+	struct HeadMountDriverState
+	{
+		int mode = 0;          // HeadMountMode value; 3 = DriverSynth
+		int32_t deviceId = -1; // -1 = unresolved
+		char trackerSerial[protocol::MaxTrackingSystemNameLen] = {};
+		char trackerTrackingSystem[protocol::MaxTrackingSystemNameLen] = {};
+		double headFromTrackerTrans[3] = {0.0, 0.0, 0.0};
+		double headFromTrackerRot[4] = {0.0, 0.0, 0.0, 1.0}; // xyzw
+		bool hideTracker = true;
+		bool offsetCalibrated = false;
 		wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming;
 	};
-	mutable std::mutex        m_headMountStateMutex;
-	HeadMountDriverState      m_headMountState;
+	mutable std::mutex m_headMountStateMutex;
+	HeadMountDriverState m_headMountState;
 
 	// Per-device tracker pose cache for the DriverSynth path. The pose-hook
 	// thread writes the latest tracker pose here when the device's openVRID
@@ -386,10 +383,10 @@ private:
 	// from stateMutex: the tracker snapshot is written on every pose tick for
 	// the tracked device, so sharing stateMutex would add contention on every
 	// tracker pose update.
-	mutable std::mutex               m_trackerSnapMutex;
-	driver_synth::TrackerSnapshot    m_trackerSnap;
-	driver_synth::SourceBlendState   m_driverSynthBlendState;
-	std::atomic<bool>                m_driverSynthBlendReset{false};
+	mutable std::mutex m_trackerSnapMutex;
+	driver_synth::TrackerSnapshot m_trackerSnap;
+	driver_synth::SourceBlendState m_driverSynthBlendState;
+	std::atomic<bool> m_driverSynthBlendReset{false};
 
 	// Finger-smoothing config packed into an atomic uint64_t. Single-writer
 	// (IPC thread, on user UI input -- rare) / many-reader (skeletal hook
@@ -420,8 +417,8 @@ private:
 	// Default zero = {master_enabled=false, smoothness=0, finger_mask=0,
 	// per_finger_smoothness all 0} so the detour fast-paths to passthrough
 	// until the overlay has sent a real config.
-	mutable std::atomic<uint64_t>     fingerCfgPacked{0};
-	mutable std::atomic<uint64_t>     perFingerSmoothness0to7Packed{0};
+	mutable std::atomic<uint64_t> fingerCfgPacked{0};
+	mutable std::atomic<uint64_t> perFingerSmoothness0to7Packed{0};
 
 	// Input-health config packed into an atomic uint64_t. Same pattern as
 	// fingerCfgPacked: single-writer (IPC thread on user UI input), many-
@@ -432,13 +429,14 @@ private:
 	// InputHealthConfig is 8 bytes (sized exactly for this pack). The
 	// runtime invariant is enforced by a static_assert in the .cpp where the
 	// packing happens.
-	mutable std::atomic<uint64_t>     inputHealthCfgPacked{0};
+	mutable std::atomic<uint64_t> inputHealthCfgPacked{0};
 	mutable std::shared_mutex inputHealthCompMutex;
 	// Diagnostic counter: incremented each time a reader had to wait on
 	// inputHealthCompMutex (writer held). Not plumbed to the overlay yet;
 	// observable under a debugger to quantify lock contention.
 	mutable std::atomic<uint64_t> inputHealthCompContentionCount{0};
-	std::unordered_map<uint64_t, std::unordered_map<std::string, protocol::InputHealthCompensationEntry>> inputHealthComp;
+	std::unordered_map<uint64_t, std::unordered_map<std::string, protocol::InputHealthCompensationEntry>>
+	    inputHealthComp;
 
 	// Look up an existing fallback slot by system name (linear scan + memcmp).
 	// Returns nullptr if no slot is currently occupied with that name.
@@ -448,12 +446,8 @@ private:
 	// flat array is at capacity.
 	FallbackSlot* AcquireFallbackSlot(const char* name, size_t len);
 
-	DeltaSize GetTransformDeltaSize(
-		DeltaSize prior_delta,
-		const IsoTransform& deviceWorldPose,
-		const IsoTransform& src,
-		const IsoTransform& target
-	) const;
+	DeltaSize GetTransformDeltaSize(DeltaSize prior_delta, const IsoTransform& deviceWorldPose, const IsoTransform& src,
+	                                const IsoTransform& target) const;
 
 	double GetTransformRate(DeltaSize delta) const;
 
@@ -466,17 +460,10 @@ private:
 	// fields by a release-modulated factor so extrapolation is suppressed at
 	// rest but active in motion. Caller guarantees smoothness > 0; rawPose is the
 	// unmodified pose, pose is mutated in place.
-	void ApplySmartSmoothing(
-		uint32_t openVRID,
-		DeviceTransform& device,
-		const vr::DriverPose_t& rawPose,
-		vr::DriverPose_t& pose,
-		uint8_t smoothness) const;
+	void ApplySmartSmoothing(uint32_t openVRID, DeviceTransform& device, const vr::DriverPose_t& rawPose,
+	                         vr::DriverPose_t& pose, uint8_t smoothness) const;
 #if WKOPENVR_BUILD_IS_DEV
-	void UpdateSmartSmoothingShadow(
-		uint32_t openVRID,
-		DeviceTransform& device,
-		const vr::DriverPose_t& rawPose,
-		const vr::DriverPose_t& livePose) const;
+	void UpdateSmartSmoothingShadow(uint32_t openVRID, DeviceTransform& device, const vr::DriverPose_t& rawPose,
+	                                const vr::DriverPose_t& livePose) const;
 #endif
 };

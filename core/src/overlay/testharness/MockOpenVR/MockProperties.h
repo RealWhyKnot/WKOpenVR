@@ -19,12 +19,12 @@ class MockOpenVRRuntime;
 // Implements vr::IVRProperties. Backs every container handle with an
 // in-memory map of typed property values. Scenarios pre-populate properties
 // like Prop_SerialNumber_String to make the driver see realistic devices.
-class MockProperties : public vr::IVRProperties {
+class MockProperties : public vr::IVRProperties
+{
 public:
-	explicit MockProperties(MockOpenVRRuntime &owner);
+	explicit MockProperties(MockOpenVRRuntime& owner);
 
-	using PropValue = std::variant<bool, int32_t, uint64_t, float, double, std::string,
-		vr::HmdMatrix34_t>;
+	using PropValue = std::variant<bool, int32_t, uint64_t, float, double, std::string, vr::HmdMatrix34_t>;
 
 	// Pre-seed properties from a scenario (called BEFORE driver Init when
 	// possible; safe to call mid-run too).
@@ -34,19 +34,19 @@ public:
 
 	// IVRProperties
 	vr::ETrackedPropertyError ReadPropertyBatch(vr::PropertyContainerHandle_t ulContainerHandle,
-		vr::PropertyRead_t *pBatch, uint32_t unBatchEntryCount) override;
+	                                            vr::PropertyRead_t* pBatch, uint32_t unBatchEntryCount) override;
 	vr::ETrackedPropertyError WritePropertyBatch(vr::PropertyContainerHandle_t ulContainerHandle,
-		vr::PropertyWrite_t *pBatch, uint32_t unBatchEntryCount) override;
-	const char *GetPropErrorNameFromEnum(vr::ETrackedPropertyError error) override;
-	vr::PropertyContainerHandle_t TrackedDeviceToPropertyContainer(
-		vr::TrackedDeviceIndex_t nDevice) override;
+	                                             vr::PropertyWrite_t* pBatch, uint32_t unBatchEntryCount) override;
+	const char* GetPropErrorNameFromEnum(vr::ETrackedPropertyError error) override;
+	vr::PropertyContainerHandle_t TrackedDeviceToPropertyContainer(vr::TrackedDeviceIndex_t nDevice) override;
 
 private:
-	struct Bucket {
+	struct Bucket
+	{
 		std::unordered_map<int /*ETrackedDeviceProperty*/, PropValue> values;
 	};
 
-	MockOpenVRRuntime &owner_;
+	MockOpenVRRuntime& owner_;
 	mutable std::mutex mu_;
 	std::unordered_map<uint64_t /*container*/, Bucket> store_;
 	std::unordered_map<uint32_t /*device*/, uint64_t /*container*/> device_to_container_;

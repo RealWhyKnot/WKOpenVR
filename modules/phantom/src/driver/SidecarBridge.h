@@ -18,28 +18,26 @@ namespace phantom {
 class SidecarBridge
 {
 public:
-    SidecarBridge() = default;
+	SidecarBridge() = default;
 
-    // Idempotent. Tries to open the OUT shmem; returns true once opened.
-    bool TryOpen();
-    void Close();
-    bool IsReady() const { return ready_; }
+	// Idempotent. Tries to open the OUT shmem; returns true once opened.
+	bool TryOpen();
+	void Close();
+	bool IsReady() const { return ready_; }
 
-    // Latest global confidence reported by the sidecar (0..1). Returns 0
-    // if the bridge is not ready or no output has arrived yet.
-    float GlobalConfidence() const;
+	// Latest global confidence reported by the sidecar (0..1). Returns 0
+	// if the bridge is not ready or no output has arrived yet.
+	float GlobalConfidence() const;
 
-    // Per-role pose. Returns false if (a) the bridge is not ready,
-    // (b) the role's output slot is not flagged valid, or (c) the
-    // global confidence is below `min_global`. The driver passes
-    // `min_global` from PhantomConfig so the threshold is user-tunable.
-    bool FetchPose(BodyRole role,
-                   float min_global,
-                   vr::DriverPose_t& out_pose) const;
+	// Per-role pose. Returns false if (a) the bridge is not ready,
+	// (b) the role's output slot is not flagged valid, or (c) the
+	// global confidence is below `min_global`. The driver passes
+	// `min_global` from PhantomConfig so the threshold is user-tunable.
+	bool FetchPose(BodyRole role, float min_global, vr::DriverPose_t& out_pose) const;
 
 private:
-    bool ready_ = false;
-    mutable PhantomInferenceOutShmem shmem_;
+	bool ready_ = false;
+	mutable PhantomInferenceOutShmem shmem_;
 };
 
 } // namespace phantom

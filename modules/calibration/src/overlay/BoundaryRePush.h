@@ -28,19 +28,21 @@ namespace boundary_repush {
 //
 // Returns the new pending count and whether the push should fire this tick
 // (fire can only be true when pushable).
-struct StartupCountdown {
+struct StartupCountdown
+{
 	int pending = 0;
 	bool fire = false;
 };
 
-inline StartupCountdown StepStartupCountdown(bool pushable, int pending) {
+inline StartupCountdown StepStartupCountdown(bool pushable, int pending)
+{
 	if (pending <= 0) return {0, false};
-	if (!pushable) return {pending, false};  // hold until pushable
+	if (!pushable) return {pending, false}; // hold until pushable
 	const int next = pending - 1;
 	return {next, next == 0};
 }
 
-}  // namespace boundary_repush
+} // namespace boundary_repush
 
 void TickBoundaryRePush(double time);
 void ScheduleBoundaryStartupPush();

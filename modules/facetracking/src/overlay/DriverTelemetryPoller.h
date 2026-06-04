@@ -20,48 +20,48 @@ namespace facetracking {
 
 struct DriverTelemetrySnapshot
 {
-    bool     valid            = false;  // file existed and parsed at least once
-    bool     stale            = false;  // file mtime > 5 s old
+	bool valid = false; // file existed and parsed at least once
+	bool stale = false; // file mtime > 5 s old
 
-    int      driver_pid       = 0;
-    uint64_t frames_processed = 0;
-    uint64_t frames_read = 0;
-    uint64_t osc_messages_sent = 0;
-    uint64_t osc_messages_dropped = 0;
-    std::string active_module_uuid;
+	int driver_pid = 0;
+	uint64_t frames_processed = 0;
+	uint64_t frames_read = 0;
+	uint64_t osc_messages_sent = 0;
+	uint64_t osc_messages_dropped = 0;
+	std::string active_module_uuid;
 
-    // Vergence lock readout.
-    bool  vergence_enabled   = false;
-    float focus_distance_m   = 0.f;
-    float ipd_m              = 0.f;
+	// Vergence lock readout.
+	bool vergence_enabled = false;
+	float focus_distance_m = 0.f;
+	float ipd_m = 0.f;
 
-    // shape_readiness[0..62]: Unified Expressions v2 shapes (63 entries).
-    // shape_readiness[63..64]: EyeOpen_L, EyeOpen_R (two eye-openness slots).
-    std::array<bool, 65> shape_warm{};
+	// shape_readiness[0..62]: Unified Expressions v2 shapes (63 entries).
+	// shape_readiness[63..64]: EyeOpen_L, EyeOpen_R (two eye-openness slots).
+	std::array<bool, 65> shape_warm{};
 };
 
 class DriverTelemetryPoller
 {
-  public:
-    DriverTelemetryPoller();
+public:
+	DriverTelemetryPoller();
 
-    // Call once per overlay frame. Re-reads the file only when the on-disk
-    // mtime advances; cost is a stat() per tick in steady state.
-    void Tick();
+	// Call once per overlay frame. Re-reads the file only when the on-disk
+	// mtime advances; cost is a stat() per tick in steady state.
+	void Tick();
 
-    const DriverTelemetrySnapshot &Snapshot() const noexcept { return snapshot_; }
+	const DriverTelemetrySnapshot& Snapshot() const noexcept { return snapshot_; }
 
-    const std::string &PathUtf8() const noexcept { return path_utf8_; }
+	const std::string& PathUtf8() const noexcept { return path_utf8_; }
 
-  private:
-    void ResolvePath();
-    void ReadFile();
+private:
+	void ResolvePath();
+	void ReadFile();
 
-    std::string                            path_utf8_;
-    std::chrono::steady_clock::time_point  last_read_attempt_{};
-    std::chrono::steady_clock::time_point  last_successful_read_{};
-    int64_t                                last_observed_mtime_ = 0;
-    DriverTelemetrySnapshot                snapshot_;
+	std::string path_utf8_;
+	std::chrono::steady_clock::time_point last_read_attempt_{};
+	std::chrono::steady_clock::time_point last_successful_read_{};
+	int64_t last_observed_mtime_ = 0;
+	DriverTelemetrySnapshot snapshot_;
 };
 
 } // namespace facetracking

@@ -31,9 +31,9 @@ protocol::FingerSmoothingConfig UnpackFingerSmoothing(uint64_t header, uint64_t 
 	protocol::FingerSmoothingConfig cfg{};
 	const uint8_t* b = reinterpret_cast<const uint8_t*>(&header);
 	cfg.master_enabled = b[0] != 0;
-	cfg.smoothness     = b[1];
-	cfg.finger_mask    = static_cast<uint16_t>(b[2] | (static_cast<uint16_t>(b[3]) << 8));
-	cfg._reserved      = 0;
+	cfg.smoothness = b[1];
+	cfg.finger_mask = static_cast<uint16_t>(b[2] | (static_cast<uint16_t>(b[3]) << 8));
+	cfg._reserved = 0;
 	std::memcpy(cfg.per_finger_smoothness, &low, 8);
 	cfg.per_finger_smoothness[8] = b[5];
 	cfg.per_finger_smoothness[9] = b[6];
@@ -55,14 +55,13 @@ bool IsFingerSmoothed(const protocol::FingerSmoothingConfig& cfg, int idx)
 
 } // namespace
 
-uint16_t ComputeFingerSmoothingReseedBits(
-	const protocol::FingerSmoothingConfig& prev,
-	const protocol::FingerSmoothingConfig& next)
+uint16_t ComputeFingerSmoothingReseedBits(const protocol::FingerSmoothingConfig& prev,
+                                          const protocol::FingerSmoothingConfig& next)
 {
 	uint16_t reseedBits = 0;
 	for (int i = 0; i < 10; ++i) {
 		const bool wasOn = IsFingerSmoothed(prev, i);
-		const bool isOn  = IsFingerSmoothed(next, i);
+		const bool isOn = IsFingerSmoothed(next, i);
 		if (!wasOn && isOn) reseedBits |= static_cast<uint16_t>(1u << i);
 	}
 	return reseedBits;
@@ -71,7 +70,7 @@ uint16_t ComputeFingerSmoothingReseedBits(
 uint64_t PackInputHealthConfig(const protocol::InputHealthConfig& cfg)
 {
 	static_assert(sizeof(protocol::InputHealthConfig) <= sizeof(uint64_t),
-		"InputHealthConfig must fit inside atomic<uint64_t>");
+	              "InputHealthConfig must fit inside atomic<uint64_t>");
 	uint64_t packed = 0;
 	std::memcpy(&packed, &cfg, sizeof(cfg));
 	return packed;

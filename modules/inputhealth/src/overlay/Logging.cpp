@@ -7,7 +7,7 @@
 
 #include <chrono>
 
-FILE *LogFile = nullptr;
+FILE* LogFile = nullptr;
 
 void OpenLogFile()
 {

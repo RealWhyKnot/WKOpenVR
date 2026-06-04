@@ -72,16 +72,17 @@ constexpr int kColdStartGraceTicks = 100;
 //     end grace early. Profile snap was correct.
 //   - At grace end with madFloor > kValidatedFailedMadM: also Failed.
 //   - In between: Inconclusive, profile stays, no recovery.
-constexpr double kValidatedSettledMadM = 0.008;   // 8 mm
-constexpr double kValidatedFailedMadM  = 0.020;   // 20 mm
-constexpr double kAcceptBiasTransM     = 0.005;   // 5 mm; max bias for Settled
-constexpr double kFailBiasTransM       = 0.015;   // 15 mm; bias above this -> Failed
-constexpr int    kValidationMinSamples = 20;
+constexpr double kValidatedSettledMadM = 0.008; // 8 mm
+constexpr double kValidatedFailedMadM = 0.020;  // 20 mm
+constexpr double kAcceptBiasTransM = 0.005;     // 5 mm; max bias for Settled
+constexpr double kFailBiasTransM = 0.015;       // 15 mm; bias above this -> Failed
+constexpr int kValidationMinSamples = 20;
 
-enum class ValidationOutcome {
-    Inconclusive = 0,
-    Settled      = 1,
-    Failed       = 2,
+enum class ValidationOutcome
+{
+	Inconclusive = 0,
+	Settled = 1,
+	Failed = 2,
 };
 
 // Number of Continuous-mode ticks to keep warm-restart validation active.
@@ -107,14 +108,15 @@ constexpr int kGraceSamples = 100;
 // `tickId` is the count of continuous-cal solver ticks since session start.
 // Used for the cold-start safety check; values below kColdStartGraceTicks
 // suppress engage to prevent session-startup false positives.
-struct EngageInput {
-    bool   wasPresent;        // ctx.lastUserPresent before this tick
-    bool   nowPresent;        // freshly-read activity-level signal
-    double awayForSeconds;    // time - ctx.userAwaySince (0 if not currently away)
-    bool   validProfile;      // ctx.validProfile
-    bool   stateEligible;     // ctx.state in {Continuous, ContinuousStandby}
-    double awayPositionDeltaM = 0.0;  // HMD displacement while "away"
-    int    tickId             = 1 << 30;  // tick counter; default safe-past-cold-start
+struct EngageInput
+{
+	bool wasPresent;                 // ctx.lastUserPresent before this tick
+	bool nowPresent;                 // freshly-read activity-level signal
+	double awayForSeconds;           // time - ctx.userAwaySince (0 if not currently away)
+	bool validProfile;               // ctx.validProfile
+	bool stateEligible;              // ctx.state in {Continuous, ContinuousStandby}
+	double awayPositionDeltaM = 0.0; // HMD displacement while "away"
+	int tickId = 1 << 30;            // tick counter; default safe-past-cold-start
 };
 
 // True iff the engage gate fires. Two paths compose:
@@ -131,17 +133,16 @@ struct EngageInput {
 //      proximity-and-time path would have been rejected for being too brief
 //      or too long. Designed for HMDs whose activity-level signal is
 //      unreliable (dead proximity sensor, IMU stillness not met).
-constexpr bool ShouldEngage(const EngageInput& in) {
-    if (in.wasPresent || !in.nowPresent) return false;
-    if (!in.validProfile || !in.stateEligible) return false;
-    if (in.tickId < kColdStartGraceTicks) return false;
+constexpr bool ShouldEngage(const EngageInput& in)
+{
+	if (in.wasPresent || !in.nowPresent) return false;
+	if (!in.validProfile || !in.stateEligible) return false;
+	if (in.tickId < kColdStartGraceTicks) return false;
 
-    const bool poseJump = in.awayPositionDeltaM >= kPositionJumpFastPathM;
-    const bool proximityAndTime =
-        in.awayForSeconds >= kMinAwaySeconds
-        && in.awayForSeconds <= kMaxAwaySeconds;
+	const bool poseJump = in.awayPositionDeltaM >= kPositionJumpFastPathM;
+	const bool proximityAndTime = in.awayForSeconds >= kMinAwaySeconds && in.awayForSeconds <= kMaxAwaySeconds;
 
-    return poseJump || proximityAndTime;
+	return poseJump || proximityAndTime;
 }
 
 // Inputs to the per-tick validation decision. Built once per Continuous
@@ -151,11 +152,12 @@ constexpr bool ShouldEngage(const EngageInput& in) {
 // error sample has been accumulated yet -- in that case the decision
 // falls back to the dispersion-only branch and only the early-Settled /
 // MAD-Failed paths can fire.
-struct ValidationInputs {
-    double madFloorM;
-    int    samplesSinceSnap;
-    bool   graceEndedThisTick;
-    double meanBiasTransM = 0.0;
+struct ValidationInputs
+{
+	double madFloorM;
+	int samplesSinceSnap;
+	bool graceEndedThisTick;
+	double meanBiasTransM = 0.0;
 };
 
 // Validation outcome from one tick's reading. Pure helper; caller
@@ -163,40 +165,34 @@ struct ValidationInputs {
 // bias accumulator.
 constexpr ValidationOutcome EvaluateValidation(const ValidationInputs& in)
 {
-    // Bias-Failed: the applied calibration is producing too much
-    // retargeting error for the snap target to be trusted. This is the
-    // path that catches the "stable but wrong" case the previous
-    // dispersion-only validator missed.
-    if (in.samplesSinceSnap >= kValidationMinSamples
-        && in.meanBiasTransM > kFailBiasTransM) {
-        return ValidationOutcome::Failed;
-    }
-    // Dispersion-Failed at grace end: post-snap samples never stabilized.
-    if (in.graceEndedThisTick && in.madFloorM > kValidatedFailedMadM) {
-        return ValidationOutcome::Failed;
-    }
-    // Settled: requires BOTH dispersion AND bias to be low. Pre-fix this
-    // only checked dispersion, so a snap that landed off-target but
-    // landed quietly was reported as Settled.
-    if (in.samplesSinceSnap >= kValidationMinSamples
-        && in.madFloorM > 0.0
-        && in.madFloorM < kValidatedSettledMadM
-        && in.meanBiasTransM <= kAcceptBiasTransM) {
-        return ValidationOutcome::Settled;
-    }
-    return ValidationOutcome::Inconclusive;
+	// Bias-Failed: the applied calibration is producing too much
+	// retargeting error for the snap target to be trusted. This is the
+	// path that catches the "stable but wrong" case the previous
+	// dispersion-only validator missed.
+	if (in.samplesSinceSnap >= kValidationMinSamples && in.meanBiasTransM > kFailBiasTransM) {
+		return ValidationOutcome::Failed;
+	}
+	// Dispersion-Failed at grace end: post-snap samples never stabilized.
+	if (in.graceEndedThisTick && in.madFloorM > kValidatedFailedMadM) {
+		return ValidationOutcome::Failed;
+	}
+	// Settled: requires BOTH dispersion AND bias to be low. Pre-fix this
+	// only checked dispersion, so a snap that landed off-target but
+	// landed quietly was reported as Settled.
+	if (in.samplesSinceSnap >= kValidationMinSamples && in.madFloorM > 0.0 && in.madFloorM < kValidatedSettledMadM &&
+	    in.meanBiasTransM <= kAcceptBiasTransM) {
+		return ValidationOutcome::Settled;
+	}
+	return ValidationOutcome::Inconclusive;
 }
 
 // Back-compat positional overload. Pre-bias callers (and existing tests
 // that pin the dispersion-only behaviour) route through this; bias is
 // implicitly zero, which satisfies the Settled bias gate and never
 // triggers Bias-Failed. New callers should use the struct form.
-constexpr ValidationOutcome EvaluateValidation(double madFloorM,
-                                                int samplesSinceSnap,
-                                                bool graceEndedThisTick)
+constexpr ValidationOutcome EvaluateValidation(double madFloorM, int samplesSinceSnap, bool graceEndedThisTick)
 {
-    return EvaluateValidation(ValidationInputs{
-        madFloorM, samplesSinceSnap, graceEndedThisTick, 0.0});
+	return EvaluateValidation(ValidationInputs{madFloorM, samplesSinceSnap, graceEndedThisTick, 0.0});
 }
 
-}  // namespace spacecal::warm_restart
+} // namespace spacecal::warm_restart

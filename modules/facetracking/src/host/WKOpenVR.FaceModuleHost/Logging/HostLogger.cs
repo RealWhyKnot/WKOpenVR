@@ -9,27 +9,32 @@ namespace WKOpenVR.FaceModuleHost.Logging;
 /// viewer can tail the file concurrently, and the file can be rotated under us.
 /// The file is opened lazily only while shared debug logging is enabled.
 /// </summary>
-public sealed class HostLogger : IDisposable
+public sealed class HostLogger(string? logFilePath = null, bool forceEnabled = false) : IDisposable
 {
-    private readonly string? _explicitLogFilePath;
-    private readonly bool    _forceEnabled;
-    private readonly object  _lock = new();
+    private readonly string? _explicitLogFilePath = logFilePath;
+    private readonly bool _forceEnabled = forceEnabled || logFilePath is not null;
+    private readonly Lock _lock = new();
 
     private StreamWriter? _writer;
-    private DateTime      _lastEnabledCheckUtc = DateTime.MinValue;
-    private bool          _cachedEnabled;
+    private DateTime _lastEnabledCheckUtc = DateTime.MinValue;
+    private bool _cachedEnabled;
 
     public enum Level { Info, Warn, Error }
 
-    public HostLogger(string? logFilePath = null, bool forceEnabled = false)
+    public void Info(string msg)
     {
-        _explicitLogFilePath = logFilePath;
-        _forceEnabled = forceEnabled || logFilePath is not null;
+        Write(Level.Info, msg);
     }
 
-    public void Info(string msg)  => Write(Level.Info,  msg);
-    public void Warn(string msg)  => Write(Level.Warn,  msg);
-    public void Error(string msg) => Write(Level.Error, msg);
+    public void Warn(string msg)
+    {
+        Write(Level.Warn, msg);
+    }
+
+    public void Error(string msg)
+    {
+        Write(Level.Error, msg);
+    }
 
     public void Flush()
     {
@@ -41,7 +46,10 @@ public sealed class HostLogger : IDisposable
 
     private void Write(Level level, string msg)
     {
-        if (!IsEnabled()) return;
+        if (!IsEnabled())
+        {
+            return;
+        }
 
         string line = $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} [{level,5}] [FaceHost] {msg}";
         lock (_lock)
@@ -67,11 +75,16 @@ public sealed class HostLogger : IDisposable
 
     private bool IsEnabled()
     {
-        if (_forceEnabled) return true;
+        if (_forceEnabled)
+        {
+            return true;
+        }
 
         DateTime now = DateTime.UtcNow;
         if ((now - _lastEnabledCheckUtc).TotalSeconds < 1)
+        {
             return _cachedEnabled;
+        }
 
         _cachedEnabled = File.Exists(DebugFlagPath());
         _lastEnabledCheckUtc = now;
@@ -80,7 +93,10 @@ public sealed class HostLogger : IDisposable
 
     private void EnsureOpen()
     {
-        if (_writer is not null) return;
+        if (_writer is not null)
+        {
+            return;
+        }
 
         string path = _explicitLogFilePath ?? DefaultLogPath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -99,8 +115,13 @@ public sealed class HostLogger : IDisposable
         return AppPaths.TimestampedLogPath("facetracking_host_log");
     }
 
-    private static string DebugFlagPath() =>
-        Path.Combine(AppPaths.RootDir(), "debug_logging.enabled");
+    private static string DebugFlagPath()
+    {
+        return Path.Combine(AppPaths.RootDir(), "debug_logging.enabled");
+    }
 
-    public void Dispose() => _writer?.Dispose();
+    public void Dispose()
+    {
+        _writer?.Dispose();
+    }
 }

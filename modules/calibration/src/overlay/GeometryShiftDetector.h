@@ -33,16 +33,17 @@ constexpr int kMinSustainedSpikes = 3;
 // Per-tick spike check. True when `currentError` exceeds the rolling median
 // by at least kSpikeRatio×, with a floor on the median to avoid spurious
 // firings on near-zero noise.
-constexpr bool IsCurrentErrorSpike(double currentError, double rollingMedian) {
-    return rollingMedian > kMedianFloor
-        && currentError > kSpikeRatio * rollingMedian;
+constexpr bool IsCurrentErrorSpike(double currentError, double rollingMedian)
+{
+	return rollingMedian > kMedianFloor && currentError > kSpikeRatio * rollingMedian;
 }
 
 // Sustain gate. Caller passes the running count of consecutive ticks where
 // IsCurrentErrorSpike returned true; this returns whether the count has
 // reached the trigger.
-constexpr bool ShouldFireGeometryShiftRecovery(int sustainedSpikes) {
-    return sustainedSpikes >= kMinSustainedSpikes;
+constexpr bool ShouldFireGeometryShiftRecovery(int sustainedSpikes)
+{
+	return sustainedSpikes >= kMinSustainedSpikes;
 }
 
 // -------------------------------------------------------------------------
@@ -92,33 +93,35 @@ constexpr double kCusumMinExcursionMm = 5.0;
 // value to add on fire.
 constexpr double kPostFireCooldownSeconds = 30.0;
 
-struct CusumState {
-    // Cumulative-sum statistic. Per-tick increment is
-    //   (currentError - baseline) - drift
-    // clamped at zero from below. When this exceeds kCusumThreshold the
-    // detector is a candidate for firing; the sustain gate below decides
-    // whether it actually fires this tick.
-    double S = 0.0;
+struct CusumState
+{
+	// Cumulative-sum statistic. Per-tick increment is
+	//   (currentError - baseline) - drift
+	// clamped at zero from below. When this exceeds kCusumThreshold the
+	// detector is a candidate for firing; the sustain gate below decides
+	// whether it actually fires this tick.
+	double S = 0.0;
 
-    // Consecutive ticks the S statistic has been above kCusumThreshold.
-    // The CUSUM math alone fires on the first threshold breach, which on
-    // cross-tracking-system rigs (Quest+Lighthouse) trips on routine
-    // transient excursions. The sustain gate requires kMinSustainedSpikes
-    // consecutive above-threshold ticks before firing -- same semantics as
-    // the legacy 5x-median rule, which has not produced the same
-    // firestorm pattern in observed logs.
-    //
-    // Reset to zero whenever S drops back to or below threshold (a
-    // transient spike doesn't latch the counter) or when a fire commits.
-    int sustainedAboveThreshold = 0;
+	// Consecutive ticks the S statistic has been above kCusumThreshold.
+	// The CUSUM math alone fires on the first threshold breach, which on
+	// cross-tracking-system rigs (Quest+Lighthouse) trips on routine
+	// transient excursions. The sustain gate requires kMinSustainedSpikes
+	// consecutive above-threshold ticks before firing -- same semantics as
+	// the legacy 5x-median rule, which has not produced the same
+	// firestorm pattern in observed logs.
+	//
+	// Reset to zero whenever S drops back to or below threshold (a
+	// transient spike doesn't latch the counter) or when a fire commits.
+	int sustainedAboveThreshold = 0;
 
-    // Clear both fields together. Used at every reset site (grace window,
-    // toggle flip, cooldown suppression, post-fire, not-enough-samples) so
-    // the two counters never drift apart.
-    constexpr void Reset() {
-        S = 0.0;
-        sustainedAboveThreshold = 0;
-    }
+	// Clear both fields together. Used at every reset site (grace window,
+	// toggle flip, cooldown suppression, post-fire, not-enough-samples) so
+	// the two counters never drift apart.
+	constexpr void Reset()
+	{
+		S = 0.0;
+		sustainedAboveThreshold = 0;
+	}
 };
 
 // Update the CUSUM statistic with a new residual reading and return whether
@@ -148,37 +151,34 @@ struct CusumState {
 // or below threshold resets the sustain counter without disturbing S
 // (the accumulated evidence stays; only the "is this sustained?" flag
 // drops). When the fire commits, both S and the sustain counter reset.
-constexpr bool UpdateCusumGeometryShift(CusumState& state,
-                                         double currentErrorMm,
-                                         double baselineMm,
-                                         double driftMm = kCusumDriftMm,
-                                         double threshold = kCusumThreshold,
-                                         double* outValueAtFire = nullptr,
-                                         int* outSustainAtFire = nullptr) {
-    const double minExcursionMm =
-        (threshold < kCusumMinExcursionMm) ? threshold : kCusumMinExcursionMm;
-    if ((currentErrorMm - baselineMm) < minExcursionMm) {
-        state.S = 0.0;
-        state.sustainedAboveThreshold = 0;
-        return false;
-    }
+constexpr bool UpdateCusumGeometryShift(CusumState& state, double currentErrorMm, double baselineMm,
+                                        double driftMm = kCusumDriftMm, double threshold = kCusumThreshold,
+                                        double* outValueAtFire = nullptr, int* outSustainAtFire = nullptr)
+{
+	const double minExcursionMm = (threshold < kCusumMinExcursionMm) ? threshold : kCusumMinExcursionMm;
+	if ((currentErrorMm - baselineMm) < minExcursionMm) {
+		state.S = 0.0;
+		state.sustainedAboveThreshold = 0;
+		return false;
+	}
 
-    const double increment = (currentErrorMm - baselineMm) - driftMm;
-    state.S = state.S + increment;
-    if (state.S < 0.0) state.S = 0.0;
-    if (state.S > threshold) {
-        state.sustainedAboveThreshold++;
-        if (state.sustainedAboveThreshold >= kMinSustainedSpikes) {
-            if (outValueAtFire) *outValueAtFire = state.S;
-            if (outSustainAtFire) *outSustainAtFire = state.sustainedAboveThreshold;
-            state.S = 0.0;
-            state.sustainedAboveThreshold = 0;
-            return true;
-        }
-    } else {
-        state.sustainedAboveThreshold = 0;
-    }
-    return false;
+	const double increment = (currentErrorMm - baselineMm) - driftMm;
+	state.S = state.S + increment;
+	if (state.S < 0.0) state.S = 0.0;
+	if (state.S > threshold) {
+		state.sustainedAboveThreshold++;
+		if (state.sustainedAboveThreshold >= kMinSustainedSpikes) {
+			if (outValueAtFire) *outValueAtFire = state.S;
+			if (outSustainAtFire) *outSustainAtFire = state.sustainedAboveThreshold;
+			state.S = 0.0;
+			state.sustainedAboveThreshold = 0;
+			return true;
+		}
+	}
+	else {
+		state.sustainedAboveThreshold = 0;
+	}
+	return false;
 }
 
 // Post-fire cooldown gate. Returns true when `now` sits inside the
@@ -189,9 +189,9 @@ constexpr bool UpdateCusumGeometryShift(CusumState& state,
 // recovery (Clear + demote to Standby + restart) is skipped, but the
 // per-tick sustain counters still advance so the next fire decision after
 // cooldown expires reflects the current state of the world.
-constexpr bool ShouldSuppressForCooldown(double now, double cooldownUntil) {
-    return now < cooldownUntil;
+constexpr bool ShouldSuppressForCooldown(double now, double cooldownUntil)
+{
+	return now < cooldownUntil;
 }
-
 
 } // namespace spacecal::geometry_shift

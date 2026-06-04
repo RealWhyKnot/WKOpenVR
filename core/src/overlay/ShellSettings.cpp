@@ -10,7 +10,7 @@
 namespace openvr_pair::overlay {
 namespace {
 
-std::wstring ShellSettingsPath(const std::wstring &profileRoot)
+std::wstring ShellSettingsPath(const std::wstring& profileRoot)
 {
 	if (profileRoot.empty()) return {};
 	return profileRoot + L"\\shell.txt";
@@ -20,26 +20,24 @@ std::string TrimAscii(std::string value)
 {
 	size_t begin = 0;
 	while (begin < value.size() &&
-		(value[begin] == ' ' || value[begin] == '\t' ||
-		 value[begin] == '\r' || value[begin] == '\n')) {
+	       (value[begin] == ' ' || value[begin] == '\t' || value[begin] == '\r' || value[begin] == '\n')) {
 		++begin;
 	}
 	size_t end = value.size();
 	while (end > begin &&
-		(value[end - 1] == ' ' || value[end - 1] == '\t' ||
-		 value[end - 1] == '\r' || value[end - 1] == '\n')) {
+	       (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\r' || value[end - 1] == '\n')) {
 		--end;
 	}
 	return value.substr(begin, end - begin);
 }
 
-std::map<std::string, std::string> ReadShellSettings(const std::wstring &profileRoot)
+std::map<std::string, std::string> ReadShellSettings(const std::wstring& profileRoot)
 {
 	std::map<std::string, std::string> settings;
 	const std::wstring path = ShellSettingsPath(profileRoot);
 	if (path.empty()) return settings;
 
-	FILE *f = nullptr;
+	FILE* f = nullptr;
 	if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f) return settings;
 
 	char lineBuf[512] = {};
@@ -57,15 +55,15 @@ std::map<std::string, std::string> ReadShellSettings(const std::wstring &profile
 	return settings;
 }
 
-bool WriteShellSettings(const std::wstring &profileRoot, const std::map<std::string, std::string> &settings)
+bool WriteShellSettings(const std::wstring& profileRoot, const std::map<std::string, std::string>& settings)
 {
 	const std::wstring path = ShellSettingsPath(profileRoot);
 	if (path.empty()) return false;
 	CreateDirectoryW(profileRoot.c_str(), nullptr);
 
-	FILE *f = nullptr;
+	FILE* f = nullptr;
 	if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return false;
-	for (const auto &entry : settings) {
+	for (const auto& entry : settings) {
 		fprintf(f, "%s=%s\n", entry.first.c_str(), entry.second.c_str());
 	}
 	fclose(f);
@@ -74,7 +72,7 @@ bool WriteShellSettings(const std::wstring &profileRoot, const std::map<std::str
 
 } // namespace
 
-std::string ReadShellSetting(const std::wstring &profileRoot, const char *key, const char *fallback)
+std::string ReadShellSetting(const std::wstring& profileRoot, const char* key, const char* fallback)
 {
 	if (!key || !key[0]) return fallback ? fallback : "";
 	const std::map<std::string, std::string> settings = ReadShellSettings(profileRoot);
@@ -83,7 +81,7 @@ std::string ReadShellSetting(const std::wstring &profileRoot, const char *key, c
 	return it->second;
 }
 
-bool WriteShellSetting(const std::wstring &profileRoot, const char *key, const std::string &value)
+bool WriteShellSetting(const std::wstring& profileRoot, const char* key, const std::string& value)
 {
 	if (!key || !key[0]) return false;
 	std::map<std::string, std::string> settings = ReadShellSettings(profileRoot);

@@ -9,95 +9,98 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-namespace
+namespace {
+std::wstring ConfigDir()
 {
-    std::wstring ConfigDir()
-    {
-        return openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
-    }
-
-    std::wstring ConfigPath()
-    {
-        std::wstring dir = ConfigDir();
-        if (dir.empty()) return {};
-        return dir + L"\\captions.txt";
-    }
+	return openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
 }
+
+std::wstring ConfigPath()
+{
+	std::wstring dir = ConfigDir();
+	if (dir.empty()) return {};
+	return dir + L"\\captions.txt";
+}
+} // namespace
 
 CaptionsConfig LoadCaptionsConfig()
 {
-    CaptionsConfig cfg;
-    std::wstring path = ConfigPath();
-    if (path.empty()) return cfg;
+	CaptionsConfig cfg;
+	std::wstring path = ConfigPath();
+	if (path.empty()) return cfg;
 
-    FILE *f = _wfopen(path.c_str(), L"r");
-    if (!f) return cfg;
+	FILE* f = _wfopen(path.c_str(), L"r");
+	if (!f) return cfg;
 
-    char line[512];
-    while (fgets(line, sizeof line, f)) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-            line[--len] = '\0';
-        }
-        char *eq = strchr(line, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        const char *key = line;
-        const char *val = eq + 1;
+	char line[512];
+	while (fgets(line, sizeof line, f)) {
+		size_t len = strlen(line);
+		while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+			line[--len] = '\0';
+		}
+		char* eq = strchr(line, '=');
+		if (!eq) continue;
+		*eq = '\0';
+		const char* key = line;
+		const char* val = eq + 1;
 
-        if (strcmp(key, "mode") == 0) {
-            int n = atoi(val);
-            // Two valid modes today; clamp defensively against a hand-edit
-            // setting an unsupported value rather than letting the UI render
-            // an out-of-range radio button.
-            if (n < 0) n = 0;
-            if (n > 1) n = 1;
-            cfg.mode = n;
-        } else if (strcmp(key, "always_on_consented") == 0) {
-            cfg.always_on_consented = (atoi(val) != 0);
-        } else if (strcmp(key, "source_lang") == 0) {
-            cfg.source_lang = val;
-        } else if (strcmp(key, "target_lang") == 0) {
-            cfg.target_lang = val;
-        } else if (strcmp(key, "chatbox_address") == 0) {
-            cfg.chatbox_address = val;
-        } else if (strcmp(key, "notify_sound") == 0) {
-            cfg.notify_sound = (atoi(val) != 0);
-        }
-    }
-    fclose(f);
-    return cfg;
+		if (strcmp(key, "mode") == 0) {
+			int n = atoi(val);
+			// Two valid modes today; clamp defensively against a hand-edit
+			// setting an unsupported value rather than letting the UI render
+			// an out-of-range radio button.
+			if (n < 0) n = 0;
+			if (n > 1) n = 1;
+			cfg.mode = n;
+		}
+		else if (strcmp(key, "always_on_consented") == 0) {
+			cfg.always_on_consented = (atoi(val) != 0);
+		}
+		else if (strcmp(key, "source_lang") == 0) {
+			cfg.source_lang = val;
+		}
+		else if (strcmp(key, "target_lang") == 0) {
+			cfg.target_lang = val;
+		}
+		else if (strcmp(key, "chatbox_address") == 0) {
+			cfg.chatbox_address = val;
+		}
+		else if (strcmp(key, "notify_sound") == 0) {
+			cfg.notify_sound = (atoi(val) != 0);
+		}
+	}
+	fclose(f);
+	return cfg;
 }
 
-void SaveCaptionsConfig(const CaptionsConfig &cfg)
+void SaveCaptionsConfig(const CaptionsConfig& cfg)
 {
-    std::wstring path = ConfigPath();
-    if (path.empty()) return;
+	std::wstring path = ConfigPath();
+	if (path.empty()) return;
 
-    std::string body;
-    body.reserve(256);
-    auto appendf = [&](const char *fmt, auto&&... args) {
-        char buf[512];
-        int n = std::snprintf(buf, sizeof buf, fmt, std::forward<decltype(args)>(args)...);
-        if (n > 0) body.append(buf, (size_t)n);
-    };
-    appendf("mode=%d\n", cfg.mode);
-    appendf("always_on_consented=%d\n", cfg.always_on_consented ? 1 : 0);
-    appendf("source_lang=%s\n", cfg.source_lang.c_str());
-    appendf("target_lang=%s\n", cfg.target_lang.c_str());
-    appendf("chatbox_address=%s\n", cfg.chatbox_address.c_str());
-    appendf("notify_sound=%d\n", cfg.notify_sound ? 1 : 0);
+	std::string body;
+	body.reserve(256);
+	auto appendf = [&](const char* fmt, auto&&... args) {
+		char buf[512];
+		int n = std::snprintf(buf, sizeof buf, fmt, std::forward<decltype(args)>(args)...);
+		if (n > 0) body.append(buf, (size_t)n);
+	};
+	appendf("mode=%d\n", cfg.mode);
+	appendf("always_on_consented=%d\n", cfg.always_on_consented ? 1 : 0);
+	appendf("source_lang=%s\n", cfg.source_lang.c_str());
+	appendf("target_lang=%s\n", cfg.target_lang.c_str());
+	appendf("chatbox_address=%s\n", cfg.chatbox_address.c_str());
+	appendf("notify_sound=%d\n", cfg.notify_sound ? 1 : 0);
 
-    std::wstring tmpPath = path + L".tmp";
-    HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr,
-        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return;
-    DWORD written = 0;
-    BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
-    CloseHandle(h);
-    if (!ok || written != (DWORD)body.size()) {
-        DeleteFileW(tmpPath.c_str());
-        return;
-    }
-    MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+	std::wstring tmpPath = path + L".tmp";
+	HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	DWORD written = 0;
+	BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
+	CloseHandle(h);
+	if (!ok || written != (DWORD)body.size()) {
+		DeleteFileW(tmpPath.c_str());
+		return;
+	}
+	MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
 }

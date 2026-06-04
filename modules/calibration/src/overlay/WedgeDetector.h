@@ -77,23 +77,22 @@ constexpr double kRuntimeWedgeDebounceSec = 30.0;
 //   - magnitude is above the bound but the debounce window hasn't elapsed
 //
 // `now` is glfwGetTime() seconds in production; tests pass synthetic times.
-inline bool ShouldFireRuntimeWedgeRecovery(double magnitudeCm,
-                                           double now,
-                                           double& wedgeSince) {
-    if (magnitudeCm <= kMaxPlausibleCalibrationMagnitudeCm) {
-        wedgeSince = -1.0;
-        return false;
-    }
-    // Magnitude is above the bound.
-    if (wedgeSince < 0.0) {
-        wedgeSince = now;
-        return false;
-    }
-    if ((now - wedgeSince) >= kRuntimeWedgeDebounceSec) {
-        wedgeSince = -1.0;  // consume the fire; require re-entry below->above to refire
-        return true;
-    }
-    return false;
+inline bool ShouldFireRuntimeWedgeRecovery(double magnitudeCm, double now, double& wedgeSince)
+{
+	if (magnitudeCm <= kMaxPlausibleCalibrationMagnitudeCm) {
+		wedgeSince = -1.0;
+		return false;
+	}
+	// Magnitude is above the bound.
+	if (wedgeSince < 0.0) {
+		wedgeSince = now;
+		return false;
+	}
+	if ((now - wedgeSince) >= kRuntimeWedgeDebounceSec) {
+		wedgeSince = -1.0; // consume the fire; require re-entry below->above to refire
+		return true;
+	}
+	return false;
 }
 
 } // namespace spacecal::wedge

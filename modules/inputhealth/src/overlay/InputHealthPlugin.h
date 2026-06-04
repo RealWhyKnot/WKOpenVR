@@ -14,10 +14,10 @@
 class InputHealthPlugin;
 
 namespace inputhealth::ui {
-void DrawDiagnosticsTab(InputHealthPlugin &ui);
-void DrawSettingsTab(InputHealthPlugin &ui);
-void DrawAdvancedTab(InputHealthPlugin &ui);
-void DrawLogsTab(InputHealthPlugin &ui);
+void DrawDiagnosticsTab(InputHealthPlugin& ui);
+void DrawSettingsTab(InputHealthPlugin& ui);
+void DrawAdvancedTab(InputHealthPlugin& ui);
+void DrawLogsTab(InputHealthPlugin& ui);
 } // namespace inputhealth::ui
 
 class InputHealthPlugin final : public openvr_pair::overlay::FeaturePlugin
@@ -25,15 +25,15 @@ class InputHealthPlugin final : public openvr_pair::overlay::FeaturePlugin
 public:
 	InputHealthPlugin();
 
-	const char *Name() const override { return ModuleName(ModuleId::InputHealth); }
-	const char *FlagFileName() const override { return ModuleFlagFileName(ModuleId::InputHealth); }
-	const char *PipeName() const override { return ModulePipeName(ModuleId::InputHealth); }
+	const char* Name() const override { return ModuleName(ModuleId::InputHealth); }
+	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::InputHealth); }
+	const char* PipeName() const override { return ModulePipeName(ModuleId::InputHealth); }
 
-	void OnStart(openvr_pair::overlay::ShellContext &context) override;
-	void OnShutdown(openvr_pair::overlay::ShellContext &context) override;
-	void Tick(openvr_pair::overlay::ShellContext &context) override;
-	void DrawTab(openvr_pair::overlay::ShellContext &context) override;
-	void DrawLogsSection(openvr_pair::overlay::ShellContext &context) override;
+	void OnStart(openvr_pair::overlay::ShellContext& context) override;
+	void OnShutdown(openvr_pair::overlay::ShellContext& context) override;
+	void Tick(openvr_pair::overlay::ShellContext& context) override;
+	void DrawTab(openvr_pair::overlay::ShellContext& context) override;
+	void DrawLogsSection(openvr_pair::overlay::ShellContext& context) override;
 
 	// Push the in-memory config to the driver via IPC. Called after the
 	// user toggles a switch in the Diagnostics or Settings tab. Quiet on
@@ -48,15 +48,15 @@ public:
 	void SendReset(uint64_t serial_hash, bool reset_passive, bool reset_active, bool reset_curves);
 
 private:
-	friend void inputhealth::ui::DrawDiagnosticsTab(InputHealthPlugin &ui);
-	friend void inputhealth::ui::DrawSettingsTab(InputHealthPlugin &ui);
-	friend void inputhealth::ui::DrawAdvancedTab(InputHealthPlugin &ui);
-	friend void inputhealth::ui::DrawLogsTab(InputHealthPlugin &ui);
+	friend void inputhealth::ui::DrawDiagnosticsTab(InputHealthPlugin& ui);
+	friend void inputhealth::ui::DrawSettingsTab(InputHealthPlugin& ui);
+	friend void inputhealth::ui::DrawAdvancedTab(InputHealthPlugin& ui);
+	friend void inputhealth::ui::DrawLogsTab(InputHealthPlugin& ui);
 
-	IPCClient      ipc_;
+	IPCClient ipc_;
 	SnapshotReader reader_;
-	ProfileStore   profiles_;
-	LearningEngine  engine_;
+	ProfileStore profiles_;
+	LearningEngine engine_;
 
 	// Pending config the user is editing. Pushed to the driver when the
 	// user clicks Apply (or when a toggle they touched is committed).
@@ -73,7 +73,7 @@ private:
 
 	void MaintainDriverConnection();
 	void WriteHealthSummary();
-	void DrawStatusBanner(const openvr_pair::overlay::ShellContext &context);
+	void DrawStatusBanner(const openvr_pair::overlay::ShellContext& context);
 	void DrawDiagnosticsTab();
 	void DrawSettingsTab();
 	void DrawAdvancedTab();

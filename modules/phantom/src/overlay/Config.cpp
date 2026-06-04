@@ -7,178 +7,204 @@
 #include <cstring>
 #include <string>
 
-namespace
-{
+namespace {
 
 std::wstring ConfigDir()
 {
-    return openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
+	return openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
 }
 
 std::wstring ConfigPath()
 {
-    const std::wstring dir = ConfigDir();
-    if (dir.empty()) return {};
-    return dir + L"\\phantom.txt";
+	const std::wstring dir = ConfigDir();
+	if (dir.empty()) return {};
+	return dir + L"\\phantom.txt";
 }
 
 uint32_t ParseMsClamped(const char* val, uint32_t lo, uint32_t hi)
 {
-    const long n = std::strtol(val, nullptr, 10);
-    if (n < (long)lo) return lo;
-    if (n > (long)hi) return hi;
-    return static_cast<uint32_t>(n);
+	const long n = std::strtol(val, nullptr, 10);
+	if (n < (long)lo) return lo;
+	if (n > (long)hi) return hi;
+	return static_cast<uint32_t>(n);
 }
 
 } // namespace
 
 PhantomConfig LoadPhantomConfig()
 {
-    PhantomConfig cfg;
-    const std::wstring path = ConfigPath();
-    if (path.empty()) return cfg;
+	PhantomConfig cfg;
+	const std::wstring path = ConfigPath();
+	if (path.empty()) return cfg;
 
-    FILE* f = _wfopen(path.c_str(), L"r");
-    if (!f) return cfg;
+	FILE* f = _wfopen(path.c_str(), L"r");
+	if (!f) return cfg;
 
-    char line[512];
-    while (fgets(line, sizeof(line), f)) {
-        size_t len = std::strlen(line);
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
-            line[--len] = '\0';
-        }
-        char* eq = std::strchr(line, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        const char* key = line;
-        const char* val = eq + 1;
+	char line[512];
+	while (fgets(line, sizeof(line), f)) {
+		size_t len = std::strlen(line);
+		while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+			line[--len] = '\0';
+		}
+		char* eq = std::strchr(line, '=');
+		if (!eq) continue;
+		*eq = '\0';
+		const char* key = line;
+		const char* val = eq + 1;
 
-        if (std::strcmp(key, "master_enabled") == 0) {
-            cfg.master_enabled = (std::atoi(val) != 0);
-        } else if (std::strcmp(key, "solver.calibrated") == 0) {
-            cfg.solver.calibrated = (std::atoi(val) != 0);
-        } else if (std::strcmp(key, "solver.floor_y_m") == 0) {
-            cfg.solver.floor_y_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.height_m") == 0) {
-            cfg.solver.height_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.forward_yaw_rad") == 0) {
-            cfg.solver.forward_yaw_rad = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.stance_width_m") == 0) {
-            cfg.solver.stance_width_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.shoulder_width_m") == 0) {
-            cfg.solver.shoulder_width_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.pelvis_width_m") == 0) {
-            cfg.solver.pelvis_width_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.upper_arm_m") == 0) {
-            cfg.solver.upper_arm_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.lower_arm_m") == 0) {
-            cfg.solver.lower_arm_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.upper_leg_m") == 0) {
-            cfg.solver.upper_leg_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.lower_leg_m") == 0) {
-            cfg.solver.lower_leg_m = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "solver.virtual_min_confidence") == 0) {
-            cfg.solver.virtual_min_confidence = std::strtod(val, nullptr);
-        } else if (std::strcmp(key, "blend_out_ms") == 0) {
-            cfg.blend_out_ms = ParseMsClamped(val, 0, 1000);
-        } else if (std::strcmp(key, "blend_in_ms") == 0) {
-            cfg.blend_in_ms = ParseMsClamped(val, 0, 2000);
-        } else if (std::strcmp(key, "reckon_hold_ms") == 0) {
-            cfg.reckon_hold_ms = ParseMsClamped(val, 0, 1000);
-        } else if (std::strcmp(key, "synth_hold_ms") == 0) {
-            cfg.synth_hold_ms = ParseMsClamped(val, 0, 10000);
-        } else if (std::strcmp(key, "lost_hold_ms") == 0) {
-            cfg.lost_hold_ms = ParseMsClamped(val, 0, 60000);
-        } else if (std::strncmp(key, "dropout_enabled.", 16) == 0) {
-            const std::string serial(key + 16);
-            cfg.dropout_enabled[serial] = (std::atoi(val) != 0);
-        } else if (std::strncmp(key, "device_role.", 12) == 0) {
-            const std::string serial(key + 12);
-            const phantom::BodyRole r = phantom::BodyRoleFromKey(val);
-            if (r != phantom::BodyRole::None) cfg.device_role[serial] = r;
-        } else if (std::strncmp(key, "virtual_enabled.", 16) == 0) {
-            const phantom::BodyRole r = phantom::BodyRoleFromKey(key + 16);
-            if (r != phantom::BodyRole::None) {
-                cfg.virtual_enabled[r] = (std::atoi(val) != 0);
-            }
-        } else if (std::strncmp(key, "role_offset.", 12) == 0) {
-            // role_offset.<role>.<field>=<value>
-            const char* rest = key + 12;
-            const char* dot = std::strchr(rest, '.');
-            if (!dot) continue;
-            std::string roleKey(rest, dot - rest);
-            const phantom::BodyRole r = phantom::BodyRoleFromKey(roleKey.c_str());
-            if (r == phantom::BodyRole::None) continue;
-            auto& o = cfg.role_offset[r];
-            const char* field = dot + 1;
-            const double d = std::strtod(val, nullptr);
-            if      (std::strcmp(field, "calibrated") == 0) o.calibrated = (std::atoi(val) != 0);
-            else if (std::strcmp(field, "px") == 0) o.rel_position_x = d;
-            else if (std::strcmp(field, "py") == 0) o.rel_position_y = d;
-            else if (std::strcmp(field, "pz") == 0) o.rel_position_z = d;
-            else if (std::strcmp(field, "qw") == 0) o.rel_rotation_w = d;
-            else if (std::strcmp(field, "qx") == 0) o.rel_rotation_x = d;
-            else if (std::strcmp(field, "qy") == 0) o.rel_rotation_y = d;
-            else if (std::strcmp(field, "qz") == 0) o.rel_rotation_z = d;
-        }
-    }
-    std::fclose(f);
-    return cfg;
+		if (std::strcmp(key, "master_enabled") == 0) {
+			cfg.master_enabled = (std::atoi(val) != 0);
+		}
+		else if (std::strcmp(key, "solver.calibrated") == 0) {
+			cfg.solver.calibrated = (std::atoi(val) != 0);
+		}
+		else if (std::strcmp(key, "solver.floor_y_m") == 0) {
+			cfg.solver.floor_y_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.height_m") == 0) {
+			cfg.solver.height_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.forward_yaw_rad") == 0) {
+			cfg.solver.forward_yaw_rad = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.stance_width_m") == 0) {
+			cfg.solver.stance_width_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.shoulder_width_m") == 0) {
+			cfg.solver.shoulder_width_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.pelvis_width_m") == 0) {
+			cfg.solver.pelvis_width_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.upper_arm_m") == 0) {
+			cfg.solver.upper_arm_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.lower_arm_m") == 0) {
+			cfg.solver.lower_arm_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.upper_leg_m") == 0) {
+			cfg.solver.upper_leg_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.lower_leg_m") == 0) {
+			cfg.solver.lower_leg_m = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "solver.virtual_min_confidence") == 0) {
+			cfg.solver.virtual_min_confidence = std::strtod(val, nullptr);
+		}
+		else if (std::strcmp(key, "blend_out_ms") == 0) {
+			cfg.blend_out_ms = ParseMsClamped(val, 0, 1000);
+		}
+		else if (std::strcmp(key, "blend_in_ms") == 0) {
+			cfg.blend_in_ms = ParseMsClamped(val, 0, 2000);
+		}
+		else if (std::strcmp(key, "reckon_hold_ms") == 0) {
+			cfg.reckon_hold_ms = ParseMsClamped(val, 0, 1000);
+		}
+		else if (std::strcmp(key, "synth_hold_ms") == 0) {
+			cfg.synth_hold_ms = ParseMsClamped(val, 0, 10000);
+		}
+		else if (std::strcmp(key, "lost_hold_ms") == 0) {
+			cfg.lost_hold_ms = ParseMsClamped(val, 0, 60000);
+		}
+		else if (std::strncmp(key, "dropout_enabled.", 16) == 0) {
+			const std::string serial(key + 16);
+			cfg.dropout_enabled[serial] = (std::atoi(val) != 0);
+		}
+		else if (std::strncmp(key, "device_role.", 12) == 0) {
+			const std::string serial(key + 12);
+			const phantom::BodyRole r = phantom::BodyRoleFromKey(val);
+			if (r != phantom::BodyRole::None) cfg.device_role[serial] = r;
+		}
+		else if (std::strncmp(key, "virtual_enabled.", 16) == 0) {
+			const phantom::BodyRole r = phantom::BodyRoleFromKey(key + 16);
+			if (r != phantom::BodyRole::None) {
+				cfg.virtual_enabled[r] = (std::atoi(val) != 0);
+			}
+		}
+		else if (std::strncmp(key, "role_offset.", 12) == 0) {
+			// role_offset.<role>.<field>=<value>
+			const char* rest = key + 12;
+			const char* dot = std::strchr(rest, '.');
+			if (!dot) continue;
+			std::string roleKey(rest, dot - rest);
+			const phantom::BodyRole r = phantom::BodyRoleFromKey(roleKey.c_str());
+			if (r == phantom::BodyRole::None) continue;
+			auto& o = cfg.role_offset[r];
+			const char* field = dot + 1;
+			const double d = std::strtod(val, nullptr);
+			if (std::strcmp(field, "calibrated") == 0)
+				o.calibrated = (std::atoi(val) != 0);
+			else if (std::strcmp(field, "px") == 0)
+				o.rel_position_x = d;
+			else if (std::strcmp(field, "py") == 0)
+				o.rel_position_y = d;
+			else if (std::strcmp(field, "pz") == 0)
+				o.rel_position_z = d;
+			else if (std::strcmp(field, "qw") == 0)
+				o.rel_rotation_w = d;
+			else if (std::strcmp(field, "qx") == 0)
+				o.rel_rotation_x = d;
+			else if (std::strcmp(field, "qy") == 0)
+				o.rel_rotation_y = d;
+			else if (std::strcmp(field, "qz") == 0)
+				o.rel_rotation_z = d;
+		}
+	}
+	std::fclose(f);
+	return cfg;
 }
 
 void SavePhantomConfig(const PhantomConfig& cfg)
 {
-    const std::wstring path = ConfigPath();
-    if (path.empty()) return;
+	const std::wstring path = ConfigPath();
+	if (path.empty()) return;
 
-    FILE* f = _wfopen(path.c_str(), L"w");
-    if (!f) return;
-    std::fprintf(f, "master_enabled=%d\n",  cfg.master_enabled ? 1 : 0);
-    std::fprintf(f, "blend_out_ms=%u\n",    (unsigned)cfg.blend_out_ms);
-    std::fprintf(f, "blend_in_ms=%u\n",     (unsigned)cfg.blend_in_ms);
-    std::fprintf(f, "reckon_hold_ms=%u\n",  (unsigned)cfg.reckon_hold_ms);
-    std::fprintf(f, "synth_hold_ms=%u\n",   (unsigned)cfg.synth_hold_ms);
-    std::fprintf(f, "lost_hold_ms=%u\n",    (unsigned)cfg.lost_hold_ms);
-    std::fprintf(f, "solver.calibrated=%d\n", cfg.solver.calibrated ? 1 : 0);
-    std::fprintf(f, "solver.floor_y_m=%.6f\n", cfg.solver.floor_y_m);
-    std::fprintf(f, "solver.height_m=%.6f\n", cfg.solver.height_m);
-    std::fprintf(f, "solver.forward_yaw_rad=%.6f\n", cfg.solver.forward_yaw_rad);
-    std::fprintf(f, "solver.stance_width_m=%.6f\n", cfg.solver.stance_width_m);
-    std::fprintf(f, "solver.shoulder_width_m=%.6f\n", cfg.solver.shoulder_width_m);
-    std::fprintf(f, "solver.pelvis_width_m=%.6f\n", cfg.solver.pelvis_width_m);
-    std::fprintf(f, "solver.upper_arm_m=%.6f\n", cfg.solver.upper_arm_m);
-    std::fprintf(f, "solver.lower_arm_m=%.6f\n", cfg.solver.lower_arm_m);
-    std::fprintf(f, "solver.upper_leg_m=%.6f\n", cfg.solver.upper_leg_m);
-    std::fprintf(f, "solver.lower_leg_m=%.6f\n", cfg.solver.lower_leg_m);
-    std::fprintf(f, "solver.virtual_min_confidence=%.6f\n", cfg.solver.virtual_min_confidence);
-    for (const auto& kv : cfg.dropout_enabled) {
-        if (kv.second) {
-            std::fprintf(f, "dropout_enabled.%s=1\n", kv.first.c_str());
-        }
-    }
-    for (const auto& kv : cfg.device_role) {
-        if (kv.second != phantom::BodyRole::None) {
-            std::fprintf(f, "device_role.%s=%s\n", kv.first.c_str(),
-                         phantom::BodyRoleToKey(kv.second));
-        }
-    }
-    for (const auto& kv : cfg.virtual_enabled) {
-        if (kv.second) {
-            std::fprintf(f, "virtual_enabled.%s=1\n",
-                         phantom::BodyRoleToKey(kv.first));
-        }
-    }
-    for (const auto& kv : cfg.role_offset) {
-        if (!kv.second.calibrated) continue;
-        const char* k = phantom::BodyRoleToKey(kv.first);
-        std::fprintf(f, "role_offset.%s.calibrated=1\n", k);
-        std::fprintf(f, "role_offset.%s.px=%.6f\n", k, kv.second.rel_position_x);
-        std::fprintf(f, "role_offset.%s.py=%.6f\n", k, kv.second.rel_position_y);
-        std::fprintf(f, "role_offset.%s.pz=%.6f\n", k, kv.second.rel_position_z);
-        std::fprintf(f, "role_offset.%s.qw=%.6f\n", k, kv.second.rel_rotation_w);
-        std::fprintf(f, "role_offset.%s.qx=%.6f\n", k, kv.second.rel_rotation_x);
-        std::fprintf(f, "role_offset.%s.qy=%.6f\n", k, kv.second.rel_rotation_y);
-        std::fprintf(f, "role_offset.%s.qz=%.6f\n", k, kv.second.rel_rotation_z);
-    }
-    std::fclose(f);
+	FILE* f = _wfopen(path.c_str(), L"w");
+	if (!f) return;
+	std::fprintf(f, "master_enabled=%d\n", cfg.master_enabled ? 1 : 0);
+	std::fprintf(f, "blend_out_ms=%u\n", (unsigned)cfg.blend_out_ms);
+	std::fprintf(f, "blend_in_ms=%u\n", (unsigned)cfg.blend_in_ms);
+	std::fprintf(f, "reckon_hold_ms=%u\n", (unsigned)cfg.reckon_hold_ms);
+	std::fprintf(f, "synth_hold_ms=%u\n", (unsigned)cfg.synth_hold_ms);
+	std::fprintf(f, "lost_hold_ms=%u\n", (unsigned)cfg.lost_hold_ms);
+	std::fprintf(f, "solver.calibrated=%d\n", cfg.solver.calibrated ? 1 : 0);
+	std::fprintf(f, "solver.floor_y_m=%.6f\n", cfg.solver.floor_y_m);
+	std::fprintf(f, "solver.height_m=%.6f\n", cfg.solver.height_m);
+	std::fprintf(f, "solver.forward_yaw_rad=%.6f\n", cfg.solver.forward_yaw_rad);
+	std::fprintf(f, "solver.stance_width_m=%.6f\n", cfg.solver.stance_width_m);
+	std::fprintf(f, "solver.shoulder_width_m=%.6f\n", cfg.solver.shoulder_width_m);
+	std::fprintf(f, "solver.pelvis_width_m=%.6f\n", cfg.solver.pelvis_width_m);
+	std::fprintf(f, "solver.upper_arm_m=%.6f\n", cfg.solver.upper_arm_m);
+	std::fprintf(f, "solver.lower_arm_m=%.6f\n", cfg.solver.lower_arm_m);
+	std::fprintf(f, "solver.upper_leg_m=%.6f\n", cfg.solver.upper_leg_m);
+	std::fprintf(f, "solver.lower_leg_m=%.6f\n", cfg.solver.lower_leg_m);
+	std::fprintf(f, "solver.virtual_min_confidence=%.6f\n", cfg.solver.virtual_min_confidence);
+	for (const auto& kv : cfg.dropout_enabled) {
+		if (kv.second) {
+			std::fprintf(f, "dropout_enabled.%s=1\n", kv.first.c_str());
+		}
+	}
+	for (const auto& kv : cfg.device_role) {
+		if (kv.second != phantom::BodyRole::None) {
+			std::fprintf(f, "device_role.%s=%s\n", kv.first.c_str(), phantom::BodyRoleToKey(kv.second));
+		}
+	}
+	for (const auto& kv : cfg.virtual_enabled) {
+		if (kv.second) {
+			std::fprintf(f, "virtual_enabled.%s=1\n", phantom::BodyRoleToKey(kv.first));
+		}
+	}
+	for (const auto& kv : cfg.role_offset) {
+		if (!kv.second.calibrated) continue;
+		const char* k = phantom::BodyRoleToKey(kv.first);
+		std::fprintf(f, "role_offset.%s.calibrated=1\n", k);
+		std::fprintf(f, "role_offset.%s.px=%.6f\n", k, kv.second.rel_position_x);
+		std::fprintf(f, "role_offset.%s.py=%.6f\n", k, kv.second.rel_position_y);
+		std::fprintf(f, "role_offset.%s.pz=%.6f\n", k, kv.second.rel_position_z);
+		std::fprintf(f, "role_offset.%s.qw=%.6f\n", k, kv.second.rel_rotation_w);
+		std::fprintf(f, "role_offset.%s.qx=%.6f\n", k, kv.second.rel_rotation_x);
+		std::fprintf(f, "role_offset.%s.qy=%.6f\n", k, kv.second.rel_rotation_y);
+		std::fprintf(f, "role_offset.%s.qz=%.6f\n", k, kv.second.rel_rotation_z);
+	}
+	std::fclose(f);
 }

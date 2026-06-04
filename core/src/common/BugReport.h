@@ -7,7 +7,8 @@
 
 namespace openvr_pair::common {
 
-struct BugReportOptions {
+struct BugReportOptions
+{
 	std::wstring logRoot;
 	std::string version;
 	size_t maxLogFiles = 8;
@@ -15,7 +16,8 @@ struct BugReportOptions {
 	size_t maxIssueLogChars = 3500;
 };
 
-struct BugReportResult {
+struct BugReportResult
+{
 	bool success = false;
 	std::string error;
 	std::wstring reportDirectory;
@@ -26,8 +28,7 @@ struct BugReportResult {
 };
 
 std::string SanitizeBugReportText(std::string_view text);
-std::string BuildBugReportIssueUrl(std::string_view version,
-                                   std::string_view logExcerpt);
+std::string BuildBugReportIssueUrl(std::string_view version, std::string_view logExcerpt);
 BugReportResult CreateBugReport(const BugReportOptions& options);
 
 } // namespace openvr_pair::common

@@ -13,8 +13,7 @@ namespace {
 class BrokenPipeException : public std::runtime_error
 {
 public:
-	BrokenPipeException(const std::string &message, DWORD code)
-		: std::runtime_error(message), errorCode(code) {}
+	BrokenPipeException(const std::string& message, DWORD code) : std::runtime_error(message), errorCode(code) {}
 
 	DWORD errorCode = ERROR_SUCCESS;
 };
@@ -24,31 +23,31 @@ bool IsBrokenPipeError(DWORD code)
 	return code == ERROR_BROKEN_PIPE || code == ERROR_PIPE_NOT_CONNECTED || code == ERROR_NO_DATA;
 }
 
-std::string GenericWin32Message(const char *prefix, DWORD error)
+std::string GenericWin32Message(const char* prefix, DWORD error)
 {
-	return std::string(prefix) + ". Error " + std::to_string(error) + ": "
-		+ openvr_pair::common::FormatWin32Error(error);
+	return std::string(prefix) + ". Error " + std::to_string(error) + ": " +
+	       openvr_pair::common::FormatWin32Error(error);
 }
 
-std::string FormatUnavailable(const IpcClientConnectOptions &options, DWORD error)
+std::string FormatUnavailable(const IpcClientConnectOptions& options, DWORD error)
 {
 	std::string details = openvr_pair::common::FormatWin32Error(error);
 	if (options.pipeUnavailable) return options.pipeUnavailable(error, details);
 	return GenericWin32Message("IPC pipe unavailable", error);
 }
 
-std::string FormatModeFailure(const IpcClientConnectOptions &options, DWORD error)
+std::string FormatModeFailure(const IpcClientConnectOptions& options, DWORD error)
 {
 	std::string details = openvr_pair::common::FormatWin32Error(error);
 	if (options.pipeModeFailed) return options.pipeModeFailed(error, details);
 	return GenericWin32Message("IPC pipe mode failed", error);
 }
 
-std::string FormatVersionMismatch(const IpcClientConnectOptions &options, uint32_t expected, uint32_t driver)
+std::string FormatVersionMismatch(const IpcClientConnectOptions& options, uint32_t expected, uint32_t driver)
 {
 	if (options.versionMismatch) return options.versionMismatch(expected, driver);
-	return "Driver protocol version mismatch. (Overlay: " + std::to_string(expected)
-		+ ", driver: " + std::to_string(driver) + ")";
+	return "Driver protocol version mismatch. (Overlay: " + std::to_string(expected) +
+	       ", driver: " + std::to_string(driver) + ")";
 }
 
 } // namespace
@@ -61,16 +60,14 @@ IpcClientBase::~IpcClientBase()
 void IpcClientBase::Close()
 {
 	if (pipe_ != INVALID_HANDLE_VALUE) {
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "close pipe='%s' generation=%llu",
-			pipeName_.c_str(),
-			static_cast<unsigned long long>(connectionGeneration_));
+		openvr_pair::common::DiagnosticLog("ipc-client", "close pipe='%s' generation=%llu", pipeName_.c_str(),
+		                                   static_cast<unsigned long long>(connectionGeneration_));
 		CloseHandle(pipe_);
 		pipe_ = INVALID_HANDLE_VALUE;
 	}
 }
 
-void IpcClientBase::Connect(const char *pipeName, IpcClientConnectOptions options)
+void IpcClientBase::Connect(const char* pipeName, IpcClientConnectOptions options)
 {
 	Close();
 	options_ = std::move(options);
@@ -78,25 +75,22 @@ void IpcClientBase::Connect(const char *pipeName, IpcClientConnectOptions option
 	const BOOL waitOk = WaitNamedPipeA(pipeName_.c_str(), options_.waitTimeoutMs);
 	const DWORD waitError = waitOk ? ERROR_SUCCESS : GetLastError();
 	openvr_pair::common::DiagnosticLog(
-		"ipc-client", "connect_start pipe='%s' wait_ok=%d wait_error=%lu wait_timeout_ms=%lu",
-		pipeName_.c_str(), waitOk ? 1 : 0, waitError,
-		static_cast<unsigned long>(options_.waitTimeoutMs));
+	    "ipc-client", "connect_start pipe='%s' wait_ok=%d wait_error=%lu wait_timeout_ms=%lu", pipeName_.c_str(),
+	    waitOk ? 1 : 0, waitError, static_cast<unsigned long>(options_.waitTimeoutMs));
 	pipe_ = CreateFileA(pipeName_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
 	DWORD openError = (pipe_ == INVALID_HANDLE_VALUE) ? GetLastError() : ERROR_SUCCESS;
 	OnPipeOpenAttempt(pipe_, openError);
 	if (pipe_ == INVALID_HANDLE_VALUE) {
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "connect_open_failed pipe='%s' error=%lu",
-			pipeName_.c_str(), openError);
+		openvr_pair::common::DiagnosticLog("ipc-client", "connect_open_failed pipe='%s' error=%lu", pipeName_.c_str(),
+		                                   openError);
 		throw std::runtime_error(FormatUnavailable(options_, openError));
 	}
 
 	DWORD mode = PIPE_READMODE_MESSAGE;
 	if (!SetNamedPipeHandleState(pipe_, &mode, nullptr, nullptr)) {
 		DWORD err = GetLastError();
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "connect_mode_failed pipe='%s' error=%lu",
-			pipeName_.c_str(), err);
+		openvr_pair::common::DiagnosticLog("ipc-client", "connect_mode_failed pipe='%s' error=%lu", pipeName_.c_str(),
+		                                   err);
 		Close();
 		throw std::runtime_error(FormatModeFailure(options_, err));
 	}
@@ -104,37 +98,29 @@ void IpcClientBase::Connect(const char *pipeName, IpcClientConnectOptions option
 	auto response = SendBlocking(protocol::Request(protocol::RequestHandshake));
 	OnHandshakeResponse(response);
 	openvr_pair::common::DiagnosticLog(
-		"ipc-client", "handshake_response pipe='%s' response_type=%d driver_protocol=%u expected_protocol=%u",
-		pipeName_.c_str(),
-		response.type,
-		(unsigned)response.protocol.version,
-		(unsigned)protocol::Version);
+	    "ipc-client", "handshake_response pipe='%s' response_type=%d driver_protocol=%u expected_protocol=%u",
+	    pipeName_.c_str(), response.type, (unsigned)response.protocol.version, (unsigned)protocol::Version);
 	if (response.type != protocol::ResponseHandshake || response.protocol.version != protocol::Version) {
 		driverVersion_ = response.protocol.version;
-		mismatchState_ = (response.protocol.version < protocol::Version)
-			? MismatchState::OverlayNewer
-			: MismatchState::DriverNewer;
+		mismatchState_ =
+		    (response.protocol.version < protocol::Version) ? MismatchState::OverlayNewer : MismatchState::DriverNewer;
 		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "handshake_mismatch pipe='%s' response_type=%d driver_protocol=%u expected_protocol=%u state=%d",
-			pipeName_.c_str(),
-			response.type,
-			(unsigned)response.protocol.version,
-			(unsigned)protocol::Version,
-			(int)mismatchState_);
+		    "ipc-client",
+		    "handshake_mismatch pipe='%s' response_type=%d driver_protocol=%u expected_protocol=%u state=%d",
+		    pipeName_.c_str(), response.type, (unsigned)response.protocol.version, (unsigned)protocol::Version,
+		    (int)mismatchState_);
 		Close();
 		throw std::runtime_error(FormatVersionMismatch(options_, protocol::Version, response.protocol.version));
 	}
 	mismatchState_ = MismatchState::Matching;
-	fprintf(stderr, "[IPC] %s handshake ok: our_protocol=%u driver_protocol=%u\n",
-		pipeName_.c_str(), (unsigned)protocol::Version, (unsigned)response.protocol.version);
+	fprintf(stderr, "[IPC] %s handshake ok: our_protocol=%u driver_protocol=%u\n", pipeName_.c_str(),
+	        (unsigned)protocol::Version, (unsigned)response.protocol.version);
 	++connectionGeneration_;
-	openvr_pair::common::DiagnosticLog(
-		"ipc-client", "connect_ok pipe='%s' generation=%llu",
-		pipeName_.c_str(),
-		static_cast<unsigned long long>(connectionGeneration_));
+	openvr_pair::common::DiagnosticLog("ipc-client", "connect_ok pipe='%s' generation=%llu", pipeName_.c_str(),
+	                                   static_cast<unsigned long long>(connectionGeneration_));
 }
 
-protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
+protocol::Response IpcClientBase::SendBlocking(const protocol::Request& request)
 {
 	if (pipe_ == INVALID_HANDLE_VALUE) {
 		if (pipeName_.empty()) throw std::runtime_error("IPC pipe is not connected.");
@@ -144,15 +130,13 @@ protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
 	try {
 		Send(request);
 		return Receive();
-	} catch (const BrokenPipeException &e) {
+	}
+	catch (const BrokenPipeException& e) {
 		if (reconnecting_ || pipeName_.empty()) throw;
 
 		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "broken_pipe pipe='%s' request_type=%d error=%lu generation=%llu",
-			pipeName_.c_str(),
-			request.type,
-			e.errorCode,
-			static_cast<unsigned long long>(connectionGeneration_));
+		    "ipc-client", "broken_pipe pipe='%s' request_type=%d error=%lu generation=%llu", pipeName_.c_str(),
+		    request.type, e.errorCode, static_cast<unsigned long long>(connectionGeneration_));
 		OnBrokenPipe(e.errorCode);
 		Close();
 
@@ -161,18 +145,14 @@ protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
 			Connect(pipeName_.c_str(), options_);
 			reconnecting_ = false;
 			OnReconnectSucceeded();
-			openvr_pair::common::DiagnosticLog(
-				"ipc-client", "reconnect_ok pipe='%s' request_type=%d generation=%llu",
-				pipeName_.c_str(),
-				request.type,
-				static_cast<unsigned long long>(connectionGeneration_));
-		} catch (const std::exception &reconnectError) {
+			openvr_pair::common::DiagnosticLog("ipc-client", "reconnect_ok pipe='%s' request_type=%d generation=%llu",
+			                                   pipeName_.c_str(), request.type,
+			                                   static_cast<unsigned long long>(connectionGeneration_));
+		}
+		catch (const std::exception& reconnectError) {
 			reconnecting_ = false;
-			openvr_pair::common::DiagnosticLog(
-				"ipc-client", "reconnect_failed pipe='%s' request_type=%d error='%s'",
-				pipeName_.c_str(),
-				request.type,
-				reconnectError.what());
+			openvr_pair::common::DiagnosticLog("ipc-client", "reconnect_failed pipe='%s' request_type=%d error='%s'",
+			                                   pipeName_.c_str(), request.type, reconnectError.what());
 			throw std::runtime_error(options_.reconnectFailurePrefix + reconnectError.what());
 		}
 
@@ -181,7 +161,7 @@ protocol::Response IpcClientBase::SendBlocking(const protocol::Request &request)
 	}
 }
 
-void IpcClientBase::Send(const protocol::Request &request)
+void IpcClientBase::Send(const protocol::Request& request)
 {
 	if (pipe_ == INVALID_HANDLE_VALUE) {
 		throw std::runtime_error("IPC pipe is not connected.");
@@ -190,24 +170,23 @@ void IpcClientBase::Send(const protocol::Request &request)
 	DWORD bytesWritten = 0;
 	if (!WriteFile(pipe_, &request, sizeof request, &bytesWritten, nullptr)) {
 		DWORD err = GetLastError();
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "write_failed pipe='%s' request_type=%d error=%lu",
-			pipeName_.c_str(), request.type, err);
+		openvr_pair::common::DiagnosticLog("ipc-client", "write_failed pipe='%s' request_type=%d error=%lu",
+		                                   pipeName_.c_str(), request.type, err);
 		Close();
-		std::string msg = options_.writeFailurePrefix + ". Error " + std::to_string(err)
-			+ ": " + openvr_pair::common::FormatWin32Error(err);
+		std::string msg = options_.writeFailurePrefix + ". Error " + std::to_string(err) + ": " +
+		                  openvr_pair::common::FormatWin32Error(err);
 		if (IsBrokenPipeError(err)) {
 			throw BrokenPipeException(msg, err);
 		}
 		throw std::runtime_error(msg);
 	}
 	if (bytesWritten != sizeof request) {
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "write_truncated pipe='%s' request_type=%d wrote=%lu expected=%zu",
-			pipeName_.c_str(), request.type, bytesWritten, sizeof request);
+		openvr_pair::common::DiagnosticLog("ipc-client",
+		                                   "write_truncated pipe='%s' request_type=%d wrote=%lu expected=%zu",
+		                                   pipeName_.c_str(), request.type, bytesWritten, sizeof request);
 		Close();
-		throw std::runtime_error("IPC write truncated: wrote " + std::to_string(bytesWritten)
-			+ " of " + std::to_string(sizeof request) + " bytes");
+		throw std::runtime_error("IPC write truncated: wrote " + std::to_string(bytesWritten) + " of " +
+		                         std::to_string(sizeof request) + " bytes");
 	}
 }
 
@@ -222,9 +201,8 @@ protocol::Response IpcClientBase::Receive()
 	if (!ReadFile(pipe_, &response, sizeof response, &bytesRead, nullptr)) {
 		DWORD err = GetLastError();
 		if (err == ERROR_MORE_DATA) {
-			openvr_pair::common::DiagnosticLog(
-				"ipc-client", "oversized_response pipe='%s' error=%lu expected_max=%zu",
-				pipeName_.c_str(), err, sizeof response);
+			openvr_pair::common::DiagnosticLog("ipc-client", "oversized_response pipe='%s' error=%lu expected_max=%zu",
+			                                   pipeName_.c_str(), err, sizeof response);
 			char drainBuffer[1024];
 			for (;;) {
 				DWORD drained = 0;
@@ -243,24 +221,20 @@ protocol::Response IpcClientBase::Receive()
 		}
 
 		Close();
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "read_failed pipe='%s' error=%lu",
-			pipeName_.c_str(), err);
-		std::string msg = options_.readFailurePrefix + ". Error " + std::to_string(err)
-			+ ": " + openvr_pair::common::FormatWin32Error(err);
+		openvr_pair::common::DiagnosticLog("ipc-client", "read_failed pipe='%s' error=%lu", pipeName_.c_str(), err);
+		std::string msg = options_.readFailurePrefix + ". Error " + std::to_string(err) + ": " +
+		                  openvr_pair::common::FormatWin32Error(err);
 		if (IsBrokenPipeError(err)) {
 			throw BrokenPipeException(msg, err);
 		}
 		throw std::runtime_error(msg);
 	}
 	if (bytesRead != sizeof response) {
-		openvr_pair::common::DiagnosticLog(
-			"ipc-client", "read_truncated pipe='%s' read=%lu expected=%zu",
-			pipeName_.c_str(), bytesRead, sizeof response);
+		openvr_pair::common::DiagnosticLog("ipc-client", "read_truncated pipe='%s' read=%lu expected=%zu",
+		                                   pipeName_.c_str(), bytesRead, sizeof response);
 		Close();
-		throw std::runtime_error(options_.sizeMismatchMessagePrefix + ": got "
-			+ std::to_string(bytesRead) + " bytes, expected "
-			+ std::to_string(sizeof response));
+		throw std::runtime_error(options_.sizeMismatchMessagePrefix + ": got " + std::to_string(bytesRead) +
+		                         " bytes, expected " + std::to_string(sizeof response));
 	}
 
 	return response;

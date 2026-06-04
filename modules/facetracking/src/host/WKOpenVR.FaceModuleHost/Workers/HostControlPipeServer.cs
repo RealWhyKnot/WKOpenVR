@@ -15,8 +15,8 @@ public sealed class HostControlPipeServer(
     CancellationTokenSource shutdownCts)
 {
     // Message type tags sent by the driver.
-    private const string MsgSelectModule  = "SelectModule";
-    private const string MsgShutdown      = "Shutdown";
+    private const string MsgSelectModule = "SelectModule";
+    private const string MsgShutdown = "Shutdown";
 
     // Driver holds at most one active connection at a time; 2 instances
     // tolerates the brief overlap during a driver-side reconnect.
@@ -102,7 +102,7 @@ public sealed class HostControlPipeServer(
                 }
 
                 uint msgLen = BitConverter.ToUInt32(lenBuf, 0);
-                if (msgLen == 0 || msgLen > 65536)
+                if (msgLen is 0 or > 65536)
                 {
                     logger.Warn($"Control pipe: invalid message length {msgLen}; dropping connection.");
                     disconnectReason = $"invalid-length({msgLen})";
@@ -117,7 +117,7 @@ public sealed class HostControlPipeServer(
                     break;
                 }
 
-                try   { DispatchMessage(msgBuf); }
+                try { DispatchMessage(msgBuf); }
                 catch (Exception ex) { logger.Warn($"Control pipe: message dispatch error: {ex.Message}"); }
                 messages++;
             }
@@ -137,17 +137,17 @@ public sealed class HostControlPipeServer(
         reader.ReadStartMap();
 
         string? msgType = null;
-        string? uuid    = null;
+        string? uuid = null;
 
         while (reader.PeekState() != CborReaderState.EndMap)
         {
             string key = reader.ReadTextString();
             switch (key)
             {
-                case "type":   msgType = reader.ReadTextString(); break;
-                case "uuid":   uuid    = reader.ReadTextString(); break;
+                case "type": msgType = reader.ReadTextString(); break;
+                case "uuid": uuid = reader.ReadTextString(); break;
                 // Additional keys (OscConfig etc.) are skipped here; extend as needed.
-                default:       reader.SkipValue();                break;
+                default: reader.SkipValue(); break;
             }
         }
         reader.ReadEndMap();
@@ -178,7 +178,11 @@ public sealed class HostControlPipeServer(
         while (total < count)
         {
             int n = await pipe.ReadAsync(buf.AsMemory(total, count - total), ct);
-            if (n == 0) break;
+            if (n == 0)
+            {
+                break;
+            }
+
             total += n;
         }
         return total;

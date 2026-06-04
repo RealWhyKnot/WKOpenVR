@@ -25,7 +25,8 @@
 namespace spacecal::replay {
 
 // One replayable tick. Produced by parsing a v2 log row.
-struct ReplayRow {
+struct ReplayRow
+{
 	double timestamp = 0.0;
 	Pose ref;
 	Pose target;
@@ -35,9 +36,10 @@ struct ReplayRow {
 // Parsed file metadata: header annotations the live logger emits up-front
 // (build stamp, HMD model, OS version). Useful for the UI to show "this
 // recording came from build X on hardware Y".
-struct RecordingMeta {
-	std::string buildStamp;       // e.g. "2026.4.28.2"
-	std::string buildChannel;     // "release" or "dev"
+struct RecordingMeta
+{
+	std::string buildStamp;   // e.g. "2026.4.28.2"
+	std::string buildChannel; // "release" or "dev"
 	std::string hmdTrackingSystem;
 	std::string hmdModel;
 	std::string hmdSerial;
@@ -50,11 +52,12 @@ struct RecordingMeta {
 // `meta` is whatever header info the file embedded; `error` is non-empty on
 // any parsing failure (file missing, wrong version banner, missing required
 // columns, etc).
-struct LoadedRecording {
+struct LoadedRecording
+{
 	RecordingMeta meta;
 	std::vector<ReplayRow> rows;
-	std::string sourcePath;     // path passed to LoadRecording, for display
-	std::string error;          // populated on failure; rows will be empty.
+	std::string sourcePath; // path passed to LoadRecording, for display
+	std::string error;      // populated on failure; rows will be empty.
 };
 
 // Parse a v2 log file from disk. Returns LoadedRecording with `error` empty
@@ -65,40 +68,43 @@ LoadedRecording LoadRecording(const std::string& path);
 // trajectory and show histograms of rejection reasons. Kept compact — one
 // entry per replayed tick — so even a 60s recording at 60Hz is only ~3600
 // entries.
-struct ReplayTickResult {
+struct ReplayTickResult
+{
 	double timestamp = 0.0;
 	bool accepted = false;        // ComputeIncremental returned true
 	double currentCalErrMm = 0.0; // RMS error against the (running) prior calibration, mm
 	double rawErrMm = 0.0;        // RMS error of the candidate computed this tick, mm (NaN if no candidate)
-	int    consecutiveRejections = 0;
-	std::string rejectReason;     // empty on accept
+	int consecutiveRejections = 0;
+	std::string rejectReason; // empty on accept
 };
 
 // Replay parameters. Mirror the user-facing knobs in the live CalCtx so
 // the user can A/B compare "what would my recording look like with a tighter
 // recalibration threshold".
-struct ReplayOptions {
-	bool   continuous = true;     // false -> single ComputeOneshot at end
-	double threshold = 1.5;       // continuousCalibrationThreshold
+struct ReplayOptions
+{
+	bool continuous = true; // false -> single ComputeOneshot at end
+	double threshold = 1.5; // continuousCalibrationThreshold
 	double maxRelError = 0.005;
-	bool   ignoreOutliers = true;
+	bool ignoreOutliers = true;
 	std::size_t maxContinuousSamples = 200; // 0 keeps every sample; live continuous mode uses a bounded window.
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
 // final transform — plus the full per-tick trace for visualisation.
-struct ReplayResult {
-	bool   succeeded = false;
-	int    rowsReplayed = 0;
-	int    accepts = 0;
-	int    rejects = 0;
-	int    watchdogResets = 0;
-	int    maxSamplesInWindow = 0;
-	double finalErrorMm = 0.0;    // NaN if calc never produced a valid result
+struct ReplayResult
+{
+	bool succeeded = false;
+	int rowsReplayed = 0;
+	int accepts = 0;
+	int rejects = 0;
+	int watchdogResets = 0;
+	int maxSamplesInWindow = 0;
+	double finalErrorMm = 0.0; // NaN if calc never produced a valid result
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();
-	bool   finalTransformValid = false;
+	bool finalTransformValid = false;
 	std::vector<ReplayTickResult> trace;
-	std::string error;            // populated on failure
+	std::string error; // populated on failure
 };
 
 // Run the replay synchronously. Continuous replay uses a bounded sample window
@@ -109,22 +115,25 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts);
 // List recent v2 log files in the user's logs directory, newest first. Used
 // by the UI to populate a "pick a recording" dropdown without forcing the
 // user to copy-paste paths.
-struct LogFileEntry {
-	std::string name;             // file name only
-	std::wstring fullPath;        // absolute path for opening
+struct LogFileEntry
+{
+	std::string name;      // file name only
+	std::wstring fullPath; // absolute path for opening
 	uint64_t sizeBytes = 0;
-	uint64_t mtimeFileTime = 0;   // FILETIME as uint64; for sorting
+	uint64_t mtimeFileTime = 0; // FILETIME as uint64; for sorting
 };
 
 constexpr std::size_t kDevAutoRecordingMaxFiles = 5;
 constexpr uint64_t kDevAutoRecordingMaxBytes = 512ull * 1024ull * 1024ull;
 
-struct RecordingRetentionPolicy {
+struct RecordingRetentionPolicy
+{
 	std::size_t maxFiles = kDevAutoRecordingMaxFiles;
 	uint64_t maxTotalBytes = kDevAutoRecordingMaxBytes;
 };
 
-struct RecordingRetentionPlan {
+struct RecordingRetentionPlan
+{
 	std::vector<std::size_t> deleteIndexes;
 	std::size_t keptFiles = 0;
 	uint64_t keptBytes = 0;
@@ -132,15 +141,16 @@ struct RecordingRetentionPlan {
 };
 
 namespace detail {
-	inline uint64_t SaturatingAdd(uint64_t a, uint64_t b) {
-		const uint64_t max = std::numeric_limits<uint64_t>::max();
-		return (b > max - a) ? max : (a + b);
-	}
+inline uint64_t SaturatingAdd(uint64_t a, uint64_t b)
+{
+	const uint64_t max = std::numeric_limits<uint64_t>::max();
+	return (b > max - a) ? max : (a + b);
 }
+} // namespace detail
 
-inline RecordingRetentionPlan PlanRecordingRetention(
-	const std::vector<LogFileEntry>& newestFirst,
-	const RecordingRetentionPolicy& policy) {
+inline RecordingRetentionPlan PlanRecordingRetention(const std::vector<LogFileEntry>& newestFirst,
+                                                     const RecordingRetentionPolicy& policy)
+{
 	RecordingRetentionPlan plan;
 
 	for (std::size_t i = 0; i < newestFirst.size(); ++i) {
@@ -163,7 +173,8 @@ inline RecordingRetentionPlan PlanRecordingRetention(
 		if (keep) {
 			++plan.keptFiles;
 			plan.keptBytes = detail::SaturatingAdd(plan.keptBytes, entry.sizeBytes);
-		} else {
+		}
+		else {
 			plan.deleteIndexes.push_back(i);
 			plan.deletedBytes = detail::SaturatingAdd(plan.deletedBytes, entry.sizeBytes);
 		}
@@ -172,7 +183,8 @@ inline RecordingRetentionPlan PlanRecordingRetention(
 	return plan;
 }
 
-struct RecordingPruneResult {
+struct RecordingPruneResult
+{
 	std::size_t totalFiles = 0;
 	uint64_t totalBytes = 0;
 	std::size_t deletedFiles = 0;

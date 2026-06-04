@@ -40,14 +40,15 @@ bool TryConnect()
 	}
 
 	if (!vr::VR_IsInterfaceVersionValid(vr::IVRSystem_Version) ||
-		!vr::VR_IsInterfaceVersionValid(vr::IVRSettings_Version)) {
+	    !vr::VR_IsInterfaceVersionValid(vr::IVRSettings_Version)) {
 		g_lastVRError = "OpenVR interface version mismatch";
 		return false;
 	}
 
 	try {
 		InitCalibrator();
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		g_lastVRError = e.what();
 		return false;
 	}
@@ -61,32 +62,28 @@ bool TryConnect()
 std::string ReadDeviceSerial(int32_t id)
 {
 	if (id < 0 || id >= (int32_t)vr::k_unMaxTrackedDeviceCount) return {};
-	auto *vrSystem = vr::VRSystem();
+	auto* vrSystem = vr::VRSystem();
 	if (!vrSystem) return {};
 
 	char buf[vr::k_unMaxPropertyStringSize] = {};
 	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-	vrSystem->GetStringTrackedDeviceProperty(
-		(uint32_t)id,
-		vr::Prop_SerialNumber_String,
-		buf, sizeof buf, &err);
+	vrSystem->GetStringTrackedDeviceProperty((uint32_t)id, vr::Prop_SerialNumber_String, buf, sizeof buf, &err);
 	if (err != vr::TrackedProp_Success || buf[0] == '\0') return {};
 	return buf;
 }
 
-void AddCalibrationLock(std::vector<openvr_pair::overlay::CalibrationDeviceLock> &locks,
-	openvr_pair::overlay::CalibrationDeviceLockKind kind,
-	int32_t liveId,
-	const std::string &fallbackSerial)
+void AddCalibrationLock(std::vector<openvr_pair::overlay::CalibrationDeviceLock>& locks,
+                        openvr_pair::overlay::CalibrationDeviceLockKind kind, int32_t liveId,
+                        const std::string& fallbackSerial)
 {
 	std::string serial = ReadDeviceSerial(liveId);
 	if (serial.empty()) serial = fallbackSerial;
 	if (serial.empty()) return;
 
-	for (const auto &existing : locks) {
+	for (const auto& existing : locks) {
 		if (existing.serial == serial) return;
 	}
-	locks.push_back({ serial, kind });
+	locks.push_back({serial, kind});
 }
 
 } // namespace
@@ -113,32 +110,27 @@ void CCal_UmbrellaTick()
 
 		std::vector<openvr_pair::overlay::CalibrationDeviceLock> locks;
 		const bool continuous =
-			CalCtx.state == CalibrationState::Continuous ||
-			CalCtx.state == CalibrationState::ContinuousStandby;
+		    CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby;
 		if (continuous) {
-			AddCalibrationLock(locks,
-				openvr_pair::overlay::CalibrationDeviceLockKind::Reference,
-				CalCtx.referenceID, CalCtx.referenceStandby.serial);
-			AddCalibrationLock(locks,
-				openvr_pair::overlay::CalibrationDeviceLockKind::Target,
-				CalCtx.targetID, CalCtx.targetStandby.serial);
-			for (const auto &extra : CalCtx.additionalCalibrations) {
+			AddCalibrationLock(locks, openvr_pair::overlay::CalibrationDeviceLockKind::Reference, CalCtx.referenceID,
+			                   CalCtx.referenceStandby.serial);
+			AddCalibrationLock(locks, openvr_pair::overlay::CalibrationDeviceLockKind::Target, CalCtx.targetID,
+			                   CalCtx.targetStandby.serial);
+			for (const auto& extra : CalCtx.additionalCalibrations) {
 				if (!extra.enabled) continue;
-				AddCalibrationLock(locks,
-					openvr_pair::overlay::CalibrationDeviceLockKind::Target,
-					extra.targetID, extra.targetStandby.serial);
+				AddCalibrationLock(locks, openvr_pair::overlay::CalibrationDeviceLockKind::Target, extra.targetID,
+				                   extra.targetStandby.serial);
 			}
 		}
 		openvr_pair::overlay::SetCalibrationDeviceLocks(locks);
-	} else {
+	}
+	else {
 		static auto s_lastWaitingLog = std::chrono::steady_clock::time_point{};
-		if (s_lastWaitingLog.time_since_epoch().count() == 0 ||
-			now - s_lastWaitingLog >= std::chrono::seconds(5)) {
+		if (s_lastWaitingLog.time_since_epoch().count() == 0 || now - s_lastWaitingLog >= std::chrono::seconds(5)) {
 			s_lastWaitingLog = now;
 			char buf[192];
-			snprintf(buf, sizeof buf,
-				"[umbrella] calibration_tick_skipped reason=vr_not_ready detail='%s'",
-				g_lastVRError.empty() ? "unknown" : g_lastVRError.c_str());
+			snprintf(buf, sizeof buf, "[umbrella] calibration_tick_skipped reason=vr_not_ready detail='%s'",
+			         g_lastVRError.empty() ? "unknown" : g_lastVRError.c_str());
 			Metrics::WriteLogAnnotation(buf);
 		}
 		openvr_pair::overlay::SetCalibrationDeviceLocks({});
@@ -150,20 +142,16 @@ void CCal_UmbrellaShutdown()
 	g_vrReady = false;
 }
 
-void RequestImmediateRedraw()
-{
-}
+void RequestImmediateRedraw() {}
 
-void RequestExit()
-{
-}
+void RequestExit() {}
 
 bool IsVRReady()
 {
 	return g_vrReady;
 }
 
-const std::string &LastVRConnectError()
+const std::string& LastVRConnectError()
 {
 	return g_lastVRError;
 }

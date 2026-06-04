@@ -8,15 +8,15 @@ std::vector<openvr_pair::overlay::CalibrationDeviceLock> g_locks;
 
 } // namespace
 
-void SetCalibrationDeviceLocks(const std::vector<CalibrationDeviceLock> &locks)
+void SetCalibrationDeviceLocks(const std::vector<CalibrationDeviceLock>& locks)
 {
 	g_locks.clear();
 
-	for (const auto &lock : locks) {
+	for (const auto& lock : locks) {
 		if (lock.serial.empty()) continue;
 
 		bool duplicate = false;
-		for (const auto &existing : g_locks) {
+		for (const auto& existing : g_locks) {
 			if (existing.serial == lock.serial) {
 				duplicate = true;
 				break;
@@ -28,10 +28,9 @@ void SetCalibrationDeviceLocks(const std::vector<CalibrationDeviceLock> &locks)
 	}
 }
 
-bool TryGetCalibrationDeviceLockKind(const std::string &serial,
-	CalibrationDeviceLockKind &kind)
+bool TryGetCalibrationDeviceLockKind(const std::string& serial, CalibrationDeviceLockKind& kind)
 {
-	for (const auto &lock : g_locks) {
+	for (const auto& lock : g_locks) {
 		if (lock.serial == serial) {
 			kind = lock.kind;
 			return true;

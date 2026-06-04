@@ -35,20 +35,18 @@ constexpr double kHealthyPriorErrorMaxMeters = 0.005;
 
 // Healthy-cal predicate. True when the cal is currently valid AND the
 // prior error is below the noise floor.
-constexpr bool IsCalibrationHealthy(bool isValid, double priorErrorMeters) {
-    return isValid && priorErrorMeters < kHealthyPriorErrorMaxMeters;
+constexpr bool IsCalibrationHealthy(bool isValid, double priorErrorMeters)
+{
+	return isValid && priorErrorMeters < kHealthyPriorErrorMaxMeters;
 }
 
 // Should the watchdog clear (`calibration.Clear()`) right now?
 // Fires when: cal is valid + rejection counter has reached the cap +
 // the prior is NOT in the healthy band. Returning false is either
 // "not at cap yet" or "at cap but healthy — skip-fire path."
-constexpr bool ShouldClearViaWatchdog(bool isValid,
-                                      int rejectionCount,
-                                      double priorErrorMeters) {
-    return isValid
-        && rejectionCount >= kMaxConsecutiveRejections
-        && !IsCalibrationHealthy(isValid, priorErrorMeters);
+constexpr bool ShouldClearViaWatchdog(bool isValid, int rejectionCount, double priorErrorMeters)
+{
+	return isValid && rejectionCount >= kMaxConsecutiveRejections && !IsCalibrationHealthy(isValid, priorErrorMeters);
 }
 
 } // namespace spacecal::watchdog

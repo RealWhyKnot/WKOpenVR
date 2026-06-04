@@ -5,7 +5,7 @@
 
 #include <vector>
 
-void IPCServer::HandleRequest(const protocol::Request &request, protocol::Response &response)
+void IPCServer::HandleRequest(const protocol::Request& request, protocol::Response& response)
 {
 	if (!driver->HandleIpcRequest(featureMask, request, response)) {
 		LOG("IPC[%s]: invalid request type %d", pipeName.c_str(), request.type);
@@ -20,16 +20,14 @@ IPCServer::~IPCServer()
 
 void IPCServer::Run()
 {
-	LOG("IPC[%s] starting server thread feature_mask=0x%08x",
-		pipeName.c_str(), (unsigned)featureMask);
+	LOG("IPC[%s] starting server thread feature_mask=0x%08x", pipeName.c_str(), (unsigned)featureMask);
 	mainThread = std::thread(RunThread, this);
 }
 
 void IPCServer::Stop()
 {
 	TRACE("IPCServer::Stop()");
-	LOG("IPC[%s] stop requested running=%d",
-		pipeName.c_str(), running ? 1 : 0);
+	LOG("IPC[%s] stop requested running=%d", pipeName.c_str(), running ? 1 : 0);
 	// Signal and join even if `running` has already been cleared by the
 	// ThreadGuard (early-exit path). A joinable thread whose destructor fires
 	// without a join calls std::terminate.
@@ -39,8 +37,7 @@ void IPCServer::Stop()
 		// ThreadGuard swaps connectEvent to INVALID_HANDLE_VALUE before
 		// CloseHandle so we can distinguish a live handle from a gone one.
 		HANDLE ev = connectEvent;
-		if (ev && ev != INVALID_HANDLE_VALUE)
-			SetEvent(ev);
+		if (ev && ev != INVALID_HANDLE_VALUE) SetEvent(ev);
 		mainThread.join();
 	}
 	// running and connectEvent are cleared by the ThreadGuard destructor in
@@ -50,7 +47,7 @@ void IPCServer::Stop()
 	LOG("IPC[%s] stop finished", pipeName.c_str());
 }
 
-IPCServer::PipeInstance *IPCServer::CreatePipeInstance(HANDLE pipe)
+IPCServer::PipeInstance* IPCServer::CreatePipeInstance(HANDLE pipe)
 {
 	// Value-init: PipeInstance contains an OVERLAPPED whose hEvent must be NULL
 	// for the completion-routine variants of WriteFileEx/ReadFileEx. Default-init
@@ -63,7 +60,7 @@ IPCServer::PipeInstance *IPCServer::CreatePipeInstance(HANDLE pipe)
 	return pipeInst;
 }
 
-void IPCServer::ClosePipeInstance(PipeInstance *pipeInst)
+void IPCServer::ClosePipeInstance(PipeInstance* pipeInst)
 {
 	DisconnectNamedPipe(pipeInst->pipe);
 	CloseHandle(pipeInst->pipe);
@@ -71,11 +68,10 @@ void IPCServer::ClosePipeInstance(PipeInstance *pipeInst)
 	delete pipeInst;
 }
 
-void IPCServer::RunThread(IPCServer *_this)
+void IPCServer::RunThread(IPCServer* _this)
 {
 	_this->running = true;
-	LOG("IPC[%s] server thread entered feature_mask=0x%08x",
-		_this->pipeName.c_str(), (unsigned)_this->featureMask);
+	LOG("IPC[%s] server thread entered feature_mask=0x%08x", _this->pipeName.c_str(), (unsigned)_this->featureMask);
 
 	// RAII guard: on any exit path (normal or error) drain any still-open
 	// PipeInstance objects, clear `running`, and close `connectEvent` once.
@@ -83,16 +79,18 @@ void IPCServer::RunThread(IPCServer *_this)
 	// early due to a WaitForSingleObjectEx or GetOverlappedResult failure,
 	// and it stops the early-return paths from leaking PipeInstance heap
 	// allocations + their kernel pipe handles.
-	struct ThreadGuard {
-		IPCServer *server;
-		~ThreadGuard() {
-			LOG("IPC[%s] server thread exiting open_pipes=%zu stop=%d",
-				server->pipeName.c_str(), server->pipes.size(), server->stop ? 1 : 0);
+	struct ThreadGuard
+	{
+		IPCServer* server;
+		~ThreadGuard()
+		{
+			LOG("IPC[%s] server thread exiting open_pipes=%zu stop=%d", server->pipeName.c_str(), server->pipes.size(),
+			    server->stop ? 1 : 0);
 			// Snapshot then close: ClosePipeInstance erases from `pipes`,
 			// which invalidates iterators on std::set during a range-for.
 			std::vector<PipeInstance*> snapshot(server->pipes.begin(), server->pipes.end());
 			server->pipes.clear();
-			for (auto *p : snapshot) {
+			for (auto* p : snapshot) {
 				DisconnectNamedPipe(p->pipe);
 				CloseHandle(p->pipe);
 				delete p;
@@ -110,8 +108,7 @@ void IPCServer::RunThread(IPCServer *_this)
 	} guard{_this};
 
 	HANDLE connectEvent = _this->connectEvent = CreateEvent(0, TRUE, TRUE, 0);
-	if (!connectEvent)
-	{
+	if (!connectEvent) {
 		LOG("CreateEvent failed in RunThread. Error: %d", GetLastError());
 		return;
 	}
@@ -123,27 +120,22 @@ void IPCServer::RunThread(IPCServer *_this)
 	HANDLE nextPipe;
 	BOOL connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
 
-	while (!_this->stop)
-	{
+	while (!_this->stop) {
 		DWORD wait = WaitForSingleObjectEx(connectEvent, INFINITE, TRUE);
 
-		if (_this->stop)
-		{
+		if (_this->stop) {
 			break;
 		}
-		else if (wait == 0)
-		{
+		else if (wait == 0) {
 			// When connectPending is false, the last call to CreateAndConnectInstance
 			// picked up a connected client and triggered this event, so we can simply
 			// create a new pipe instance for it. If true, the client was still pending
 			// connection when CreateAndConnectInstance returned, so this event was triggered
 			// internally and we need to flush out the result, or something like that.
-			if (connectPending)
-			{
+			if (connectPending) {
 				DWORD bytesConnect;
 				BOOL success = GetOverlappedResult(nextPipe, &connectOverlap, &bytesConnect, FALSE);
-				if (!success)
-				{
+				if (!success) {
 					LOG("GetOverlappedResult failed in RunThread. Error: %d", GetLastError());
 					// Close the still-pending pipe handle before bailing --
 					// neither CreatePipeInstance (which would have taken
@@ -157,16 +149,14 @@ void IPCServer::RunThread(IPCServer *_this)
 				}
 			}
 
-			LOG("IPC[%s] client connected (our_protocol=%u)",
-				_this->pipeName.c_str(), (unsigned)protocol::Version);
+			LOG("IPC[%s] client connected (our_protocol=%u)", _this->pipeName.c_str(), (unsigned)protocol::Version);
 
 			auto pipeInst = _this->CreatePipeInstance(nextPipe);
-			CompletedWriteCallback(0, sizeof protocol::Response, (LPOVERLAPPED) pipeInst);
+			CompletedWriteCallback(0, sizeof protocol::Response, (LPOVERLAPPED)pipeInst);
 
 			connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
 		}
-		else if (wait != WAIT_IO_COMPLETION)
-		{
+		else if (wait != WAIT_IO_COMPLETION) {
 			LOG("WaitForSingleObjectEx failed in RunThread. Error: %d", GetLastError());
 			return;
 		}
@@ -175,41 +165,32 @@ void IPCServer::RunThread(IPCServer *_this)
 	// paths (normal + error returns above).
 }
 
-BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE &pipe)
+BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE& pipe)
 {
-	pipe = CreateNamedPipeA(
-		pipeName.c_str(),
-		PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-		PIPE_UNLIMITED_INSTANCES,
-		sizeof protocol::Request,
-		sizeof protocol::Response,
-		1000,
-		0
-	);
+	pipe = CreateNamedPipeA(pipeName.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+	                        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT, PIPE_UNLIMITED_INSTANCES,
+	                        sizeof protocol::Request, sizeof protocol::Response, 1000, 0);
 
-	if (pipe == INVALID_HANDLE_VALUE)
-	{
+	if (pipe == INVALID_HANDLE_VALUE) {
 		LOG("CreateNamedPipe(%s) failed. Error: %d", pipeName.c_str(), GetLastError());
 		return FALSE;
 	}
 
 	ConnectNamedPipe(pipe, overlap);
 
-	switch(GetLastError())
-	{
-	case ERROR_IO_PENDING:
-		// Mark a pending connection by returning true, and when the connection
-		// completes an event will trigger automatically.
-		LOG("IPC[%s] waiting for client", pipeName.c_str());
-		return TRUE;
+	switch (GetLastError()) {
+		case ERROR_IO_PENDING:
+			// Mark a pending connection by returning true, and when the connection
+			// completes an event will trigger automatically.
+			LOG("IPC[%s] waiting for client", pipeName.c_str());
+			return TRUE;
 
-	case ERROR_PIPE_CONNECTED:
-		// Signal the event loop that a client is connected.
-		if (SetEvent(overlap->hEvent)) {
-			LOG("IPC[%s] client was already connected at pipe creation", pipeName.c_str());
-			return FALSE;
-		}
+		case ERROR_PIPE_CONNECTED:
+			// Signal the event loop that a client is connected.
+			if (SetEvent(overlap->hEvent)) {
+				LOG("IPC[%s] client was already connected at pipe creation", pipeName.c_str());
+				return FALSE;
+			}
 	}
 
 	// Pipe handle was created above but neither path took ownership of it. Close
@@ -222,40 +203,30 @@ BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE &pipe)
 
 void IPCServer::CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED overlap)
 {
-	PipeInstance *pipeInst = (PipeInstance *) overlap;
+	PipeInstance* pipeInst = (PipeInstance*)overlap;
 	BOOL success = FALSE;
 
-	if (err == 0 && bytesRead == sizeof protocol::Request)
-	{
+	if (err == 0 && bytesRead == sizeof protocol::Request) {
 		pipeInst->server->HandleRequest(pipeInst->request, pipeInst->response);
-		success = WriteFileEx(
-			pipeInst->pipe,
-			&pipeInst->response,
-			sizeof protocol::Response,
-			overlap,
-			(LPOVERLAPPED_COMPLETION_ROUTINE) CompletedWriteCallback
-		);
+		success = WriteFileEx(pipeInst->pipe, &pipeInst->response, sizeof protocol::Response, overlap,
+		                      (LPOVERLAPPED_COMPLETION_ROUTINE)CompletedWriteCallback);
 	}
-	else if (err == 0 && bytesRead > 0)
-	{
+	else if (err == 0 && bytesRead > 0) {
 		// Partial message on a PIPE_TYPE_MESSAGE pipe means the peer wrote
 		// fewer bytes than sizeof(Request). The Request union has overlapping
 		// payloads and an unread tail would be uninitialized memory; dispatching
 		// HandleRequest in that state can do anything. Drop and disconnect.
-		LOG("IPC[%s] short read: got=%u expected=%zu, disconnecting client",
-			pipeInst->server->pipeName.c_str(), bytesRead, sizeof protocol::Request);
+		LOG("IPC[%s] short read: got=%u expected=%zu, disconnecting client", pipeInst->server->pipeName.c_str(),
+		    bytesRead, sizeof protocol::Request);
 	}
 
-	if (!success)
-	{
-		if (err == ERROR_BROKEN_PIPE)
-		{
+	if (!success) {
+		if (err == ERROR_BROKEN_PIPE) {
 			LOG("IPC[%s] client disconnecting normally", pipeInst->server->pipeName.c_str());
 		}
-		else
-		{
+		else {
 			LOG("IPC[%s] client disconnecting due to error (CompletedReadCallback): err=%d bytesRead=%d",
-				pipeInst->server->pipeName.c_str(), err, bytesRead);
+			    pipeInst->server->pipeName.c_str(), err, bytesRead);
 		}
 		pipeInst->server->ClosePipeInstance(pipeInst);
 	}
@@ -263,24 +234,17 @@ void IPCServer::CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED o
 
 void IPCServer::CompletedWriteCallback(DWORD err, DWORD bytesWritten, LPOVERLAPPED overlap)
 {
-	PipeInstance *pipeInst = (PipeInstance *) overlap;
+	PipeInstance* pipeInst = (PipeInstance*)overlap;
 	BOOL success = FALSE;
 
-	if (err == 0 && bytesWritten == sizeof protocol::Response)
-	{
-		success = ReadFileEx(
-			pipeInst->pipe,
-			&pipeInst->request,
-			sizeof protocol::Request,
-			overlap,
-			(LPOVERLAPPED_COMPLETION_ROUTINE) CompletedReadCallback
-		);
+	if (err == 0 && bytesWritten == sizeof protocol::Response) {
+		success = ReadFileEx(pipeInst->pipe, &pipeInst->request, sizeof protocol::Request, overlap,
+		                     (LPOVERLAPPED_COMPLETION_ROUTINE)CompletedReadCallback);
 	}
 
-	if (!success)
-	{
+	if (!success) {
 		LOG("IPC[%s] client disconnecting due to error (CompletedWriteCallback): err=%d bytesWritten=%d",
-			pipeInst->server->pipeName.c_str(), err, bytesWritten);
+		    pipeInst->server->pipeName.c_str(), err, bytesWritten);
 		pipeInst->server->ClosePipeInstance(pipeInst);
 	}
 }

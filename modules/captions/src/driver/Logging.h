@@ -14,8 +14,8 @@ void TrLogFlushDrv();
 // the format-string attribute on MSVC without warning.
 #define TR_LOG_DRV(fmt, ...) TrDrvLog((fmt), ##__VA_ARGS__)
 
-void TrDrvLog(const char *fmt, ...);
+void TrDrvLog(const char* fmt, ...);
 
 // va_list variant for callers that already have args captured (e.g. a base
 // class's LogV hook). Same behavior as TrDrvLog otherwise.
-void TrDrvLogV(const char *fmt, va_list args);
+void TrDrvLogV(const char* fmt, va_list args);

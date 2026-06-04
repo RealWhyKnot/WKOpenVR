@@ -18,13 +18,13 @@ inline constexpr float kInvalidSignalMin = 1000000.0f;
 
 inline bool IsInvalidUpstreamSignal(float v)
 {
-    return !std::isfinite(v) || v >= kInvalidSignalMin;
+	return !std::isfinite(v) || v >= kInvalidSignalMin;
 }
 
 inline float ClampUpstreamUnitSignal(float v)
 {
-    if (IsInvalidUpstreamSignal(v)) return 0.0f;
-    return std::clamp(v, 0.0f, 1.0f);
+	if (IsInvalidUpstreamSignal(v)) return 0.0f;
+	return std::clamp(v, 0.0f, 1.0f);
 }
 
 // Index into protocol::FACETRACKING_EXPRESSION_COUNT slots for each
@@ -54,8 +54,8 @@ inline constexpr int kUpstreamToOurs[kUpstreamShapeCount] = {
     // 0..3 Eye Squint/Wide
     11, // [ 0] EyeSquintRight       -> EyeSquintRight (11)
     10, // [ 1] EyeSquintLeft        -> EyeSquintLeft (10)
-     9, // [ 2] EyeWideRight         -> EyeWideRight (9)
-     8, // [ 3] EyeWideLeft          -> EyeWideLeft (8)
+    9,  // [ 2] EyeWideRight         -> EyeWideRight (9)
+    8,  // [ 3] EyeWideLeft          -> EyeWideLeft (8)
     // 4..11 Brow
     19, // [ 4] BrowPinchRight       -> BrowPinchRight (19)
     18, // [ 5] BrowPinchLeft        -> BrowPinchLeft (18)
@@ -176,14 +176,14 @@ inline constexpr int kUpstreamToOurs[kUpstreamShapeCount] = {
 // have at least protocol::FACETRACKING_EXPRESSION_COUNT entries.
 inline void RemapUpstreamShapes(const float* src, float* dst)
 {
-    constexpr int kOurCount = static_cast<int>(protocol::FACETRACKING_EXPRESSION_COUNT);
-    for (int u = 0; u < kUpstreamShapeCount; ++u) {
-        const int o = kUpstreamToOurs[u];
-        if (o < 0 || o >= kOurCount) continue;
-        const float v = src[u];
-        if (IsInvalidUpstreamSignal(v)) continue;
-        dst[o] = std::clamp(v, 0.0f, 1.0f);
-    }
+	constexpr int kOurCount = static_cast<int>(protocol::FACETRACKING_EXPRESSION_COUNT);
+	for (int u = 0; u < kUpstreamShapeCount; ++u) {
+		const int o = kUpstreamToOurs[u];
+		if (o < 0 || o >= kOurCount) continue;
+		const float v = src[u];
+		if (IsInvalidUpstreamSignal(v)) continue;
+		dst[o] = std::clamp(v, 0.0f, 1.0f);
+	}
 }
 
 } // namespace facetracking

@@ -39,112 +39,112 @@ namespace openvr_pair::common {
 class HostSupervisorBase
 {
 public:
-    explicit HostSupervisorBase(std::string host_exe_path);
-    virtual ~HostSupervisorBase();
+	explicit HostSupervisorBase(std::string host_exe_path);
+	virtual ~HostSupervisorBase();
 
-    HostSupervisorBase(const HostSupervisorBase&)            = delete;
-    HostSupervisorBase& operator=(const HostSupervisorBase&) = delete;
+	HostSupervisorBase(const HostSupervisorBase&) = delete;
+	HostSupervisorBase& operator=(const HostSupervisorBase&) = delete;
 
-    bool Start();
-    void Stop();
-    void Restart();
-    bool IsRunning() const;
-    bool IsHalted()  const;
+	bool Start();
+	void Stop();
+	void Restart();
+	bool IsRunning() const;
+	bool IsHalted() const;
 
-    // 0 if no exit has been recorded yet.
-    uint32_t    LastExitCode()        const;
-    std::string LastExitDescription() const;
+	// 0 if no exit has been recorded yet.
+	uint32_t LastExitCode() const;
+	std::string LastExitDescription() const;
 
-    // If a stale host from a previous SteamVR session is still holding the
-    // singleton mutex but its control pipe has gone unresponsive, terminate
-    // any process matching the host's image name. Call this from the driver
-    // module's Init() BEFORE Start() so the supervisor's connect-first
-    // attach path does not race against a wedged host.
-    //
-    // Returns the number of stale processes terminated (zero if the host
-    // image isn't running, or if the live host's pipe answered the probe).
-    int CleanupStaleHostIfWedged();
+	// If a stale host from a previous SteamVR session is still holding the
+	// singleton mutex but its control pipe has gone unresponsive, terminate
+	// any process matching the host's image name. Call this from the driver
+	// module's Init() BEFORE Start() so the supervisor's connect-first
+	// attach path does not race against a wedged host.
+	//
+	// Returns the number of stale processes terminated (zero if the host
+	// image isn't running, or if the live host's pipe answered the probe).
+	int CleanupStaleHostIfWedged();
 
 protected:
-    virtual std::string ControlPipeName() const = 0;
+	virtual std::string ControlPipeName() const = 0;
 
-    // Per-user singleton mutex name (e.g. Global\WKOpenVR-FaceModuleHost-
-    // Singleton-<sid-or-username>). Empty means "host has no singleton
-    // mutex", and the supervisor falls back to pipe-only attach detection.
-    virtual std::wstring SingletonMutexName() const { return {}; }
+	// Per-user singleton mutex name (e.g. Global\WKOpenVR-FaceModuleHost-
+	// Singleton-<sid-or-username>). Empty means "host has no singleton
+	// mutex", and the supervisor falls back to pipe-only attach detection.
+	virtual std::wstring SingletonMutexName() const { return {}; }
 
-    // Default appends nothing. Subclasses override to add their own flags.
-    virtual void BuildCommandLine(std::wstring& commandLine,
-                                  const std::wstring& exe_path) const;
+	// Default appends nothing. Subclasses override to add their own flags.
+	virtual void BuildCommandLine(std::wstring& commandLine, const std::wstring& exe_path) const;
 
-    // Called whenever the host transitions to a reachable state (post-spawn
-    // and once per monitor tick while alive/attached). Subclass flushes any
-    // queued control-pipe message here.
-    virtual void OnHostReady() {}
+	// Called whenever the host transitions to a reachable state (post-spawn
+	// and once per monitor tick while alive/attached). Subclass flushes any
+	// queued control-pipe message here.
+	virtual void OnHostReady() {}
 
-    // Called once each time the host process exits. Subclass resets any
-    // "sent" flags so the queued message is retried against the next host.
-    virtual void OnHostExited() {}
+	// Called once each time the host process exits. Subclass resets any
+	// "sent" flags so the queued message is retried against the next host.
+	virtual void OnHostExited() {}
 
-    // Default returns empty. Captions overrides to provide a table of
-    // known exit codes.
-    virtual std::string DescribeExitCode(DWORD code) const { (void)code; return {}; }
+	// Default returns empty. Captions overrides to provide a table of
+	// known exit codes.
+	virtual std::string DescribeExitCode(DWORD code) const
+	{
+		(void)code;
+		return {};
+	}
 
-    // Route a printf-style log line to the subclass's logger. Pure: there is
-    // no shared driver log file, each feature has its own (FT_LOG_DRV /
-    // TR_LOG_DRV) routed to a feature-specific file in %LocalAppDataLow%.
-    virtual void LogV(const char* fmt, va_list args) = 0;
+	// Route a printf-style log line to the subclass's logger. Pure: there is
+	// no shared driver log file, each feature has its own (FT_LOG_DRV /
+	// TR_LOG_DRV) routed to a feature-specific file in %LocalAppDataLow%.
+	virtual void LogV(const char* fmt, va_list args) = 0;
 
-    // Convenience.
-    void Log(const char* fmt, ...);
+	// Convenience.
+	void Log(const char* fmt, ...);
 
-    // Helpers for subclasses ------------------------------------------------
+	// Helpers for subclasses ------------------------------------------------
 
-    // Open the control pipe for write and push `data`. Returns true on a
-    // successful WriteFile of the full payload. The pipe is closed before
-    // return. Used by subclass control-pipe senders.
-    bool SendBytesOverControlPipe(const void* data, size_t len);
+	// Open the control pipe for write and push `data`. Returns true on a
+	// successful WriteFile of the full payload. The pipe is closed before
+	// return. Used by subclass control-pipe senders.
+	bool SendBytesOverControlPipe(const void* data, size_t len);
 
-    // True if the host's control pipe is responsive within timeout_ms.
-    bool CanConnectToHost(int timeout_ms) const;
+	// True if the host's control pipe is responsive within timeout_ms.
+	bool CanConnectToHost(int timeout_ms) const;
 
-    // True if the per-user singleton mutex named by SingletonMutexName()
-    // exists. Always returns false when SingletonMutexName() is empty.
-    bool IsSingletonMutexHeld() const;
+	// True if the per-user singleton mutex named by SingletonMutexName()
+	// exists. Always returns false when SingletonMutexName() is empty.
+	bool IsSingletonMutexHeld() const;
 
-    bool IsStopRequested() const
-    {
-        return stop_requested_.load(std::memory_order_acquire);
-    }
+	bool IsStopRequested() const { return stop_requested_.load(std::memory_order_acquire); }
 
 private:
-    static bool IsCleanSingletonExit(DWORD code);
+	static bool IsCleanSingletonExit(DWORD code);
 
-    bool Spawn();
-    void Kill();
-    void MonitorLoop();
+	bool Spawn();
+	void Kill();
+	void MonitorLoop();
 
-    std::string       host_exe_path_;
-    std::atomic<bool> stop_requested_{ false };
-    std::atomic<bool> running_{ false };
+	std::string host_exe_path_;
+	std::atomic<bool> stop_requested_{false};
+	std::atomic<bool> running_{false};
 
-    // process_handle_ is read/written by both MonitorLoop and Restart/Kill;
-    // all accesses must hold process_mutex_.
-    mutable std::mutex process_mutex_;
-    HANDLE process_handle_ = INVALID_HANDLE_VALUE;
-    HANDLE job_handle_     = nullptr;
-    bool   attached_to_existing_ = false;
-    int    consecutive_fast_exits_ = 0;
-    bool   halted_                 = false;
-    uint32_t    last_exit_code_     = 0;
-    std::string last_exit_description_;
+	// process_handle_ is read/written by both MonitorLoop and Restart/Kill;
+	// all accesses must hold process_mutex_.
+	mutable std::mutex process_mutex_;
+	HANDLE process_handle_ = INVALID_HANDLE_VALUE;
+	HANDLE job_handle_ = nullptr;
+	bool attached_to_existing_ = false;
+	int consecutive_fast_exits_ = 0;
+	bool halted_ = false;
+	uint32_t last_exit_code_ = 0;
+	std::string last_exit_description_;
 
-    std::thread monitor_thread_;
+	std::thread monitor_thread_;
 
-    static constexpr int kFastExitThresholdMs     = 2000;
-    static constexpr int kCircuitBreakerThreshold = 5;
-    static constexpr int kBackoffStartMs          = 1000;
-    static constexpr int kBackoffMaxMs            = 30000;
+	static constexpr int kFastExitThresholdMs = 2000;
+	static constexpr int kCircuitBreakerThreshold = 5;
+	static constexpr int kBackoffStartMs = 1000;
+	static constexpr int kBackoffMaxMs = 30000;
 };
 
 } // namespace openvr_pair::common

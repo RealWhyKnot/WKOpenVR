@@ -15,7 +15,8 @@ constexpr int kDriverSynthStaleLimitMsMax = 250;
 constexpr int kDriverSynthTransitionMsMin = 0;
 constexpr int kDriverSynthTransitionMsMax = 5000;
 
-struct DriverSynthTimingConfig {
+struct DriverSynthTimingConfig
+{
 	int staleLimitMs = kDriverSynthStaleLimitMsDefault;
 	int graceHoldMs = kDriverSynthGraceHoldMsDefault;
 	int blendToFallbackMs = kDriverSynthBlendToFallbackMsDefault;
@@ -46,11 +47,9 @@ inline DriverSynthTimingConfig ClampDriverSynthTimingConfig(DriverSynthTimingCon
 inline bool DriverSynthTimingIsDefault(const DriverSynthTimingConfig& cfg)
 {
 	const DriverSynthTimingConfig def{};
-	return cfg.staleLimitMs == def.staleLimitMs
-		&& cfg.graceHoldMs == def.graceHoldMs
-		&& cfg.blendToFallbackMs == def.blendToFallbackMs
-		&& cfg.stableBeforeSynthMs == def.stableBeforeSynthMs
-		&& cfg.blendToSynthMs == def.blendToSynthMs;
+	return cfg.staleLimitMs == def.staleLimitMs && cfg.graceHoldMs == def.graceHoldMs &&
+	       cfg.blendToFallbackMs == def.blendToFallbackMs && cfg.stableBeforeSynthMs == def.stableBeforeSynthMs &&
+	       cfg.blendToSynthMs == def.blendToSynthMs;
 }
 
 } // namespace wkopenvr::headmount

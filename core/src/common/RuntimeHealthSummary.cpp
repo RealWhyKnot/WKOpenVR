@@ -39,27 +39,39 @@ std::string JsonString(const std::string& value)
 	out.push_back('"');
 	for (const char ch : value) {
 		switch (ch) {
-		case '\\': out += "\\\\"; break;
-		case '"': out += "\\\""; break;
-		case '\n': out += "\\n"; break;
-		case '\r': out += "\\r"; break;
-		case '\t': out += "\\t"; break;
-		default:
-			if (static_cast<unsigned char>(ch) < 0x20) {
-				char escaped[7]{};
-				std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned char>(ch));
-				out += escaped;
-			} else {
-				out.push_back(ch);
-			}
-			break;
+			case '\\':
+				out += "\\\\";
+				break;
+			case '"':
+				out += "\\\"";
+				break;
+			case '\n':
+				out += "\\n";
+				break;
+			case '\r':
+				out += "\\r";
+				break;
+			case '\t':
+				out += "\\t";
+				break;
+			default:
+				if (static_cast<unsigned char>(ch) < 0x20) {
+					char escaped[7]{};
+					std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned char>(ch));
+					out += escaped;
+				}
+				else {
+					out.push_back(ch);
+				}
+				break;
 		}
 	}
 	out.push_back('"');
 	return out;
 }
 
-struct MetricSummary {
+struct MetricSummary
+{
 	uint64_t count = 0;
 	double min = 0.0;
 	double mean = 0.0;
@@ -69,7 +81,8 @@ struct MetricSummary {
 	double max = 0.0;
 };
 
-class RuntimeMetric {
+class RuntimeMetric
+{
 public:
 	void Observe(double value)
 	{
@@ -78,7 +91,8 @@ public:
 		if (count_ == 0) {
 			min_ = value;
 			max_ = value;
-		} else {
+		}
+		else {
 			min_ = std::min(min_, value);
 			max_ = std::max(max_, value);
 		}
@@ -135,9 +149,8 @@ private:
 	double Percentile(double fraction) const
 	{
 		if (count_ == 0) return 0.0;
-		const uint64_t target = std::max<uint64_t>(
-			1,
-			static_cast<uint64_t>(std::ceil(static_cast<double>(count_) * fraction)));
+		const uint64_t target =
+		    std::max<uint64_t>(1, static_cast<uint64_t>(std::ceil(static_cast<double>(count_) * fraction)));
 		uint64_t seen = 0;
 		for (size_t i = 0; i < buckets_.size(); ++i) {
 			seen += buckets_[i];
@@ -153,7 +166,8 @@ private:
 	std::array<uint64_t, kMetricBuckets> buckets_{};
 };
 
-struct ProcessHealth {
+struct ProcessHealth
+{
 	bool valid = false;
 	std::string role;
 	ProcessPerfSample latest{};
@@ -165,7 +179,8 @@ struct ProcessHealth {
 	uint32_t maxHandleCount = 0;
 };
 
-struct CompositorHealth {
+struct CompositorHealth
+{
 	uint64_t frameSamples = 0;
 	uint64_t droppedFrames = 0;
 	uint64_t mispresentedFrames = 0;
@@ -179,7 +194,8 @@ struct CompositorHealth {
 	RuntimeMetric submitFrameMs;
 };
 
-struct PoseHealth {
+struct PoseHealth
+{
 	uint64_t samples = 0;
 	uint64_t invalidSamples = 0;
 	uint64_t staleSamples = 0;
@@ -190,12 +206,14 @@ struct PoseHealth {
 	RuntimeMetric poseGapMs;
 };
 
-struct CalibrationHealth {
+struct CalibrationHealth
+{
 	bool valid = false;
 	RuntimeCalibrationHealthSample latest{};
 };
 
-struct RuntimeHealthState {
+struct RuntimeHealthState
+{
 	std::mutex mutex;
 	ProcessHealth process;
 	CompositorHealth compositor;
@@ -212,14 +230,10 @@ RuntimeHealthState& State()
 
 void AppendMetric(std::ostringstream& out, const MetricSummary& summary)
 {
-	out << "{\"count\":" << summary.count
-		<< ",\"min\":" << CleanNumber(summary.min)
-		<< ",\"mean\":" << CleanNumber(summary.mean)
-		<< ",\"p50\":" << CleanNumber(summary.p50)
-		<< ",\"p95\":" << CleanNumber(summary.p95)
-		<< ",\"p99\":" << CleanNumber(summary.p99)
-		<< ",\"max\":" << CleanNumber(summary.max)
-		<< "}";
+	out << "{\"count\":" << summary.count << ",\"min\":" << CleanNumber(summary.min)
+	    << ",\"mean\":" << CleanNumber(summary.mean) << ",\"p50\":" << CleanNumber(summary.p50)
+	    << ",\"p95\":" << CleanNumber(summary.p95) << ",\"p99\":" << CleanNumber(summary.p99)
+	    << ",\"max\":" << CleanNumber(summary.max) << "}";
 }
 
 std::string BuildJsonLocked(const RuntimeHealthState& state)
@@ -234,37 +248,35 @@ std::string BuildJsonLocked(const RuntimeHealthState& state)
 		const ProcessPerfSample& p = state.process.latest;
 		const ProcessPerfSnapshot& s = p.snapshot;
 		out << "\"valid\": true"
-			<< ", \"role\": " << JsonString(state.process.role)
-			<< ", \"samples\": " << state.process.samples
-			<< ", \"pid\": " << s.processId
-			<< ", \"logical_cpus\": " << s.logicalProcessors
-			<< ", \"cpu_valid\": " << (p.cpuValid ? "true" : "false")
-			<< ", \"cpu_pct_total\": " << CleanNumber(p.cpuPctTotal)
-			<< ", \"cpu_pct_one_core\": " << CleanNumber(p.cpuPctOneCore)
-			<< ", \"cpu_pct_total_max\": " << CleanNumber(state.process.maxCpuPctTotal)
-			<< ", \"cpu_pct_one_core_max\": " << CleanNumber(state.process.maxCpuPctOneCore)
-			<< ", \"memory_valid\": " << (s.memoryValid ? "true" : "false")
-			<< ", \"working_set_mb\": " << CleanNumber(BytesToMb(s.workingSetBytes))
-			<< ", \"private_mb\": " << CleanNumber(BytesToMb(s.privateBytes))
-			<< ", \"peak_working_set_mb\": " << CleanNumber(BytesToMb(s.peakWorkingSetBytes))
-			<< ", \"working_set_mb_max\": " << CleanNumber(BytesToMb(state.process.maxWorkingSetBytes))
-			<< ", \"private_mb_max\": " << CleanNumber(BytesToMb(state.process.maxPrivateBytes))
-			<< ", \"handle_valid\": " << (s.handleCountValid ? "true" : "false")
-			<< ", \"handles\": " << s.handleCount
-			<< ", \"handles_max\": " << state.process.maxHandleCount;
-	} else {
+		    << ", \"role\": " << JsonString(state.process.role) << ", \"samples\": " << state.process.samples
+		    << ", \"pid\": " << s.processId << ", \"logical_cpus\": " << s.logicalProcessors
+		    << ", \"cpu_valid\": " << (p.cpuValid ? "true" : "false")
+		    << ", \"cpu_pct_total\": " << CleanNumber(p.cpuPctTotal)
+		    << ", \"cpu_pct_one_core\": " << CleanNumber(p.cpuPctOneCore)
+		    << ", \"cpu_pct_total_max\": " << CleanNumber(state.process.maxCpuPctTotal)
+		    << ", \"cpu_pct_one_core_max\": " << CleanNumber(state.process.maxCpuPctOneCore)
+		    << ", \"memory_valid\": " << (s.memoryValid ? "true" : "false")
+		    << ", \"working_set_mb\": " << CleanNumber(BytesToMb(s.workingSetBytes))
+		    << ", \"private_mb\": " << CleanNumber(BytesToMb(s.privateBytes))
+		    << ", \"peak_working_set_mb\": " << CleanNumber(BytesToMb(s.peakWorkingSetBytes))
+		    << ", \"working_set_mb_max\": " << CleanNumber(BytesToMb(state.process.maxWorkingSetBytes))
+		    << ", \"private_mb_max\": " << CleanNumber(BytesToMb(state.process.maxPrivateBytes))
+		    << ", \"handle_valid\": " << (s.handleCountValid ? "true" : "false") << ", \"handles\": " << s.handleCount
+		    << ", \"handles_max\": " << state.process.maxHandleCount;
+	}
+	else {
 		out << "\"valid\": false";
 	}
 	out << "},\n";
 
 	out << "  \"compositor\": {"
-		<< "\"frames\": " << state.compositor.frameSamples
-		<< ", \"last_frame_index\": " << state.compositor.lastFrameIndex
-		<< ", \"dropped_frames\": " << state.compositor.droppedFrames
-		<< ", \"mispresented_frames\": " << state.compositor.mispresentedFrames
-		<< ", \"reprojected_frames\": " << state.compositor.reprojectedFrames
-		<< ", \"hmd_pose_invalid_frames\": " << state.compositor.hmdPoseInvalidFrames
-		<< ", \"client_frame_interval_ms\": ";
+	    << "\"frames\": " << state.compositor.frameSamples
+	    << ", \"last_frame_index\": " << state.compositor.lastFrameIndex
+	    << ", \"dropped_frames\": " << state.compositor.droppedFrames
+	    << ", \"mispresented_frames\": " << state.compositor.mispresentedFrames
+	    << ", \"reprojected_frames\": " << state.compositor.reprojectedFrames
+	    << ", \"hmd_pose_invalid_frames\": " << state.compositor.hmdPoseInvalidFrames
+	    << ", \"client_frame_interval_ms\": ";
 	AppendMetric(out, state.compositor.clientFrameIntervalMs.Summary());
 	out << ", \"total_render_gpu_ms\": ";
 	AppendMetric(out, state.compositor.totalRenderGpuMs.Summary());
@@ -277,13 +289,10 @@ std::string BuildJsonLocked(const RuntimeHealthState& state)
 	out << "},\n";
 
 	out << "  \"tracking\": {"
-		<< "\"samples\": " << state.pose.samples
-		<< ", \"invalid_samples\": " << state.pose.invalidSamples
-		<< ", \"stale_samples\": " << state.pose.staleSamples
-		<< ", \"jump_samples\": " << state.pose.jumpSamples
-		<< ", \"last_ref_tracking_result\": " << state.pose.lastRefTrackingResult
-		<< ", \"last_target_tracking_result\": " << state.pose.lastTargetTrackingResult
-		<< ", \"pose_age_ms\": ";
+	    << "\"samples\": " << state.pose.samples << ", \"invalid_samples\": " << state.pose.invalidSamples
+	    << ", \"stale_samples\": " << state.pose.staleSamples << ", \"jump_samples\": " << state.pose.jumpSamples
+	    << ", \"last_ref_tracking_result\": " << state.pose.lastRefTrackingResult
+	    << ", \"last_target_tracking_result\": " << state.pose.lastTargetTrackingResult << ", \"pose_age_ms\": ";
 	AppendMetric(out, state.pose.poseAgeMs.Summary());
 	out << ", \"pose_gap_ms\": ";
 	AppendMetric(out, state.pose.poseGapMs.Summary());
@@ -293,15 +302,15 @@ std::string BuildJsonLocked(const RuntimeHealthState& state)
 	if (state.calibration.valid) {
 		const RuntimeCalibrationHealthSample& c = state.calibration.latest;
 		out << "\"valid\": true"
-			<< ", \"sample_count\": " << c.sampleCount
-			<< ", \"valid_sample_count\": " << c.validSampleCount
-			<< ", \"paired_sample_count\": " << c.pairedSampleCount
-			<< ", \"tracking_health_pass\": " << (c.trackingHealthPass ? "true" : "false")
-			<< ", \"shadow_dynamic_pass\": " << (c.shadowDynamicPass ? "true" : "false")
-			<< ", \"residual_rms_mm\": " << CleanNumber(c.residualRmsMm)
-			<< ", \"residual_p95_mm\": " << CleanNumber(c.residualP95Mm)
-			<< ", \"holdout_rms_mm\": " << CleanNumber(c.holdoutRmsMm);
-	} else {
+		    << ", \"sample_count\": " << c.sampleCount << ", \"valid_sample_count\": " << c.validSampleCount
+		    << ", \"paired_sample_count\": " << c.pairedSampleCount
+		    << ", \"tracking_health_pass\": " << (c.trackingHealthPass ? "true" : "false")
+		    << ", \"shadow_dynamic_pass\": " << (c.shadowDynamicPass ? "true" : "false")
+		    << ", \"residual_rms_mm\": " << CleanNumber(c.residualRmsMm)
+		    << ", \"residual_p95_mm\": " << CleanNumber(c.residualP95Mm)
+		    << ", \"holdout_rms_mm\": " << CleanNumber(c.holdoutRmsMm);
+	}
+	else {
 		out << "\"valid\": false";
 	}
 	out << "}\n";
@@ -332,15 +341,9 @@ void RecordRuntimeProcessSample(const char* role, const ProcessPerfSample& sampl
 	++state.process.samples;
 	state.process.maxCpuPctTotal = std::max(state.process.maxCpuPctTotal, sample.cpuPctTotal);
 	state.process.maxCpuPctOneCore = std::max(state.process.maxCpuPctOneCore, sample.cpuPctOneCore);
-	state.process.maxWorkingSetBytes = std::max(
-		state.process.maxWorkingSetBytes,
-		sample.snapshot.workingSetBytes);
-	state.process.maxPrivateBytes = std::max(
-		state.process.maxPrivateBytes,
-		sample.snapshot.privateBytes);
-	state.process.maxHandleCount = std::max(
-		state.process.maxHandleCount,
-		sample.snapshot.handleCount);
+	state.process.maxWorkingSetBytes = std::max(state.process.maxWorkingSetBytes, sample.snapshot.workingSetBytes);
+	state.process.maxPrivateBytes = std::max(state.process.maxPrivateBytes, sample.snapshot.privateBytes);
+	state.process.maxHandleCount = std::max(state.process.maxHandleCount, sample.snapshot.handleCount);
 }
 
 void RecordRuntimeCompositorTiming(const RuntimeCompositorTimingSample& sample)
@@ -410,8 +413,8 @@ bool MaybeWriteRuntimeHealthSummary(uint64_t intervalMs, const wchar_t* fileName
 	{
 		RuntimeHealthState& state = State();
 		std::lock_guard<std::mutex> lock(state.mutex);
-		if (state.lastWriteWallMs != 0 && nowMs >= state.lastWriteWallMs
-			&& nowMs - state.lastWriteWallMs < intervalMs) {
+		if (state.lastWriteWallMs != 0 && nowMs >= state.lastWriteWallMs &&
+		    nowMs - state.lastWriteWallMs < intervalMs) {
 			return false;
 		}
 		state.lastWriteWallMs = nowMs;

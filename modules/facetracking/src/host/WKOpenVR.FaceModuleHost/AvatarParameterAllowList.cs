@@ -8,8 +8,10 @@ internal static class AvatarParameterAllowList
 {
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    public static string PathOnDisk() =>
-        Path.Combine(AppPaths.FaceTrackingDir(), "avatar_parameters.txt");
+    public static string PathOnDisk()
+    {
+        return Path.Combine(AppPaths.FaceTrackingDir(), "avatar_parameters.txt");
+    }
 
     public static void Clear(HostLogger logger)
     {
@@ -45,8 +47,8 @@ internal static class AvatarParameterAllowList
                 return;
             }
 
-            await using var fs = File.OpenRead(configPath);
-            using var doc = await JsonDocument.ParseAsync(fs, cancellationToken: ct);
+            await using FileStream fs = File.OpenRead(configPath);
+            using JsonDocument doc = await JsonDocument.ParseAsync(fs, cancellationToken: ct);
             var addresses = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
 
@@ -100,21 +102,27 @@ internal static class AvatarParameterAllowList
     private static string? FindAvatarConfig(string avatarId)
     {
         string root = Path.Combine(AppPaths.LocalAppDataLow(), "VRChat", "VRChat", "OSC");
-        if (!Directory.Exists(root)) return null;
+        if (!Directory.Exists(root))
+        {
+            return null;
+        }
 
         try
         {
             foreach (string userFolder in Directory.EnumerateDirectories(root))
             {
                 string avatarsDir = Path.Combine(userFolder, "Avatars");
-                if (!Directory.Exists(avatarsDir)) continue;
+                if (!Directory.Exists(avatarsDir))
+                {
+                    continue;
+                }
 
                 foreach (string avatarFile in Directory.EnumerateFiles(avatarsDir, "*.json"))
                 {
                     try
                     {
                         using FileStream fs = File.OpenRead(avatarFile);
-                        using JsonDocument doc = JsonDocument.Parse(fs);
+                        using var doc = JsonDocument.Parse(fs);
                         string? id = doc.RootElement.TryGetProperty("id", out JsonElement idElement)
                             ? idElement.GetString()
                             : null;

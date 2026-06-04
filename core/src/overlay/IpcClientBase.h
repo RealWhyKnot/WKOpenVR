@@ -16,7 +16,7 @@ namespace openvr_pair::overlay {
 
 struct IpcClientConnectOptions
 {
-	using Win32ErrorFormatter = std::function<std::string(DWORD error, const std::string &details)>;
+	using Win32ErrorFormatter = std::function<std::string(DWORD error, const std::string& details)>;
 	using VersionMismatchFormatter = std::function<std::string(uint32_t expectedVersion, uint32_t driverVersion)>;
 
 	Win32ErrorFormatter pipeUnavailable;
@@ -33,13 +33,18 @@ struct IpcClientConnectOptions
 class IpcClientBase
 {
 public:
-	enum class MismatchState { Matching, OverlayNewer, DriverNewer };
+	enum class MismatchState
+	{
+		Matching,
+		OverlayNewer,
+		DriverNewer
+	};
 
 	virtual ~IpcClientBase();
 
-	void Connect(const char *pipeName, IpcClientConnectOptions options = {});
-	protocol::Response SendBlocking(const protocol::Request &request);
-	void Send(const protocol::Request &request);
+	void Connect(const char* pipeName, IpcClientConnectOptions options = {});
+	protocol::Response SendBlocking(const protocol::Request& request);
+	void Send(const protocol::Request& request);
 	protocol::Response Receive();
 	bool IsConnected() const { return pipe_ != INVALID_HANDLE_VALUE; }
 	void Close();
@@ -50,8 +55,12 @@ public:
 	uint32_t GetExpectedVersion() const { return protocol::Version; }
 
 protected:
-	virtual void OnPipeOpenAttempt(HANDLE pipe, DWORD lastError) { (void)pipe; (void)lastError; }
-	virtual void OnHandshakeResponse(const protocol::Response &response) { (void)response; }
+	virtual void OnPipeOpenAttempt(HANDLE pipe, DWORD lastError)
+	{
+		(void)pipe;
+		(void)lastError;
+	}
+	virtual void OnHandshakeResponse(const protocol::Response& response) { (void)response; }
 	virtual void OnBrokenPipe(DWORD error) { (void)error; }
 	virtual void OnReconnectSucceeded() {}
 

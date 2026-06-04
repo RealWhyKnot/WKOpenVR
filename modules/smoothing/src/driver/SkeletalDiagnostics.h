@@ -13,9 +13,7 @@ struct BoneDeltaStats
 	float minQuatDot = 1.0f;
 };
 
-BoneDeltaStats MeasureBoneDeltaStats(
-	const vr::VRBoneTransform_t* current,
-	const vr::VRBoneTransform_t* previous,
-	uint32_t count);
+BoneDeltaStats MeasureBoneDeltaStats(const vr::VRBoneTransform_t* current, const vr::VRBoneTransform_t* previous,
+                                     uint32_t count);
 
 } // namespace skeletal::diagnostics

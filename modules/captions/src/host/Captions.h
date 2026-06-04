@@ -12,25 +12,23 @@
 class Captions
 {
 public:
-    Captions();
-    ~Captions();
+	Captions();
+	~Captions();
 
-    static bool RuntimeAvailable();
+	static bool RuntimeAvailable();
 
-    // Load model directory. Returns false on failure.
-    bool Load(const std::string &model_dir);
+	// Load model directory. Returns false on failure.
+	bool Load(const std::string& model_dir);
 
-    void Unload();
+	void Unload();
 
-    bool IsLoaded() const noexcept;
+	bool IsLoaded() const noexcept;
 
-    // Translate `text` from src_lang to tgt_lang. If src_lang == tgt_lang or
-    // the model is not loaded, returns `text` as-is.
-    std::string Translate(const std::string &text,
-                          const std::string &src_lang,
-                          const std::string &tgt_lang);
+	// Translate `text` from src_lang to tgt_lang. If src_lang == tgt_lang or
+	// the model is not loaded, returns `text` as-is.
+	std::string Translate(const std::string& text, const std::string& src_lang, const std::string& tgt_lang);
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+	struct Impl;
+	std::unique_ptr<Impl> impl_;
 };

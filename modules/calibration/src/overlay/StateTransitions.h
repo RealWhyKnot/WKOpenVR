@@ -35,42 +35,36 @@
 
 namespace spacecal::state {
 
-constexpr bool IsLegalTransition(CalibrationState from, CalibrationState to) {
-    if (from == to) return true;
+constexpr bool IsLegalTransition(CalibrationState from, CalibrationState to)
+{
+	if (from == to) return true;
 
-    switch (from) {
-    case CalibrationState::None:
-        return to == CalibrationState::Begin
-            || to == CalibrationState::Continuous
-            || to == CalibrationState::ContinuousStandby
-            || to == CalibrationState::Editing;
+	switch (from) {
+		case CalibrationState::None:
+			return to == CalibrationState::Begin || to == CalibrationState::Continuous ||
+			       to == CalibrationState::ContinuousStandby || to == CalibrationState::Editing;
 
-    case CalibrationState::Begin:
-        return to == CalibrationState::None
-            || to == CalibrationState::Rotation
-            || to == CalibrationState::Continuous;
+		case CalibrationState::Begin:
+			return to == CalibrationState::None || to == CalibrationState::Rotation ||
+			       to == CalibrationState::Continuous;
 
-    case CalibrationState::Rotation:
-        return to == CalibrationState::None
-            || to == CalibrationState::Translation;
+		case CalibrationState::Rotation:
+			return to == CalibrationState::None || to == CalibrationState::Translation;
 
-    case CalibrationState::Translation:
-        return to == CalibrationState::None;
+		case CalibrationState::Translation:
+			return to == CalibrationState::None;
 
-    case CalibrationState::Editing:
-        return to == CalibrationState::None;
+		case CalibrationState::Editing:
+			return to == CalibrationState::None;
 
-    case CalibrationState::Continuous:
-        return to == CalibrationState::None
-            || to == CalibrationState::Begin
-            || to == CalibrationState::ContinuousStandby;
+		case CalibrationState::Continuous:
+			return to == CalibrationState::None || to == CalibrationState::Begin ||
+			       to == CalibrationState::ContinuousStandby;
 
-    case CalibrationState::ContinuousStandby:
-        return to == CalibrationState::None
-            || to == CalibrationState::Begin
-            || to == CalibrationState::Continuous;
-    }
-    return false;
+		case CalibrationState::ContinuousStandby:
+			return to == CalibrationState::None || to == CalibrationState::Begin || to == CalibrationState::Continuous;
+	}
+	return false;
 }
 
 } // namespace spacecal::state

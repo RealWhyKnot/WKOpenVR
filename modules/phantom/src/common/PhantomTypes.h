@@ -18,30 +18,38 @@ namespace phantom {
 //   LOST          -- no longer publishing for this device this session.
 enum class TrackerState : uint8_t
 {
-    REAL         = 0,
-    BLEND_OUT    = 1,
-    SYNTH_RECKON = 2,
-    SYNTH_IK     = 3,
-    SYNTH_ML     = 4,
-    BLEND_IN     = 5,
-    OUT_OF_RANGE = 6,
-    LOST         = 7,
+	REAL = 0,
+	BLEND_OUT = 1,
+	SYNTH_RECKON = 2,
+	SYNTH_IK = 3,
+	SYNTH_ML = 4,
+	BLEND_IN = 5,
+	OUT_OF_RANGE = 6,
+	LOST = 7,
 };
 
 // Human-readable label for diagnostics + overlay badge text.
 inline const char* TrackerStateLabel(TrackerState s)
 {
-    switch (s) {
-        case TrackerState::REAL:         return "Real";
-        case TrackerState::BLEND_OUT:    return "Blending out";
-        case TrackerState::SYNTH_RECKON: return "Dead reckoning";
-        case TrackerState::SYNTH_IK:     return "IK";
-        case TrackerState::SYNTH_ML:     return "ML";
-        case TrackerState::BLEND_IN:     return "Blending in";
-        case TrackerState::OUT_OF_RANGE: return "Out of range";
-        case TrackerState::LOST:         return "Lost";
-    }
-    return "?";
+	switch (s) {
+		case TrackerState::REAL:
+			return "Real";
+		case TrackerState::BLEND_OUT:
+			return "Blending out";
+		case TrackerState::SYNTH_RECKON:
+			return "Dead reckoning";
+		case TrackerState::SYNTH_IK:
+			return "IK";
+		case TrackerState::SYNTH_ML:
+			return "ML";
+		case TrackerState::BLEND_IN:
+			return "Blending in";
+		case TrackerState::OUT_OF_RANGE:
+			return "Out of range";
+		case TrackerState::LOST:
+			return "Lost";
+	}
+	return "?";
 }
 
 } // namespace phantom

@@ -13,41 +13,41 @@
 class QuestAppPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
 public:
-    const char* Name() const override { return ModuleName(ModuleId::QuestApp); }
-    const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::QuestApp); }
-    const char* PipeName() const override { return ModulePipeName(ModuleId::QuestApp); }
+	const char* Name() const override { return ModuleName(ModuleId::QuestApp); }
+	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::QuestApp); }
+	const char* PipeName() const override { return ModulePipeName(ModuleId::QuestApp); }
 
-    void OnStart(openvr_pair::overlay::ShellContext& context) override;
-    void DrawTab(openvr_pair::overlay::ShellContext& context) override;
-    void DrawLogsSection(openvr_pair::overlay::ShellContext& context) override;
+	void OnStart(openvr_pair::overlay::ShellContext& context) override;
+	void DrawTab(openvr_pair::overlay::ShellContext& context) override;
+	void DrawLogsSection(openvr_pair::overlay::ShellContext& context) override;
 #if WKOPENVR_BUILD_IS_DEV
-    bool HasDevTools() const override { return true; }
-    void DrawDevTools(openvr_pair::overlay::ShellContext& context) override;
+	bool HasDevTools() const override { return true; }
+	void DrawDevTools(openvr_pair::overlay::ShellContext& context) override;
 #endif
 
 private:
-    wkopenvr::questapp::QuestAppConfig cfg_;
-    wkopenvr::questapp::QuestCompanionSettings companionSettings_;
-    AdbController adb_;
-    wkopenvr::questapp::AdbSetupWizard wizard_{adb_};
-    std::string status_;
-    bool statusWarn_ = false;
-    bool showAllPackages_ = false;
-    bool packagesLoaded_ = false;
-    bool companionSettingsLoaded_ = false;
-    std::vector<wkopenvr::questapp::QuestLaunchTarget> detectedPackages_;
+	wkopenvr::questapp::QuestAppConfig cfg_;
+	wkopenvr::questapp::QuestCompanionSettings companionSettings_;
+	AdbController adb_;
+	wkopenvr::questapp::AdbSetupWizard wizard_{adb_};
+	std::string status_;
+	bool statusWarn_ = false;
+	bool showAllPackages_ = false;
+	bool packagesLoaded_ = false;
+	bool companionSettingsLoaded_ = false;
+	std::vector<wkopenvr::questapp::QuestLaunchTarget> detectedPackages_;
 #if WKOPENVR_BUILD_IS_DEV
-    std::string lastWifiEndpoint_;
-    std::string lastDevicesOutput_;
+	std::string lastWifiEndpoint_;
+	std::string lastDevicesOutput_;
 #endif
 
-    void SetStatus(std::string text, bool warn = false);
-    void DrawSetup(openvr_pair::overlay::ShellContext& context);
-    void DrawBoundaryGuide();
-    void DrawCompanion(openvr_pair::overlay::ShellContext& context);
-    void DrawLaunchTargetPicker();
-    void RefreshPackages();
+	void SetStatus(std::string text, bool warn = false);
+	void DrawSetup(openvr_pair::overlay::ShellContext& context);
+	void DrawBoundaryGuide();
+	void DrawCompanion(openvr_pair::overlay::ShellContext& context);
+	void DrawLaunchTargetPicker();
+	void RefreshPackages();
 #if WKOPENVR_BUILD_IS_DEV
-    void DrawAdbDevTools();
+	void DrawAdbDevTools();
 #endif
 };

@@ -12,7 +12,7 @@ ImVector<ImRect> g_groupPanelLabelStack;
 
 void ApplyOverlayStyle()
 {
-	ImGuiStyle &style = ImGui::GetStyle();
+	ImGuiStyle& style = ImGui::GetStyle();
 
 	style.WindowPadding = ImVec2(12.0f, 10.0f);
 	style.FramePadding = ImVec2(8.0f, 4.0f);
@@ -24,11 +24,11 @@ void ApplyOverlayStyle()
 	style.GrabRounding = 4.0f;
 }
 
-void BeginGroupPanel(const char *name, const ImVec2 &size)
+void BeginGroupPanel(const char* name, const ImVec2& size)
 {
 	ImGui::BeginGroup();
 
-	const ImGuiStyle &style = ImGui::GetStyle();
+	const ImGuiStyle& style = ImGui::GetStyle();
 	const ImVec2 itemSpacing = style.ItemSpacing;
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
@@ -39,7 +39,8 @@ void BeginGroupPanel(const char *name, const ImVec2 &size)
 	ImVec2 effectiveSize = size;
 	if (size.x < 0.0f) {
 		effectiveSize.x = ImGui::GetContentRegionAvail().x;
-	} else {
+	}
+	else {
 		effectiveSize.x = size.x;
 	}
 	ImGui::Dummy(ImVec2(effectiveSize.x, 0.0f));
@@ -77,7 +78,7 @@ void EndGroupPanel()
 {
 	ImGui::PopItemWidth();
 
-	const ImGuiStyle &style = ImGui::GetStyle();
+	const ImGuiStyle& style = ImGui::GetStyle();
 	const ImVec2 itemSpacing = style.ItemSpacing;
 
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
@@ -106,16 +107,22 @@ void EndGroupPanel()
 	labelRect.Max.x += itemSpacing.x;
 	for (int i = 0; i < 4; ++i) {
 		switch (i) {
-		case 0: ImGui::PushClipRect(ImVec2(-FLT_MAX, -FLT_MAX), ImVec2(labelRect.Min.x, FLT_MAX), true); break;
-		case 1: ImGui::PushClipRect(ImVec2(labelRect.Max.x, -FLT_MAX), ImVec2(FLT_MAX, FLT_MAX), true); break;
-		case 2: ImGui::PushClipRect(ImVec2(labelRect.Min.x, -FLT_MAX), ImVec2(labelRect.Max.x, labelRect.Min.y), true); break;
-		case 3: ImGui::PushClipRect(ImVec2(labelRect.Min.x, labelRect.Max.y), ImVec2(labelRect.Max.x, FLT_MAX), true); break;
+			case 0:
+				ImGui::PushClipRect(ImVec2(-FLT_MAX, -FLT_MAX), ImVec2(labelRect.Min.x, FLT_MAX), true);
+				break;
+			case 1:
+				ImGui::PushClipRect(ImVec2(labelRect.Max.x, -FLT_MAX), ImVec2(FLT_MAX, FLT_MAX), true);
+				break;
+			case 2:
+				ImGui::PushClipRect(ImVec2(labelRect.Min.x, -FLT_MAX), ImVec2(labelRect.Max.x, labelRect.Min.y), true);
+				break;
+			case 3:
+				ImGui::PushClipRect(ImVec2(labelRect.Min.x, labelRect.Max.y), ImVec2(labelRect.Max.x, FLT_MAX), true);
+				break;
 		}
 
-		ImGui::GetWindowDrawList()->AddRect(
-			frameRect.Min, frameRect.Max,
-			ImColor(ImGui::GetStyleColorVec4(ImGuiCol_Border)),
-			halfFrame.x);
+		ImGui::GetWindowDrawList()->AddRect(frameRect.Min, frameRect.Max,
+		                                    ImColor(ImGui::GetStyleColorVec4(ImGuiCol_Border)), halfFrame.x);
 
 		ImGui::PopClipRect();
 	}
@@ -135,7 +142,7 @@ void EndGroupPanel()
 	ImGui::EndGroup();
 }
 
-PanelScope::PanelScope(const char *name, const ImVec2 &size)
+PanelScope::PanelScope(const char* name, const ImVec2& size)
 {
 	BeginGroupPanel(name, size);
 }
@@ -145,7 +152,7 @@ PanelScope::~PanelScope()
 	EndGroupPanel();
 }
 
-ChildScope::ChildScope(const char *id, const ImVec2 &size, ImGuiChildFlags childFlags, ImGuiWindowFlags windowFlags)
+ChildScope::ChildScope(const char* id, const ImVec2& size, ImGuiChildFlags childFlags, ImGuiWindowFlags windowFlags)
 {
 	open = ImGui::BeginChild(id, size, childFlags, windowFlags);
 }
@@ -155,7 +162,7 @@ ChildScope::~ChildScope()
 	ImGui::EndChild();
 }
 
-TabBarScope::TabBarScope(const char *id, ImGuiTabBarFlags flags)
+TabBarScope::TabBarScope(const char* id, ImGuiTabBarFlags flags)
 {
 	open = ImGui::BeginTabBar(id, flags);
 }
@@ -165,7 +172,7 @@ TabBarScope::~TabBarScope()
 	if (open) ImGui::EndTabBar();
 }
 
-TabItemScope::TabItemScope(const char *label, bool *visible, ImGuiTabItemFlags flags)
+TabItemScope::TabItemScope(const char* label, bool* visible, ImGuiTabItemFlags flags)
 {
 	open = ImGui::BeginTabItem(label, visible, flags);
 }

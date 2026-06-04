@@ -38,10 +38,10 @@ namespace prediction {
 // Uses a squared curve: factor = (1 - s/100)^2.
 constexpr double SmoothnessToFactor(uint8_t smoothness)
 {
-    double s = static_cast<double>(smoothness);
-    if (s > 100.0) s = 100.0;
-    double t = 1.0 - s / 100.0;
-    return t * t;
+	double s = static_cast<double>(smoothness);
+	if (s > 100.0) s = 100.0;
+	double t = 1.0 - s / 100.0;
+	return t * t;
 }
 
 // EWM alpha for position low-pass filtering.  alpha is the weight on the
@@ -50,11 +50,11 @@ constexpr double SmoothnessToFactor(uint8_t smoothness)
 // at mid-settings (less lag at 50%), but both converge to 0 at s=100.
 inline double PositionEwmAlpha(uint8_t smoothness)
 {
-    double s = static_cast<double>(smoothness);
-    if (s > 100.0) s = 100.0;
-    double t = 1.0 - s / 100.0;
-    if (t <= 0.0) return 0.0;
-    return std::pow(t, 1.8);
+	double s = static_cast<double>(smoothness);
+	if (s > 100.0) s = 100.0;
+	double t = 1.0 - s / 100.0;
+	if (t <= 0.0) return 0.0;
+	return std::pow(t, 1.8);
 }
 
 } // namespace prediction

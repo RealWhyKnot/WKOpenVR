@@ -9,13 +9,19 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 
 namespace WKOpenVR.FaceModuleProcess;
+
 public class ProxyLoggerProvider : ILoggerProvider
 {
     private readonly ConcurrentDictionary<string, ProxyLogger> _loggers =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public ILogger CreateLogger(string categoryName) =>
-        _loggers.GetOrAdd(categoryName, name => new ProxyLogger(name));
+    public ILogger CreateLogger(string categoryName)
+    {
+        return _loggers.GetOrAdd(categoryName, name => new ProxyLogger(name));
+    }
 
-    public void Dispose() => _loggers.Clear();
+    public void Dispose()
+    {
+        _loggers.Clear();
+    }
 }

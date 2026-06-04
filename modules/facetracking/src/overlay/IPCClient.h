@@ -12,16 +12,16 @@
 class FtIPCClient : public openvr_pair::overlay::IpcClientBase
 {
 public:
-    // Open the pipe, set message mode, handshake, and verify protocol version.
-    // Throws std::runtime_error on failure with a UI-ready message.
-    void Connect();
+	// Open the pipe, set message mode, handshake, and verify protocol version.
+	// Throws std::runtime_error on failure with a UI-ready message.
+	void Connect();
 
-    // Send a request and read the response, with one transparent reconnect on
-    // broken-pipe errors (covers vrserver restart mid-request).
-    using openvr_pair::overlay::IpcClientBase::Close;
-    using openvr_pair::overlay::IpcClientBase::ConnectionGeneration;
-    using openvr_pair::overlay::IpcClientBase::IsConnected;
-    using openvr_pair::overlay::IpcClientBase::Receive;
-    using openvr_pair::overlay::IpcClientBase::Send;
-    using openvr_pair::overlay::IpcClientBase::SendBlocking;
+	// Send a request and read the response, with one transparent reconnect on
+	// broken-pipe errors (covers vrserver restart mid-request).
+	using openvr_pair::overlay::IpcClientBase::Close;
+	using openvr_pair::overlay::IpcClientBase::ConnectionGeneration;
+	using openvr_pair::overlay::IpcClientBase::IsConnected;
+	using openvr_pair::overlay::IpcClientBase::Receive;
+	using openvr_pair::overlay::IpcClientBase::Send;
+	using openvr_pair::overlay::IpcClientBase::SendBlocking;
 };

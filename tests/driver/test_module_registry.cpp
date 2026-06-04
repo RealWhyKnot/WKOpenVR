@@ -12,7 +12,7 @@ namespace module_safety = openvr_pair::common::module_safety;
 TEST(ModuleRegistry, ContainsAllUserVisibleModules)
 {
 	size_t count = 0;
-	const module_registry::ModuleInfo *modules = module_registry::All(&count);
+	const module_registry::ModuleInfo* modules = module_registry::All(&count);
 	ASSERT_NE(modules, nullptr);
 	EXPECT_EQ(count, 8u);
 
@@ -28,7 +28,7 @@ TEST(ModuleRegistry, ContainsAllUserVisibleModules)
 
 TEST(ModuleRegistry, ExposesStableFaceTrackingMetadata)
 {
-	const auto *module = module_registry::FindById(module_registry::ModuleId::FaceTracking);
+	const auto* module = module_registry::FindById(module_registry::ModuleId::FaceTracking);
 	ASSERT_NE(module, nullptr);
 
 	EXPECT_EQ(std::string_view(module->slug), "facetracking");
@@ -43,7 +43,7 @@ TEST(ModuleRegistry, ExposesStableFaceTrackingMetadata)
 
 TEST(ModuleRegistry, CaptionsKeepsLegacyTranslatorFlagAlias)
 {
-	const auto *module = module_registry::FindByAnyFlagFileName("enable_translator.flag");
+	const auto* module = module_registry::FindByAnyFlagFileName("enable_translator.flag");
 	ASSERT_NE(module, nullptr);
 
 	EXPECT_EQ(module->id, module_registry::ModuleId::Captions);
@@ -55,7 +55,7 @@ TEST(ModuleRegistry, CaptionsKeepsLegacyTranslatorFlagAlias)
 
 TEST(ModuleRegistry, QuestAppIsUserVisibleButNotDriverSafetyManaged)
 {
-	const auto *module = module_registry::FindById(module_registry::ModuleId::QuestApp);
+	const auto* module = module_registry::FindById(module_registry::ModuleId::QuestApp);
 	ASSERT_NE(module, nullptr);
 
 	EXPECT_EQ(std::string_view(module->flag_file), "enable_questapp.flag");
@@ -68,11 +68,11 @@ TEST(ModuleRegistry, QuestAppIsUserVisibleButNotDriverSafetyManaged)
 TEST(ModuleRegistry, ModuleSafetyDelegatesToDriverSafetyEntries)
 {
 	size_t count = 0;
-	const module_safety::ModuleSpec *safetyModules = module_safety::Specs(&count);
+	const module_safety::ModuleSpec* safetyModules = module_safety::Specs(&count);
 	ASSERT_NE(safetyModules, nullptr);
 	EXPECT_EQ(count, 7u);
 
-	const auto *phantom = module_registry::FindById(module_registry::ModuleId::Phantom);
+	const auto* phantom = module_registry::FindById(module_registry::ModuleId::Phantom);
 	ASSERT_NE(phantom, nullptr);
 	EXPECT_EQ(module_safety::FindByFlagFileName("enable_phantom.flag"), phantom);
 }

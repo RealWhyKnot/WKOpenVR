@@ -5,7 +5,8 @@
 
 namespace openvr_pair::common {
 
-struct ProcessPerfSnapshot {
+struct ProcessPerfSnapshot
+{
 	uint32_t processId = 0;
 	uint32_t logicalProcessors = 1;
 	uint64_t wallMs = 0;
@@ -21,7 +22,8 @@ struct ProcessPerfSnapshot {
 	uint32_t handleCount = 0;
 };
 
-struct ProcessPerfSample {
+struct ProcessPerfSample
+{
 	ProcessPerfSnapshot snapshot;
 	bool cpuValid = false;
 	uint64_t intervalMs = 0;
@@ -31,15 +33,13 @@ struct ProcessPerfSample {
 };
 
 double CalculateProcessCpuPercentOneCore(uint64_t processDelta100ns, uint64_t wallDeltaMs);
-double CalculateProcessCpuPercentTotal(
-	uint64_t processDelta100ns,
-	uint64_t wallDeltaMs,
-	uint32_t logicalProcessors);
+double CalculateProcessCpuPercentTotal(uint64_t processDelta100ns, uint64_t wallDeltaMs, uint32_t logicalProcessors);
 bool ShouldTakeProcessPerfSample(uint64_t lastSampleWallMs, uint64_t nowWallMs, uint64_t intervalMs);
 bool CollectProcessPerfSnapshot(ProcessPerfSnapshot& out);
 std::string FormatProcessPerfSample(const char* role, const ProcessPerfSample& sample);
 
-class ProcessPerfSampler {
+class ProcessPerfSampler
+{
 public:
 	explicit ProcessPerfSampler(uint64_t intervalMs = 10000);
 

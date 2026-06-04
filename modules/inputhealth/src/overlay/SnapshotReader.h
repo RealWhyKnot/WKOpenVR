@@ -43,7 +43,7 @@ public:
 	bool IsOpen() const { return shmem_; }
 
 	// Most recent error from TryOpen() / Refresh(); empty when healthy.
-	const std::string &LastError() const { return last_error_; }
+	const std::string& LastError() const { return last_error_; }
 
 	// True if the last TryOpen() failure was a magic/version mismatch (driver
 	// and overlay are from different builds). False means "not ready yet" or
@@ -56,16 +56,13 @@ public:
 	// Snapshot of the live entries, keyed by component handle. Order
 	// is unspecified; callers needing a stable display order should sort
 	// after copying out (typically by device serial hash + path).
-	const std::unordered_map<uint64_t, Entry> &EntriesByHandle() const
-	{
-		return entries_by_handle_;
-	}
+	const std::unordered_map<uint64_t, Entry>& EntriesByHandle() const { return entries_by_handle_; }
 
 private:
 	protocol::InputHealthSnapshotShmem shmem_;
 	std::unordered_map<uint64_t, Entry> entries_by_handle_;
 	std::string last_error_;
-	bool        last_error_is_version_mismatch_ = false;
-	uint64_t    last_publish_tick_ = 0;
+	bool last_error_is_version_mismatch_ = false;
+	uint64_t last_publish_tick_ = 0;
 	std::chrono::steady_clock::time_point last_publish_tick_change_{};
 };

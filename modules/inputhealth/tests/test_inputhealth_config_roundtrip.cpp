@@ -15,11 +15,11 @@
 
 TEST(InputHealthConfig, DefaultValues)
 {
-    const InputHealthGlobalConfig cfg;
-    EXPECT_TRUE (cfg.master_enabled);
-    EXPECT_FALSE(cfg.diagnostics_only);
-    EXPECT_TRUE (cfg.enable_rest_recenter);
-    EXPECT_TRUE (cfg.enable_trigger_remap);
+	const InputHealthGlobalConfig cfg;
+	EXPECT_TRUE(cfg.master_enabled);
+	EXPECT_FALSE(cfg.diagnostics_only);
+	EXPECT_TRUE(cfg.enable_rest_recenter);
+	EXPECT_TRUE(cfg.enable_trigger_remap);
 }
 
 // ---------------------------------------------------------------------------
@@ -28,50 +28,50 @@ TEST(InputHealthConfig, DefaultValues)
 
 TEST(InputHealthConfig, RoundTrip_AllTrue)
 {
-    InputHealthGlobalConfig in;
-    in.master_enabled       = true;
-    in.diagnostics_only     = true;
-    in.enable_rest_recenter = true;
-    in.enable_trigger_remap = true;
-    SaveInputHealthConfig(in);
+	InputHealthGlobalConfig in;
+	in.master_enabled = true;
+	in.diagnostics_only = true;
+	in.enable_rest_recenter = true;
+	in.enable_trigger_remap = true;
+	SaveInputHealthConfig(in);
 
-    const InputHealthGlobalConfig out = LoadInputHealthConfig();
-    EXPECT_EQ(out.master_enabled,       in.master_enabled);
-    EXPECT_EQ(out.diagnostics_only,     in.diagnostics_only);
-    EXPECT_EQ(out.enable_rest_recenter, in.enable_rest_recenter);
-    EXPECT_EQ(out.enable_trigger_remap, in.enable_trigger_remap);
+	const InputHealthGlobalConfig out = LoadInputHealthConfig();
+	EXPECT_EQ(out.master_enabled, in.master_enabled);
+	EXPECT_EQ(out.diagnostics_only, in.diagnostics_only);
+	EXPECT_EQ(out.enable_rest_recenter, in.enable_rest_recenter);
+	EXPECT_EQ(out.enable_trigger_remap, in.enable_trigger_remap);
 }
 
 TEST(InputHealthConfig, RoundTrip_AllFalse)
 {
-    InputHealthGlobalConfig in;
-    in.master_enabled       = false;
-    in.diagnostics_only     = false;
-    in.enable_rest_recenter = false;
-    in.enable_trigger_remap = false;
-    SaveInputHealthConfig(in);
+	InputHealthGlobalConfig in;
+	in.master_enabled = false;
+	in.diagnostics_only = false;
+	in.enable_rest_recenter = false;
+	in.enable_trigger_remap = false;
+	SaveInputHealthConfig(in);
 
-    const InputHealthGlobalConfig out = LoadInputHealthConfig();
-    EXPECT_EQ(out.master_enabled,       false);
-    EXPECT_EQ(out.diagnostics_only,     false);
-    EXPECT_EQ(out.enable_rest_recenter, false);
-    EXPECT_EQ(out.enable_trigger_remap, false);
+	const InputHealthGlobalConfig out = LoadInputHealthConfig();
+	EXPECT_EQ(out.master_enabled, false);
+	EXPECT_EQ(out.diagnostics_only, false);
+	EXPECT_EQ(out.enable_rest_recenter, false);
+	EXPECT_EQ(out.enable_trigger_remap, false);
 }
 
 TEST(InputHealthConfig, RoundTrip_Mixed)
 {
-    InputHealthGlobalConfig in;
-    in.master_enabled       = true;
-    in.diagnostics_only     = false;
-    in.enable_rest_recenter = false;
-    in.enable_trigger_remap = true;
-    SaveInputHealthConfig(in);
+	InputHealthGlobalConfig in;
+	in.master_enabled = true;
+	in.diagnostics_only = false;
+	in.enable_rest_recenter = false;
+	in.enable_trigger_remap = true;
+	SaveInputHealthConfig(in);
 
-    const InputHealthGlobalConfig out = LoadInputHealthConfig();
-    EXPECT_EQ(out.master_enabled,       true);
-    EXPECT_EQ(out.diagnostics_only,     false);
-    EXPECT_EQ(out.enable_rest_recenter, false);
-    EXPECT_EQ(out.enable_trigger_remap, true);
+	const InputHealthGlobalConfig out = LoadInputHealthConfig();
+	EXPECT_EQ(out.master_enabled, true);
+	EXPECT_EQ(out.diagnostics_only, false);
+	EXPECT_EQ(out.enable_rest_recenter, false);
+	EXPECT_EQ(out.enable_trigger_remap, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,10 +83,10 @@ TEST(InputHealthConfig, RoundTrip_Mixed)
 
 TEST(InputHealthConfig, LoadReturnsDefaultsOnDefaultConstruction)
 {
-    // Structural: default-constructed struct == documented plugin defaults.
-    const InputHealthGlobalConfig dflt;
-    EXPECT_TRUE(dflt.master_enabled);
-    EXPECT_FALSE(dflt.diagnostics_only);
-    EXPECT_TRUE(dflt.enable_rest_recenter);
-    EXPECT_TRUE(dflt.enable_trigger_remap);
+	// Structural: default-constructed struct == documented plugin defaults.
+	const InputHealthGlobalConfig dflt;
+	EXPECT_TRUE(dflt.master_enabled);
+	EXPECT_FALSE(dflt.diagnostics_only);
+	EXPECT_TRUE(dflt.enable_rest_recenter);
+	EXPECT_TRUE(dflt.enable_trigger_remap);
 }

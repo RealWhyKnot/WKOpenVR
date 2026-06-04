@@ -18,179 +18,185 @@
 #include <unordered_map>
 
 namespace {
-	// Per-device cache of the last SetDeviceTransform we sent to the driver. Used to
-	// suppress redundant IPC writes when ScanAndApplyProfile runs every tick during
-	// continuous calibration.
-	struct LastAppliedTransform {
-		bool valid = false;
-		protocol::SetDeviceTransform payload{ 0u, false };
-	};
-	LastAppliedTransform g_lastApplied[vr::k_unMaxTrackedDeviceCount];
+// Per-device cache of the last SetDeviceTransform we sent to the driver. Used to
+// suppress redundant IPC writes when ScanAndApplyProfile runs every tick during
+// continuous calibration.
+struct LastAppliedTransform
+{
+	bool valid = false;
+	protocol::SetDeviceTransform payload{0u, false};
+};
+LastAppliedTransform g_lastApplied[vr::k_unMaxTrackedDeviceCount];
 
-	// Per-device serial cache. If a device ID gets reassigned to a different physical
-	// device (battery dies, pairing changes, SteamVR re-enumerates), we want to clear
-	// the stale per-ID state in the driver before applying any new transform.
-	std::string g_lastSeenSerial[vr::k_unMaxTrackedDeviceCount];
+// Per-device serial cache. If a device ID gets reassigned to a different physical
+// device (battery dies, pairing changes, SteamVR re-enumerates), we want to clear
+// the stale per-ID state in the driver before applying any new transform.
+std::string g_lastSeenSerial[vr::k_unMaxTrackedDeviceCount];
 
-	// Target system tracking. When the calibrated profile's target system changes
-	// (or the profile is cleared), we invalidate all per-ID caches so the next scan
-	// re-establishes correct enable/disable state.
-	std::string g_lastTargetSystem;
-	bool g_lastEnabled = false;
+// Target system tracking. When the calibrated profile's target system changes
+// (or the profile is cleared), we invalidate all per-ID caches so the next scan
+// re-establishes correct enable/disable state.
+std::string g_lastTargetSystem;
+bool g_lastEnabled = false;
 
-	// AlignmentSpeedParams dedupe -- avoid spamming the driver with identical params.
-	protocol::AlignmentSpeedParams g_lastAlignmentSpeed{};
-	bool g_alignmentSpeedSent = false;
+// AlignmentSpeedParams dedupe -- avoid spamming the driver with identical params.
+protocol::AlignmentSpeedParams g_lastAlignmentSpeed{};
+bool g_alignmentSpeedSent = false;
 
-	// Last per-tracking-system fallback we sent to the driver (deduped).
-	protocol::SetTrackingSystemFallback g_lastFallback{};
-	bool g_lastFallbackSent = false;
+// Last per-tracking-system fallback we sent to the driver (deduped).
+protocol::SetTrackingSystemFallback g_lastFallback{};
+bool g_lastFallbackSent = false;
 
-	bool TransformPayloadEqual(const protocol::SetDeviceTransform& a, const protocol::SetDeviceTransform& b) {
-		if (a.openVRID != b.openVRID) return false;
-		if (a.enabled != b.enabled) return false;
-		if (a.updateTranslation != b.updateTranslation) return false;
-		if (a.updateRotation != b.updateRotation) return false;
-		if (a.updateScale != b.updateScale) return false;
-		if (a.lerp != b.lerp) return false;
-		if (a.quash != b.quash) return false;
-		if (a.updateQuash != b.updateQuash) return false;
-		if (a.predictionSmoothness != b.predictionSmoothness) return false;
-		if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
-		if (a.scale != b.scale) return false;
-		for (int i = 0; i < 3; i++) if (a.translation.v[i] != b.translation.v[i]) return false;
-		if (a.rotation.w != b.rotation.w || a.rotation.x != b.rotation.x ||
-			a.rotation.y != b.rotation.y || a.rotation.z != b.rotation.z) return false;
-		if (memcmp(a.target_system, b.target_system, sizeof a.target_system) != 0) return false;
-		return true;
-	}
-
-	bool FallbackPayloadEqual(const protocol::SetTrackingSystemFallback& a, const protocol::SetTrackingSystemFallback& b) {
-		if (memcmp(a.system_name, b.system_name, sizeof a.system_name) != 0) return false;
-		if (a.enabled != b.enabled) return false;
-		if (a.predictionSmoothness != b.predictionSmoothness) return false;
-		if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
-		if (a.scale != b.scale) return false;
-		for (int i = 0; i < 3; i++) if (a.translation.v[i] != b.translation.v[i]) return false;
-		if (a.rotation.w != b.rotation.w || a.rotation.x != b.rotation.x ||
-			a.rotation.y != b.rotation.y || a.rotation.z != b.rotation.z) return false;
-		return true;
-	}
-
-	void SetTargetSystemField(protocol::SetDeviceTransform& payload, const std::string& system) {
-		// Copy bounded by the buffer size; leave any remaining bytes zero so the
-		// driver can read up to the first NUL or buffer end.
-		memset(payload.target_system, 0, sizeof payload.target_system);
-		size_t copyLen = system.size();
-		if (copyLen >= sizeof payload.target_system) copyLen = sizeof payload.target_system - 1;
-		memcpy(payload.target_system, system.data(), copyLen);
-	}
-
-	bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransform& payload) {
-		if (id >= vr::k_unMaxTrackedDeviceCount) return false;
-		auto& cache = g_lastApplied[id];
-		if (cache.valid && TransformPayloadEqual(cache.payload, payload)) {
-			return false;
-		}
-		protocol::Request req(protocol::RequestSetDeviceTransform);
-		req.setDeviceTransform = payload;
-		Driver.SendBlocking(req);
-		cache.valid = true;
-		cache.payload = payload;
-		char buf[512];
-		snprintf(buf, sizeof buf,
-			"profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
-			" trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f lerp=%d quash=%d"
-			" recalibrateOnMovement=%d state=%d",
-			id, (int)payload.enabled, payload.target_system,
-			payload.translation.v[0] * 100.0,
-			payload.translation.v[1] * 100.0,
-			payload.translation.v[2] * 100.0,
-			std::sqrt(
-				payload.translation.v[0] * payload.translation.v[0] +
-				payload.translation.v[1] * payload.translation.v[1] +
-				payload.translation.v[2] * payload.translation.v[2]) * 100.0,
-			payload.scale, (int)payload.lerp, (int)payload.quash,
-			(int)payload.recalibrateOnMovement, (int)CalCtx.state);
-		Metrics::WriteLogAnnotation(buf);
-		return true;
-	}
-
-	// Per-tracking-system cache so multi-ecosystem setups (3+ systems) don't
-	// thrash IPC: each system's fallback is compared against its OWN last-sent
-	// value. The previous single-slot g_lastFallback worked when only one
-	// system ever had a fallback active, but with extras we send N fallbacks
-	// per scan tick, and a single-slot cache would miss on every other call.
-	//
-	// Threading invariant: this map and the legacy single-slot g_lastFallback /
-	// g_lastFallbackSent above are written ONLY from the overlay's calibration
-	// tick (SpaceCalibratorUmbrellaRuntime::Tick -> CalibrationTick) and
-	// InvalidateAllTransformCaches, both of which run on the overlay main
-	// thread. Adding a UI handler or background worker that mutates these
-	// would introduce a race and requires adding synchronisation here first.
-	std::unordered_map<std::string, protocol::SetTrackingSystemFallback> g_lastFallbacksBySystem;
-
-	void SendFallbackIfChanged(const std::string& systemName, bool enabled,
-		const Eigen::Vector3d& translationCm, const Eigen::Quaterniond& rotation, double scale,
-		uint8_t predictionSmoothness, bool recalibrateOnMovement)
-	{
-		protocol::SetTrackingSystemFallback payload{};
-		size_t copyLen = systemName.size();
-		if (copyLen >= sizeof payload.system_name) copyLen = sizeof payload.system_name - 1;
-		memcpy(payload.system_name, systemName.data(), copyLen);
-		payload.enabled = enabled;
-		Eigen::Vector3d trans = translationCm * 0.01; // cm -> m, matches per-ID convention
-		payload.translation.v[0] = trans.x();
-		payload.translation.v[1] = trans.y();
-		payload.translation.v[2] = trans.z();
-		payload.rotation.w = rotation.w();
-		payload.rotation.x = rotation.x();
-		payload.rotation.y = rotation.y();
-		payload.rotation.z = rotation.z();
-		payload.scale = scale;
-		payload.predictionSmoothness = predictionSmoothness;
-		payload.recalibrateOnMovement = recalibrateOnMovement;
-
-		auto it = g_lastFallbacksBySystem.find(systemName);
-		if (it != g_lastFallbacksBySystem.end() && FallbackPayloadEqual(it->second, payload)) {
-			return;
-		}
-
-		protocol::Request req(protocol::RequestSetTrackingSystemFallback);
-		req.setTrackingSystemFallback = payload;
-		Driver.SendBlocking(req);
-		g_lastFallbacksBySystem[systemName] = payload;
-		// Legacy single-slot cache kept for any code that still reads it.
-		g_lastFallback = payload;
-		g_lastFallbackSent = true;
-		char buf[480];
-		snprintf(buf, sizeof buf,
-			"profile_apply_fallback_sent: system='%s' enabled=%d"
-			" trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f"
-			" recalibrateOnMovement=%d state=%d",
-			systemName.c_str(), (int)enabled,
-			translationCm.x(), translationCm.y(), translationCm.z(),
-			translationCm.norm(), scale,
-			(int)recalibrateOnMovement, (int)CalCtx.state);
-		Metrics::WriteLogAnnotation(buf);
-	}
-
-	void InvalidateTransformCacheForId(uint32_t id) {
-		if (id >= vr::k_unMaxTrackedDeviceCount) return;
-		g_lastApplied[id].valid = false;
-		g_lastSeenSerial[id].clear();
-	}
-
-	bool ResolveHeadMountHide(uint32_t id, const std::string& trackingSystem) {
-		if (id >= vr::k_unMaxTrackedDeviceCount) return false;
-		return wkopenvr::headmount::ShouldHideHeadMountTracker(
-			CalCtx, id, g_lastSeenSerial[id], trackingSystem);
-	}
-
-
+bool TransformPayloadEqual(const protocol::SetDeviceTransform& a, const protocol::SetDeviceTransform& b)
+{
+	if (a.openVRID != b.openVRID) return false;
+	if (a.enabled != b.enabled) return false;
+	if (a.updateTranslation != b.updateTranslation) return false;
+	if (a.updateRotation != b.updateRotation) return false;
+	if (a.updateScale != b.updateScale) return false;
+	if (a.lerp != b.lerp) return false;
+	if (a.quash != b.quash) return false;
+	if (a.updateQuash != b.updateQuash) return false;
+	if (a.predictionSmoothness != b.predictionSmoothness) return false;
+	if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
+	if (a.scale != b.scale) return false;
+	for (int i = 0; i < 3; i++)
+		if (a.translation.v[i] != b.translation.v[i]) return false;
+	if (a.rotation.w != b.rotation.w || a.rotation.x != b.rotation.x || a.rotation.y != b.rotation.y ||
+	    a.rotation.z != b.rotation.z)
+		return false;
+	if (memcmp(a.target_system, b.target_system, sizeof a.target_system) != 0) return false;
+	return true;
 }
 
-void InvalidateAllTransformCaches() {
+bool FallbackPayloadEqual(const protocol::SetTrackingSystemFallback& a, const protocol::SetTrackingSystemFallback& b)
+{
+	if (memcmp(a.system_name, b.system_name, sizeof a.system_name) != 0) return false;
+	if (a.enabled != b.enabled) return false;
+	if (a.predictionSmoothness != b.predictionSmoothness) return false;
+	if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
+	if (a.scale != b.scale) return false;
+	for (int i = 0; i < 3; i++)
+		if (a.translation.v[i] != b.translation.v[i]) return false;
+	if (a.rotation.w != b.rotation.w || a.rotation.x != b.rotation.x || a.rotation.y != b.rotation.y ||
+	    a.rotation.z != b.rotation.z)
+		return false;
+	return true;
+}
+
+void SetTargetSystemField(protocol::SetDeviceTransform& payload, const std::string& system)
+{
+	// Copy bounded by the buffer size; leave any remaining bytes zero so the
+	// driver can read up to the first NUL or buffer end.
+	memset(payload.target_system, 0, sizeof payload.target_system);
+	size_t copyLen = system.size();
+	if (copyLen >= sizeof payload.target_system) copyLen = sizeof payload.target_system - 1;
+	memcpy(payload.target_system, system.data(), copyLen);
+}
+
+bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransform& payload)
+{
+	if (id >= vr::k_unMaxTrackedDeviceCount) return false;
+	auto& cache = g_lastApplied[id];
+	if (cache.valid && TransformPayloadEqual(cache.payload, payload)) {
+		return false;
+	}
+	protocol::Request req(protocol::RequestSetDeviceTransform);
+	req.setDeviceTransform = payload;
+	Driver.SendBlocking(req);
+	cache.valid = true;
+	cache.payload = payload;
+	char buf[512];
+	snprintf(buf, sizeof buf,
+	         "profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
+	         " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f lerp=%d quash=%d"
+	         " recalibrateOnMovement=%d state=%d",
+	         id, (int)payload.enabled, payload.target_system, payload.translation.v[0] * 100.0,
+	         payload.translation.v[1] * 100.0, payload.translation.v[2] * 100.0,
+	         std::sqrt(payload.translation.v[0] * payload.translation.v[0] +
+	                   payload.translation.v[1] * payload.translation.v[1] +
+	                   payload.translation.v[2] * payload.translation.v[2]) *
+	             100.0,
+	         payload.scale, (int)payload.lerp, (int)payload.quash, (int)payload.recalibrateOnMovement,
+	         (int)CalCtx.state);
+	Metrics::WriteLogAnnotation(buf);
+	return true;
+}
+
+// Per-tracking-system cache so multi-ecosystem setups (3+ systems) don't
+// thrash IPC: each system's fallback is compared against its OWN last-sent
+// value. The previous single-slot g_lastFallback worked when only one
+// system ever had a fallback active, but with extras we send N fallbacks
+// per scan tick, and a single-slot cache would miss on every other call.
+//
+// Threading invariant: this map and the legacy single-slot g_lastFallback /
+// g_lastFallbackSent above are written ONLY from the overlay's calibration
+// tick (SpaceCalibratorUmbrellaRuntime::Tick -> CalibrationTick) and
+// InvalidateAllTransformCaches, both of which run on the overlay main
+// thread. Adding a UI handler or background worker that mutates these
+// would introduce a race and requires adding synchronisation here first.
+std::unordered_map<std::string, protocol::SetTrackingSystemFallback> g_lastFallbacksBySystem;
+
+void SendFallbackIfChanged(const std::string& systemName, bool enabled, const Eigen::Vector3d& translationCm,
+                           const Eigen::Quaterniond& rotation, double scale, uint8_t predictionSmoothness,
+                           bool recalibrateOnMovement)
+{
+	protocol::SetTrackingSystemFallback payload{};
+	size_t copyLen = systemName.size();
+	if (copyLen >= sizeof payload.system_name) copyLen = sizeof payload.system_name - 1;
+	memcpy(payload.system_name, systemName.data(), copyLen);
+	payload.enabled = enabled;
+	Eigen::Vector3d trans = translationCm * 0.01; // cm -> m, matches per-ID convention
+	payload.translation.v[0] = trans.x();
+	payload.translation.v[1] = trans.y();
+	payload.translation.v[2] = trans.z();
+	payload.rotation.w = rotation.w();
+	payload.rotation.x = rotation.x();
+	payload.rotation.y = rotation.y();
+	payload.rotation.z = rotation.z();
+	payload.scale = scale;
+	payload.predictionSmoothness = predictionSmoothness;
+	payload.recalibrateOnMovement = recalibrateOnMovement;
+
+	auto it = g_lastFallbacksBySystem.find(systemName);
+	if (it != g_lastFallbacksBySystem.end() && FallbackPayloadEqual(it->second, payload)) {
+		return;
+	}
+
+	protocol::Request req(protocol::RequestSetTrackingSystemFallback);
+	req.setTrackingSystemFallback = payload;
+	Driver.SendBlocking(req);
+	g_lastFallbacksBySystem[systemName] = payload;
+	// Legacy single-slot cache kept for any code that still reads it.
+	g_lastFallback = payload;
+	g_lastFallbackSent = true;
+	char buf[480];
+	snprintf(buf, sizeof buf,
+	         "profile_apply_fallback_sent: system='%s' enabled=%d"
+	         " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f"
+	         " recalibrateOnMovement=%d state=%d",
+	         systemName.c_str(), (int)enabled, translationCm.x(), translationCm.y(), translationCm.z(),
+	         translationCm.norm(), scale, (int)recalibrateOnMovement, (int)CalCtx.state);
+	Metrics::WriteLogAnnotation(buf);
+}
+
+void InvalidateTransformCacheForId(uint32_t id)
+{
+	if (id >= vr::k_unMaxTrackedDeviceCount) return;
+	g_lastApplied[id].valid = false;
+	g_lastSeenSerial[id].clear();
+}
+
+bool ResolveHeadMountHide(uint32_t id, const std::string& trackingSystem)
+{
+	if (id >= vr::k_unMaxTrackedDeviceCount) return false;
+	return wkopenvr::headmount::ShouldHideHeadMountTracker(CalCtx, id, g_lastSeenSerial[id], trackingSystem);
+}
+
+} // namespace
+
+void InvalidateAllTransformCaches()
+{
 	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
 		g_lastApplied[id].valid = false;
 		g_lastSeenSerial[id].clear();
@@ -205,9 +211,12 @@ void ResetAndDisableOffsets(uint32_t id, const std::string& trackingSystem)
 	zeroV.v[0] = zeroV.v[1] = zeroV.v[2] = 0;
 
 	vr::HmdQuaternion_t zeroQ;
-	zeroQ.x = 0; zeroQ.y = 0; zeroQ.z = 0; zeroQ.w = 1;
+	zeroQ.x = 0;
+	zeroQ.y = 0;
+	zeroQ.z = 0;
+	zeroQ.w = 1;
 
-	protocol::SetDeviceTransform payload{ id, false, zeroV, zeroQ, 1.0 };
+	protocol::SetDeviceTransform payload{id, false, zeroV, zeroQ, 1.0};
 	SetTargetSystemField(payload, trackingSystem);
 	// Carry head-mounted tracker hide through disable payloads too. This keeps
 	// the selected tracker hidden by serial when continuous calibration is idle,
@@ -223,25 +232,23 @@ static_assert(vr::k_unTrackedDeviceIndex_Hmd == 0, "HMD index expected to be 0")
 // applied a per-target-system transform to last time. Used to log
 // adopted/disconnected events when the set changes scan-over-scan.
 namespace {
-	struct AdoptedTracker {
-		std::string serial;
-		std::string model;
-	};
-	// Indexed by OpenVR ID. Empty entries mean the slot was not adopted last scan.
-	std::map<uint32_t, AdoptedTracker> g_lastAdoptedTrackers;
-}
+struct AdoptedTracker
+{
+	std::string serial;
+	std::string model;
+};
+// Indexed by OpenVR ID. Empty entries mean the slot was not adopted last scan.
+std::map<uint32_t, AdoptedTracker> g_lastAdoptedTrackers;
+} // namespace
 
-void ScanAndApplyProfile(
-	CalibrationContext& ctx,
-	bool forceSnapThisCycle,
-	const char* forceSnapReason)
+void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const char* forceSnapReason)
 {
 	if (!vr::VRSystem()) {
 		ctx.enabled = ctx.validProfile;
 		return;
 	}
 
-	std::unique_ptr<char[]> buffer_array(new char [vr::k_unMaxPropertyStringSize]);
+	std::unique_ptr<char[]> buffer_array(new char[vr::k_unMaxPropertyStringSize]);
 	char* buffer = buffer_array.get();
 	ctx.enabled = ctx.validProfile;
 
@@ -255,9 +262,8 @@ void ScanAndApplyProfile(
 	// per-ID sends in this cycle see the same value.
 	const bool recoverySnapThisCycle = g_snapNextProfileApply;
 	const bool snapThisCycle = recoverySnapThisCycle || forceSnapThisCycle;
-	const char* snapReason = recoverySnapThisCycle
-		? "recovery"
-		: ((forceSnapReason && forceSnapReason[0]) ? forceSnapReason : "forced");
+	const char* snapReason =
+	    recoverySnapThisCycle ? "recovery" : ((forceSnapReason && forceSnapReason[0]) ? forceSnapReason : "forced");
 
 	// Snapshot of which IDs got adopted this scan and what serial/model they had.
 	// Compared against g_lastAdoptedTrackers below to log new-adoption / disconnect events.
@@ -284,7 +290,7 @@ void ScanAndApplyProfile(
 			if (copyLen >= sizeof disablePayload.system_name) copyLen = sizeof disablePayload.system_name - 1;
 			memcpy(disablePayload.system_name, g_lastTargetSystem.data(), copyLen);
 			disablePayload.enabled = false;
-			disablePayload.rotation = { 1, 0, 0, 0 };
+			disablePayload.rotation = {1, 0, 0, 0};
 			disablePayload.scale = 1.0;
 			protocol::Request req(protocol::RequestSetTrackingSystemFallback);
 			req.setTrackingSystemFallback = disablePayload;
@@ -296,7 +302,8 @@ void ScanAndApplyProfile(
 		g_lastEnabled = ctx.enabled;
 	}
 
-	if (!g_alignmentSpeedSent || memcmp(&g_lastAlignmentSpeed, &ctx.alignmentSpeedParams, sizeof g_lastAlignmentSpeed) != 0) {
+	if (!g_alignmentSpeedSent ||
+	    memcmp(&g_lastAlignmentSpeed, &ctx.alignmentSpeedParams, sizeof g_lastAlignmentSpeed) != 0) {
 		protocol::Request setParamsReq(protocol::RequestSetAlignmentSpeedParams);
 		setParamsReq.setAlignmentSpeedParams = ctx.alignmentSpeedParams;
 		Driver.SendBlocking(setParamsReq);
@@ -313,10 +320,9 @@ void ScanAndApplyProfile(
 	// gets clean-velocity behaviour from its very first pose update.
 	if (ctx.enabled && !ctx.targetTrackingSystem.empty()) {
 		auto euler = ctx.calibratedRotation * EIGEN_PI / 180.0;
-		Eigen::Quaterniond rotQuat =
-			Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()) *
-			Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()) *
-			Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX());
+		Eigen::Quaterniond rotQuat = Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()) *
+		                             Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()) *
+		                             Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX());
 		// Per-tracking-system fallback never carries a smoothness value: the
 		// fallback applies to ANY device of that system that doesn't have an
 		// active per-ID transform, including potentially the HMD or a freshly-
@@ -324,10 +330,8 @@ void ScanAndApplyProfile(
 		// per-ID path below sends per-tracker smoothness; the fallback path
 		// stays at 0 to avoid surprise-suppressing a device the user didn't
 		// individually opt in.
-		SendFallbackIfChanged(ctx.targetTrackingSystem, true,
-			ctx.calibratedTranslation, rotQuat, ctx.calibratedScale,
-			/*predictionSmoothness=*/0,
-			ctx.recalibrateOnMovement);
+		SendFallbackIfChanged(ctx.targetTrackingSystem, true, ctx.calibratedTranslation, rotQuat, ctx.calibratedScale,
+		                      /*predictionSmoothness=*/0, ctx.recalibrateOnMovement);
 	}
 
 	// Multi-ecosystem extras: each entry contributes its own per-tracking-
@@ -344,18 +348,15 @@ void ScanAndApplyProfile(
 		if (extra.targetTrackingSystem == ctx.targetTrackingSystem) continue;
 
 		auto eulerE = extra.calibratedRotation * EIGEN_PI / 180.0;
-		Eigen::Quaterniond rotQuatE =
-			Eigen::AngleAxisd(eulerE(0), Eigen::Vector3d::UnitZ()) *
-			Eigen::AngleAxisd(eulerE(1), Eigen::Vector3d::UnitY()) *
-			Eigen::AngleAxisd(eulerE(2), Eigen::Vector3d::UnitX());
-		SendFallbackIfChanged(extra.targetTrackingSystem, true,
-			extra.calibratedTranslation, rotQuatE, extra.calibratedScale,
-			/*predictionSmoothness=*/0,
-			ctx.recalibrateOnMovement);
+		Eigen::Quaterniond rotQuatE = Eigen::AngleAxisd(eulerE(0), Eigen::Vector3d::UnitZ()) *
+		                              Eigen::AngleAxisd(eulerE(1), Eigen::Vector3d::UnitY()) *
+		                              Eigen::AngleAxisd(eulerE(2), Eigen::Vector3d::UnitX());
+		SendFallbackIfChanged(extra.targetTrackingSystem, true, extra.calibratedTranslation, rotQuatE,
+		                      extra.calibratedScale,
+		                      /*predictionSmoothness=*/0, ctx.recalibrateOnMovement);
 	}
 
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id)
-	{
+	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
 		auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(id);
 		if (deviceClass == vr::TrackedDeviceClass_Invalid) {
 			++scanInvalidClass;
@@ -373,7 +374,8 @@ void ScanAndApplyProfile(
 		{
 			char serialBuf[256] = {0};
 			vr::ETrackedPropertyError serialErr = vr::TrackedProp_Success;
-			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, serialBuf, sizeof serialBuf, &serialErr);
+			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, serialBuf,
+			                                               sizeof serialBuf, &serialErr);
 			std::string serial = (serialErr == vr::TrackedProp_Success) ? std::string(serialBuf) : std::string();
 			if (g_lastSeenSerial[id] != serial) {
 				const bool hadPriorSerial = !g_lastSeenSerial[id].empty();
@@ -390,25 +392,22 @@ void ScanAndApplyProfile(
 
 		/*if (deviceClass == vr::TrackedDeviceClass_HMD) // for debugging unexpected universe switches
 		{
-			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-			auto universeId = vr::VRSystem()->GetUint64TrackedDeviceProperty(id, vr::Prop_CurrentUniverseId_Uint64, &err);
-			printf("uid %d err %d\n", universeId, err);
-			ResetAndDisableOffsets(id);
-			continue;
+		    vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+		    auto universeId = vr::VRSystem()->GetUint64TrackedDeviceProperty(id, vr::Prop_CurrentUniverseId_Uint64,
+		&err); printf("uid %d err %d\n", universeId, err); ResetAndDisableOffsets(id); continue;
 		}*/
 
-		if (!ctx.enabled)
-		{
+		if (!ctx.enabled) {
 			++scanDisabledProfile;
 			ResetAndDisableOffsets(id);
 			continue;
 		}
 
 		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-		vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, vr::k_unMaxPropertyStringSize, &err);
+		vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer,
+		                                               vr::k_unMaxPropertyStringSize, &err);
 
-		if (err != vr::TrackedProp_Success)
-		{
+		if (err != vr::TrackedProp_Success) {
 			++scanTrackingSystemError;
 			ResetAndDisableOffsets(id);
 			continue;
@@ -416,21 +415,22 @@ void ScanAndApplyProfile(
 
 		std::string trackingSystem(buffer);
 
-		if (id == vr::k_unTrackedDeviceIndex_Hmd)
-		{
+		if (id == vr::k_unTrackedDeviceIndex_Hmd) {
 			++scanHmd;
-			//auto p = ctx.devicePoses[id].mDeviceToAbsoluteTracking.m;
-			//printf("HMD %d: %f %f %f\n", id, p[0][3], p[1][3], p[2][3]);
+			// auto p = ctx.devicePoses[id].mDeviceToAbsoluteTracking.m;
+			// printf("HMD %d: %f %f %f\n", id, p[0][3], p[1][3], p[2][3]);
 
 			// Check if the current HMD is a Pimax crystal
 			if (trackingSystem == "aapvr") {
 				// HMD is a Pimax HMD
 				vr::HmdMatrix34_t eyeToHeadLeft = vr::VRSystem()->GetEyeToHeadTransform(vr::Eye_Left);
-				// Crystal's projection matrix is constant 0s or 1s except for [0][3], which stores the IPD offset from the nose
+				// Crystal's projection matrix is constant 0s or 1s except for [0][3], which stores the IPD offset from
+				// the nose
 				bool isCrystalHmd =
-					eyeToHeadLeft.m[0][0] == 1 && eyeToHeadLeft.m[0][1] == 0 && eyeToHeadLeft.m[0][2] == 0 &&                     // IPD
-					eyeToHeadLeft.m[1][0] == 0 && eyeToHeadLeft.m[1][1] == 1 && eyeToHeadLeft.m[1][2] == 0 && eyeToHeadLeft.m[1][3] == 0 &&
-					eyeToHeadLeft.m[2][0] == 0 && eyeToHeadLeft.m[2][1] == 0 && eyeToHeadLeft.m[2][2] == 1 && eyeToHeadLeft.m[2][3] == 0;
+				    eyeToHeadLeft.m[0][0] == 1 && eyeToHeadLeft.m[0][1] == 0 && eyeToHeadLeft.m[0][2] == 0 && // IPD
+				    eyeToHeadLeft.m[1][0] == 0 && eyeToHeadLeft.m[1][1] == 1 && eyeToHeadLeft.m[1][2] == 0 &&
+				    eyeToHeadLeft.m[1][3] == 0 && eyeToHeadLeft.m[2][0] == 0 && eyeToHeadLeft.m[2][1] == 0 &&
+				    eyeToHeadLeft.m[2][2] == 1 && eyeToHeadLeft.m[2][3] == 0;
 
 				if (isCrystalHmd) {
 					// Move it outside the aapvr system ; we treat aapvr as if it were lighthouse
@@ -438,8 +438,7 @@ void ScanAndApplyProfile(
 				}
 			}
 
-			if (trackingSystem != ctx.referenceTrackingSystem)
-			{
+			if (trackingSystem != ctx.referenceTrackingSystem) {
 				// Currently using an HMD with a different tracking system than the calibration.
 				ctx.enabled = false;
 			}
@@ -451,22 +450,23 @@ void ScanAndApplyProfile(
 		// Detect Pimax crystal controllers and separate them too
 		if (deviceClass == vr::TrackedDeviceClass_Controller) {
 			if (trackingSystem == "oculus") {
-				vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, vr::k_unMaxPropertyStringSize, &err);
+				vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer,
+				                                               vr::k_unMaxPropertyStringSize, &err);
 				std::string renderModel(buffer);
-				vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_ConnectedWirelessDongle_String, buffer, vr::k_unMaxPropertyStringSize, &err);
+				vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_ConnectedWirelessDongle_String, buffer,
+				                                               vr::k_unMaxPropertyStringSize, &err);
 				std::string connectedWirelessDongle(buffer);
 
 				// Check if the controller claims its an oculus controller but also pimax
 				if (renderModel.find("{aapvr}") != std::string::npos &&
-					renderModel.find("crystal") != std::string::npos &&
-					connectedWirelessDongle.find("lighthouse") != std::string::npos) {
+				    renderModel.find("crystal") != std::string::npos &&
+				    connectedWirelessDongle.find("lighthouse") != std::string::npos) {
 					trackingSystem = "Pimax Crystal Controllers";
 				}
 			}
 		}
 
-		if (trackingSystem != ctx.targetTrackingSystem)
-		{
+		if (trackingSystem != ctx.targetTrackingSystem) {
 			++scanNonTargetSystem;
 			ResetAndDisableOffsets(id, trackingSystem);
 			continue;
@@ -475,13 +475,8 @@ void ScanAndApplyProfile(
 
 		const bool isFreshlyAdopted = !g_lastApplied[id].valid || !g_lastApplied[id].payload.enabled;
 
-		protocol::SetDeviceTransform payload{
-			id,
-			true,
-			VRTranslationVec(ctx.calibratedTranslation),
-			VRRotationQuat(ctx.calibratedRotation),
-			ctx.calibratedScale
-		};
+		protocol::SetDeviceTransform payload{id, true, VRTranslationVec(ctx.calibratedTranslation),
+		                                     VRRotationQuat(ctx.calibratedRotation), ctx.calibratedScale};
 		// During continuous calibration, lerp toward the smoothly-updating target so
 		// the active offset doesn't snap on every cycle. EXCEPT when this is a freshly
 		// adopted device -- those need to snap into place rather than ramping in from
@@ -491,15 +486,15 @@ void ScanAndApplyProfile(
 		// Decision routed through the pure helper so test_motion_gate.cpp pins
 		// the contract.
 		payload.lerp = spacecal::motiongate::ShouldBlendCycle(
-			/*inContinuousState=*/CalCtx.state == CalibrationState::Continuous,
-			/*isFreshlyAdopted=*/isFreshlyAdopted,
-			/*snapThisCycle=*/snapThisCycle);
+		    /*inContinuousState=*/CalCtx.state == CalibrationState::Continuous,
+		    /*isFreshlyAdopted=*/isFreshlyAdopted,
+		    /*snapThisCycle=*/snapThisCycle);
 		// Hide intent: the continuous-target toggle hides the active target
 		// during continuous calibration. The head-mounted tracker toggle is
 		// serial-based so the same physical tracker remains hidden through
 		// standby, reacquire, and OpenVR device-id churn.
-		payload.quash = wkopenvr::headmount::ShouldQuashPublishedTrackerPose(
-			CalCtx, id, g_lastSeenSerial[id], trackingSystem);
+		payload.quash =
+		    wkopenvr::headmount::ShouldQuashPublishedTrackerPose(CalCtx, id, g_lastSeenSerial[id], trackingSystem);
 		payload.updateQuash = true;
 		SetTargetSystemField(payload, ctx.targetTrackingSystem);
 
@@ -526,7 +521,8 @@ void ScanAndApplyProfile(
 		tracker.serial = g_lastSeenSerial[id];
 		char modelBuf[256] = {0};
 		vr::ETrackedPropertyError modelErr = vr::TrackedProp_Success;
-		vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_ModelNumber_String, modelBuf, sizeof modelBuf, &modelErr);
+		vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_ModelNumber_String, modelBuf, sizeof modelBuf,
+		                                               &modelErr);
 		if (modelErr == vr::TrackedProp_Success) tracker.model = modelBuf;
 		currentAdopted[id] = tracker;
 	}
@@ -538,8 +534,8 @@ void ScanAndApplyProfile(
 			if (g_lastAdoptedTrackers.find(kv.first) == g_lastAdoptedTrackers.end()) {
 				char buf[512];
 				snprintf(buf, sizeof buf, "Adopted new tracker: %s/%s\n",
-					kv.second.model.empty() ? "(unknown model)" : kv.second.model.c_str(),
-					kv.second.serial.empty() ? "(no serial)" : kv.second.serial.c_str());
+				         kv.second.model.empty() ? "(unknown model)" : kv.second.model.c_str(),
+				         kv.second.serial.empty() ? "(no serial)" : kv.second.serial.c_str());
 				CalCtx.Log(buf);
 			}
 		}
@@ -547,7 +543,7 @@ void ScanAndApplyProfile(
 			if (currentAdopted.find(kv.first) == currentAdopted.end()) {
 				char buf[512];
 				snprintf(buf, sizeof buf, "Tracker disconnected: %s\n",
-					kv.second.serial.empty() ? "(no serial)" : kv.second.serial.c_str());
+				         kv.second.serial.empty() ? "(no serial)" : kv.second.serial.c_str());
 				CalCtx.Log(buf);
 			}
 		}
@@ -559,34 +555,27 @@ void ScanAndApplyProfile(
 			s_lastApplyScanSummary = Metrics::CurrentTime;
 			char summaryBuf[640];
 			snprintf(summaryBuf, sizeof summaryBuf,
-				"profile_apply_scan_summary: state=%d enabled=%d validProfile=%d"
-				" ref='%s' target='%s' profile_trans_cm=(%.2f,%.2f,%.2f)"
-				" profile_mag_cm=%.2f invalid=%d disabled=%d hmd=%d"
-				" trackingErr=%d nonTarget=%d targetMatched=%d payloadSent=%d"
-				" adopted=%zu fallbackSent=%d snap=%d",
-				(int)CalCtx.state, (int)ctx.enabled, (int)ctx.validProfile,
-				ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str(),
-				ctx.calibratedTranslation.x(),
-				ctx.calibratedTranslation.y(),
-				ctx.calibratedTranslation.z(),
-				ctx.calibratedTranslation.norm(),
-				scanInvalidClass, scanDisabledProfile, scanHmd,
-				scanTrackingSystemError, scanNonTargetSystem, scanTargetMatched,
-				scanPayloadSent, g_lastAdoptedTrackers.size(),
-				(int)g_lastFallbackSent, (int)snapThisCycle);
+			         "profile_apply_scan_summary: state=%d enabled=%d validProfile=%d"
+			         " ref='%s' target='%s' profile_trans_cm=(%.2f,%.2f,%.2f)"
+			         " profile_mag_cm=%.2f invalid=%d disabled=%d hmd=%d"
+			         " trackingErr=%d nonTarget=%d targetMatched=%d payloadSent=%d"
+			         " adopted=%zu fallbackSent=%d snap=%d",
+			         (int)CalCtx.state, (int)ctx.enabled, (int)ctx.validProfile, ctx.referenceTrackingSystem.c_str(),
+			         ctx.targetTrackingSystem.c_str(), ctx.calibratedTranslation.x(), ctx.calibratedTranslation.y(),
+			         ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(), scanInvalidClass,
+			         scanDisabledProfile, scanHmd, scanTrackingSystemError, scanNonTargetSystem, scanTargetMatched,
+			         scanPayloadSent, g_lastAdoptedTrackers.size(), (int)g_lastFallbackSent, (int)snapThisCycle);
 			Metrics::WriteLogAnnotation(summaryBuf);
 		}
 	}
 
-	if (ctx.enabled && ctx.chaperone.valid && ctx.chaperone.autoApply)
-	{
+	if (ctx.enabled && ctx.chaperone.valid && ctx.chaperone.autoApply) {
 		uint32_t quadCount = 0;
 		vr::VRChaperoneSetup()->GetLiveCollisionBoundsInfo(nullptr, &quadCount);
 
 		// Heuristic: when SteamVR resets to a blank-ish chaperone, it uses empty geometry,
 		// but manual adjustments (e.g. via a play space mover) will not touch geometry.
-		if (quadCount != ctx.chaperone.geometry.size())
-		{
+		if (quadCount != ctx.chaperone.geometry.size()) {
 			ApplyChaperoneBounds();
 		}
 	}
@@ -599,9 +588,8 @@ void ScanAndApplyProfile(
 			g_snapNextProfileApply = false;
 		}
 		char snapBuf[220];
-		snprintf(snapBuf, sizeof snapBuf,
-			"profile_apply_snap_cycle_consumed: reason=%s payloadSent=%d",
-			snapReason, scanPayloadSent);
+		snprintf(snapBuf, sizeof snapBuf, "profile_apply_snap_cycle_consumed: reason=%s payloadSent=%d", snapReason,
+		         scanPayloadSent);
 		Metrics::WriteLogAnnotation(snapBuf);
 	}
 }

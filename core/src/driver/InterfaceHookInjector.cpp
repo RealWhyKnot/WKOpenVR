@@ -9,7 +9,7 @@
 #include <cstring>
 #include <thread>
 
-static ServerTrackedDeviceProvider *Driver = nullptr;
+static ServerTrackedDeviceProvider* Driver = nullptr;
 
 // Captured at InjectHooks() time and consulted inside DetourGetGenericInterface
 // so per-feature inner hooks (IVRServerDriverHost::TrackedDevicePoseUpdated for
@@ -51,7 +51,7 @@ void DrainInFlightDetours() noexcept
 	while (g_inFlightDetours.load(std::memory_order_acquire) > 0) {
 		if (clock::now() > deadline) {
 			LOG("DrainInFlightDetours: timeout with %d in-flight callers; proceeding with shutdown anyway",
-				g_inFlightDetours.load(std::memory_order_acquire));
+			    g_inFlightDetours.load(std::memory_order_acquire));
 			return;
 		}
 		std::this_thread::yield();
@@ -60,16 +60,17 @@ void DrainInFlightDetours() noexcept
 
 } // namespace InterfaceHooks
 
-static Hook<void*(*)(vr::IVRDriverContext *, const char *, vr::EVRInitError *)> 
-	GetGenericInterfaceHook("IVRDriverContext::GetGenericInterface");
+static Hook<void* (*)(vr::IVRDriverContext*, const char*, vr::EVRInitError*)>
+    GetGenericInterfaceHook("IVRDriverContext::GetGenericInterface");
 
-static Hook<void(*)(vr::IVRServerDriverHost *, uint32_t, const vr::DriverPose_t &, uint32_t)>
-	TrackedDevicePoseUpdatedHook005("IVRServerDriverHost005::TrackedDevicePoseUpdated");
+static Hook<void (*)(vr::IVRServerDriverHost*, uint32_t, const vr::DriverPose_t&, uint32_t)>
+    TrackedDevicePoseUpdatedHook005("IVRServerDriverHost005::TrackedDevicePoseUpdated");
 
-static Hook<void(*)(vr::IVRServerDriverHost *, uint32_t, const vr::DriverPose_t &, uint32_t)>
-	TrackedDevicePoseUpdatedHook006("IVRServerDriverHost006::TrackedDevicePoseUpdated");
+static Hook<void (*)(vr::IVRServerDriverHost*, uint32_t, const vr::DriverPose_t&, uint32_t)>
+    TrackedDevicePoseUpdatedHook006("IVRServerDriverHost006::TrackedDevicePoseUpdated");
 
-static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost *_this, uint32_t unWhichDevice, const vr::DriverPose_t &newPose, uint32_t unPoseStructSize)
+static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost* _this, uint32_t unWhichDevice,
+                                              const vr::DriverPose_t& newPose, uint32_t unPoseStructSize)
 {
 	InterfaceHooks::DetourScope _scope;
 	// Inherited from upstream: only run our HandleDevicePoseUpdated when the
@@ -83,24 +84,24 @@ static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost *_this, ui
 	// nothing the size check doesn't already.
 	if (unPoseStructSize == sizeof(vr::DriverPose_t)) {
 		auto pose = newPose;
-		if (Driver->HandleDevicePoseUpdated(unWhichDevice, pose))
-		{
+		if (Driver->HandleDevicePoseUpdated(unWhichDevice, pose)) {
 			TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, pose, unPoseStructSize);
 		}
-	} else {
+	}
+	else {
 		TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);
 	}
 }
 
-static void DetourTrackedDevicePoseUpdated006(vr::IVRServerDriverHost *_this, uint32_t unWhichDevice, const vr::DriverPose_t &newPose, uint32_t unPoseStructSize)
+static void DetourTrackedDevicePoseUpdated006(vr::IVRServerDriverHost* _this, uint32_t unWhichDevice,
+                                              const vr::DriverPose_t& newPose, uint32_t unPoseStructSize)
 {
 	InterfaceHooks::DetourScope _scope;
 	// See DetourTrackedDevicePoseUpdated005 above for the rationale --
 	// same cleanup applied here.
 	if (unPoseStructSize == sizeof(vr::DriverPose_t)) {
 		auto pose = newPose;
-		if (Driver->HandleDevicePoseUpdated(unWhichDevice, pose))
-		{
+		if (Driver->HandleDevicePoseUpdated(unWhichDevice, pose)) {
 			TrackedDevicePoseUpdatedHook006.originalFunc(_this, unWhichDevice, pose, unPoseStructSize);
 		}
 	}
@@ -109,7 +110,8 @@ static void DetourTrackedDevicePoseUpdated006(vr::IVRServerDriverHost *_this, ui
 	}
 }
 
-static void *DetourGetGenericInterface(vr::IVRDriverContext *_this, const char *pchInterfaceVersion, vr::EVRInitError *peError)
+static void* DetourGetGenericInterface(vr::IVRDriverContext* _this, const char* pchInterfaceVersion,
+                                       vr::EVRInitError* peError)
 {
 	InterfaceHooks::DetourScope _scope;
 	TRACE("ServerTrackedDeviceProvider::DetourGetGenericInterface(%s)", pchInterfaceVersion);
@@ -118,21 +120,19 @@ static void *DetourGetGenericInterface(vr::IVRDriverContext *_this, const char *
 	// strcmp avoids a std::string allocation per interface query. This is
 	// called for every interface version SteamVR queries during driver
 	// init -- not a tight loop, but cumulative startup latency.
-	if ((s_featureFlags & pairdriver::kFeatureCalibration)
-		&& std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_005") == 0)
-	{
-		if (!IHook::Exists(TrackedDevicePoseUpdatedHook005.name))
-		{
-			TrackedDevicePoseUpdatedHook005.CreateHookInObjectVTable(originalInterface, 1, &DetourTrackedDevicePoseUpdated005);
+	if ((s_featureFlags & pairdriver::kFeatureCalibration) &&
+	    std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_005") == 0) {
+		if (!IHook::Exists(TrackedDevicePoseUpdatedHook005.name)) {
+			TrackedDevicePoseUpdatedHook005.CreateHookInObjectVTable(originalInterface, 1,
+			                                                         &DetourTrackedDevicePoseUpdated005);
 			IHook::Register(&TrackedDevicePoseUpdatedHook005);
 		}
 	}
-	else if ((s_featureFlags & pairdriver::kFeatureCalibration)
-		&& std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_006") == 0)
-	{
-		if (!IHook::Exists(TrackedDevicePoseUpdatedHook006.name))
-		{
-			TrackedDevicePoseUpdatedHook006.CreateHookInObjectVTable(originalInterface, 1, &DetourTrackedDevicePoseUpdated006);
+	else if ((s_featureFlags & pairdriver::kFeatureCalibration) &&
+	         std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_006") == 0) {
+		if (!IHook::Exists(TrackedDevicePoseUpdatedHook006.name)) {
+			TrackedDevicePoseUpdatedHook006.CreateHookInObjectVTable(originalInterface, 1,
+			                                                         &DetourTrackedDevicePoseUpdated006);
 			IHook::Register(&TrackedDevicePoseUpdatedHook006);
 		}
 	}
@@ -141,7 +141,7 @@ static void *DetourGetGenericInterface(vr::IVRDriverContext *_this, const char *
 	return originalInterface;
 }
 
-bool InjectHooks(ServerTrackedDeviceProvider *driver, vr::IVRDriverContext *pDriverContext, uint32_t featureFlags)
+bool InjectHooks(ServerTrackedDeviceProvider* driver, vr::IVRDriverContext* pDriverContext, uint32_t featureFlags)
 {
 	Driver = driver;
 	s_featureFlags = featureFlags;
@@ -153,8 +153,7 @@ bool InjectHooks(ServerTrackedDeviceProvider *driver, vr::IVRDriverContext *pDri
 	}
 
 	auto err = MH_Initialize();
-	if (err != MH_OK)
-	{
+	if (err != MH_OK) {
 		LOG("MH_Initialize error: %s -- driver running without hooks", MH_StatusToString(err));
 		return false;
 	}

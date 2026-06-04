@@ -25,7 +25,7 @@ std::wstring JoinPath(std::wstring_view left, std::wstring_view right)
 	return out;
 }
 
-std::wstring EnvVar(const wchar_t *name)
+std::wstring EnvVar(const wchar_t* name)
 {
 	const DWORD needed = GetEnvironmentVariableW(name, nullptr, 0);
 	if (needed == 0) return {};
@@ -44,13 +44,12 @@ bool EndsWithLocalComponent(std::wstring_view path)
 
 	auto tail = path.substr(path.size() - suffix1.size());
 	std::wstring lower(tail.data(), tail.size());
-	std::transform(lower.begin(), lower.end(), lower.begin(), [](wchar_t c) {
-		return static_cast<wchar_t>(towlower(c));
-	});
+	std::transform(lower.begin(), lower.end(), lower.begin(),
+	               [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
 	return lower == L"\\local" || lower == L"/local";
 }
 
-std::wstring LocalAppDataLowFromLocalAppData(const std::wstring &local)
+std::wstring LocalAppDataLowFromLocalAppData(const std::wstring& local)
 {
 	if (local.empty()) return {};
 	if (EndsWithLocalComponent(local)) {
@@ -85,9 +84,9 @@ std::vector<std::wstring> LocalAppDataLowCandidates()
 	}
 
 	std::vector<std::wstring> unique;
-	for (auto &candidate : candidates) {
+	for (auto& candidate : candidates) {
 		if (candidate.empty()) continue;
-		const bool exists = std::any_of(unique.begin(), unique.end(), [&](const std::wstring &prior) {
+		const bool exists = std::any_of(unique.begin(), unique.end(), [&](const std::wstring& prior) {
 			return _wcsicmp(prior.c_str(), candidate.c_str()) == 0;
 		});
 		if (!exists) unique.push_back(std::move(candidate));
@@ -111,17 +110,16 @@ std::wstring LocalAppDataLowPath()
 	return candidates.empty() ? std::wstring{} : candidates.front();
 }
 
-bool EnsureDirectory(const std::wstring &path)
+bool EnsureDirectory(const std::wstring& path)
 {
 	if (path.empty()) return false;
 	std::error_code ec;
-	return std::filesystem::create_directories(path, ec)
-		|| std::filesystem::is_directory(path, ec);
+	return std::filesystem::create_directories(path, ec) || std::filesystem::is_directory(path, ec);
 }
 
 std::wstring WkOpenVrRootPath(bool create)
 {
-	for (const auto &candidate : LocalAppDataLowCandidates()) {
+	for (const auto& candidate : LocalAppDataLowCandidates()) {
 		std::wstring root = JoinPath(candidate, L"WKOpenVR");
 		if (!create || EnsureDirectory(root)) return root;
 	}
@@ -148,7 +146,7 @@ std::wstring WkOpenVrLogsPath(bool create)
 	return WkOpenVrSubdirectoryPath(L"Logs", create);
 }
 
-int64_t FileLastWriteTime(const std::wstring &path)
+int64_t FileLastWriteTime(const std::wstring& path)
 {
 	WIN32_FILE_ATTRIBUTE_DATA data{};
 	if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) {

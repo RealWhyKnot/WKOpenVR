@@ -9,7 +9,7 @@ namespace openvr_pair::overlay::testharness {
 // Entry point invoked from main() when --test-harness is on the command line.
 // Returns a process exit code: 0 on full pass, non-zero on any failure or
 // precondition violation (release-channel binary, SteamVR alive, etc.).
-int Run(int argc, char **argv);
+int Run(int argc, char** argv);
 
 } // namespace openvr_pair::overlay::testharness
 

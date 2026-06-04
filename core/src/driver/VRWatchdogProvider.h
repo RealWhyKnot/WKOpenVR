@@ -7,7 +7,7 @@
 class VRWatchdogProvider : public vr::IVRWatchdogProvider
 {
 	/** initializes the driver in watchdog mode. */
-	virtual vr::EVRInitError Init(vr::IVRDriverContext *pDriverContext)
+	virtual vr::EVRInitError Init(vr::IVRDriverContext* pDriverContext)
 	{
 		LOG("VRWatchdogProvider::Init()");
 		VR_INIT_WATCHDOG_DRIVER_CONTEXT(pDriverContext);

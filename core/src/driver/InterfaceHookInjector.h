@@ -6,7 +6,8 @@
 
 class ServerTrackedDeviceProvider;
 
-static void DetourTrackedDevicePoseUpdated(vr::IVRServerDriverHost * _this, uint32_t unWhichDevice, const vr::DriverPose_t & newPose, uint32_t unPoseStructSize);
+static void DetourTrackedDevicePoseUpdated(vr::IVRServerDriverHost* _this, uint32_t unWhichDevice,
+                                           const vr::DriverPose_t& newPose, uint32_t unPoseStructSize);
 
 // Install the GetGenericInterface detour and register the inner per-interface
 // hooks gated by featureFlags (pairdriver::kFeature*). With featureFlags == 0
@@ -14,7 +15,7 @@ static void DetourTrackedDevicePoseUpdated(vr::IVRServerDriverHost * _this, uint
 // no-op aside from caching the driver pointer.
 // Returns true on success. On false the driver should return
 // vr::VRInitError_Driver_Failed from Init; DisableHooks becomes a no-op.
-bool InjectHooks(ServerTrackedDeviceProvider *driver, vr::IVRDriverContext *pDriverContext, uint32_t featureFlags);
+bool InjectHooks(ServerTrackedDeviceProvider* driver, vr::IVRDriverContext* pDriverContext, uint32_t featureFlags);
 
 // DisableHooks removes our MinHook patches AND drains in-flight detour callers
 // before returning. After it returns no detour can be executing inside our code,
@@ -33,9 +34,10 @@ void EnterDetour() noexcept;
 void ExitDetour() noexcept;
 void DrainInFlightDetours() noexcept;
 
-struct DetourScope {
-	DetourScope() noexcept  { EnterDetour(); }
-	~DetourScope() noexcept { ExitDetour();  }
+struct DetourScope
+{
+	DetourScope() noexcept { EnterDetour(); }
+	~DetourScope() noexcept { ExitDetour(); }
 	DetourScope(const DetourScope&) = delete;
 	DetourScope& operator=(const DetourScope&) = delete;
 };

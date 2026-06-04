@@ -26,32 +26,30 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-bool StartsWith(const std::string &value, const char *prefix)
+bool StartsWith(const std::string& value, const char* prefix)
 {
 	return prefix && value.rfind(prefix, 0) == 0;
 }
 
-bool IsDriverWaitError(const std::string &error)
+bool IsDriverWaitError(const std::string& error)
 {
-	return StartsWith(error, "InputHealth IPC:")
-		|| StartsWith(error, "Driver connection:")
-		|| StartsWith(error, "Not connected");
+	return StartsWith(error, "InputHealth IPC:") || StartsWith(error, "Driver connection:") ||
+	       StartsWith(error, "Not connected");
 }
 
 } // namespace
 
-InputHealthPlugin::InputHealthPlugin()
-	: engine_(ipc_, profiles_)
+InputHealthPlugin::InputHealthPlugin() : engine_(ipc_, profiles_)
 {
 	const InputHealthGlobalConfig saved = LoadInputHealthConfig();
-	pending_config_.master_enabled       = saved.master_enabled;
-	pending_config_.diagnostics_only     = saved.diagnostics_only;
+	pending_config_.master_enabled = saved.master_enabled;
+	pending_config_.diagnostics_only = saved.diagnostics_only;
 	pending_config_.enable_rest_recenter = saved.enable_rest_recenter;
 	pending_config_.enable_trigger_remap = saved.enable_trigger_remap;
 	observed_ipc_generation_ = ipc_.ConnectionGeneration();
 }
 
-void InputHealthPlugin::OnStart(openvr_pair::overlay::ShellContext &)
+void InputHealthPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 {
 	OpenLogFile();
 	LOG("WKOpenVR-InputHealth plugin starting");
@@ -61,7 +59,8 @@ void InputHealthPlugin::OnStart(openvr_pair::overlay::ShellContext &)
 		LOG("[ui] IPC connected");
 		engine_.PushReadyCompensations();
 		PushConfigToDriver();
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		LOG("[ui] initial IPC connect failed: %s", e.what());
 		last_error_ = std::string("InputHealth IPC: ") + e.what();
 	}
@@ -73,7 +72,7 @@ void InputHealthPlugin::OnStart(openvr_pair::overlay::ShellContext &)
 	WriteHealthSummary();
 }
 
-void InputHealthPlugin::OnShutdown(openvr_pair::overlay::ShellContext &)
+void InputHealthPlugin::OnShutdown(openvr_pair::overlay::ShellContext&)
 {
 	engine_.Flush();
 	WriteHealthSummary();
@@ -83,7 +82,7 @@ void InputHealthPlugin::OnShutdown(openvr_pair::overlay::ShellContext &)
 	LogFlush();
 }
 
-void InputHealthPlugin::Tick(openvr_pair::overlay::ShellContext &)
+void InputHealthPlugin::Tick(openvr_pair::overlay::ShellContext&)
 {
 	const auto now = Clock::now();
 	if (now - last_connection_check_ >= std::chrono::seconds(1)) {
@@ -132,12 +131,11 @@ void InputHealthPlugin::PushConfigToDriver()
 			return;
 		}
 		last_error_.clear();
-		LOG("[ui] config pushed: master=%d diag_only=%d rest=%d trig=%d",
-			(int)pending_config_.master_enabled,
-			(int)pending_config_.diagnostics_only,
-			(int)pending_config_.enable_rest_recenter,
-			(int)pending_config_.enable_trigger_remap);
-	} catch (const std::exception &e) {
+		LOG("[ui] config pushed: master=%d diag_only=%d rest=%d trig=%d", (int)pending_config_.master_enabled,
+		    (int)pending_config_.diagnostics_only, (int)pending_config_.enable_rest_recenter,
+		    (int)pending_config_.enable_trigger_remap);
+	}
+	catch (const std::exception& e) {
 		last_error_ = std::string("IPC error: ") + e.what();
 		LOG("[ui] PushConfigToDriver failed: %s", e.what());
 	}
@@ -146,14 +144,13 @@ void InputHealthPlugin::PushConfigToDriver()
 void InputHealthPlugin::SaveGlobalConfig()
 {
 	InputHealthGlobalConfig cfg;
-	cfg.master_enabled       = pending_config_.master_enabled;
-	cfg.diagnostics_only     = pending_config_.diagnostics_only;
+	cfg.master_enabled = pending_config_.master_enabled;
+	cfg.diagnostics_only = pending_config_.diagnostics_only;
 	cfg.enable_rest_recenter = pending_config_.enable_rest_recenter;
 	cfg.enable_trigger_remap = pending_config_.enable_trigger_remap;
 	SaveInputHealthConfig(cfg);
-	LOG("[ui] global config saved: master=%d diag_only=%d rest=%d trig=%d",
-		(int)cfg.master_enabled, (int)cfg.diagnostics_only,
-		(int)cfg.enable_rest_recenter, (int)cfg.enable_trigger_remap);
+	LOG("[ui] global config saved: master=%d diag_only=%d rest=%d trig=%d", (int)cfg.master_enabled,
+	    (int)cfg.diagnostics_only, (int)cfg.enable_rest_recenter, (int)cfg.enable_trigger_remap);
 }
 
 void InputHealthPlugin::MaintainDriverConnection()
@@ -167,8 +164,8 @@ void InputHealthPlugin::MaintainDriverConnection()
 		const auto resp = ipc_.SendBlocking(protocol::Request(protocol::RequestHandshake));
 		if (resp.type != protocol::ResponseHandshake || resp.protocol.version != protocol::Version) {
 			last_error_ = "Driver protocol mismatch during heartbeat";
-			LOG("[ui] heartbeat protocol mismatch: type=%d driverVersion=%u overlayVersion=%u",
-				(int)resp.type, resp.protocol.version, protocol::Version);
+			LOG("[ui] heartbeat protocol mismatch: type=%d driverVersion=%u overlayVersion=%u", (int)resp.type,
+			    resp.protocol.version, protocol::Version);
 			return;
 		}
 
@@ -176,16 +173,16 @@ void InputHealthPlugin::MaintainDriverConnection()
 		if (gen != observed_ipc_generation_) {
 			observed_ipc_generation_ = gen;
 			LOG("[ui] IPC generation changed to %llu; re-sending InputHealth config and compensations",
-				(unsigned long long)gen);
+			    (unsigned long long)gen);
 			PushConfigToDriver();
 			engine_.PushReadyCompensations();
 		}
-		if (last_error_.find("Driver connection:") == 0 ||
-			last_error_.find("InputHealth IPC") == 0 ||
-			last_error_.find("Not connected") == 0) {
+		if (last_error_.find("Driver connection:") == 0 || last_error_.find("InputHealth IPC") == 0 ||
+		    last_error_.find("Not connected") == 0) {
 			last_error_.clear();
 		}
-	} catch (const std::exception &e) {
+	}
+	catch (const std::exception& e) {
 		last_error_ = std::string("Driver connection: ") + e.what();
 		LOG("[ui] heartbeat failed: %s", e.what());
 		ipc_.Close();
@@ -201,43 +198,38 @@ void InputHealthPlugin::SendReset(uint64_t serial_hash, bool reset_passive, bool
 	try {
 		protocol::Request req(protocol::RequestResetInputHealthStats);
 		req.resetInputHealthStats.device_serial_hash = serial_hash;
-		req.resetInputHealthStats.reset_passive      = reset_passive ? 1 : 0;
-		req.resetInputHealthStats.reset_active       = reset_active  ? 1 : 0;
-		req.resetInputHealthStats.reset_curves       = reset_curves  ? 1 : 0;
+		req.resetInputHealthStats.reset_passive = reset_passive ? 1 : 0;
+		req.resetInputHealthStats.reset_active = reset_active ? 1 : 0;
+		req.resetInputHealthStats.reset_curves = reset_curves ? 1 : 0;
 		auto resp = ipc_.SendBlocking(req);
 		if (resp.type != protocol::ResponseSuccess) {
 			last_error_ = "Driver rejected ResetInputHealthStats";
 			return;
 		}
 		last_error_.clear();
-		LOG("[ui] reset request sent: serial=0x%016llx passive=%d active=%d curves=%d",
-			(unsigned long long)serial_hash, (int)reset_passive, (int)reset_active, (int)reset_curves);
-	} catch (const std::exception &e) {
+		LOG("[ui] reset request sent: serial=0x%016llx passive=%d active=%d curves=%d", (unsigned long long)serial_hash,
+		    (int)reset_passive, (int)reset_active, (int)reset_curves);
+	}
+	catch (const std::exception& e) {
 		last_error_ = std::string("IPC error: ") + e.what();
 		LOG("[ui] SendReset failed: %s", e.what());
 	}
 }
 
-void InputHealthPlugin::DrawStatusBanner(const openvr_pair::overlay::ShellContext &context)
+void InputHealthPlugin::DrawStatusBanner(const openvr_pair::overlay::ShellContext& context)
 {
 	// Connection state lives in the shared footer; the live IPC / shmem /
 	// publish_tick triple lives on the Logs tab. The top banner is reserved
 	// for actual errors so a narrow window does not overflow with noise.
-	if (inputhealth::ui::ShouldShowDriverProblemBanner(
-			!last_error_.empty(), IsDriverWaitError(last_error_))) {
-		openvr_pair::overlay::ui::DrawErrorBanner(
-			"InputHealth driver problem",
-			last_error_.c_str());
+	if (inputhealth::ui::ShouldShowDriverProblemBanner(!last_error_.empty(), IsDriverWaitError(last_error_))) {
+		openvr_pair::overlay::ui::DrawErrorBanner("InputHealth driver problem", last_error_.c_str());
 	}
 	// Shmem-not-open is normal during driver startup and can flicker briefly
 	// on reconnects. Surface it as subtle disabled-grey text rather than a
 	// hard red banner so it does not read as a tracking problem when it is
 	// only a transient handshake state.
-	if (inputhealth::ui::ShouldShowShmemProblemText(
-			context.vrConnected,
-			reader_.IsOpen(),
-			!reader_.LastError().empty(),
-			reader_.LastErrorIsVersionMismatch())) {
+	if (inputhealth::ui::ShouldShowShmemProblemText(context.vrConnected, reader_.IsOpen(), !reader_.LastError().empty(),
+	                                                reader_.LastErrorIsVersionMismatch())) {
 		ImGui::TextDisabled("Shmem: %s", reader_.LastError().c_str());
 	}
 }
@@ -262,7 +254,7 @@ void InputHealthPlugin::DrawLogsTab()
 	inputhealth::ui::DrawLogsTab(*this);
 }
 
-void InputHealthPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
+void InputHealthPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 {
 	DrawStatusBanner(context);
 
@@ -282,7 +274,7 @@ void InputHealthPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
 	openvr_pair::overlay::DrawShellFooter(footer);
 }
 
-void InputHealthPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext &)
+void InputHealthPlugin::DrawLogsSection(openvr_pair::overlay::ShellContext&)
 {
 	// Reuse the per-tab Logs implementation. The umbrella's global Logs tab
 	// wraps each plugin in a collapsing header so the section reads with no

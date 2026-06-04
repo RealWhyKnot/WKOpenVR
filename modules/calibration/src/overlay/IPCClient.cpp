@@ -1,6 +1,6 @@
 #include "IPCClient.h"
-#include "CalibrationMetrics.h"   // WriteLogAnnotation -- see Connect() for why
-                                  // we trace the IPC handshake outcomes.
+#include "CalibrationMetrics.h" // WriteLogAnnotation -- see Connect() for why
+                                // we trace the IPC handshake outcomes.
 
 #include <cstdio>
 #include <string>
@@ -12,20 +12,20 @@
 // signature-stable, so a local forward declaration is the safe minimum coupling.
 void ReopenShmem();
 
-namespace
-{
+namespace {
 openvr_pair::overlay::IpcClientConnectOptions Options()
 {
 	openvr_pair::overlay::IpcClientConnectOptions options;
-	options.pipeUnavailable = [](DWORD, const std::string &) {
-		return "Space Calibrator driver unavailable. Make sure SteamVR is running, and the Space Calibrator addon is enabled in SteamVR settings.";
+	options.pipeUnavailable = [](DWORD, const std::string&) {
+		return "Space Calibrator driver unavailable. Make sure SteamVR is running, and the Space Calibrator addon is "
+		       "enabled in SteamVR settings.";
 	};
-	options.pipeModeFailed = [](DWORD error, const std::string &details) {
+	options.pipeModeFailed = [](DWORD error, const std::string& details) {
 		return "Couldn't set pipe mode. Error " + std::to_string(error) + ": " + details;
 	};
 	options.versionMismatch = [](uint32_t expected, uint32_t driver) {
-		return "Incorrect driver version installed, try reinstalling Space Calibrator. (Client: "
-			+ std::to_string(expected) + ", Driver: " + std::to_string(driver) + ")";
+		return "Incorrect driver version installed, try reinstalling Space Calibrator. (Client: " +
+		       std::to_string(expected) + ", Driver: " + std::to_string(driver) + ")";
 	};
 	options.writeFailurePrefix = "Error writing IPC request";
 	options.readFailurePrefix = "Error reading IPC response";
@@ -37,9 +37,7 @@ openvr_pair::overlay::IpcClientConnectOptions Options()
 
 void SCIPCClient::Connect()
 {
-	openvr_pair::overlay::IpcClientBase::Connect(
-		OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME,
-		Options());
+	openvr_pair::overlay::IpcClientBase::Connect(OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME, Options());
 }
 
 void SCIPCClient::OnPipeOpenAttempt(HANDLE pipe, DWORD lastError)
@@ -49,21 +47,18 @@ void SCIPCClient::OnPipeOpenAttempt(HANDLE pipe, DWORD lastError)
 	Metrics::WriteLogAnnotation(annot);
 }
 
-void SCIPCClient::OnHandshakeResponse(const protocol::Response &response)
+void SCIPCClient::OnHandshakeResponse(const protocol::Response& response)
 {
 	char annot[160];
 	snprintf(annot, sizeof annot, "ipc_handshake: response_type=%d server_version=%u client_version=%u",
-		(int)response.type,
-		(unsigned)response.protocol.version,
-		(unsigned)protocol::Version);
+	         (int)response.type, (unsigned)response.protocol.version, (unsigned)protocol::Version);
 	Metrics::WriteLogAnnotation(annot);
 }
 
 void SCIPCClient::OnBrokenPipe(DWORD error)
 {
-	fprintf(stderr,
-		"[SCIPCClient] Broken pipe (error %lu) during request; attempting reconnect...\n",
-		(unsigned long)error);
+	fprintf(stderr, "[SCIPCClient] Broken pipe (error %lu) during request; attempting reconnect...\n",
+	        (unsigned long)error);
 }
 
 void SCIPCClient::OnReconnectSucceeded()

@@ -35,16 +35,16 @@ struct ShellFooterStatus
 	// Human-readable name for the driver column, e.g. "Smoothing driver" or
 	// "InputHealth driver". Used as "<driverLabel>: connected" /
 	// "<driverLabel>: disconnected". Must not be null.
-	const char *driverLabel = "Driver";
+	const char* driverLabel = "Driver";
 
 	// Per-build version stamp shown after "WKOpenVR". May be null; the
 	// helper falls back to OPENVR_PAIR_VERSION_STRING when absent.
-	const char *buildStamp = nullptr;
+	const char* buildStamp = nullptr;
 };
 
 // Draws a single-row footer pinned to the bottom of the current child /
 // window. Caller must already be inside the layout area it wants the footer
 // in -- the helper does not push a child of its own.
-void DrawShellFooter(const ShellFooterStatus &status);
+void DrawShellFooter(const ShellFooterStatus& status);
 
 } // namespace openvr_pair::overlay

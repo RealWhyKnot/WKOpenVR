@@ -34,7 +34,8 @@ void WriteLaunchContextBanner(std::ostream& out)
 	wchar_t exePath[MAX_PATH] = {};
 	if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
 		out << "# launch_exe_path=" << WideToUtf8(exePath) << "\n";
-	} else {
+	}
+	else {
 		out << "# launch_exe_path=GetModuleFileNameW_failed_err=" << GetLastError() << "\n";
 	}
 
@@ -47,7 +48,8 @@ void WriteLaunchContextBanner(std::ostream& out)
 	DWORD cwdLen = GetCurrentDirectoryW(MAX_PATH, cwd);
 	if (cwdLen > 0 && cwdLen < MAX_PATH) {
 		out << "# launch_cwd=" << WideToUtf8(cwd) << "\n";
-	} else {
+	}
+	else {
 		out << "# launch_cwd=GetCurrentDirectoryW_failed_err=" << GetLastError() << "\n";
 	}
 
@@ -66,7 +68,8 @@ void WriteLaunchContextBanner(std::ostream& out)
 				} while (Process32NextW(snap, &pe));
 			}
 			CloseHandle(snap);
-		} else {
+		}
+		else {
 			out << "# launch_parent_lookup=snapshot_failed_err=" << GetLastError() << "\n";
 		}
 	}
@@ -79,12 +82,13 @@ void WriteLaunchContextBanner(std::ostream& out)
 			DWORD len = MAX_PATH;
 			if (QueryFullProcessImageNameW(hParent, 0, parentExe, &len)) {
 				out << "# launch_parent_exe=" << WideToUtf8(parentExe) << "\n";
-			} else {
-				out << "# launch_parent_exe=QueryFullProcessImageNameW_failed_err="
-					<< GetLastError() << "\n";
+			}
+			else {
+				out << "# launch_parent_exe=QueryFullProcessImageNameW_failed_err=" << GetLastError() << "\n";
 			}
 			CloseHandle(hParent);
-		} else {
+		}
+		else {
 			out << "# launch_parent_exe=OpenProcess_failed_err=" << GetLastError() << "\n";
 		}
 	}
@@ -97,15 +101,19 @@ void WriteLaunchContextBanner(std::ostream& out)
 			std::vector<BYTE> buf(size);
 			if (GetTokenInformation(token, TokenIntegrityLevel, buf.data(), size, &size)) {
 				auto* tml = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(buf.data());
-				DWORD subAuth = *GetSidSubAuthority(
-					tml->Label.Sid,
-					static_cast<DWORD>(static_cast<UCHAR>(*GetSidSubAuthorityCount(tml->Label.Sid) - 1)));
+				DWORD subAuth = *GetSidSubAuthority(tml->Label.Sid, static_cast<DWORD>(static_cast<UCHAR>(
+				                                                        *GetSidSubAuthorityCount(tml->Label.Sid) - 1)));
 				const char* levelName = "unknown";
-				if (subAuth < 0x1000) levelName = "untrusted";
-				else if (subAuth < 0x2000) levelName = "low";
-				else if (subAuth < 0x3000) levelName = "medium";
-				else if (subAuth < 0x4000) levelName = "high";
-				else levelName = "system";
+				if (subAuth < 0x1000)
+					levelName = "untrusted";
+				else if (subAuth < 0x2000)
+					levelName = "low";
+				else if (subAuth < 0x3000)
+					levelName = "medium";
+				else if (subAuth < 0x4000)
+					levelName = "high";
+				else
+					levelName = "system";
 				char tmp[64];
 				sprintf_s(tmp, "%s(0x%lx)", levelName, subAuth);
 				out << "# launch_token_integrity=" << tmp << "\n";
@@ -123,9 +131,15 @@ void WriteLaunchContextBanner(std::ostream& out)
 		if (GetTokenInformation(token, TokenElevationType, &elevType, elevTypeSize, &elevTypeSize)) {
 			const char* etName = "unknown";
 			switch (elevType) {
-			case TokenElevationTypeDefault: etName = "default"; break;
-			case TokenElevationTypeFull: etName = "full"; break;
-			case TokenElevationTypeLimited: etName = "limited"; break;
+				case TokenElevationTypeDefault:
+					etName = "default";
+					break;
+				case TokenElevationTypeFull:
+					etName = "full";
+					break;
+				case TokenElevationTypeLimited:
+					etName = "limited";
+					break;
 			}
 			out << "# launch_token_elevation_type=" << etName << "\n";
 		}
@@ -151,7 +165,8 @@ void WriteLaunchContextBanner(std::ostream& out)
 		}
 
 		CloseHandle(token);
-	} else {
+	}
+	else {
 		out << "# launch_token=OpenProcessToken_failed_err=" << GetLastError() << "\n";
 	}
 
@@ -179,8 +194,8 @@ void WriteLaunchContextBanner(std::ostream& out)
 	si.cb = sizeof si;
 	GetStartupInfoW(&si);
 	char sibuf[128];
-	sprintf_s(sibuf, "0x%lx show_window=0x%x has_title=%d",
-		si.dwFlags, static_cast<unsigned>(si.wShowWindow), si.lpTitle ? 1 : 0);
+	sprintf_s(sibuf, "0x%lx show_window=0x%x has_title=%d", si.dwFlags, static_cast<unsigned>(si.wShowWindow),
+	          si.lpTitle ? 1 : 0);
 	out << "# launch_startup_info=" << sibuf << "\n";
 	if (si.lpTitle) {
 		out << "# launch_startup_title=" << WideToUtf8(si.lpTitle) << "\n";
@@ -194,17 +209,14 @@ void WriteLaunchContextBanner(std::ostream& out)
 		while (*p) {
 			envCount++;
 			std::wstring entry(p);
-			if (entry.rfind(L"VR_", 0) == 0
-				|| entry.rfind(L"OPENVR_", 0) == 0
-				|| entry.rfind(L"XR_", 0) == 0
-				|| entry.rfind(L"STEAM_", 0) == 0
-				|| entry.rfind(L"OVR_", 0) == 0
-				|| entry.rfind(L"VRPATH", 0) == 0) {
+			if (entry.rfind(L"VR_", 0) == 0 || entry.rfind(L"OPENVR_", 0) == 0 || entry.rfind(L"XR_", 0) == 0 ||
+			    entry.rfind(L"STEAM_", 0) == 0 || entry.rfind(L"OVR_", 0) == 0 || entry.rfind(L"VRPATH", 0) == 0) {
 				vrEnvDump += "# launch_vr_env=";
 				vrEnvDump += WideToUtf8(p);
 				vrEnvDump += "\n";
 			}
-			while (*p) p++;
+			while (*p)
+				p++;
 			p++;
 		}
 		FreeEnvironmentStringsW(env);

@@ -7,6 +7,6 @@
 void CaptionsHostOpenLogFile();
 void CaptionsHostFlushLog();
 
-void CaptionsHostLog(const char *fmt, ...);
+void CaptionsHostLog(const char* fmt, ...);
 
 #define TH_LOG(fmt, ...) CaptionsHostLog((fmt), ##__VA_ARGS__)

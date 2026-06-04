@@ -18,25 +18,25 @@ namespace oscrouter {
 class UdpSender
 {
 public:
-    UdpSender() = default;
-    ~UdpSender();
+	UdpSender() = default;
+	~UdpSender();
 
-    // Open a UDP socket and resolve the target. Returns false on failure.
-    bool Open(const char *host, uint16_t port);
+	// Open a UDP socket and resolve the target. Returns false on failure.
+	bool Open(const char* host, uint16_t port);
 
-    // Send `len` bytes from `data`. Returns bytes sent or -1 on error.
-    int Send(const void *data, size_t len);
+	// Send `len` bytes from `data`. Returns bytes sent or -1 on error.
+	int Send(const void* data, size_t len);
 
-    // Close the socket. Safe to call multiple times.
-    void Close();
+	// Close the socket. Safe to call multiple times.
+	void Close();
 
-    bool IsOpen() const { return sock_ != INVALID_SOCKET; }
+	bool IsOpen() const { return sock_ != INVALID_SOCKET; }
 
 private:
-    SOCKET          sock_    = INVALID_SOCKET;
-    sockaddr_in     target_  {};
-    uint64_t        sendErrorCount_ = 0;
-    static bool     wsaInit_;
+	SOCKET sock_ = INVALID_SOCKET;
+	sockaddr_in target_{};
+	uint64_t sendErrorCount_ = 0;
+	static bool wsaInit_;
 };
 
 } // namespace oscrouter

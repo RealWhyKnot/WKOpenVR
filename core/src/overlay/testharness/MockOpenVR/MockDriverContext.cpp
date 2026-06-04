@@ -9,14 +9,14 @@
 
 namespace openvr_pair::overlay::testharness {
 
-MockDriverContext::MockDriverContext(MockOpenVRRuntime &owner) : owner_(owner) {}
+MockDriverContext::MockDriverContext(MockOpenVRRuntime& owner) : owner_(owner) {}
 
-void MockDriverContext::RegisterInterface(std::string version, void *iface) {
+void MockDriverContext::RegisterInterface(std::string version, void* iface)
+{
 	interfaces_[std::move(version)] = iface;
 }
 
-void *MockDriverContext::GetGenericInterface(const char *pchInterfaceVersion,
-	vr::EVRInitError *peError)
+void* MockDriverContext::GetGenericInterface(const char* pchInterfaceVersion, vr::EVRInitError* peError)
 {
 	if (peError) *peError = vr::VRInitError_None;
 	if (pchInterfaceVersion == nullptr) {
@@ -29,14 +29,15 @@ void *MockDriverContext::GetGenericInterface(const char *pchInterfaceVersion,
 		// returns the underlying pointer, so we still log + return null so
 		// the request is visible during debugging without crashing.
 		std::fprintf(stderr, "[testharness][MockDriverContext] unhandled GetGenericInterface(%s)\n",
-			pchInterfaceVersion);
+		             pchInterfaceVersion);
 		if (peError) *peError = vr::VRInitError_Init_InterfaceNotFound;
 		return nullptr;
 	}
 	return it->second;
 }
 
-vr::DriverHandle_t MockDriverContext::GetDriverHandle() {
+vr::DriverHandle_t MockDriverContext::GetDriverHandle()
+{
 	// Any non-zero handle satisfies the driver's internal book-keeping.
 	return (vr::DriverHandle_t)0x10000001ULL;
 }

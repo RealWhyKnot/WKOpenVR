@@ -21,23 +21,19 @@ namespace phantom {
 class DeadReckoner
 {
 public:
-    DeadReckoner() = default;
+	DeadReckoner() = default;
 
-    // Project forward from the most recent real pose in `history` to
-    // observation time `target_qpc_ns`. Returns false if there is no real
-    // sample to project from. On success, `out_pose` is filled and may be
-    // emitted to SteamVR; its velocity / acceleration fields are damped to
-    // suppress SteamVR's own extrapolation (we already projected forward).
-    bool Project(
-        const PoseHistory& history,
-        int64_t qpc_freq,
-        int64_t target_qpc_ns,
-        vr::DriverPose_t& out_pose) const;
+	// Project forward from the most recent real pose in `history` to
+	// observation time `target_qpc_ns`. Returns false if there is no real
+	// sample to project from. On success, `out_pose` is filled and may be
+	// emitted to SteamVR; its velocity / acceleration fields are damped to
+	// suppress SteamVR's own extrapolation (we already projected forward).
+	bool Project(const PoseHistory& history, int64_t qpc_freq, int64_t target_qpc_ns, vr::DriverPose_t& out_pose) const;
 
-    // Damping window. Past this many milliseconds since the last real pose,
-    // the projected velocity / acceleration are scaled down to zero so the
-    // pose comes to rest rather than continuing to drift.
-    static constexpr int64_t kFullDampMs = 250;
+	// Damping window. Past this many milliseconds since the last real pose,
+	// the projected velocity / acceleration are scaled down to zero so the
+	// pose comes to rest rather than continuing to drift.
+	static constexpr int64_t kFullDampMs = 250;
 };
 
 } // namespace phantom

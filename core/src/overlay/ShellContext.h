@@ -18,13 +18,13 @@ struct ShellContext
 	bool dashboardVisible = false;
 
 	std::string DesktopDefaultModuleFlagFileName() const;
-	bool SetDesktopDefaultModuleFlagFileName(const char *flagFileName);
-	std::wstring FlagPath(const char *flagFileName) const;
-	bool IsFlagPresent(const char *flagFileName) const;
-	bool IsModuleAutoDisabled(const char *flagFileName) const;
-	std::string ModuleAutoDisabledReason(const char *flagFileName) const;
-	bool SetFlagPresent(const char *flagFileName, bool present);
-	bool IsTogglePending(const char *flagFileName) const;
+	bool SetDesktopDefaultModuleFlagFileName(const char* flagFileName);
+	std::wstring FlagPath(const char* flagFileName) const;
+	bool IsFlagPresent(const char* flagFileName) const;
+	bool IsModuleAutoDisabled(const char* flagFileName) const;
+	std::string ModuleAutoDisabledReason(const char* flagFileName) const;
+	bool SetFlagPresent(const char* flagFileName, bool present);
+	bool IsTogglePending(const char* flagFileName) const;
 	void TickToggles();
 	void TickStatus();
 	void ClearStatus();
@@ -32,6 +32,6 @@ struct ShellContext
 };
 
 ShellContext CreateShellContext();
-std::string Narrow(const std::wstring &value);
+std::string Narrow(const std::wstring& value);
 
 } // namespace openvr_pair::overlay

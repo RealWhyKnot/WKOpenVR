@@ -11,15 +11,13 @@ inline bool Equals(const char* value, const char* expected)
 
 inline bool NeedsMoreRotation(const char* reason)
 {
-	return Equals(reason, "rotation_no_deltas")
-		|| Equals(reason, "rotation_planar");
+	return Equals(reason, "rotation_no_deltas") || Equals(reason, "rotation_planar");
 }
 
 inline bool NeedsMoreTranslation(const char* reason)
 {
-	return Equals(reason, "translation_no_deltas")
-		|| Equals(reason, "translation_planar")
-		|| Equals(reason, "axis_variance_low");
+	return Equals(reason, "translation_no_deltas") || Equals(reason, "translation_planar") ||
+	       Equals(reason, "axis_variance_low");
 }
 
 inline bool IsMotionQualityGate(const char* reason)

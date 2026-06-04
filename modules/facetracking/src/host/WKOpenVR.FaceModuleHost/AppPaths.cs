@@ -8,27 +8,37 @@ internal static class AppPaths
         if (!string.IsNullOrWhiteSpace(local))
         {
             if (local.EndsWith("Local", StringComparison.OrdinalIgnoreCase))
+            {
                 return local[..^5] + "LocalLow";
+            }
 
             string? parent = Directory.GetParent(local)?.FullName;
             if (!string.IsNullOrWhiteSpace(parent))
+            {
                 return Path.Combine(parent, "LocalLow");
+            }
         }
 
         string? envLocal = Environment.GetEnvironmentVariable("LOCALAPPDATA");
         if (!string.IsNullOrWhiteSpace(envLocal))
         {
             if (envLocal.EndsWith("Local", StringComparison.OrdinalIgnoreCase))
+            {
                 return envLocal[..^5] + "LocalLow";
+            }
 
             string? parent = Directory.GetParent(envLocal)?.FullName;
             if (!string.IsNullOrWhiteSpace(parent))
+            {
                 return Path.Combine(parent, "LocalLow");
+            }
         }
 
         string? userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
         if (!string.IsNullOrWhiteSpace(userProfile))
+        {
             return Path.Combine(userProfile, "AppData", "LocalLow");
+        }
 
         return Path.GetTempPath();
     }

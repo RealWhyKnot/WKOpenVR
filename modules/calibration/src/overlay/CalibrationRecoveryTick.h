@@ -7,9 +7,7 @@
 void TickBaseStationDrift(double now);
 void TickHmdRelocalizationDetector(double now);
 
-void RecoverFromWedgedCalibration(
-	const char* userFacingMessage,
-	const char* recoverReason = "auto_recovery_snap");
+void RecoverFromWedgedCalibration(const char* userFacingMessage, const char* recoverReason = "auto_recovery_snap");
 
 extern spacecal::liveness::TrackerLivenessState g_refLiveness;
 extern spacecal::liveness::TrackerLivenessState g_tgtLiveness;

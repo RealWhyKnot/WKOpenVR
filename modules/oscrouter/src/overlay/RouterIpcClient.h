@@ -10,12 +10,12 @@
 class RouterIpcClient : public openvr_pair::overlay::IpcClientBase
 {
 public:
-    void Connect();
+	void Connect();
 
-    using openvr_pair::overlay::IpcClientBase::Close;
-    using openvr_pair::overlay::IpcClientBase::ConnectionGeneration;
-    using openvr_pair::overlay::IpcClientBase::IsConnected;
-    using openvr_pair::overlay::IpcClientBase::Receive;
-    using openvr_pair::overlay::IpcClientBase::Send;
-    using openvr_pair::overlay::IpcClientBase::SendBlocking;
+	using openvr_pair::overlay::IpcClientBase::Close;
+	using openvr_pair::overlay::IpcClientBase::ConnectionGeneration;
+	using openvr_pair::overlay::IpcClientBase::IsConnected;
+	using openvr_pair::overlay::IpcClientBase::Receive;
+	using openvr_pair::overlay::IpcClientBase::Send;
+	using openvr_pair::overlay::IpcClientBase::SendBlocking;
 };
