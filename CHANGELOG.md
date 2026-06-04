@@ -122,6 +122,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **overlay:** Wait for SteamVR before module sync (0a76cd7)
 - **phantom:** Target vrchat tracker roles (095c119)
 - **facetracking:** Process canonical signal output (617d09a)
+- **inputhealth:** Harden compensation policy (ce9aac8)
+- **smoothing:** Hide smart toggle and test finger smoothing (7c74ca3)
 
 ---
 
