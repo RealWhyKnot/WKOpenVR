@@ -238,14 +238,13 @@ private:
 		// has already vetted that suppressing this device is safe.
 		uint8_t predictionSmoothness = 0;
 
-		// Smart smoothing. When predictionSmoothness > 0 the device's reported
+		// One-euro smoothing. When predictionSmoothness > 0 the device's reported
 		// position -- and, in dev builds with smartEnabled on, rotation -- is run
-		// through a one-euro speed-adaptive low-pass (SmartSmoothingShadowMath.h):
-		// heavy smoothing at rest, little lag in motion, and never frozen. This
-		// is the base smoothing for every user; smartEnabled is the dev-only
-		// experimental switch for the (laggier) rotation low-pass and is ignored
-		// in release builds. All fields below are guarded by stateMutex, same as
-		// predictionSmoothness.
+		// through a speed-adaptive low-pass (SmartSmoothingShadowMath.h): heavy
+		// smoothing at rest, little lag in motion, and never frozen. Position
+		// smoothing is the baseline for every user; smartEnabled is only the
+		// dev-only rotation preview toggle. All fields below are guarded by
+		// stateMutex, same as predictionSmoothness.
 		bool smartEnabled = false;
 
 		// One-euro filter coefficients (slider-derived via BuildParams) + running

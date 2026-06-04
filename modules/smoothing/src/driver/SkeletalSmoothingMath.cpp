@@ -1,6 +1,7 @@
 #include "SkeletalSmoothingMath.h"
 
 #include <cmath>
+#include <cstring>
 
 namespace skeletal::math {
 
@@ -62,6 +63,91 @@ float SmoothnessToAlpha(uint8_t smoothness)
 	if (s < 0.0f)   s = 0.0f;
 	if (s > 100.0f) s = 100.0f;
 	return 1.0f - (s / 100.0f) * 0.95f;
+}
+
+FingerFrameResult SmoothFingerFrame(
+	FingerFrameState& state,
+	const vr::VRBoneTransform_t* input,
+	uint32_t count,
+	int handBase,
+	uint16_t fingerMask,
+	const float alphaPerFinger[kFingersPerHand],
+	vr::VRBoneTransform_t* output)
+{
+	FingerFrameResult result{};
+	if (!input || !output || !alphaPerFinger || count != kFingerBoneCount) {
+		return result;
+	}
+
+	if (!state.initialized) {
+		std::memcpy(state.previous, input, sizeof(state.previous));
+		std::memcpy(output, input, sizeof(state.previous));
+		state.initialized = true;
+		result.seeded = true;
+		return result;
+	}
+
+	for (uint32_t i = 0; i < kFingerBoneCount; ++i) {
+		const int finger = FingerIndexForBone(i);
+		const bool inMask = finger >= 0
+			&& (((fingerMask >> (handBase + finger)) & 1u) != 0);
+		if (!inMask) {
+			output[i] = input[i];
+			state.previous[i] = input[i];
+			continue;
+		}
+
+		if (state.reseed_pending[finger]) {
+			output[i] = input[i];
+			state.previous[i] = input[i];
+			result.reseeded = true;
+			continue;
+		}
+
+		const float alpha = alphaPerFinger[finger];
+		if (alpha >= 1.0f) {
+			output[i] = input[i];
+			state.previous[i] = input[i];
+			continue;
+		}
+
+		const auto& in = input[i];
+		const auto& prev = state.previous[i];
+		vr::VRBoneTransform_t out{};
+		out.position.v[0] = Lerpf(prev.position.v[0], in.position.v[0], alpha);
+		out.position.v[1] = Lerpf(prev.position.v[1], in.position.v[1], alpha);
+		out.position.v[2] = Lerpf(prev.position.v[2], in.position.v[2], alpha);
+		out.position.v[3] = in.position.v[3];
+		out.orientation = SlerpQuat(prev.orientation, in.orientation, alpha);
+
+		const float dx = out.position.v[0] - prev.position.v[0];
+		const float dy = out.position.v[1] - prev.position.v[1];
+		const float dz = out.position.v[2] - prev.position.v[2];
+		const float posDelta = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (posDelta > result.maxPosDelta) {
+			result.maxPosDelta = posDelta;
+			result.maxPosDeltaBone = static_cast<int>(i);
+		}
+
+		const float qd = out.orientation.w * prev.orientation.w
+			+ out.orientation.x * prev.orientation.x
+			+ out.orientation.y * prev.orientation.y
+			+ out.orientation.z * prev.orientation.z;
+		const float absQd = qd < 0.0f ? -qd : qd;
+		if (absQd < result.minQuatDot) {
+			result.minQuatDot = absQd;
+			result.minQuatDotBone = static_cast<int>(i);
+		}
+
+		output[i] = out;
+		state.previous[i] = out;
+		result.appliedSmoothing = true;
+	}
+
+	for (int f = 0; f < kFingersPerHand; ++f) {
+		state.reseed_pending[f] = false;
+	}
+	return result;
 }
 
 } // namespace skeletal::math

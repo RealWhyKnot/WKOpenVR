@@ -58,9 +58,9 @@ void TryInstallPublicHooks(void *iface);
 // UpdateSkeleton frame for each finger whose bit is set in `fingerBits`.
 // Bit layout matches finger_mask: bits 0..4 = left thumb..pinky, 5..9 = right.
 //
-// The reseed makes the next call snap state.previous to the live raw input
+// The reseed makes the next call snap frame.previous to the live raw input
 // for those bones instead of slerping from the existing cached value. Used
-// by the IPC config handler to avoid a "stale state.previous -> spasm"
+// by the IPC config handler to avoid a "stale frame.previous -> spasm"
 // transient when a finger transitions from passthrough (effective
 // smoothness 0 / mask bit clear) to actively smoothed. Internally guarded
 // by the same mutex as the per-hand state buffer.

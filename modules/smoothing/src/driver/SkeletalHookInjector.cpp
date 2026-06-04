@@ -32,25 +32,17 @@
 // can race the clear.
 static ServerTrackedDeviceProvider *g_driver = nullptr;
 
-// Per-hand smoothing state. Index 0 = left, 1 = right. The "previous" buffer
-// is the last bone array we wrote out for that hand -- the next frame's slerp
-// target is the raw incoming pose, with the previous as the source.
+// Per-hand smoothing state. Index 0 = left, 1 = right. Frame data is kept in
+// a pure helper state so the per-bone smoothing behavior can be tested without
+// a live IVRDriverInput hook.
 struct HandState
 {
-    bool                  initialized = false;
-    // Per-finger "snap the next smoothed frame to live input" bits. Bits map
-    // 0..4 = thumb..pinky for this hand. Set by MarkFingersNeedReseed in
-    // response to IPC config transitions (a finger going from passthrough to
-    // smoothed). Cleared at the end of the bone loop after one frame -- one
-    // frame of snap is enough to overwrite state.previous with the live pose
-    // before the slerp loop resumes its normal blend.
-    bool                  reseed_pending[5] = {};
-    vr::VRBoneTransform_t previous[31] = {};
+    skeletal::math::FingerFrameState frame;
 
     // Steady-state motion diagnostic. Track worst per-bone output delta across
     // the 30 s stats window so the next jitter report has a signature in the
     // log without needing a fresh repro. Captures continuous artefacts (stream
-    // interleave, slerp amplifying upstream noise, stale state.previous causing
+    // interleave, slerp amplifying upstream noise, stale prior output causing
     // repeated snap-blend) that the enable-transition diagnostic doesn't see,
     // because that one stops 30 frames after the false->true toggle and the
     // user's jitter typically shows up much later in a session.
@@ -145,8 +137,8 @@ static std::atomic<bool>     g_firstCreateSkeletonLogged{false};
 //
 // What the lines record:
 //   - On transition: alpha-per-finger array, plus the first wrist + thumb-meta
-//     + index-meta bones so we can compare the seeded state.previous against
-//     the live pTransforms (would surface "state.previous holds stale data").
+//     + index-meta bones so we can compare the seeded frame.previous against
+//     the live pTransforms (would surface stale previous-frame data).
 //   - Each post-enable sample: max per-bone position delta vs prior frame, and
 //     the worst (smallest) quaternion dot product across all 31 bones, which
 //     flags spinning / sign-flipped slerp.
@@ -197,7 +189,7 @@ static void MaybeLogStats(const char *callerTag)
 
     // Steady-state motion diagnostic. Worst per-bone output deltas over the
     // same window. Healthy slerp running on a still hand: pos delta near zero,
-    // quat dot near 1. Interleaved streams or stale state.previous: pos delta
+    // quat dot near 1. Interleaved streams or stale prior output: pos delta
     // jumps (centimetres per frame) and quat dot drops (single-frame rotations
     // tens of degrees). Zero/identity values mean smoothing didn't run on any
     // bone in the window (smoothness=0 or finger mask all clear). Reset under
@@ -260,8 +252,8 @@ static void MaybeLogDeepState(const char *callerTag)
     bool l_init, r_init;
     {
         std::lock_guard<std::mutex> lk(g_handStateMutex);
-        l_init = g_handState[0].initialized;
-        r_init = g_handState[1].initialized;
+        l_init = g_handState[0].frame.initialized;
+        r_init = g_handState[1].frame.initialized;
     }
     double l_hz = (double)l_total / elapsedSec;
     double r_hz = (double)r_total / elapsedSec;
@@ -395,7 +387,7 @@ static vr::EVRInputError DetourPublicCreateSkeletonComponent(
             // the slerp blends frames from stream A against the prior
             // output from stream B, the smoothed output oscillates, and
             // the user sees finger jitter that disappears with
-            // smoothness=0 (passthrough does not consult state.previous,
+            // smoothness=0 (passthrough does not consult prior output,
             // so there's no interleave to amplify).
             size_t evicted = 0;
             for (auto it = g_handleToHandedness.begin(); it != g_handleToHandedness.end(); ) {
@@ -415,7 +407,7 @@ static vr::EVRInputError DetourPublicCreateSkeletonComponent(
             // A re-create for the same hand needs to re-seed from incoming.
             // Mark uninitialised so the first UpdateSkeleton after this snaps
             // to the new pose instead of slerp-blending out of stale state.
-            g_handState[handedness].initialized = false;
+            g_handState[handedness].frame.initialized = false;
             // Reset the verbose-call counter for this hand so the user sees
             // detailed dumps after a re-create (driver reload, hand reconnect).
             g_verboseCallsRemaining[handedness].store(kVerboseFirstCalls);
@@ -551,7 +543,8 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
         uint8_t s = cfg.per_finger_smoothness[handBase + f];
         if (s == 0) s = cfg.smoothness;
         alphaPerFinger[f] = skeletal::math::SmoothnessToAlpha(s);
-        if (s != 0) anySmoothing = true;
+        const bool fingerEnabled = ((cfg.finger_mask >> (handBase + f)) & 1u) != 0;
+        if (s != 0 && fingerEnabled) anySmoothing = true;
     }
 
     // Detect anySmoothing transitions for enable-diagnostic logging. Cheap atomic
@@ -579,16 +572,16 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
         HandState &state = g_handState[handedness];
 
         if (anySmoothing && !prevAnySmoothing) {
-            // False->true transition: log alpha + seeded state.previous vs the
-            // live input so we can see if state.previous is stale at the moment
+            // False->true transition: log alpha + seeded frame.previous vs the
+            // live input so we can see if previous-frame data is stale at the moment
             // smoothing kicks in. Bones 1, 2, 7 = wrist, thumb-meta, index-meta
             // -- three reference points without dumping all 31 bones.
             const auto &p1 = pTransforms[1];
             const auto &p2 = pTransforms[2];
             const auto &p7 = pTransforms[7];
-            const auto &s1 = state.previous[1];
-            const auto &s2 = state.previous[2];
-            const auto &s7 = state.previous[7];
+            const auto &s1 = state.frame.previous[1];
+            const auto &s2 = state.frame.previous[2];
+            const auto &s7 = state.frame.previous[7];
             LOG("[smoothing-diag] enable transition on %s hand: alpha=[%.3f %.3f %.3f %.3f %.3f] "
                 "init=%d prev_bone1=(%.3f,%.3f,%.3f) in_bone1=(%.3f,%.3f,%.3f) "
                 "prev_bone2=(%.3f,%.3f,%.3f) in_bone2=(%.3f,%.3f,%.3f) "
@@ -596,7 +589,7 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
                 handedness == 0 ? "left" : "right",
                 alphaPerFinger[0], alphaPerFinger[1], alphaPerFinger[2],
                 alphaPerFinger[3], alphaPerFinger[4],
-                (int)state.initialized,
+                (int)state.frame.initialized,
                 s1.position.v[0], s1.position.v[1], s1.position.v[2],
                 p1.position.v[0], p1.position.v[1], p1.position.v[2],
                 s2.position.v[0], s2.position.v[1], s2.position.v[2],
@@ -607,81 +600,21 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(
             g_postEnableSnap[handedness].valid = false;
         }
 
-        if (!state.initialized) {
-            // First frame for this hand: seed previous-state from the incoming
-            // pose and forward unmodified. Avoids a visible "snap from
-            // identity quaternion" on the first call after CreateSkeleton.
-            std::memcpy(state.previous, pTransforms, sizeof(state.previous));
-            std::memcpy(smoothed,        pTransforms, sizeof(smoothed));
-            state.initialized = true;
-        } else {
-            for (uint32_t i = 0; i < 31; ++i) {
-                int finger = skeletal::math::FingerIndexForBone(i);
-                bool inMask = finger >= 0 && (((cfg.finger_mask >> (handBase + finger)) & 1u) != 0);
-                if (!inMask) {
-                    smoothed[i] = pTransforms[i];
-                    state.previous[i] = pTransforms[i];
-                    continue;
-                }
-                // Reseed transition: a finger that wasn't smoothed last frame
-                // (mask bit was off, or effective smoothness was 0, or fresh
-                // IPC reconnect) needs state.previous reseeded from the live
-                // input to avoid blending against a stale cached value on the
-                // first smoothed frame. One frame of snap-to-raw, then the
-                // slerp loop resumes normal behaviour.
-                if (finger >= 0 && state.reseed_pending[finger]) {
-                    smoothed[i] = pTransforms[i];
-                    state.previous[i] = pTransforms[i];
-                    continue;
-                }
-                const float alpha = alphaPerFinger[finger];
-                if (alpha >= 1.0f) {
-                    // Effective smoothness 0 -> passthrough this finger.
-                    smoothed[i] = pTransforms[i];
-                    state.previous[i] = pTransforms[i];
-                    continue;
-                }
-                const auto &in   = pTransforms[i];
-                const auto &prev = state.previous[i];
-                vr::VRBoneTransform_t out{};
-                out.position.v[0] = skeletal::math::Lerpf(prev.position.v[0], in.position.v[0], alpha);
-                out.position.v[1] = skeletal::math::Lerpf(prev.position.v[1], in.position.v[1], alpha);
-                out.position.v[2] = skeletal::math::Lerpf(prev.position.v[2], in.position.v[2], alpha);
-                out.position.v[3] = in.position.v[3];
-                out.orientation   = skeletal::math::SlerpQuat(prev.orientation, in.orientation, alpha);
-
-                // Steady-state delta tracking: compute before we overwrite
-                // state.previous[i] with `out` below, so `prev` is still the
-                // last frame's output. Posdelta in metres, quatdot is |dot|.
-                // Already inside g_handStateMutex so the running max is safe
-                // to update with plain stores.
-                const float dx = out.position.v[0] - prev.position.v[0];
-                const float dy = out.position.v[1] - prev.position.v[1];
-                const float dz = out.position.v[2] - prev.position.v[2];
-                const float posDelta = std::sqrt(dx*dx + dy*dy + dz*dz);
-                if (posDelta > state.windowMaxPosDelta) {
-                    state.windowMaxPosDelta     = posDelta;
-                    state.windowMaxPosDeltaBone = (int)i;
-                }
-                const float qd = out.orientation.w * prev.orientation.w
-                               + out.orientation.x * prev.orientation.x
-                               + out.orientation.y * prev.orientation.y
-                               + out.orientation.z * prev.orientation.z;
-                const float absQd = qd < 0.0f ? -qd : qd;
-                if (absQd < state.windowMinQuatDot) {
-                    state.windowMinQuatDot     = absQd;
-                    state.windowMinQuatDotBone = (int)i;
-                }
-
-                smoothed[i]       = out;
-                state.previous[i] = out;
-            }
-            // One frame of reseed is enough; clear after the bone loop so the
-            // next call resumes normal slerp. Doing this at end-of-loop avoids
-            // half-clearing a finger that has multiple bones still in flight.
-            for (int f = 0; f < 5; ++f) {
-                state.reseed_pending[f] = false;
-            }
+        const auto frameResult = skeletal::math::SmoothFingerFrame(
+            state.frame,
+            pTransforms,
+            unTransformCount,
+            handBase,
+            cfg.finger_mask,
+            alphaPerFinger,
+            smoothed);
+        if (frameResult.maxPosDelta > state.windowMaxPosDelta) {
+            state.windowMaxPosDelta = frameResult.maxPosDelta;
+            state.windowMaxPosDeltaBone = frameResult.maxPosDeltaBone;
+        }
+        if (frameResult.minQuatDot < state.windowMinQuatDot) {
+            state.windowMinQuatDot = frameResult.minQuatDot;
+            state.windowMinQuatDotBone = frameResult.minQuatDotBone;
         }
 
         // Post-enable sample log: every kPostEnableLogStride frames after a
@@ -743,9 +676,7 @@ void Init(ServerTrackedDeviceProvider *driver)
         std::lock_guard<std::mutex>         slk(g_handStateMutex);
         g_handleToHandedness.clear();
         for (int h = 0; h < 2; ++h) {
-            g_handState[h].initialized = false;
-            std::memset(g_handState[h].previous, 0, sizeof(g_handState[h].previous));
-            std::memset(g_handState[h].reseed_pending, 0, sizeof(g_handState[h].reseed_pending));
+            g_handState[h].frame = {};
             g_handState[h].windowMaxPosDelta     = 0.0f;
             g_handState[h].windowMaxPosDeltaBone = -1;
             g_handState[h].windowMinQuatDot      = 1.0f;
@@ -794,8 +725,7 @@ void Shutdown()
         std::lock_guard<std::mutex>         slk(g_handStateMutex);
         g_handleToHandedness.clear();
         for (int h = 0; h < 2; ++h) {
-            g_handState[h].initialized = false;
-            std::memset(g_handState[h].reseed_pending, 0, sizeof(g_handState[h].reseed_pending));
+            g_handState[h].frame = {};
             g_postEnableSnap[h].valid = false;
             g_postEnableFramesLeft[h].store(0, std::memory_order_relaxed);
             g_lastAnySmoothing[h].store(false, std::memory_order_relaxed);
@@ -810,7 +740,7 @@ void MarkFingersNeedReseed(uint16_t fingerBits)
     for (int h = 0; h < 2; ++h) {
         for (int f = 0; f < 5; ++f) {
             if ((fingerBits >> (h * 5 + f)) & 1u) {
-                g_handState[h].reseed_pending[f] = true;
+                g_handState[h].frame.reseed_pending[f] = true;
             }
         }
     }

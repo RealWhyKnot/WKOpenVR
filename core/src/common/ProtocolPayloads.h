@@ -172,14 +172,11 @@
 	{
 		uint32_t openVRID;
 		uint8_t  predictionSmoothness;   // 0..100, see SetDeviceTransform notes
-		// Smart smoothing: when non-zero, the driver treats
-		// predictionSmoothness as the maximum strength to apply when the
-		// device is stationary, and rolls it off toward 0 as the device's
-		// linear or angular velocity rises. Stationary jitter is suppressed;
-		// real motion (walking, fast aim) is not damped. 0 = static
-		// behaviour (predictionSmoothness applied uniformly, prior wire
-		// semantics). 1 = adaptive. Old overlays leave this byte zero so
-		// they get the prior behaviour automatically.
+		// Compatibility flag for the former smart-smoothing toggle. Position
+		// smoothing now always uses the speed-adaptive one-euro filter for
+		// nonzero predictionSmoothness. Dev builds may use this byte to preview
+		// rotation filtering; release builds keep raw rotation. Old overlays
+		// may leave this byte zero without changing position smoothing.
 		uint8_t  smart_enabled;
 		uint8_t  _reserved[2];           // pad to 8-byte alignment; must be 0
 	};

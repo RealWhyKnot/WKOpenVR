@@ -26,15 +26,10 @@ struct SmoothingConfig
     // update time.
     std::unordered_map<std::string, int> trackerSmoothness;
 
-    // Smart smoothing master toggle. When true, the driver treats each
-    // tracker's trackerSmoothness value as a maximum strength to apply
-    // when the device is stationary, and rolls it off toward 0 as the
-    // device's linear or angular velocity rises. Resting jitter still
-    // gets damped; real motion (walking, fast aim) does not. When false
-    // the slider behaves uniformly as before. One global flag rather
-    // than per-tracker -- "make smoothing smart" is a single decision
-    // for the typical user; per-device tuning still works through the
-    // existing slider going to 0.
+    // Compatibility key for the old smart-smoothing toggle. Position smoothing
+    // now always uses the speed-adaptive one-euro filter whenever a tracker
+    // smoothness value is nonzero. Dev builds still forward this flag to preview
+    // rotation filtering; release builds hide the control and keep raw rotation.
     bool smart_smoothing = false;
 };
 

@@ -6,6 +6,7 @@
 
 #include "SmoothingPlugin.h"
 
+#include "BuildChannel.h"
 #include "CalibrationAnchor.h"
 #include "DebugLogging.h"
 #include "DeviceFilters.h"
@@ -122,10 +123,9 @@ void SmoothingPlugin::SendDevicePrediction(uint32_t openVRID, int smoothness)
 	protocol::Request req(protocol::RequestSetDevicePrediction);
 	req.setDevicePrediction.openVRID = openVRID;
 	req.setDevicePrediction.predictionSmoothness = (uint8_t)smoothness;
-	// Smart flag rides with every per-device push; the driver caches it
-	// alongside predictionSmoothness and only consumes it when smoothness
-	// is non-zero, so sending it for clear-to-zero calls is harmless and
-	// keeps the wire path uniform.
+	// Compatibility flag rides with every per-device push. Position smoothing is
+	// always one-euro for nonzero smoothness; dev builds may use this flag for
+	// rotation filtering, and release builds ignore it.
 	req.setDevicePrediction.smart_enabled = cfg_.smart_smoothing ? 1 : 0;
 	req.setDevicePrediction._reserved[0] = 0;
 	req.setDevicePrediction._reserved[1] = 0;
@@ -306,30 +306,29 @@ void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext &context)
 
 void SmoothingPlugin::DrawSettingsTab()
 {
+#if WKOPENVR_BUILD_IS_DEV
 	bool smart = cfg_.smart_smoothing;
 	openvr_pair::overlay::ui::DrawSettingTable("smoothing_general_settings", 160.0f,
 		[&](openvr_pair::overlay::ui::SettingTableScope &table) {
-			openvr_pair::overlay::ui::SettingRow(table, "Smart smoothing", [&] {
+			openvr_pair::overlay::ui::SettingRow(table, "Rotation smoothing preview", [&] {
 				if (openvr_pair::overlay::ui::CheckboxWithTooltip(
 						"##smart_smoothing", &smart,
-						"Adapts the prediction strength to how much each tracker is moving.\n"
-						"Stationary: full slider strength (kills resting jitter when holding\n"
-						"or aiming the controller).\n"
-						"Walking / fast aim: relaxed toward 0 (no judder, no lag).\n"
-						"Affects prediction only -- finger smoothing is unchanged.")) {
+						"Filters tracker rotation in dev builds while the one-euro\n"
+						"position filter remains the baseline for every nonzero\n"
+						"prediction smoothness value. Release builds keep raw rotation.\n"
+						"Finger smoothing is unchanged.")) {
 					cfg_.smart_smoothing = smart;
 					SaveConfig(cfg_);
-					// Push the new flag down to every device that already has a saved
-					// per-tracker value. ReplayDevicePredictions walks the saved map
-					// and calls SendDevicePrediction, which now carries cfg_.smart_smoothing
-					// alongside each device's smoothness. Devices without a saved value
-					// pick up the flag the first time the user touches their slider.
+					// Push the dev rotation-preview flag down to every device that
+					// already has a saved per-tracker value. Devices without a saved
+					// value pick up the flag the first time the user touches their slider.
 					ReplayDevicePredictions(smart ? "smart-toggle-on" : "smart-toggle-off");
-					SM_LOG("[smart] master toggle set to %s", smart ? "on" : "off");
+					SM_LOG("[smart] rotation preview set to %s", smart ? "on" : "off");
 				}
 			});
 		});
 	ImGui::Spacing();
+#endif
 
 	openvr_pair::overlay::ui::DrawSectionHeading("Prediction");
 	DrawPredictionTab();
