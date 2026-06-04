@@ -425,6 +425,85 @@ private:
     uint64_t diag_osc_deduped_ = 0;
     uint64_t diag_osc_remapped_ = 0;
 
+    FaceOscPublishCounts MaybePublishOsc(
+        const protocol::FaceTrackingConfig &cfg,
+        const protocol::FaceTrackingFrameBody &frame,
+        bool eye_valid,
+        bool expr_nonzero)
+    {
+        const bool osc_enabled = (cfg.output_osc_enabled != 0);
+        if (osc_enabled != osc_was_enabled_) {
+            if (osc_enabled) {
+                FT_LOG_DRV("[facetracking] OSC output enabled", 0);
+                osc_first_publish_ = false;
+            } else {
+                FT_LOG_DRV("[facetracking] OSC output disabled", 0);
+            }
+            osc_was_enabled_ = osc_enabled;
+        }
+
+        FaceOscPublishCounts counts{};
+        if (!osc_enabled) return counts;
+
+        bool has_nonzero = expr_nonzero;
+        if (eye_valid) {
+            has_nonzero = has_nonzero ||
+                frame.eye_openness_l != 0.f || frame.eye_openness_r != 0.f;
+        }
+
+        if (!has_nonzero) {
+            if (++all_zero_frames_ >= 60 && !all_zero_warned_) {
+                FT_LOG_DRV("[facetracking] expression frame all-zero for 60+ frames -- module may not be delivering data", 0);
+                all_zero_warned_ = true;
+            }
+        } else {
+            all_zero_frames_ = 0;
+            all_zero_warned_ = false;
+        }
+
+        if (osc_filter_.ReloadIfChanged()) {
+            FT_LOG_DRV("[facetracking] avatar OSC allowlist status=%s addresses=%u",
+                FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()),
+                (unsigned)osc_filter_.AllowedCount());
+        }
+
+        counts = PublishFaceFrameOsc(frame, &osc_filter_);
+        osc_messages_sent_ += counts.sent;
+        osc_messages_dropped_ += counts.dropped;
+
+        if (!osc_first_publish_ && counts.attempted > 0) {
+            FT_LOG_DRV("[facetracking] first OSC publish: attempted=%u sent=%u drop=%u "
+                       "filtered=%u deduped=%u remapped=%u JawOpen=%.3f LeftEyeLid=%.3f flags=0x%x",
+                (unsigned)counts.attempted,
+                (unsigned)counts.sent,
+                (unsigned)counts.dropped,
+                (unsigned)counts.filtered,
+                (unsigned)counts.deduped,
+                (unsigned)counts.remapped,
+                frame.expressions[26], // index 26 = JawOpen
+                frame.eye_openness_l,
+                (unsigned)frame.flags);
+            osc_first_publish_ = true;
+        }
+
+        return counts;
+    }
+
+    void ResetDebugPeriodCounters()
+    {
+        diag_frames_ = 0;
+        diag_eye_valid_ = 0;
+        diag_expr_valid_ = 0;
+        diag_zero_expr_ = 0;
+        diag_read_failures_ = 0;
+        diag_osc_attempted_ = 0;
+        diag_osc_sent_ = 0;
+        diag_osc_dropped_ = 0;
+        diag_osc_filtered_ = 0;
+        diag_osc_deduped_ = 0;
+        diag_osc_remapped_ = 0;
+    }
+
     // -----------------------------------------------------------------------
     // Worker thread: polls shmem, runs the filter pipeline, publishes.
     // -----------------------------------------------------------------------
@@ -584,71 +663,15 @@ private:
                 native_unavailable_warned_ = true;
             }
 
-            // Forward face data to the OSC router. PublishOsc is non-blocking
-            // and returns false silently when the router is not active, so
-            // gating on output_osc_enabled is the only check we need here.
-            const bool osc_enabled = (cfg.output_osc_enabled != 0);
-            if (osc_enabled != osc_was_enabled_) {
-                if (osc_enabled) {
-                    FT_LOG_DRV("[facetracking] OSC output enabled", 0);
-                    osc_first_publish_ = false;
-                } else {
-                    FT_LOG_DRV("[facetracking] OSC output disabled", 0);
-                }
-                osc_was_enabled_ = osc_enabled;
-            }
-
             FaceOscPublishCounts counts{};
             const bool debug_logging_enabled = openvr_pair::common::IsDebugLoggingEnabled();
             bool expr_nonzero = false;
-            if ((osc_enabled || debug_logging_enabled) && expr_valid) {
+            if ((cfg.output_osc_enabled != 0 || debug_logging_enabled) && expr_valid) {
                 for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
                     if (frame.expressions[i] != 0.f) { expr_nonzero = true; break; }
                 }
             }
-            if (osc_enabled) {
-                // All-zero expression guard.
-                bool has_nonzero = expr_nonzero;
-                if (eye_valid) {
-                    has_nonzero = has_nonzero ||
-                        frame.eye_openness_l != 0.f || frame.eye_openness_r != 0.f;
-                }
-
-                if (!has_nonzero) {
-                    if (++all_zero_frames_ >= 60 && !all_zero_warned_) {
-                        FT_LOG_DRV("[facetracking] expression frame all-zero for 60+ frames -- module may not be delivering data", 0);
-                        all_zero_warned_ = true;
-                    }
-                } else {
-                    all_zero_frames_ = 0;
-                    all_zero_warned_ = false;
-                }
-
-                if (osc_filter_.ReloadIfChanged()) {
-                    FT_LOG_DRV("[facetracking] avatar OSC allowlist status=%s addresses=%u",
-                        FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()),
-                        (unsigned)osc_filter_.AllowedCount());
-                }
-
-                counts = PublishFaceFrameOsc(frame, &osc_filter_);
-                osc_messages_sent_ += counts.sent;
-                osc_messages_dropped_ += counts.dropped;
-
-                if (!osc_first_publish_ && counts.attempted > 0) {
-                    FT_LOG_DRV("[facetracking] first OSC publish: attempted=%u sent=%u drop=%u "
-                               "filtered=%u deduped=%u remapped=%u JawOpen=%.3f LeftEyeLid=%.3f flags=0x%x",
-                        (unsigned)counts.attempted,
-                        (unsigned)counts.sent,
-                        (unsigned)counts.dropped,
-                        (unsigned)counts.filtered,
-                        (unsigned)counts.deduped,
-                        (unsigned)counts.remapped,
-                        frame.expressions[26], // index 26 = JawOpen
-                        frame.eye_openness_l,
-                        (unsigned)frame.flags);
-                    osc_first_publish_ = true;
-                }
-            }
+            counts = MaybePublishOsc(cfg, frame, eye_valid, expr_nonzero);
 
             if (debug_logging_enabled) {
                 ++diag_frames_;
@@ -737,17 +760,7 @@ private:
                                frame.eye_openness_r,
                                frame.pupil_dilation_l,
                                frame.pupil_dilation_r);
-                    diag_frames_ = 0;
-                    diag_eye_valid_ = 0;
-                    diag_expr_valid_ = 0;
-                    diag_zero_expr_ = 0;
-                    diag_read_failures_ = 0;
-                    diag_osc_attempted_ = 0;
-                    diag_osc_sent_ = 0;
-                    diag_osc_dropped_ = 0;
-                    diag_osc_filtered_ = 0;
-                    diag_osc_deduped_ = 0;
-                    diag_osc_remapped_ = 0;
+                    ResetDebugPeriodCounters();
                     last_diag_log_ = diag_now;
                 }
             }

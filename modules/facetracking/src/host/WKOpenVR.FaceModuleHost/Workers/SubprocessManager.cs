@@ -715,31 +715,12 @@ public sealed class SubprocessManager : IDisposable
             // wire; the driver remaps to our 63-slot ordering on read.
             float[] upstreamShapes = new float[FrameWriter.UpstreamShapeCount];
             var eyeSink  = new EyeFrameSink();
-            long frameNum         = 0;
-            int  noDataRun        = 0;
-            int  zeroRunFrames    = 0;
-            bool firstNonZero     = false;
-            bool sawExpressionData = false;
-            bool sawEyeData        = false;
-            bool firstInvalidSignal = false;
-            var  dataPeriodSw     = Stopwatch.StartNew();
-            long framesInPeriod   = 0;
-            float lastJawOpen     = 0f;
-            long invalidExprSignalsInPeriod = 0;
-            long invalidEyeSignalsInPeriod  = 0;
-            long clampedSignalsInPeriod     = 0;
-            long staleUpdateReusesInPeriod   = 0;
-            long replyUpdatesAtPeriodStart   = Interlocked.Read(ref _replyUpdatesReceived);
-            int lastValidExprSignals = 0;
-            int lastValidEyeSignals = 0;
-            int lastNonZeroShapes = 0;
-            float lastLeftEyeLid = 0f;
-            float lastRightEyeLid = 0f;
-            Vector3 lastLeftGaze = default;
-            float lastPupilLeft = 0f;
-            float lastPupilRight = 0f;
-            var  lastUpdateTime   = DateTime.UtcNow;
-            ReplyUpdatePacket? lastProcessedUpdate = null;
+            var diag = new PullLoopDiagnostics(
+                _logger,
+                module.Manifest.Name,
+                proc.Id,
+                upstreamShapes.Length,
+                Interlocked.Read(ref _replyUpdatesReceived));
 
             _logger.Info($"[ftp/data] pull loop started for {module.Manifest.Name} PID={proc.Id}");
             SetPhase("publishing-frames");
@@ -771,18 +752,16 @@ public sealed class SubprocessManager : IDisposable
                 if (snap is null)
                 {
                     // Warn if no update has arrived for >2s while subprocess is still alive.
-                    if ((DateTime.UtcNow - lastUpdateTime).TotalSeconds > 2.0 && !active.Exited)
+                    var noReplyNow = DateTime.UtcNow;
+                    if (diag.ShouldWarnNoReply(noReplyNow) && !active.Exited)
                     {
                         _logger.Warn($"[ftp/data] no ReplyUpdate from subprocess for >2s; " +
                                      $"subprocess alive={!active.Exited} pid={proc.Id}");
-                        lastUpdateTime = DateTime.UtcNow; // reset to avoid log spam
+                        diag.MarkNoReplyWarning(noReplyNow);
                     }
                     continue;
                 }
-                lastUpdateTime = DateTime.UtcNow;
-                if (ReferenceEquals(snap, lastProcessedUpdate))
-                    staleUpdateReusesInPeriod++;
-                lastProcessedUpdate = snap;
+                diag.RecordReply(snap, DateTime.UtcNow);
 
                 var decoded = snap.DecodedData;
                 float[]? shapes = decoded.GetExpressionShapes();
@@ -806,7 +785,6 @@ public sealed class SubprocessManager : IDisposable
                         }
                     }
                 }
-                if (validExprSignals > 0) sawExpressionData = true;
 
                 // Eye data.
                 int validEyeSignals = 0;
@@ -907,98 +885,30 @@ public sealed class SubprocessManager : IDisposable
                 {
                     invalidEyeSignals++;
                 }
-                if (validEyeSignals > 0) sawEyeData = true;
-                invalidExprSignalsInPeriod += invalidExprSignals;
-                invalidEyeSignalsInPeriod += invalidEyeSignals;
-                clampedSignalsInPeriod += clampedSignals;
+                diag.RecordSignalStats(
+                    validExprSignals,
+                    invalidExprSignals,
+                    validEyeSignals,
+                    invalidEyeSignals,
+                    clampedSignals);
 
-                if (!firstInvalidSignal && (invalidExprSignals > 0 || invalidEyeSignals > 0))
-                {
-                    firstInvalidSignal = true;
-                    _logger.Warn($"[ftp/data] invalid upstream signal(s) ignored: frame={frameNum + 1} " +
-                                 $"expr_invalid={invalidExprSignals} eye_invalid={invalidEyeSignals} " +
-                                 $"valid_expr={validExprSignals} valid_eye={validEyeSignals}");
-                }
-
-                frameNum++;
-                framesInPeriod++;
-                // Telemetry runs against the upstream array directly now.
-                // Upstream's JawOpen index is 22 (UnifiedExpressions.JawOpen).
-                ReadOnlySpan<float> s = upstreamShapes;
-                int nonZero = 0;
-                foreach (float v in s) if (v != 0f) nonZero++;
-                const int kUpstreamJawOpenIndex = 22;
-                float jawOpen = s.Length > kUpstreamJawOpenIndex
-                    ? s[kUpstreamJawOpenIndex]
-                    : 0f;
-                lastJawOpen = jawOpen;
-                lastValidExprSignals = validExprSignals;
-                lastValidEyeSignals = validEyeSignals;
-                lastNonZeroShapes = nonZero;
-                lastLeftEyeLid = eyeSink.LeftOpenness;
-                lastRightEyeLid = eyeSink.RightOpenness;
-                lastLeftGaze = eyeSink.Left.DirHmd;
-                lastPupilLeft = eyeSink.PupilDilationLeft;
-                lastPupilRight = eyeSink.PupilDilationRight;
-
-                bool currentFrameHasEyeData = validEyeSignals > 0;
-                bool currentFrameHasData = nonZero > 0 || currentFrameHasEyeData;
+                bool currentFrameHasData = diag.RecordFrame(
+                    upstreamShapes,
+                    eyeSink,
+                    validExprSignals,
+                    validEyeSignals);
 
                 if (currentFrameHasData)
                     Interlocked.Increment(ref _framesWithData);
 
-                if (nonZero > 0 && !firstNonZero)
-                {
-                    firstNonZero = true;
-                    _logger.Info($"[ftp/data] first non-zero shapes: frame={frameNum} " +
-                                 $"nonZeroShapes={nonZero}/{s.Length} validExprSignals={validExprSignals} " +
-                                 $"jawOpen={jawOpen:F3} leftEyeLid={eyeSink.LeftOpenness:F3}");
-                }
-
-                if (!currentFrameHasData)
-                {
-                    noDataRun++;
-                    zeroRunFrames++;
-                    if (noDataRun % 60 == 0)
-                        _logger.Warn($"[ftp/data] no-data for {noDataRun} frames " +
-                                     $"(module={module.Manifest.Name} pid={proc.Id})");
-                }
-                else
-                {
-                    noDataRun = 0;
-                }
-
-                // 5-second throughput report.
-                if (dataPeriodSw.Elapsed.TotalSeconds >= 5.0)
-                {
-                    long replyUpdatesNow = Interlocked.Read(ref _replyUpdatesReceived);
-                    long replyUpdatesInPeriod = replyUpdatesNow - replyUpdatesAtPeriodStart;
-                    long noPortDrops = Interlocked.Read(ref _sendDroppedNoPort);
-                    _logger.Info($"[ftp/data] period: published {framesInPeriod} frames in last " +
-                                 $"{dataPeriodSw.Elapsed.TotalSeconds:F1}s; lastJawOpen={lastJawOpen:F3}; " +
-                                 $"consecutive_zero_frames={zeroRunFrames}; " +
-                                 $"invalid_expr={invalidExprSignalsInPeriod}; invalid_eye={invalidEyeSignalsInPeriod}; " +
-                                 $"clamped={clampedSignalsInPeriod}; reply_updates={replyUpdatesInPeriod}; " +
-                                 $"stale_reuses={staleUpdateReusesInPeriod}; no_port_drops_total={noPortDrops}; " +
-                                 $"last_nonzero={lastNonZeroShapes}/{s.Length}; " +
-                                 $"last_valid_expr={lastValidExprSignals}; last_valid_eye={lastValidEyeSignals}; " +
-                                 $"last_eye=({lastLeftEyeLid:F3},{lastRightEyeLid:F3}); " +
-                                 $"last_gazeL=({lastLeftGaze.X:F3},{lastLeftGaze.Y:F3}); " +
-                                 $"last_pupil=({lastPupilLeft:F3},{lastPupilRight:F3})");
-                    framesInPeriod = 0;
-                    zeroRunFrames  = 0;
-                    invalidExprSignalsInPeriod = 0;
-                    invalidEyeSignalsInPeriod = 0;
-                    clampedSignalsInPeriod = 0;
-                    staleUpdateReusesInPeriod = 0;
-                    replyUpdatesAtPeriodStart = replyUpdatesNow;
-                    dataPeriodSw.Restart();
-                }
+                diag.MaybeLogPeriod(
+                    Interlocked.Read(ref _replyUpdatesReceived),
+                    Interlocked.Read(ref _sendDroppedNoPort));
 
                 await writer.PublishAsync(
                     eyeSink, upstreamShapes,
-                    initReply.eyeSuccess && sawEyeData,
-                    initReply.expressionSuccess && sawExpressionData,
+                    initReply.eyeSuccess && diag.SawEyeData,
+                    initReply.expressionSuccess && diag.SawExpressionData,
                     module.UuidHash, ct);
                 Interlocked.Increment(ref _framesWritten);
             }
@@ -1050,6 +960,175 @@ public sealed class SubprocessManager : IDisposable
                 // Reset breaker on healthy lifetime.
                 if (_breakerUuid == module.Uuid) { _breakerUuid = null; _breakerCount = 0; }
             }
+        }
+    }
+
+    private sealed class PullLoopDiagnostics
+    {
+        private const int UpstreamJawOpenIndex = 22;
+
+        private readonly HostLogger _logger;
+        private readonly string _moduleName;
+        private readonly int _pid;
+        private readonly int _shapeCount;
+        private readonly Stopwatch _period = Stopwatch.StartNew();
+
+        private int _noDataRun;
+        private int _zeroFramesInPeriod;
+        private bool _firstNonZero;
+        private bool _firstInvalidSignal;
+        private long _framesInPeriod;
+        private long _invalidExprInPeriod;
+        private long _invalidEyeInPeriod;
+        private long _clampedInPeriod;
+        private long _staleReusesInPeriod;
+        private long _replyUpdatesAtPeriodStart;
+        private DateTime _lastUpdateTime = DateTime.UtcNow;
+        private ReplyUpdatePacket? _lastProcessedUpdate;
+
+        private float _lastJawOpen;
+        private int _lastValidExprSignals;
+        private int _lastValidEyeSignals;
+        private int _lastNonZeroShapes;
+        private float _lastLeftEyeLid;
+        private float _lastRightEyeLid;
+        private Vector3 _lastLeftGaze;
+        private float _lastPupilLeft;
+        private float _lastPupilRight;
+
+        public bool SawExpressionData { get; private set; }
+        public bool SawEyeData { get; private set; }
+        public long FrameNumber { get; private set; }
+
+        public PullLoopDiagnostics(
+            HostLogger logger,
+            string moduleName,
+            int pid,
+            int shapeCount,
+            long replyUpdatesAtPeriodStart)
+        {
+            _logger = logger;
+            _moduleName = moduleName;
+            _pid = pid;
+            _shapeCount = shapeCount;
+            _replyUpdatesAtPeriodStart = replyUpdatesAtPeriodStart;
+        }
+
+        public bool ShouldWarnNoReply(DateTime now) =>
+            (now - _lastUpdateTime).TotalSeconds > 2.0;
+
+        public void MarkNoReplyWarning(DateTime now) => _lastUpdateTime = now;
+
+        public void RecordReply(ReplyUpdatePacket packet, DateTime now)
+        {
+            _lastUpdateTime = now;
+            if (ReferenceEquals(packet, _lastProcessedUpdate))
+                _staleReusesInPeriod++;
+            _lastProcessedUpdate = packet;
+        }
+
+        public void RecordSignalStats(
+            int validExprSignals,
+            int invalidExprSignals,
+            int validEyeSignals,
+            int invalidEyeSignals,
+            int clampedSignals)
+        {
+            if (validExprSignals > 0) SawExpressionData = true;
+            if (validEyeSignals > 0) SawEyeData = true;
+
+            _invalidExprInPeriod += invalidExprSignals;
+            _invalidEyeInPeriod += invalidEyeSignals;
+            _clampedInPeriod += clampedSignals;
+
+            if (!_firstInvalidSignal && (invalidExprSignals > 0 || invalidEyeSignals > 0))
+            {
+                _firstInvalidSignal = true;
+                _logger.Warn($"[ftp/data] invalid upstream signal(s) ignored: frame={FrameNumber + 1} " +
+                             $"expr_invalid={invalidExprSignals} eye_invalid={invalidEyeSignals} " +
+                             $"valid_expr={validExprSignals} valid_eye={validEyeSignals}");
+            }
+        }
+
+        public bool RecordFrame(
+            float[] upstreamShapes,
+            EyeFrameSink eyeSink,
+            int validExprSignals,
+            int validEyeSignals)
+        {
+            FrameNumber++;
+            _framesInPeriod++;
+
+            int nonZero = 0;
+            foreach (float value in upstreamShapes)
+            {
+                if (value != 0f) nonZero++;
+            }
+
+            float jawOpen = upstreamShapes.Length > UpstreamJawOpenIndex
+                ? upstreamShapes[UpstreamJawOpenIndex]
+                : 0f;
+
+            _lastJawOpen = jawOpen;
+            _lastValidExprSignals = validExprSignals;
+            _lastValidEyeSignals = validEyeSignals;
+            _lastNonZeroShapes = nonZero;
+            _lastLeftEyeLid = eyeSink.LeftOpenness;
+            _lastRightEyeLid = eyeSink.RightOpenness;
+            _lastLeftGaze = eyeSink.Left.DirHmd;
+            _lastPupilLeft = eyeSink.PupilDilationLeft;
+            _lastPupilRight = eyeSink.PupilDilationRight;
+
+            if (nonZero > 0 && !_firstNonZero)
+            {
+                _firstNonZero = true;
+                _logger.Info($"[ftp/data] first non-zero shapes: frame={FrameNumber} " +
+                             $"nonZeroShapes={nonZero}/{upstreamShapes.Length} validExprSignals={validExprSignals} " +
+                             $"jawOpen={jawOpen:F3} leftEyeLid={eyeSink.LeftOpenness:F3}");
+            }
+
+            bool currentFrameHasData = nonZero > 0 || validEyeSignals > 0;
+            if (!currentFrameHasData)
+            {
+                _noDataRun++;
+                _zeroFramesInPeriod++;
+                if (_noDataRun % 60 == 0)
+                    _logger.Warn($"[ftp/data] no-data for {_noDataRun} frames " +
+                                 $"(module={_moduleName} pid={_pid})");
+            }
+            else
+            {
+                _noDataRun = 0;
+            }
+
+            return currentFrameHasData;
+        }
+
+        public void MaybeLogPeriod(long replyUpdatesReceived, long noPortDrops)
+        {
+            if (_period.Elapsed.TotalSeconds < 5.0) return;
+
+            long replyUpdatesInPeriod = replyUpdatesReceived - _replyUpdatesAtPeriodStart;
+            _logger.Info($"[ftp/data] period: published {_framesInPeriod} frames in last " +
+                         $"{_period.Elapsed.TotalSeconds:F1}s; lastJawOpen={_lastJawOpen:F3}; " +
+                         $"consecutive_zero_frames={_zeroFramesInPeriod}; " +
+                         $"invalid_expr={_invalidExprInPeriod}; invalid_eye={_invalidEyeInPeriod}; " +
+                         $"clamped={_clampedInPeriod}; reply_updates={replyUpdatesInPeriod}; " +
+                         $"stale_reuses={_staleReusesInPeriod}; no_port_drops_total={noPortDrops}; " +
+                         $"last_nonzero={_lastNonZeroShapes}/{_shapeCount}; " +
+                         $"last_valid_expr={_lastValidExprSignals}; last_valid_eye={_lastValidEyeSignals}; " +
+                         $"last_eye=({_lastLeftEyeLid:F3},{_lastRightEyeLid:F3}); " +
+                         $"last_gazeL=({_lastLeftGaze.X:F3},{_lastLeftGaze.Y:F3}); " +
+                         $"last_pupil=({_lastPupilLeft:F3},{_lastPupilRight:F3})");
+
+            _framesInPeriod = 0;
+            _zeroFramesInPeriod = 0;
+            _invalidExprInPeriod = 0;
+            _invalidEyeInPeriod = 0;
+            _clampedInPeriod = 0;
+            _staleReusesInPeriod = 0;
+            _replyUpdatesAtPeriodStart = replyUpdatesReceived;
+            _period.Restart();
         }
     }
 

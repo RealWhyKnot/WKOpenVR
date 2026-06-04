@@ -19,6 +19,156 @@ std::atomic<OscRouter*> g_activeRouter {nullptr};
 
 static bool ShouldLogCounter(uint64_t value);
 
+namespace {
+
+using RouterClock = std::chrono::steady_clock;
+
+struct SendWorkerDiagSample
+{
+    uint64_t sent = 0;
+    uint64_t bytes = 0;
+    uint64_t dropped = 0;
+    uint64_t queued = 0;
+    uint64_t oversize = 0;
+    uint64_t unmatched = 0;
+    uint64_t send_fail = 0;
+    uint64_t socket_drop = 0;
+    size_t   queue_depth = 0;
+    uint32_t active_routes = 0;
+};
+
+struct SendWorkerDiagnostics
+{
+    RouterClock::time_point next_log = RouterClock::now() + std::chrono::seconds(5);
+    SendWorkerDiagSample last{};
+
+    bool IsDue(RouterClock::time_point now) const
+    {
+        return now >= next_log;
+    }
+
+    void MaybeLog(RouterClock::time_point now,
+                  const SendWorkerDiagSample &sample,
+                  const char *host,
+                  uint16_t port)
+    {
+        if (now < next_log) return;
+        next_log = now + std::chrono::seconds(5);
+
+        const bool changed =
+            sample.sent != last.sent ||
+            sample.dropped != last.dropped ||
+            sample.queued != last.queued ||
+            sample.oversize != last.oversize ||
+            sample.unmatched != last.unmatched ||
+            sample.send_fail != last.send_fail ||
+            sample.socket_drop != last.socket_drop ||
+            sample.queue_depth != 0;
+        if (changed) {
+            OR_LOG("[OscRouter][diag] period queued=%llu sent=%llu bytes=%llu dropped=%llu "
+                   "oversize=%llu unmatched=%llu send_fail=%llu socket_drop=%llu q_depth=%zu routes=%u target=%s:%u",
+                   static_cast<unsigned long long>(sample.queued - last.queued),
+                   static_cast<unsigned long long>(sample.sent - last.sent),
+                   static_cast<unsigned long long>(sample.bytes - last.bytes),
+                   static_cast<unsigned long long>(sample.dropped - last.dropped),
+                   static_cast<unsigned long long>(sample.oversize - last.oversize),
+                   static_cast<unsigned long long>(sample.unmatched - last.unmatched),
+                   static_cast<unsigned long long>(sample.send_fail - last.send_fail),
+                   static_cast<unsigned long long>(sample.socket_drop - last.socket_drop),
+                   sample.queue_depth,
+                   static_cast<unsigned>(sample.active_routes),
+                   host, static_cast<unsigned>(port));
+        }
+        last = sample;
+    }
+};
+
+struct PubPipeClientDiagnostics
+{
+    char source[33] = {};
+    uint64_t frames = 0;
+    uint64_t bytes = 0;
+    uint64_t bad_lengths = 0;
+    uint64_t invalid_osc = 0;
+    uint64_t queue_drops = 0;
+    uint64_t read_breaks = 0;
+    bool source_logged = false;
+
+    const char *SourceForLog() const
+    {
+        return source[0] ? source : "(unknown)";
+    }
+
+    void RememberSource(const char *source_id)
+    {
+        memcpy(source, source_id, 32);
+        source[32] = '\0';
+        if (!source_logged) {
+            OR_LOG("OscRouter pub-pipe source='%.32s'", source);
+            source_logged = true;
+        }
+    }
+
+    void RecordQueued(uint32_t frame_len)
+    {
+        ++frames;
+        bytes += frame_len;
+    }
+
+    void RecordReadBreak(std::atomic<uint64_t> &aggregate)
+    {
+        ++read_breaks;
+        aggregate.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void RecordBadLength(std::atomic<uint64_t> &aggregate, uint32_t frame_len)
+    {
+        ++bad_lengths;
+        aggregate.fetch_add(1, std::memory_order_relaxed);
+        OR_LOG("OscRouter pub-pipe: invalid frame length %u from %.32s",
+               static_cast<unsigned>(frame_len), SourceForLog());
+    }
+
+    void RecordInvalidOsc(std::atomic<uint64_t> &aggregate, uint32_t frame_len)
+    {
+        ++invalid_osc;
+        aggregate.fetch_add(1, std::memory_order_relaxed);
+        if (ShouldLogCounter(invalid_osc)) {
+            OR_LOG("OscRouter pub-pipe: invalid OSC frame source='%.32s' bytes=%u invalid_total=%llu",
+                   SourceForLog(),
+                   static_cast<unsigned>(frame_len),
+                   static_cast<unsigned long long>(invalid_osc));
+        }
+    }
+
+    void RecordQueueDrop(std::atomic<uint64_t> &aggregate, uint64_t total_drops, size_t queue_depth)
+    {
+        ++queue_drops;
+        aggregate.fetch_add(1, std::memory_order_relaxed);
+        if (ShouldLogCounter(total_drops)) {
+            OR_LOG("OscRouter pub-pipe: queue full source='%.32s' total_dropped=%llu q_count=%zu",
+                   SourceForLog(),
+                   static_cast<unsigned long long>(total_drops),
+                   queue_depth);
+        }
+    }
+
+    void LogDisconnect() const
+    {
+        OR_LOG("OscRouter pub-pipe client disconnected source='%.32s' frames=%llu bytes=%llu "
+               "bad_len=%llu invalid_osc=%llu queue_drop=%llu read_break=%llu",
+               SourceForLog(),
+               static_cast<unsigned long long>(frames),
+               static_cast<unsigned long long>(bytes),
+               static_cast<unsigned long long>(bad_lengths),
+               static_cast<unsigned long long>(invalid_osc),
+               static_cast<unsigned long long>(queue_drops),
+               static_cast<unsigned long long>(read_breaks));
+    }
+};
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // DriverModule factory
 // ---------------------------------------------------------------------------
@@ -292,16 +442,8 @@ void OscRouter::SendWorkerMain()
 
     using clock = std::chrono::steady_clock;
     auto nextStats = clock::now() + std::chrono::milliseconds(100);
-    auto nextDiag = clock::now() + std::chrono::seconds(5);
+    SendWorkerDiagnostics diag;
     bool socket_not_open_logged_ = false;
-    uint64_t lastDiagSent = 0;
-    uint64_t lastDiagBytes = 0;
-    uint64_t lastDiagDropped = 0;
-    uint64_t lastDiagQueued = 0;
-    uint64_t lastDiagOversize = 0;
-    uint64_t lastDiagUnmatched = 0;
-    uint64_t lastDiagSendFail = 0;
-    uint64_t lastDiagSocketDrops = 0;
 
     SendEntry entry;
 
@@ -391,53 +533,22 @@ void OscRouter::SendWorkerMain()
             nextStats = now + std::chrono::milliseconds(100);
             if (shmemReady_) routeTable_.PublishToShmem(statsShmem_);
         }
-        if (now >= nextDiag) {
-            nextDiag = now + std::chrono::seconds(5);
-            uint64_t sentNow = packetsSent_.load(std::memory_order_relaxed);
-            uint64_t bytesNow = bytesSent_.load(std::memory_order_relaxed);
-            uint64_t droppedNow = droppedCount_.load(std::memory_order_relaxed);
-            uint64_t queuedNow = packetsQueued_.load(std::memory_order_relaxed);
-            uint64_t oversizeNow = oversizedPackets_.load(std::memory_order_relaxed);
-            uint64_t unmatchedNow = unmatchedRoutes_.load(std::memory_order_relaxed);
-            uint64_t sendFailNow = sendFailures_.load(std::memory_order_relaxed);
-            uint64_t socketDropNow = socketClosedDrops_.load(std::memory_order_relaxed);
-            size_t qDepth = 0;
+        if (diag.IsDue(now)) {
+            SendWorkerDiagSample sample;
+            sample.sent = packetsSent_.load(std::memory_order_relaxed);
+            sample.bytes = bytesSent_.load(std::memory_order_relaxed);
+            sample.dropped = droppedCount_.load(std::memory_order_relaxed);
+            sample.queued = packetsQueued_.load(std::memory_order_relaxed);
+            sample.oversize = oversizedPackets_.load(std::memory_order_relaxed);
+            sample.unmatched = unmatchedRoutes_.load(std::memory_order_relaxed);
+            sample.send_fail = sendFailures_.load(std::memory_order_relaxed);
+            sample.socket_drop = socketClosedDrops_.load(std::memory_order_relaxed);
+            sample.active_routes = routeTable_.ActiveCount();
             {
                 std::lock_guard<std::mutex> lk(queueMutex_);
-                qDepth = qCount_;
+                sample.queue_depth = qCount_;
             }
-            const bool changed =
-                sentNow != lastDiagSent ||
-                droppedNow != lastDiagDropped ||
-                queuedNow != lastDiagQueued ||
-                oversizeNow != lastDiagOversize ||
-                unmatchedNow != lastDiagUnmatched ||
-                sendFailNow != lastDiagSendFail ||
-                socketDropNow != lastDiagSocketDrops ||
-                qDepth != 0;
-            if (changed) {
-                OR_LOG("[OscRouter][diag] period queued=%llu sent=%llu bytes=%llu dropped=%llu "
-                       "oversize=%llu unmatched=%llu send_fail=%llu socket_drop=%llu q_depth=%zu routes=%u target=%s:%u",
-                       static_cast<unsigned long long>(queuedNow - lastDiagQueued),
-                       static_cast<unsigned long long>(sentNow - lastDiagSent),
-                       static_cast<unsigned long long>(bytesNow - lastDiagBytes),
-                       static_cast<unsigned long long>(droppedNow - lastDiagDropped),
-                       static_cast<unsigned long long>(oversizeNow - lastDiagOversize),
-                       static_cast<unsigned long long>(unmatchedNow - lastDiagUnmatched),
-                       static_cast<unsigned long long>(sendFailNow - lastDiagSendFail),
-                       static_cast<unsigned long long>(socketDropNow - lastDiagSocketDrops),
-                       qDepth,
-                       (unsigned)routeTable_.ActiveCount(),
-                       sendHost_.c_str(), (unsigned)sendPort_);
-            }
-            lastDiagSent = sentNow;
-            lastDiagBytes = bytesNow;
-            lastDiagDropped = droppedNow;
-            lastDiagQueued = queuedNow;
-            lastDiagOversize = oversizeNow;
-            lastDiagUnmatched = unmatchedNow;
-            lastDiagSendFail = sendFailNow;
-            lastDiagSocketDrops = socketDropNow;
+            diag.MaybeLog(now, sample, sendHost_.c_str(), sendPort_);
         }
     }
 
@@ -513,35 +624,21 @@ void OscRouter::PubPipeWorkerMain()
 
         // Read frames from this client until it disconnects or stop_.
         char source_id[32];
-        char current_source[33] = {};
-        uint64_t clientFrames = 0;
-        uint64_t clientBytes = 0;
-        uint64_t clientBadLengths = 0;
-        uint64_t clientInvalidOsc = 0;
-        uint64_t clientQueueDrops = 0;
-        uint64_t clientReadBreaks = 0;
-        bool clientSourceLogged = false;
+        PubPipeClientDiagnostics client;
         OR_LOG("OscRouter pub-pipe client connected", 0);
         while (!stop_.load(std::memory_order_acquire)) {
             // Read 32-byte source identifier.
             DWORD got = 0;
             if (!ReadFile(pipe, source_id, 32, &got, nullptr) || got != 32) {
-                ++clientReadBreaks;
-                pubPipeReadBreaks_.fetch_add(1, std::memory_order_relaxed);
+                client.RecordReadBreak(pubPipeReadBreaks_);
                 break;
             }
-            memcpy(current_source, source_id, 32);
-            current_source[32] = '\0';
-            if (!clientSourceLogged) {
-                OR_LOG("OscRouter pub-pipe source='%.32s'", current_source);
-                clientSourceLogged = true;
-            }
+            client.RememberSource(source_id);
 
             // Read 4-byte LE frame length.
             uint8_t lenBuf[4];
             if (!ReadFile(pipe, lenBuf, 4, &got, nullptr) || got != 4) {
-                ++clientReadBreaks;
-                pubPipeReadBreaks_.fetch_add(1, std::memory_order_relaxed);
+                client.RecordReadBreak(pubPipeReadBreaks_);
                 break;
             }
             uint32_t frameLen = (uint32_t)lenBuf[0]
@@ -550,10 +647,7 @@ void OscRouter::PubPipeWorkerMain()
                               | ((uint32_t)lenBuf[3] << 24);
 
             if (frameLen == 0 || frameLen > kSendQueueEntryMaxSize) {
-                ++clientBadLengths;
-                pubPipeInvalidFrames_.fetch_add(1, std::memory_order_relaxed);
-                OR_LOG("OscRouter pub-pipe: invalid frame length %u from %.32s",
-                       (unsigned)frameLen, current_source);
+                client.RecordBadLength(pubPipeInvalidFrames_, frameLen);
                 break;
             }
 
@@ -569,21 +663,13 @@ void OscRouter::PubPipeWorkerMain()
                 total += chunk;
             }
             if (total != frameLen) {
-                ++clientReadBreaks;
-                pubPipeReadBreaks_.fetch_add(1, std::memory_order_relaxed);
+                client.RecordReadBreak(pubPipeReadBreaks_);
                 break;
             }
 
             OscMessage msg = OscParseMessage(frameBuf, frameLen);
             if (!msg.valid) {
-                ++clientInvalidOsc;
-                pubPipeInvalidFrames_.fetch_add(1, std::memory_order_relaxed);
-                if (ShouldLogCounter(clientInvalidOsc)) {
-                    OR_LOG("OscRouter pub-pipe: invalid OSC frame source='%.32s' bytes=%u invalid_total=%llu",
-                           current_source,
-                           (unsigned)frameLen,
-                           static_cast<unsigned long long>(clientInvalidOsc));
-                }
+                client.RecordInvalidOsc(pubPipeInvalidFrames_, frameLen);
             }
 
             // Enqueue the raw OSC packet directly.
@@ -592,35 +678,19 @@ void OscRouter::PubPipeWorkerMain()
                 bool ok = EnqueueLocked(frameBuf, frameLen);
                 if (!ok) {
                     const uint64_t drops = droppedCount_.fetch_add(1, std::memory_order_relaxed) + 1;
-                    ++clientQueueDrops;
-                    pubPipeQueueDrops_.fetch_add(1, std::memory_order_relaxed);
                     if (msg.valid) routeTable_.BumpDropCount(msg.address);
                     if (shmemReady_) statsShmem_.AddDropped();
-                    if (ShouldLogCounter(drops)) {
-                        OR_LOG("OscRouter pub-pipe: queue full source='%.32s' total_dropped=%llu q_count=%zu",
-                               current_source,
-                               static_cast<unsigned long long>(drops),
-                               qCount_);
-                    }
+                    client.RecordQueueDrop(pubPipeQueueDrops_, drops, qCount_);
                 } else {
                     packetsQueued_.fetch_add(1, std::memory_order_relaxed);
                     pubPipeFrames_.fetch_add(1, std::memory_order_relaxed);
-                    ++clientFrames;
-                    clientBytes += frameLen;
+                    client.RecordQueued(frameLen);
                     queueCv_.notify_one();
                 }
             }
         }
 
-        OR_LOG("OscRouter pub-pipe client disconnected source='%.32s' frames=%llu bytes=%llu "
-               "bad_len=%llu invalid_osc=%llu queue_drop=%llu read_break=%llu",
-               current_source[0] ? current_source : "(unknown)",
-               static_cast<unsigned long long>(clientFrames),
-               static_cast<unsigned long long>(clientBytes),
-               static_cast<unsigned long long>(clientBadLengths),
-               static_cast<unsigned long long>(clientInvalidOsc),
-               static_cast<unsigned long long>(clientQueueDrops),
-               static_cast<unsigned long long>(clientReadBreaks));
+        client.LogDisconnect();
         DisconnectNamedPipe(pipe);
         CloseHandle(pipe);
     }
