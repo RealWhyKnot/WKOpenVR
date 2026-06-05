@@ -9,6 +9,7 @@
 #include "CommonModeCoherence.h"
 #include "HeadMountPoseSampling.h"
 #include "SnapSuppression.h"
+#include "TrackingStyle.h"
 
 #include <GLFW/glfw3.h>
 
@@ -795,8 +796,9 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	//
 	// Entry conditions are intentionally stricter than the logging fire:
 	//   - hmdDelta >= 15 cm (logging fires at 5 cm)
-	//   - State == Continuous or ContinuousStandby (don't surprise the
-	//     user mid-wizard or in None mode where there's nothing to fix)
+	//   - State == Continuous or ContinuousStandby in the plain Continuous
+	//     tracking style (don't surprise the user mid-wizard or in tracker
+	//     lock modes where raw-HMD SLAM events should not rewrite the lock)
 	//   - Session has been running >= 30 s (avoid bootstrap noise)
 	//   - >= 30 s since last auto-recover (let cal converge between resets)
 	//
@@ -830,6 +832,8 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	const bool postStallGrace = secSinceStall < kRelocAutoRecoverPostStallSec;
 	const bool stateOK =
 	    (CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby);
+	const bool styleOK = TrackingStyleAllowsHmdPoseEventRecovery(CalCtx.trackingStyle);
+	const bool recoveryEligible = HmdPoseEventRecoveryEligible(CalCtx.state, CalCtx.trackingStyle);
 	const bool magnitudeOK = currentHmdDelta >= kRelocAutoRecoverThresholdM;
 	const bool startupOK = now >= kRelocAutoRecoverStartupSec;
 	const bool throttleOK = (now - s.lastAutoRecoverTime) >= kRelocAutoRecoverThrottleSec;
@@ -839,17 +843,17 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// every borderline event so we can tune thresholds against real data
 	// instead of guessing. Throttled to once per fire (the fire itself
 	// is throttled to 5s by the existing code), so this won't flood.
-	if (fired && (!magnitudeOK || !stateOK || !startupOK || !throttleOK || postStallGrace)) {
-		char skipbuf[384];
+	if (fired && (!magnitudeOK || !recoveryEligible || !startupOK || !throttleOK || postStallGrace)) {
+		char skipbuf[448];
 		snprintf(skipbuf, sizeof skipbuf,
-		         "auto_recover_skipped: hmdDelta=%.3f magnitudeOK=%d stateOK=%d startupOK=%d throttleOK=%d "
-		         "postStallGrace=%d (secSinceStall=%.2f) state=%d",
-		         currentHmdDelta, (int)magnitudeOK, (int)stateOK, (int)startupOK, (int)throttleOK, (int)postStallGrace,
-		         secSinceStall, (int)CalCtx.state);
+		         "auto_recover_skipped: hmdDelta=%.3f magnitudeOK=%d stateOK=%d styleOK=%d startupOK=%d "
+		         "throttleOK=%d postStallGrace=%d (secSinceStall=%.2f) state=%d style=%d",
+		         currentHmdDelta, (int)magnitudeOK, (int)stateOK, (int)styleOK, (int)startupOK, (int)throttleOK,
+		         (int)postStallGrace, secSinceStall, (int)CalCtx.state, (int)CalCtx.trackingStyle);
 		Metrics::WriteLogAnnotation(skipbuf);
 	}
 
-	if (fired && magnitudeOK && stateOK && startupOK && throttleOK && !postStallGrace) {
+	if (fired && magnitudeOK && recoveryEligible && startupOK && throttleOK && !postStallGrace) {
 		const double hmdDelta = currentHmdDelta;
 		const Eigen::Vector3d dpos = hmdPose.translation() - s.prevHmd.translation();
 

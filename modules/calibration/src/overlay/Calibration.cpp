@@ -1324,11 +1324,11 @@ void CalibrationTick(double time)
 	// AUTO Lock engages (previously stuck at 0).
 	calibration.lockRelativePosition = ctx.lockRelativePosition;
 
-	// Warm-restart detection. The user takes the HMD off (activity level
-	// falls to Standby), comes back later, puts it on (activity level
-	// snaps back to UserInteraction). If the away duration cleared the
-	// threshold and the saved profile is valid, snap the driver to the
-	// saved transform and grant a validation grace window.
+	// Warm-restart detection. In plain Continuous mode, the user takes the
+	// HMD off (activity level falls to Standby), comes back later, puts it
+	// on (activity level snaps back to UserInteraction). If the away duration
+	// cleared the threshold and the saved profile is valid, snap the driver
+	// to the saved transform and grant a validation grace window.
 	//
 	// GetTrackedDeviceActivityLevel is preferred over Prop_UserPresent_Bool
 	// here because the activity-level path is driven by both the proximity
@@ -1385,12 +1385,13 @@ void CalibrationTick(double time)
 				const double awayFor = (ctx.userAwaySince > 0.0) ? (time - ctx.userAwaySince) : 0.0;
 				const double awayPosDelta =
 				    (ctx.hmdLastKnownPosValid && hmdPoseValid) ? (hmdPosNow - ctx.hmdLastKnownPosWhenAway).norm() : 0.0;
+				const bool hmdEventRecoveryEligible = HmdPoseEventRecoveryEligible(ctx.state, ctx.trackingStyle);
 				const spacecal::warm_restart::EngageInput engageIn = {
 				    wasPresent,
 				    nowPresent,
 				    awayFor,
 				    ctx.validProfile,
-				    ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby,
+				    hmdEventRecoveryEligible,
 				    awayPosDelta,
 				    ctx.warmRestartTickId,
 				};
@@ -1402,8 +1403,7 @@ void CalibrationTick(double time)
 				// to cold cal" leaves a paper trail rather than being
 				// invisible. Only logs when this is the suppress reason
 				// (not when pose-jump fast-path took over).
-				if (!engaged && ctx.validProfile &&
-				    (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) &&
+				if (!engaged && ctx.validProfile && hmdEventRecoveryEligible &&
 				    ctx.warmRestartTickId >= spacecal::warm_restart::kColdStartGraceTicks &&
 				    awayFor > spacecal::warm_restart::kMaxAwaySeconds &&
 				    awayPosDelta < spacecal::warm_restart::kPositionJumpFastPathM) {

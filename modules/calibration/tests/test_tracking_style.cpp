@@ -47,6 +47,24 @@ TEST(TrackingStyleTest, PresetMappingMatchesSupportedStyles)
 	EXPECT_FALSE(TrackingStyleShowsBoundarySetup(ctx.trackingStyle));
 }
 
+TEST(TrackingStyleTest, HmdPoseEventRecoveryIsPlainContinuousOnly)
+{
+	EXPECT_TRUE(HmdPoseEventRecoveryEligible(CalibrationState::Continuous, TrackingStyle::Continuous));
+	EXPECT_TRUE(HmdPoseEventRecoveryEligible(CalibrationState::ContinuousStandby, TrackingStyle::Continuous));
+
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::None, TrackingStyle::Continuous));
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::Continuous, TrackingStyle::Manual));
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::ContinuousStandby, TrackingStyle::Manual));
+
+	EXPECT_TRUE(TrackingStyleRunsContinuous(TrackingStyle::LockedWithRecovery));
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::Continuous, TrackingStyle::LockedWithRecovery));
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::ContinuousStandby, TrackingStyle::LockedWithRecovery));
+
+	EXPECT_FALSE(TrackingStyleRunsContinuous(TrackingStyle::HardTrackerLock));
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::Continuous, TrackingStyle::HardTrackerLock));
+	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::ContinuousStandby, TrackingStyle::HardTrackerLock));
+}
+
 TEST(TrackingStyleTest, LegacyAutoLockRawMapsToOff)
 {
 	EXPECT_EQ(ExplicitLockModeFromRaw((int)CalibrationContext::LockMode::AUTO), CalibrationContext::LockMode::OFF);

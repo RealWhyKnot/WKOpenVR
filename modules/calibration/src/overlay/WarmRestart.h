@@ -114,7 +114,7 @@ struct EngageInput
 	bool nowPresent;                 // freshly-read activity-level signal
 	double awayForSeconds;           // time - ctx.userAwaySince (0 if not currently away)
 	bool validProfile;               // ctx.validProfile
-	bool stateEligible;              // ctx.state in {Continuous, ContinuousStandby}
+	bool stateEligible;              // Caller-flattened state/style eligibility.
 	double awayPositionDeltaM = 0.0; // HMD displacement while "away"
 	int tickId = 1 << 30;            // tick counter; default safe-past-cold-start
 };

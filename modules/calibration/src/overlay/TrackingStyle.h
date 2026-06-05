@@ -47,6 +47,17 @@ inline bool TrackingStyleRunsContinuous(TrackingStyle style)
 	return style == TrackingStyle::Continuous || style == TrackingStyle::LockedWithRecovery;
 }
 
+inline bool TrackingStyleAllowsHmdPoseEventRecovery(TrackingStyle style)
+{
+	return style == TrackingStyle::Continuous;
+}
+
+inline bool HmdPoseEventRecoveryEligible(CalibrationState state, TrackingStyle style)
+{
+	const bool stateEligible = state == CalibrationState::Continuous || state == CalibrationState::ContinuousStandby;
+	return stateEligible && TrackingStyleAllowsHmdPoseEventRecovery(style);
+}
+
 inline bool TrackingStyleShowsBoundarySetup(TrackingStyle style)
 {
 	return style == TrackingStyle::LockedWithRecovery;
