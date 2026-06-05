@@ -65,6 +65,14 @@ TEST(TrackingStyleTest, HmdPoseEventRecoveryIsPlainContinuousOnly)
 	EXPECT_FALSE(HmdPoseEventRecoveryEligible(CalibrationState::ContinuousStandby, TrackingStyle::HardTrackerLock));
 }
 
+TEST(TrackingStyleTest, CalibrationDeviceLocksArePlainContinuousOnly)
+{
+	EXPECT_TRUE(TrackingStylePublishesCalibrationDeviceLocks(TrackingStyle::Continuous));
+	EXPECT_FALSE(TrackingStylePublishesCalibrationDeviceLocks(TrackingStyle::Manual));
+	EXPECT_FALSE(TrackingStylePublishesCalibrationDeviceLocks(TrackingStyle::LockedWithRecovery));
+	EXPECT_FALSE(TrackingStylePublishesCalibrationDeviceLocks(TrackingStyle::HardTrackerLock));
+}
+
 TEST(TrackingStyleTest, LegacyAutoLockRawMapsToOff)
 {
 	EXPECT_EQ(ExplicitLockModeFromRaw((int)CalibrationContext::LockMode::AUTO), CalibrationContext::LockMode::OFF);

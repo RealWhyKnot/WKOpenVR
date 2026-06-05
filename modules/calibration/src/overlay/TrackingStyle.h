@@ -52,6 +52,11 @@ inline bool TrackingStyleAllowsHmdPoseEventRecovery(TrackingStyle style)
 	return style == TrackingStyle::Continuous;
 }
 
+inline bool TrackingStylePublishesCalibrationDeviceLocks(TrackingStyle style)
+{
+	return style == TrackingStyle::Continuous;
+}
+
 inline bool HmdPoseEventRecoveryEligible(CalibrationState state, TrackingStyle style)
 {
 	const bool stateEligible = state == CalibrationState::Continuous || state == CalibrationState::ContinuousStandby;

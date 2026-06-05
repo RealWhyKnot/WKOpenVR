@@ -5,6 +5,7 @@
 #include "CalibrationAnchor.h"
 #include "CalibrationMetrics.h"
 #include "Configuration.h"
+#include "TrackingStyle.h"
 #include "UserInterface.h"
 
 #include <openvr.h>
@@ -111,7 +112,9 @@ void CCal_UmbrellaTick()
 		std::vector<openvr_pair::overlay::CalibrationDeviceLock> locks;
 		const bool continuous =
 		    CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby;
-		if (continuous) {
+		const bool publishCalibrationLocks =
+		    continuous && TrackingStylePublishesCalibrationDeviceLocks(CalCtx.trackingStyle);
+		if (publishCalibrationLocks) {
 			AddCalibrationLock(locks, openvr_pair::overlay::CalibrationDeviceLockKind::Reference, CalCtx.referenceID,
 			                   CalCtx.referenceStandby.serial);
 			AddCalibrationLock(locks, openvr_pair::overlay::CalibrationDeviceLockKind::Target, CalCtx.targetID,
