@@ -31,3 +31,14 @@ public sealed class EyeGaze
     public Vector3 DirHmd { get; set; }
     public float Confidence { get; set; }
 }
+
+public sealed class HeadFrameSink
+{
+    public float Yaw { get; set; }
+    public float Pitch { get; set; }
+    public float Roll { get; set; }
+    public float PosX { get; set; }
+    public float PosY { get; set; }
+    public float PosZ { get; set; }
+    public bool IsValid { get; set; }
+}

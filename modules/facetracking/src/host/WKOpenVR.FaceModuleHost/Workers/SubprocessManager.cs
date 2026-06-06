@@ -277,6 +277,18 @@ public sealed class SubprocessManager : IDisposable
         return true;
     }
 
+    private static bool TryFiniteSignal(float value, out float sanitized)
+    {
+        sanitized = 0.0f;
+        if (IsInvalidSignal(value))
+        {
+            return false;
+        }
+
+        sanitized = value;
+        return true;
+    }
+
     private static Vector3 GazeDirection(float x, float y)
     {
         Vector3 dir = new(x, y, -1.0f);
@@ -754,6 +766,7 @@ public sealed class SubprocessManager : IDisposable
             // wire; the driver remaps to our 63-slot ordering on read.
             float[] upstreamShapes = new float[FrameWriter.UpstreamShapeCount];
             var eyeSink = new EyeFrameSink();
+            var headSink = new HeadFrameSink();
             var diag = new PullLoopDiagnostics(
                 _logger,
                 module.Manifest.Name,
@@ -948,6 +961,35 @@ public sealed class SubprocessManager : IDisposable
                 {
                     invalidEyeSignals++;
                 }
+
+                float headYaw = 0.0f;
+                float headPitch = 0.0f;
+                float headRoll = 0.0f;
+                float headPosX = 0.0f;
+                float headPosY = 0.0f;
+                float headPosZ = 0.0f;
+                bool headValid =
+                    TryFiniteSignal(decoded.GetHeadYaw(), out headYaw) &&
+                    TryFiniteSignal(decoded.GetHeadPitch(), out headPitch) &&
+                    TryFiniteSignal(decoded.GetHeadRoll(), out headRoll) &&
+                    TryFiniteSignal(decoded.GetHeadPosX(), out headPosX) &&
+                    TryFiniteSignal(decoded.GetHeadPosY(), out headPosY) &&
+                    TryFiniteSignal(decoded.GetHeadPosZ(), out headPosZ);
+                if (headValid)
+                {
+                    headSink.Yaw = headYaw;
+                    headSink.Pitch = headPitch;
+                    headSink.Roll = headRoll;
+                    headSink.PosX = headPosX;
+                    headSink.PosY = headPosY;
+                    headSink.PosZ = headPosZ;
+                    headSink.IsValid = true;
+                }
+                else
+                {
+                    headSink.IsValid = false;
+                }
+
                 diag.RecordSignalStats(
                     validExprSignals,
                     invalidExprSignals,
@@ -971,7 +1013,7 @@ public sealed class SubprocessManager : IDisposable
                     Interlocked.Read(ref _sendDroppedNoPort));
 
                 await writer.PublishAsync(
-                    eyeSink, upstreamShapes,
+                    eyeSink, headSink, upstreamShapes,
                     initReply.eyeSuccess && diag.SawEyeData,
                     initReply.expressionSuccess && diag.SawExpressionData,
                     module.UuidHash, ct);

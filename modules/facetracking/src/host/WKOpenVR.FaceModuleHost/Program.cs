@@ -287,11 +287,12 @@ static async Task<int> RunE2eFakeFramesAsync(
         {
             await writer.PublishAsync(
                 eye,
+                new HeadFrameSink(),
                 upstreamShapes,
                 eyeValid: true,
                 exprValid: true,
                 moduleUuidHash: 0xE2E0FACADE123456UL,
-                ct);
+                ct: ct);
             framesWritten++;
             if (opts.E2eFakeFrameIntervalMs > 0)
             {

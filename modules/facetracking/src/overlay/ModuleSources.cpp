@@ -167,28 +167,47 @@ bool SaveSourcesCatalogue(const SourcesCatalogue& cat)
 	return true;
 }
 
-// Built-in registry source ID (stable across installs).
-static const char kRegistrySourceId[] = "00000000000000000000000000000001";
-static const char kRegistryUrl[] = "https://registry.vrcft.io";
+// Built-in registry source IDs (stable across installs).
+static const char kLegacyRegistrySourceId[] = "00000000000000000000000000000001";
+static const char kLegacyRegistryUrl[] = "https://registry.vrcft.io";
+static const char kNativeRegistrySourceId[] = "00000000000000000000000000000002";
+static const char kNativeRegistryUrl[] = "https://wkopenvr-module-registry.whyknot.dev";
 
 SourcesCatalogue EnsureSourcesCatalogue()
 {
 	SourcesCatalogue cat = LoadSourcesCatalogue();
 
-	// Check if registry entry already exists.
-	for (const auto& s : cat.sources)
-		if (s.id == kRegistrySourceId) return cat;
+	const auto hasSource = [&](const char* id) {
+		for (const auto& s : cat.sources)
+			if (s.id == id) return true;
+		return false;
+	};
 
-	// Seed with registry.
-	ModuleSource reg;
-	reg.id = kRegistrySourceId;
-	reg.kind = SourceKind::Registry;
-	reg.url = kRegistryUrl;
-	reg.label = "VRCFT registry";
-	reg.auto_update = false;
-	cat.sources.insert(cat.sources.begin(), std::move(reg));
+	bool changed = false;
+	if (!hasSource(kLegacyRegistrySourceId)) {
+		ModuleSource legacy;
+		legacy.id = kLegacyRegistrySourceId;
+		legacy.kind = SourceKind::Registry;
+		legacy.url = kLegacyRegistryUrl;
+		legacy.label = "VRCFT legacy registry";
+		legacy.auto_update = false;
+		cat.sources.insert(cat.sources.begin(), std::move(legacy));
+		changed = true;
+	}
+
+	if (!hasSource(kNativeRegistrySourceId)) {
+		ModuleSource native;
+		native.id = kNativeRegistrySourceId;
+		native.kind = SourceKind::Registry;
+		native.url = kNativeRegistryUrl;
+		native.label = "WKOpenVR native registry";
+		native.auto_update = false;
+		cat.sources.insert(cat.sources.begin(), std::move(native));
+		changed = true;
+	}
+
 	cat.schema_version = 1;
-	SaveSourcesCatalogue(cat);
+	if (changed) SaveSourcesCatalogue(cat);
 	return cat;
 }
 

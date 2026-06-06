@@ -134,6 +134,24 @@ public class ModuleAssembly
                 TrackingModule = LoadExternalModule(type);
                 break;
             }
+
+            if (Loaded)
+            {
+                return;
+            }
+
+            foreach (Type type in Assembly.GetExportedTypes())
+            {
+                if (!NativeSdkTrackingModuleAdapter.IsNativeSdkModule(type))
+                {
+                    continue;
+                }
+
+                _logger.LogDebug("{module} implements WKOpenVR native face module SDK.", type.Name);
+                Loaded = true;
+                TrackingModule = LoadNativeSdkModule(type);
+                break;
+            }
         }
         catch (Exception e)
         {
@@ -153,6 +171,31 @@ public class ModuleAssembly
         try
         {
             var moduleObj = (ExtTrackingModule)Activator.CreateInstance(moduleType);
+            ILogger logger = _loggerFactory.CreateLogger(moduleObj.GetType().Name);
+            moduleObj.Logger = logger;
+
+            return moduleObj;
+        }
+        catch (Exception e)
+        {
+            _logger.LogError("Exception loading {dll}. Skipping. {e}", Assembly.FullName, e);
+        }
+
+        return null;
+    }
+
+    private ExtTrackingModule LoadNativeSdkModule(Type moduleType)
+    {
+        if (Assembly == null)
+        {
+            throw new Exception("Assembly failed to load but tried setting up module!");
+        }
+
+        _logger.LogInformation("Loading Native SDK Module " + Assembly.FullName);
+
+        try
+        {
+            var moduleObj = NativeSdkTrackingModuleAdapter.Create(moduleType, ModulePath);
             ILogger logger = _loggerFactory.CreateLogger(moduleObj.GetType().Name);
             moduleObj.Logger = logger;
 

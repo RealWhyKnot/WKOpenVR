@@ -191,6 +191,7 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
     /// </summary>
     public ValueTask PublishAsync(
         EyeFrameSink eye,
+        HeadFrameSink head,
         ReadOnlySpan<float> upstreamShapes,
         bool eyeValid,
         bool exprValid,
@@ -215,7 +216,13 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
             eye_confidence_l = eye.Left.Confidence,
             eye_confidence_r = eye.Right.Confidence,
             flags = (eyeValid ? 1u : 0u) | (exprValid ? 2u : 0u),
-            head_flags = 0u,
+            head_yaw = head.Yaw,
+            head_pitch = head.Pitch,
+            head_roll = head.Roll,
+            head_pos_x = head.PosX,
+            head_pos_y = head.PosY,
+            head_pos_z = head.PosZ,
+            head_flags = head.IsValid ? 1u : 0u,
         };
 
         body.eye_origin_l[0] = eye.Left.OriginHmd.X;

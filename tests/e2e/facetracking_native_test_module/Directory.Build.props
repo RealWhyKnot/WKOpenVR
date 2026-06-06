@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <FaceNativeTestModuleBuildRoot Condition="'$(FaceNativeTestModuleBuildRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\build\dotnet\e2e-face-native-test-module\</FaceNativeTestModuleBuildRoot>
+    <BaseOutputPath>$(FaceNativeTestModuleBuildRoot)bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(FaceNativeTestModuleBuildRoot)obj\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(FaceNativeTestModuleBuildRoot)obj\</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>

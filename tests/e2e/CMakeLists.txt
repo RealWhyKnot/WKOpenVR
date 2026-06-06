@@ -91,6 +91,42 @@ if(TARGET openvr_pair_feature_facetracking_host)
         add_dependencies(openvr_pair_e2e_facetracking_test_module
             openvr_pair_feature_facetracking_host)
         add_dependencies(e2e_tests openvr_pair_e2e_facetracking_test_module)
+
+        set(FACE_NATIVE_TEST_MODULE_PROJECT
+            "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_native_test_module/WKOpenVR.FaceTracking.NativeTestModule.csproj")
+        set(FACE_NATIVE_TEST_MODULE_ARTIFACT_DIR
+            "${CMAKE_BINARY_DIR}/artifacts/FaceNativeTestModule")
+        set(FACE_NATIVE_TEST_MODULE_STAMP
+            "${CMAKE_CURRENT_BINARY_DIR}/face_native_test_module.stamp")
+
+        file(GLOB_RECURSE FACE_NATIVE_TEST_MODULE_INPUTS
+            "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_native_test_module/*.csproj"
+            "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_native_test_module/*.cs"
+            "${CMAKE_CURRENT_SOURCE_DIR}/facetracking_native_test_module/*.props")
+        list(FILTER FACE_NATIVE_TEST_MODULE_INPUTS EXCLUDE REGEX "/(bin|obj)/")
+
+        add_custom_command(
+            OUTPUT "${FACE_NATIVE_TEST_MODULE_STAMP}"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${FACE_NATIVE_TEST_MODULE_ARTIFACT_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${FACE_NATIVE_TEST_MODULE_ARTIFACT_DIR}"
+            COMMAND ${E2E_DOTNET_EXECUTABLE} publish "${FACE_NATIVE_TEST_MODULE_PROJECT}"
+                -c Release
+                --self-contained false
+                -p:FaceNativeTestModuleBuildRoot=${CMAKE_BINARY_DIR}/dotnet/e2e-face-native-test-module/
+                -o "${FACE_NATIVE_TEST_MODULE_ARTIFACT_DIR}"
+                --nologo
+                --verbosity minimal
+            COMMAND ${CMAKE_COMMAND} -E touch "${FACE_NATIVE_TEST_MODULE_STAMP}"
+            DEPENDS ${FACE_NATIVE_TEST_MODULE_INPUTS}
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tests/e2e/facetracking_native_test_module"
+            COMMENT "Building WKOpenVR e2e native face-tracking test module (.NET 10)"
+            VERBATIM)
+
+        add_custom_target(openvr_pair_e2e_facetracking_native_test_module
+            DEPENDS "${FACE_NATIVE_TEST_MODULE_STAMP}")
+        add_dependencies(openvr_pair_e2e_facetracking_native_test_module
+            openvr_pair_feature_facetracking_host)
+        add_dependencies(e2e_tests openvr_pair_e2e_facetracking_native_test_module)
     else()
         message(WARNING "dotnet CLI not found on PATH. The e2e face-tracking test module will not build.")
     endif()

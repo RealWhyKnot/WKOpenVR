@@ -69,6 +69,9 @@ std::vector<std::wstring> LocalAppDataLowCandidates()
 {
 	std::vector<std::wstring> candidates;
 
+	std::wstring testOverride = EnvVar(L"WKOPENVR_LOCALAPPDATA_OVERRIDE");
+	if (!testOverride.empty()) candidates.push_back(std::move(testOverride));
+
 	PWSTR raw = nullptr;
 	if (S_OK == SHGetKnownFolderPath(FOLDERID_LocalAppDataLow, 0, nullptr, &raw) && raw) {
 		candidates.emplace_back(raw);

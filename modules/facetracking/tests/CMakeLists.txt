@@ -20,8 +20,11 @@ add_executable(facetracking_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/eyelid_sync_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/face_signal_processor_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/feature_flags_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/module_sources_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/osc_publish_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/upstream_shape_map_tests.cpp
+    ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/Logging.cpp
+    ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/ModuleSources.cpp
     ${FT_DRIVER_SRC}/CalibrationEngine.cpp
     ${FT_DRIVER_SRC}/VergenceLock.cpp
     ${FT_DRIVER_SRC}/EyelidSync.cpp
@@ -39,7 +42,11 @@ target_include_directories(facetracking_tests
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers
 )
 
-target_link_libraries(facetracking_tests PRIVATE GTest::gtest_main)
+target_link_libraries(facetracking_tests PRIVATE
+    GTest::gtest_main
+    openvr_pair_common
+    bcrypt
+    crypt32)
 
 target_compile_definitions(facetracking_tests PRIVATE
     NOMINMAX
