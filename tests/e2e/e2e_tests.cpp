@@ -907,6 +907,7 @@ TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
 	EXPECT_NEAR(frame.expressions[8], 0.0f, 0.001f);
 	EXPECT_NEAR(frame.expressions[45], 0.25f, 0.001f);
 	EXPECT_NEAR(frame.upstream_expressions[3], 0.0f, 0.001f);
+	EXPECT_EQ(frame.head_flags, 0u);
 
 	const std::string log = ReadFileUtf8(logPath);
 	EXPECT_NE(log.find("RECV ReplyInit"), std::string::npos);

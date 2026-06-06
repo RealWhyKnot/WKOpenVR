@@ -220,7 +220,16 @@ public class ModuleProcessMain
                 },
                 _maxDilation = 0xFFFFFFFF,
                 _minDilation = 0xFFFFFFFF,
-            }
+            },
+            Head = new()
+            {
+                HeadYaw = 0xFFFFFFFF,
+                HeadPitch = 0xFFFFFFFF,
+                HeadRoll = 0xFFFFFFFF,
+                HeadPosX = 0xFFFFFFFF,
+                HeadPosY = 0xFFFFFFFF,
+                HeadPosZ = 0xFFFFFFFF,
+            },
         };
         for (int i = 0; i < (int)UnifiedExpressions.Max + 1; i++)
         {

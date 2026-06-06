@@ -14,6 +14,7 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
     private const long FlagExpressionsValid = 1;
     private const long FlagEyeValid = 2;
     private const long FlagHeadValid = 4;
+    private const float InvalidFloat = 0xFFFFFFFF;
 
     private readonly object module;
     private readonly Type moduleType;
@@ -133,6 +134,10 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
                 UnifiedTracking.Data.Shapes[i].Weight = expressions![i];
             }
         }
+        else
+        {
+            InvalidateExpressions();
+        }
 
         if ((flags & FlagEyeValid) != 0)
         {
@@ -154,6 +159,10 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
             UnifiedTracking.Data.Eye._minDilation = GetFloat(eye, "MinDilation");
             UnifiedTracking.Data.Eye._maxDilation = GetFloat(eye, "MaxDilation");
         }
+        else
+        {
+            InvalidateEye();
+        }
 
         if ((flags & FlagHeadValid) != 0)
         {
@@ -166,6 +175,42 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
             UnifiedTracking.Data.Head.HeadPosY = GetFloat(head, "PosY");
             UnifiedTracking.Data.Head.HeadPosZ = GetFloat(head, "PosZ");
         }
+        else
+        {
+            InvalidateHead();
+        }
+    }
+
+    private static void InvalidateExpressions()
+    {
+        for (int i = 0; i < (int)UnifiedExpressions.Max; i++)
+        {
+            UnifiedTracking.Data.Shapes[i].Weight = InvalidFloat;
+        }
+    }
+
+    private static void InvalidateEye()
+    {
+        UnifiedTracking.Data.Eye.Left.Gaze.x = InvalidFloat;
+        UnifiedTracking.Data.Eye.Left.Gaze.y = InvalidFloat;
+        UnifiedTracking.Data.Eye.Left.PupilDiameter_MM = InvalidFloat;
+        UnifiedTracking.Data.Eye.Left.Openness = InvalidFloat;
+        UnifiedTracking.Data.Eye.Right.Gaze.x = InvalidFloat;
+        UnifiedTracking.Data.Eye.Right.Gaze.y = InvalidFloat;
+        UnifiedTracking.Data.Eye.Right.PupilDiameter_MM = InvalidFloat;
+        UnifiedTracking.Data.Eye.Right.Openness = InvalidFloat;
+        UnifiedTracking.Data.Eye._minDilation = InvalidFloat;
+        UnifiedTracking.Data.Eye._maxDilation = InvalidFloat;
+    }
+
+    private static void InvalidateHead()
+    {
+        UnifiedTracking.Data.Head.HeadYaw = InvalidFloat;
+        UnifiedTracking.Data.Head.HeadPitch = InvalidFloat;
+        UnifiedTracking.Data.Head.HeadRoll = InvalidFloat;
+        UnifiedTracking.Data.Head.HeadPosX = InvalidFloat;
+        UnifiedTracking.Data.Head.HeadPosY = InvalidFloat;
+        UnifiedTracking.Data.Head.HeadPosZ = InvalidFloat;
     }
 
     private long GetCapabilities()
