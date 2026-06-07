@@ -31,7 +31,12 @@ float EyelidSync::SmoothToward(float current, float target, double dtSeconds)
 	// delta can happen in tight test loops or same-tick frames; use a nominal
 	// frame step so a one-frame spike still smooths instead of snapping.
 	if (dtSeconds > 0.5) return target;
-	if (dtSeconds <= 0.0) dtSeconds = 1.0 / 120.0;
+	// Sub-millisecond deltas mean same-tick or tight-loop calls (two frames in one
+	// tick, or a unit test driving Apply in a loop); real frame data never arrives
+	// that fast. Snap to a nominal frame step so convergence is deterministic
+	// instead of crawling by a wall-clock-tiny alpha -- the latter made the
+	// convergence tests flaky across machine speed and runner load.
+	if (dtSeconds < 1.0 / 1000.0) dtSeconds = 1.0 / 120.0;
 	const double tauMs = (target < current) ? kCloseTauMs : kOpenTauMs;
 	const double alpha = 1.0 - std::exp(-(dtSeconds * 1000.0) / tauMs);
 	return current + static_cast<float>(alpha) * (target - current);
