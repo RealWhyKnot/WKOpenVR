@@ -21,6 +21,7 @@ add_executable(captions_tests
 
 target_include_directories(captions_tests PRIVATE
     ${TR_HOST_SRC}
+    ${CMAKE_SOURCE_DIR}/modules/captions/src/overlay
     ${CMAKE_SOURCE_DIR}/core/src/common
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/lib/openvr/headers)

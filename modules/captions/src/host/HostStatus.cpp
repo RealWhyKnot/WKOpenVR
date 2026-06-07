@@ -121,6 +121,10 @@ void HostStatus::SetActiveTranslationPair(const std::string& pair)
 {
 	active_translation_pair_ = pair;
 }
+void HostStatus::IncrementCaptionsCompleted() noexcept
+{
+	++captions_completed_;
+}
 void HostStatus::IncrementPacketsSent() noexcept
 {
 	++packets_sent_;
@@ -163,6 +167,7 @@ void HostStatus::DoFlush()
 	o << "  \"translation_runtime_available\": " << (translation_runtime_available_ ? "true" : "false") << ",\n";
 	o << "  \"translation_pack_installed\": " << (translation_pack_installed_ ? "true" : "false") << ",\n";
 	o << "  \"active_translation_pair\": \"" << EscapeJson(active_translation_pair_) << "\",\n";
+	o << "  \"captions_completed\": " << captions_completed_ << ",\n";
 	o << "  \"packets_sent\": " << packets_sent_ << ",\n";
 	o << "  \"frames_written\": 0,\n";
 	o << "  \"frames_read\": 0,\n";

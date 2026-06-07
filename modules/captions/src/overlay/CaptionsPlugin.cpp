@@ -167,6 +167,10 @@ void CaptionsPlugin::Tick(openvr_pair::overlay::ShellContext&)
 		PollSupervisorStatus();
 	}
 	host_status_.Tick();
+	const auto& snap = host_status_.Snapshot();
+	if (snap.valid) {
+		preview_history_.Observe(snap.captions_completed, snap.last_transcript, snap.last_translation);
+	}
 }
 
 void CaptionsPlugin::DrawTab(openvr_pair::overlay::ShellContext& ctx)

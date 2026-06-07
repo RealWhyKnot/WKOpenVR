@@ -29,6 +29,7 @@ struct HostStatusSnapshot
 	bool translation_runtime_available = false;
 	bool translation_pack_installed = false;
 	std::string active_translation_pair;
+	long long captions_completed = 0;
 	long long packets_sent = 0;
 };
 

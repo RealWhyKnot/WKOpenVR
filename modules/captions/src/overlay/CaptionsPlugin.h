@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FeaturePlugin.h"
+#include "CaptionPreviewHistory.h"
 #include "HostStatusPoller.h"
 #include "Protocol.h"
 #include "CaptionsIpcClient.h"
@@ -53,6 +54,8 @@ public:
 
 	// Accessors for the UI helpers.
 	captions::HostStatusPoller& HostStatus() { return host_status_; }
+	const captions::CaptionPreviewHistory& PreviewHistory() const { return preview_history_; }
+	void ClearPreviewHistory() { preview_history_.Clear(); }
 
 	int GetMode() const { return mode_; }
 	void SetMode(int m);
@@ -76,6 +79,7 @@ private:
 
 	CaptionsIpcClient ipc_;
 	captions::HostStatusPoller host_status_;
+	captions::CaptionPreviewHistory preview_history_;
 
 	// Settings cached here and pushed to the driver.
 	int mode_ = 0; // 0=PTT, 1=always-on

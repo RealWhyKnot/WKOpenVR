@@ -32,6 +32,7 @@ public:
 	void SetTranslationRuntimeAvailable(bool available) noexcept;
 	void SetTranslationPackInstalled(bool installed) noexcept;
 	void SetActiveTranslationPair(const std::string& pair);
+	void IncrementCaptionsCompleted() noexcept;
 	void IncrementPacketsSent() noexcept;
 
 	// Write the JSON file to disk if at least 1 s has elapsed since the
@@ -58,6 +59,7 @@ private:
 	bool translation_runtime_available_ = false;
 	bool translation_pack_installed_ = false;
 	std::string active_translation_pair_;
+	long long captions_completed_ = 0;
 	long long packets_sent_ = 0;
 
 	void WritePath(const std::wstring& status_path);

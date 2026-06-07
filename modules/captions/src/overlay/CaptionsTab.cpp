@@ -269,6 +269,42 @@ static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot
 	}
 }
 
+static void DrawPrivatePreview(CaptionsPlugin& plugin)
+{
+	openvr_pair::overlay::ui::DrawSectionHeading("Private preview");
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Clear##captions_private_preview")) {
+		plugin.ClearPreviewHistory();
+	}
+
+	const auto& entries = plugin.PreviewHistory().Entries();
+	if (entries.empty()) {
+		ImGui::TextDisabled("No captions yet");
+		return;
+	}
+
+	if (ImGui::BeginTable("captions_private_preview_table", 2,
+	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+		ImGui::TableSetupColumn("Caption", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+		ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+		ImGui::TableHeadersRow();
+		for (const auto& entry : entries) {
+			const std::string& caption = entry.translation.empty() ? entry.transcript : entry.translation;
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextWrapped("%s", caption.c_str());
+			ImGui::TableSetColumnIndex(1);
+			if (!entry.translation.empty() && entry.translation != entry.transcript) {
+				ImGui::TextWrapped("%s", entry.transcript.c_str());
+			}
+			else {
+				ImGui::TextDisabled("Transcribe only");
+			}
+		}
+		ImGui::EndTable();
+	}
+}
+
 void DrawCaptionsTab(CaptionsPlugin& plugin)
 {
 	const auto& snap = plugin.HostStatus().Snapshot();
@@ -376,6 +412,8 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 		ImGui::TextDisabled("Host not running");
 	}
 
+	ImGui::Separator();
+	DrawPrivatePreview(plugin);
 	ImGui::Separator();
 	DrawSetup(plugin, snap);
 	ImGui::Separator();

@@ -98,6 +98,7 @@ void HostStatusPoller::ReadFile()
 	s.translation_runtime_available = openvr_pair::common::json::BoolAt(root, "translation_runtime_available");
 	s.translation_pack_installed = openvr_pair::common::json::BoolAt(root, "translation_pack_installed");
 	s.active_translation_pair = openvr_pair::common::json::StringAt(root, "active_translation_pair");
+	s.captions_completed = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "captions_completed"));
 	s.packets_sent = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "packets_sent"));
 
 	snapshot_ = std::move(s);

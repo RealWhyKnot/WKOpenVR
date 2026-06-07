@@ -5,6 +5,7 @@ set(CAPTIONS_PAIRDRIVER_ROOT "${CMAKE_SOURCE_DIR}")
 add_library(openvr_pair_feature_captions_overlay STATIC
     HostStatusPoller.cpp
     HostStatusPoller.h
+    CaptionPreviewHistory.h
     CaptionsIpcClient.cpp
     CaptionsIpcClient.h
     CaptionsConfig.cpp

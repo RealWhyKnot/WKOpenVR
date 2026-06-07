@@ -17,6 +17,7 @@
 
 // Pull in the implementation directly (header-only interface test).
 #include "ChatboxPacer.h"
+#include "CaptionPreviewHistory.h"
 #include "CaptionsOutputPolicy.h"
 #include "Protocol.h"
 
@@ -66,6 +67,31 @@ TEST(CaptionsProtocolTest, ZeroedConfigDoesNotPublishToChatbox)
 {
 	protocol::CaptionsConfig cfg{};
 	EXPECT_EQ(cfg.chatbox_enabled, 0);
+}
+
+TEST(CaptionPreviewHistoryTest, AddsEachCompletedCaptionOnce)
+{
+	captions::CaptionPreviewHistory history;
+	history.Observe(1, "hello", "");
+	history.Observe(1, "hello", "");
+	history.Observe(2, "hello", "bonjour");
+
+	ASSERT_EQ(history.Entries().size(), 2u);
+	EXPECT_EQ(history.Entries()[0].transcript, "hello");
+	EXPECT_TRUE(history.Entries()[0].translation.empty());
+	EXPECT_EQ(history.Entries()[1].translation, "bonjour");
+}
+
+TEST(CaptionPreviewHistoryTest, KeepsMostRecentEntries)
+{
+	captions::CaptionPreviewHistory history(2);
+	history.Observe(1, "one", "");
+	history.Observe(2, "two", "");
+	history.Observe(3, "three", "");
+
+	ASSERT_EQ(history.Entries().size(), 2u);
+	EXPECT_EQ(history.Entries()[0].transcript, "two");
+	EXPECT_EQ(history.Entries()[1].transcript, "three");
 }
 
 // ---------------------------------------------------------------------------

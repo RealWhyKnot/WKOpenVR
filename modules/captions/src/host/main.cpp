@@ -962,6 +962,9 @@ try {
 					TH_LOG("[main] translation: %s", output.c_str());
 				}
 
+				if (!output.empty()) {
+					status.IncrementCaptionsCompleted();
+				}
 				if (captions::ShouldPublishChatbox(cfg.chatbox_enabled, output)) {
 					pacer.Enqueue(output, true, cfg.notify_sound);
 				}
