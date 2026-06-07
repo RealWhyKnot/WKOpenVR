@@ -126,6 +126,14 @@ void CCal_UmbrellaTick()
 			}
 		}
 		openvr_pair::overlay::SetCalibrationDeviceLocks(locks);
+
+		std::string headsetSynthesisTrackerSerial;
+		if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) &&
+		    CalCtx.headMount.mode == HeadMountMode::DriverSynth) {
+			headsetSynthesisTrackerSerial = ReadDeviceSerial(CalCtx.headMount.deviceID);
+			if (headsetSynthesisTrackerSerial.empty()) headsetSynthesisTrackerSerial = CalCtx.headMount.trackerSerial;
+		}
+		openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial(headsetSynthesisTrackerSerial);
 	}
 	else {
 		static auto s_lastWaitingLog = std::chrono::steady_clock::time_point{};
@@ -137,12 +145,15 @@ void CCal_UmbrellaTick()
 			Metrics::WriteLogAnnotation(buf);
 		}
 		openvr_pair::overlay::SetCalibrationDeviceLocks({});
+		openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial({});
 	}
 }
 
 void CCal_UmbrellaShutdown()
 {
 	g_vrReady = false;
+	openvr_pair::overlay::SetCalibrationDeviceLocks({});
+	openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial({});
 }
 
 void RequestImmediateRedraw() {}

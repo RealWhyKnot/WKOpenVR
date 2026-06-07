@@ -29,6 +29,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_boundary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_controller_input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_calc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_anchor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_auto_speed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_configuration.cpp
@@ -59,6 +60,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_prediction_smoothing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_recording_retention.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs.cpp
+    ${CMAKE_SOURCE_DIR}/core/src/overlay/CalibrationAnchor.cpp
     ${CMAKE_SOURCE_DIR}/core/src/overlay/DeviceFilters.cpp
     ${SPACECAL_SRC}/overlay/Boundary.cpp
     ${SPACECAL_SRC}/overlay/BoundaryCapture.cpp

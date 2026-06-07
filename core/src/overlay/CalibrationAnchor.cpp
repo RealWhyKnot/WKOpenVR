@@ -5,6 +5,7 @@ namespace openvr_pair::overlay {
 namespace {
 
 std::vector<openvr_pair::overlay::CalibrationDeviceLock> g_locks;
+std::string g_headsetSynthesisTrackerSerial;
 
 } // namespace
 
@@ -37,6 +38,23 @@ bool TryGetCalibrationDeviceLockKind(const std::string& serial, CalibrationDevic
 		}
 	}
 	return false;
+}
+
+void SetHeadsetSynthesisTrackerSerial(const std::string& serial)
+{
+	g_headsetSynthesisTrackerSerial = serial;
+}
+
+bool TryGetHeadsetSynthesisTrackerSerial(std::string& serial)
+{
+	if (g_headsetSynthesisTrackerSerial.empty()) return false;
+	serial = g_headsetSynthesisTrackerSerial;
+	return true;
+}
+
+bool IsHeadsetSynthesisTracker(const std::string& serial)
+{
+	return !serial.empty() && serial == g_headsetSynthesisTrackerSerial;
 }
 
 } // namespace openvr_pair::overlay
