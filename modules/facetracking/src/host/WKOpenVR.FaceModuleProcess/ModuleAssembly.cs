@@ -147,7 +147,15 @@ public class ModuleAssembly
                     continue;
                 }
 
-                _logger.LogDebug("{module} implements WKOpenVR native face module SDK.", type.Name);
+                int moduleAbi = ReadModuleSdkAbi(type);
+                string status = ClassifyModuleAbi(moduleAbi, out bool canLoad);
+                if (!canLoad)
+                {
+                    _logger.LogError("Skipping native module {module}: {status}.", type.Name, status);
+                    break;
+                }
+
+                _logger.LogInformation("{module} implements WKOpenVR native face module SDK ({status}).", type.Name, status);
                 Loaded = true;
                 TrackingModule = LoadNativeSdkModule(type);
                 break;
@@ -157,6 +165,53 @@ public class ModuleAssembly
         {
             _logger.LogWarning("{error} Assembly not able to be loaded. Skipping.", e.Message);
         }
+    }
+
+    // Native SDK contract (ABI) window this host understands. A module reports the SDK ABI it was
+    // built against via WKOpenVR.FaceTracking.Sdk.FaceModuleAbi.Version (read by reflection below).
+    // Modules within [HostMinimumSdkAbi, HostSupportedSdkAbi] load; older are too old to run; newer
+    // were built for a newer app. Bump these together with breaking SDK contract changes.
+    private const int HostSupportedSdkAbi = 1;
+    private const int HostMinimumSdkAbi = 1;
+
+    private static int ReadModuleSdkAbi(Type nativeType)
+    {
+        try
+        {
+            Type? abiType = nativeType.GetInterfaces()
+                .FirstOrDefault(i => i.FullName == "WKOpenVR.FaceTracking.Sdk.IFaceTrackingModule")?
+                .Assembly.GetType("WKOpenVR.FaceTracking.Sdk.FaceModuleAbi");
+            object? value = abiType?.GetField("Version", BindingFlags.Public | BindingFlags.Static)?.GetRawConstantValue();
+            return value is int abi ? abi : 1; // SDKs predating FaceModuleAbi are treated as the baseline (1).
+        }
+        catch (Exception)
+        {
+            return 1;
+        }
+    }
+
+    private static string ClassifyModuleAbi(int moduleAbi, out bool canLoad)
+    {
+        if (moduleAbi > HostSupportedSdkAbi)
+        {
+            canLoad = false;
+            return $"built against a newer SDK (ABI {moduleAbi}) than this app supports (ABI {HostSupportedSdkAbi}); update WKOpenVR";
+        }
+
+        if (moduleAbi == HostSupportedSdkAbi)
+        {
+            canLoad = true;
+            return $"SDK ABI {moduleAbi}, current";
+        }
+
+        if (moduleAbi >= HostMinimumSdkAbi)
+        {
+            canLoad = true;
+            return $"SDK ABI {moduleAbi}, older than this app (ABI {HostSupportedSdkAbi}) but supported in compatibility mode";
+        }
+
+        canLoad = false;
+        return $"SDK ABI {moduleAbi} is below the minimum supported (ABI {HostMinimumSdkAbi}); rebuild against a newer SDK";
     }
 
     private ExtTrackingModule LoadExternalModule(Type moduleType)

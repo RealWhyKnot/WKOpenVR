@@ -92,9 +92,7 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
     {
         var contextType = SdkType("WKOpenVR.FaceTracking.Sdk.FaceModuleContext");
         var requestType = SdkType("WKOpenVR.FaceTracking.Sdk.FaceModuleInitRequest");
-        var logAction = new Action<string>(message => Logger?.LogInformation("{message}", message));
-        var context = Activator.CreateInstance(contextType, moduleDirectory, logAction)
-            ?? throw new InvalidOperationException("Could not create native FaceModuleContext.");
+        object context = CreateModuleContext(contextType);
         var request = Activator.CreateInstance(requestType, eyeAvailable, expressionAvailable, true)
             ?? throw new InvalidOperationException("Could not create native FaceModuleInitRequest.");
 
@@ -120,6 +118,58 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
     {
         AwaitAsyncResult(teardownAsync.Invoke(module, [CancellationToken.None]));
     }
+
+    private object CreateModuleContext(Type contextType)
+    {
+        // Prefer the leveled-logger constructor (string, Action<int,string>, int) so the module's
+        // Trace/Debug output flows when the host is in a verbose logging mode; fall back to the legacy
+        // (string, Action<string>) constructor for modules built against an older SDK.
+        var leveledCtor = contextType.GetConstructor(new[] { typeof(string), typeof(Action<int, string>), typeof(int) });
+        if (leveledCtor != null)
+        {
+            var sink = new Action<int, string>((level, message) => Logger?.Log(MapModuleLogLevel(level), "{message}", message));
+            return Activator.CreateInstance(contextType, moduleDirectory, sink, CurrentMinModuleLogLevel())
+                ?? throw new InvalidOperationException("Could not create native FaceModuleContext.");
+        }
+
+        var logAction = new Action<string>(message => Logger?.LogInformation("{message}", message));
+        return Activator.CreateInstance(contextType, moduleDirectory, logAction)
+            ?? throw new InvalidOperationException("Could not create native FaceModuleContext.");
+    }
+
+    private int CurrentMinModuleLogLevel()
+    {
+        if (Logger == null)
+        {
+            return 2;
+        }
+
+        if (Logger.IsEnabled(LogLevel.Trace))
+        {
+            return 0;
+        }
+
+        if (Logger.IsEnabled(LogLevel.Debug))
+        {
+            return 1;
+        }
+
+        if (Logger.IsEnabled(LogLevel.Information))
+        {
+            return 2;
+        }
+
+        return Logger.IsEnabled(LogLevel.Warning) ? 3 : 4;
+    }
+
+    private static LogLevel MapModuleLogLevel(int level) => level switch
+    {
+        0 => LogLevel.Trace,
+        1 => LogLevel.Debug,
+        2 => LogLevel.Information,
+        3 => LogLevel.Warning,
+        _ => LogLevel.Error,
+    };
 
     private void CopyNativeFrameToUnifiedTracking()
     {
