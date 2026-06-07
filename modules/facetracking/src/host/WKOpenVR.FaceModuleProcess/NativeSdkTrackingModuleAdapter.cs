@@ -124,7 +124,7 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
         // Prefer the leveled-logger constructor (string, Action<int,string>, int) so the module's
         // Trace/Debug output flows when the host is in a verbose logging mode; fall back to the legacy
         // (string, Action<string>) constructor for modules built against an older SDK.
-        var leveledCtor = contextType.GetConstructor(new[] { typeof(string), typeof(Action<int, string>), typeof(int) });
+        var leveledCtor = contextType.GetConstructor([typeof(string), typeof(Action<int, string>), typeof(int)]);
         if (leveledCtor != null)
         {
             var sink = new Action<int, string>((level, message) => Logger?.Log(MapModuleLogLevel(level), "{message}", message));
@@ -162,14 +162,17 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
         return Logger.IsEnabled(LogLevel.Warning) ? 3 : 4;
     }
 
-    private static LogLevel MapModuleLogLevel(int level) => level switch
+    private static LogLevel MapModuleLogLevel(int level)
     {
-        0 => LogLevel.Trace,
-        1 => LogLevel.Debug,
-        2 => LogLevel.Information,
-        3 => LogLevel.Warning,
-        _ => LogLevel.Error,
-    };
+        return level switch
+        {
+            0 => LogLevel.Trace,
+            1 => LogLevel.Debug,
+            2 => LogLevel.Information,
+            3 => LogLevel.Warning,
+            _ => LogLevel.Error,
+        };
+    }
 
     private void CopyNativeFrameToUnifiedTracking()
     {
