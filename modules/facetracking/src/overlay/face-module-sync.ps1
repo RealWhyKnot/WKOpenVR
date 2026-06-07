@@ -456,6 +456,9 @@ if ($srcKind -eq 'registry') {
                 payload_sha256 = Get-Prop $selected @('payload_sha256','sha256','SHA256') ''
                 file_hash      = Get-Prop $selected @('FileHash','file_hash','md5') ''
                 dll_file_name  = Get-Prop $selected @('DllFileName','dll_file_name') ''
+                prerelease     = Get-Prop $selected @('prerelease','is_prerelease') $false
+                release_channel = Get-Prop $selected @('release_channel','channel') ''
+                module_page_url = Get-Prop $selected @('ModulePageUrl','module_page_url','release_url') ''
             }
         }
 
@@ -465,49 +468,91 @@ if ($srcKind -eq 'registry') {
             payload_sha256 = Get-Prop $entry @('payload_sha256','sha256','SHA256') ''
             file_hash      = Get-Prop $entry @('FileHash','file_hash','md5') ''
             dll_file_name  = Get-Prop $entry @('DllFileName','dll_file_name') ''
+            prerelease     = Get-Prop $entry @('prerelease','is_prerelease') $false
+            release_channel = Get-Prop $entry @('release_channel','channel') ''
+            module_page_url = Get-Prop $entry @('ModulePageUrl','module_page_url','release_url') ''
         }
+    }
+
+    function Get-RegistryManifest($uuid, [string]$version) {
+        if (-not [string]::IsNullOrEmpty($version)) {
+            try {
+                return Invoke-RestMethod -Uri "$base/v1/modules/$uuid/versions/$version/manifest" `
+                    -UseBasicParsing -Headers $headers
+            } catch { }
+        }
+        try {
+            return Invoke-RestMethod -Uri "$base/v1/modules/$uuid/manifest" `
+                -UseBasicParsing -Headers $headers
+        } catch { }
+        return $null
     }
 
     function Convert-RegistryEntryToAvailable($entry) {
         $uuid = Get-Prop $entry @('uuid','ModuleId','module_id','id') ''
         if ([string]::IsNullOrEmpty($uuid)) { return $null }
 
-        $verMeta = Select-VersionMetadata $entry ''
-        $version = [string]$verMeta.version
-        $name = Get-Prop $entry @('name','ModuleName','module_name','label') $uuid
-        $vendor = Get-Prop $entry @('vendor','AuthorName','author_name') 'Unknown'
-        $description = Get-Prop $entry @('description','ModuleDescription','module_description') ''
-
-        $manifest = $null
-        try {
-            $manifest = Invoke-RestMethod -Uri "$base/v1/modules/$uuid/manifest" `
-                -UseBasicParsing -Headers $headers
-        } catch { }
-        if ($null -ne $manifest) {
-            $name = Get-Prop $manifest @('name','ModuleName') $name
-            $vendor = Get-Prop $manifest @('vendor','AuthorName') $vendor
-            $version = Get-Prop $manifest @('version','Version') $version
-            if ([string]::IsNullOrEmpty([string]$verMeta.payload_sha256)) {
-                $verMeta.payload_sha256 = Get-Prop $manifest @('payload_sha256') ''
+        $wantedVersions = @()
+        $versionsProp = $entry.PSObject.Properties['versions']
+        if ($null -ne $versionsProp -and $null -ne $versionsProp.Value) {
+            foreach ($v in @($versionsProp.Value)) {
+                $vv = Get-Prop $v @('version','Version') ''
+                if (-not [string]::IsNullOrEmpty($vv)) {
+                    $wantedVersions += $vv
+                }
             }
         }
-
-        return [ordered]@{
-            uuid           = $uuid
-            version        = $version
-            name           = $name
-            vendor         = $vendor
-            description    = $description
-            source_id      = $srcId
-            source_label   = Get-Prop $src @('label') 'Registry'
-            registry_url   = $base
-            payload_url    = [string]$verMeta.payload_url
-            payload_sha256 = [string]$verMeta.payload_sha256
-            download_url   = Get-Prop $entry @('DownloadUrl','download_url') ''
-            file_hash      = [string]$verMeta.file_hash
-            dll_file_name  = [string]$verMeta.dll_file_name
-            module_page_url = Get-Prop $entry @('ModulePageUrl','module_page_url') ''
+        if ($wantedVersions.Count -eq 0) {
+            $wantedVersions += ''
         }
+
+        $available = @()
+        foreach ($wantedVersion in $wantedVersions) {
+            $verMeta = Select-VersionMetadata $entry $wantedVersion
+            $version = [string]$verMeta.version
+            if ([string]::IsNullOrEmpty($version)) { continue }
+
+            $name = Get-Prop $entry @('name','ModuleName','module_name','label') $uuid
+            $vendor = Get-Prop $entry @('vendor','AuthorName','author_name') 'Unknown'
+            $description = Get-Prop $entry @('description','ModuleDescription','module_description') ''
+
+            $manifest = Get-RegistryManifest $uuid $version
+            if ($null -ne $manifest) {
+                $name = Get-Prop $manifest @('name','ModuleName') $name
+                $vendor = Get-Prop $manifest @('vendor','AuthorName') $vendor
+                $description = Get-Prop $manifest @('description','ModuleDescription','module_description') $description
+                $version = Get-Prop $manifest @('version','Version') $version
+                if ([string]::IsNullOrEmpty([string]$verMeta.payload_sha256)) {
+                    $verMeta.payload_sha256 = Get-Prop $manifest @('payload_sha256') ''
+                }
+                if ([string]::IsNullOrEmpty([string]$verMeta.payload_url)) {
+                    $verMeta.payload_url = Get-Prop $manifest @('payload_url','download_url','DownloadUrl') ''
+                }
+            }
+
+            $modulePageUrl = [string]$verMeta.module_page_url
+            if ([string]::IsNullOrEmpty($modulePageUrl)) {
+                $modulePageUrl = Get-Prop $entry @('ModulePageUrl','module_page_url','release_url') ''
+            }
+
+            $available += [ordered]@{
+                uuid           = $uuid
+                version        = $version
+                name           = $name
+                vendor         = $vendor
+                description    = $description
+                source_id      = $srcId
+                source_label   = Get-Prop $src @('label') 'Registry'
+                registry_url   = $base
+                payload_url    = [string]$verMeta.payload_url
+                payload_sha256 = [string]$verMeta.payload_sha256
+                download_url   = Get-Prop $entry @('DownloadUrl','download_url') ''
+                file_hash      = [string]$verMeta.file_hash
+                dll_file_name  = [string]$verMeta.dll_file_name
+                module_page_url = $modulePageUrl
+            }
+        }
+        return $available
     }
 
     function Copy-DirectoryContents([string]$sourceDir, [string]$destDir) {
@@ -589,14 +634,14 @@ if ($srcKind -eq 'registry') {
         $expectedMd5 = (Get-Prop $src @('file_hash','FileHash','md5') '').ToLower()
         $registryManifest = $null
 
-        try {
-            $registryManifest = Invoke-RestMethod -Uri "$base/v1/modules/$uuid/manifest" `
-                -UseBasicParsing -Headers $headers
-        } catch { }
+        $registryManifest = Get-RegistryManifest $uuid $ver
         if ($null -ne $registryManifest) {
             $ver = Get-Prop $registryManifest @('version','Version') $ver
             $name = Get-Prop $registryManifest @('name','ModuleName') $name
             $vendor = Get-Prop $registryManifest @('vendor','AuthorName') $vendor
+            if ([string]::IsNullOrEmpty($downloadUrl)) {
+                $downloadUrl = Get-Prop $registryManifest @('payload_url','download_url','DownloadUrl') ''
+            }
             if ([string]::IsNullOrEmpty($expectedSha)) {
                 $expectedSha = (Get-Prop $registryManifest @('payload_sha256') '').ToLower()
             }
@@ -732,12 +777,14 @@ if ($srcKind -eq 'registry') {
     $available = @()
     $failed = 0
     foreach ($entry in $index.Entries) {
-        $module = Convert-RegistryEntryToAvailable $entry
-        if ($null -eq $module) {
+        $modules = @(Convert-RegistryEntryToAvailable $entry)
+        if ($modules.Count -eq 0) {
             $failed++
             continue
         }
-        $available += $module
+        foreach ($module in $modules) {
+            $available += $module
+        }
     }
 
     $cache = [ordered]@{
