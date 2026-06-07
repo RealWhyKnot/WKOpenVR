@@ -90,10 +90,9 @@ struct DriverPose_t
 
 namespace protocol {
 // v8 (2026-04-28): freezePrediction (bool) -> predictionSmoothness (uint8 0..100).
-// Old field gave a binary on/off; new field is a strength knob. Driver scales
-// velocity / acceleration / poseTimeOffset by (1 - smoothness/100) instead of
-// zeroing them when the bool was true. smoothness=100 reproduces the old freeze
-// behaviour; smoothness=0 leaves the pose untouched (off).
+// Old field gave a binary on/off; new field is a strength knob. The driver uses
+// the value to tune tracker prediction suppression and one-euro position
+// smoothing; smoothness=100 is the strongest setting, not a hard pose freeze.
 // v9 (2026-05-02): adds RequestSetFingerSmoothing + FingerSmoothingConfig union
 // member. Driver-side hook on IVRDriverInputInternal::UpdateSkeletonComponent
 // applies per-bone slerp smoothing to Index Knuckles bone arrays before they

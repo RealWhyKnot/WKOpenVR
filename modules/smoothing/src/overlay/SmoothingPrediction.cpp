@@ -151,7 +151,7 @@ void SmoothingPlugin::DrawPredictionTab()
 	// Headline kept short -- the slider tooltips below carry the detail
 	// about 0 vs 100, the HMD lock, and what suppressing calibration
 	// trackers does to the SC math. Avoids a wall of intro text on entry.
-	ImGui::TextWrapped("Per-tracker prediction suppression. 0 = raw motion, 100 = fully suppressed.");
+	ImGui::TextWrapped("Per-tracker prediction smoothing. 0 = raw motion, 100 = strongest smoothing.");
 	ImGui::Spacing();
 	// The synthesized (locked) HMD pose is not a tracked device in this list, so
 	// its smoothing lives with the head-mount lock. Point the user there.
@@ -219,7 +219,7 @@ void SmoothingPlugin::DrawPredictionTab()
 			}
 			else {
 				ImGui::SetTooltip("0 = raw motion (no suppression).\n"
-				                  "100 = fully suppressed (matches the old binary 'freeze' behaviour).\n"
+				                  "100 = strongest smoothing with more lag allowed, but not a hard freeze.\n"
 				                  "Try around 50-75 for IMU-based trackers that feel jittery.");
 			}
 		}

@@ -72,6 +72,7 @@ struct Params
 	double derivCutoffHz = 4.0;
 	double maxCutoffHz = 90.0;
 	double basePredictionFactor = 1.0;
+	double releaseScale = 1.0;
 
 	double linDerivedDeadband = 0.03;
 	double linReportedDeadband = 0.06;
@@ -103,13 +104,17 @@ inline Params BuildParams(uint8_t smoothness)
 {
 	const double s01 = Clamp(static_cast<double>(smoothness) / 100.0, 0.0, 1.0);
 	const double inv = 1.0 - s01;
+	const double topEnd = SmoothStep(85.0, 100.0, static_cast<double>(smoothness));
 
 	Params p;
-	p.posMinCutoffHz = 0.45 + 16.0 * std::pow(inv, 1.8);
+	p.posMinCutoffHz = Lerp(0.45 + 16.0 * std::pow(inv, 1.8), 0.25, topEnd);
 	p.rotMinCutoffHz = 0.75 + 18.0 * std::pow(inv, 1.6);
-	p.posBetaHzPerMps = Lerp(6.0, 24.0, s01);
-	p.rotBetaHzPerRadps = Lerp(1.5, 4.5, s01);
+	p.posBetaHzPerMps = Lerp(6.0, 24.0, s01) * Lerp(1.0, 0.55, topEnd);
+	p.rotBetaHzPerRadps = Lerp(1.5, 4.5, s01) * Lerp(1.0, 0.65, topEnd);
 	p.basePredictionFactor = prediction::SmoothnessToFactor(smoothness);
+	p.releaseScale = Lerp(1.0, 0.40, topEnd);
+	p.linMovingSpeed = Lerp(p.linMovingSpeed, 0.60, topEnd);
+	p.angMovingSpeed = Lerp(p.angMovingSpeed, 2.00, topEnd);
 	return p;
 }
 
@@ -171,10 +176,12 @@ inline Params BuildCandidateParams(uint8_t smoothness, CandidateKind kind)
 // tested and called from both the live pose path and the dev comparison.
 //
 // The defining property versus a plain EWM: the cutoff frequency rises with
-// speed, so the filter smooths hard at rest (low cutoff) yet adds little lag
-// in motion (high cutoff). It never freezes -- even at rest the minimum cutoff
-// keeps tracking slow drift -- which is the fix for the "sticks at rest then
-// snaps when you move" behaviour of the old (1-s/100)^1.8 position EWM.
+// speed, so the filter smooths hard at rest (low cutoff) and releases during
+// motion. At the top of the slider that release is capped so 100% remains the
+// strongest setting instead of becoming pass-through as soon as motion starts.
+// It never freezes -- even at rest the minimum cutoff keeps tracking slow drift
+// -- which is the fix for the "sticks at rest then snaps when you move"
+// behaviour of the old (1-s/100)^1.8 position EWM.
 // ---------------------------------------------------------------------------
 
 inline bool IsFinite3(const double v[3])
@@ -410,6 +417,8 @@ inline StepResult FilterStep(FilterState& s, const Params& p, const double rawPo
 
 	s.posRelease = UpdateEnvelope(s.posRelease, posTarget, dt, p.gateAttackTauSeconds, p.gateReleaseTauSeconds);
 	s.rotRelease = UpdateEnvelope(s.rotRelease, rotTarget, dt, p.gateAttackTauSeconds, p.gateReleaseTauSeconds);
+	const double effectivePosRelease = Saturate(s.posRelease * p.releaseScale);
+	const double effectiveRotRelease = Saturate(s.rotRelease * p.releaseScale);
 
 	const double posErrSpeed = std::min(std::max(0.0, posInnovation - p.posErrStillM) / dt, 3.0);
 	const double rotErrSpeed = std::min(std::max(0.0, rotInnovation - p.rotErrStillRad) / dt, 20.0);
@@ -419,13 +428,13 @@ inline StepResult FilterStep(FilterState& s, const Params& p, const double rawPo
 	double posCutoff = Clamp(p.posMinCutoffHz + p.posBetaHzPerMps * posSpeedForCutoff, p.posMinCutoffHz, p.maxCutoffHz);
 	double rotCutoff =
 	    Clamp(p.rotMinCutoffHz + p.rotBetaHzPerRadps * rotSpeedForCutoff, p.rotMinCutoffHz, p.maxCutoffHz);
-	posCutoff = std::max(posCutoff, Lerp(p.posMinCutoffHz, p.maxCutoffHz, s.posRelease));
-	rotCutoff = std::max(rotCutoff, Lerp(p.rotMinCutoffHz, p.maxCutoffHz, s.rotRelease));
+	posCutoff = std::max(posCutoff, Lerp(p.posMinCutoffHz, p.maxCutoffHz, effectivePosRelease));
+	rotCutoff = std::max(rotCutoff, Lerp(p.rotMinCutoffHz, p.maxCutoffHz, effectiveRotRelease));
 
 	double posAlpha = AlphaFromCutoffHz(posCutoff, dt);
 	double rotAlpha = AlphaFromCutoffHz(rotCutoff, dt);
-	posAlpha = posAlpha + (1.0 - posAlpha) * s.posRelease;
-	rotAlpha = rotAlpha + (1.0 - rotAlpha) * s.rotRelease;
+	posAlpha = posAlpha + (1.0 - posAlpha) * effectivePosRelease;
+	rotAlpha = rotAlpha + (1.0 - rotAlpha) * effectiveRotRelease;
 
 	for (int axis = 0; axis < 3; ++axis) {
 		s.filteredPos[axis] += posAlpha * (rawPos[axis] - s.filteredPos[axis]);
@@ -447,8 +456,8 @@ inline StepResult FilterStep(FilterState& s, const Params& p, const double rawPo
 
 	out.posAlpha = posAlpha;
 	out.rotAlpha = rotAlpha;
-	out.posRelease = s.posRelease;
-	out.rotRelease = s.rotRelease;
+	out.posRelease = effectivePosRelease;
+	out.rotRelease = effectiveRotRelease;
 	out.posCutoffHz = posCutoff;
 	out.rotCutoffHz = rotCutoff;
 	return out;

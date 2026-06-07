@@ -52,12 +52,10 @@ struct SetDeviceTransform
 	char target_system[MaxTrackingSystemNameLen];
 
 	// Strength of native pose-prediction suppression for this device, on a
-	// 0..100 scale. 0 = pose untouched (no suppression). 100 = velocity,
-	// acceleration, angular velocity, angular acceleration and poseTimeOffset
-	// are all zeroed before the pose ships -- defeating SteamVR's
-	// extrapolation entirely (the old binary "freeze" behaviour). Values in
-	// between scale velocity / acceleration by (1 - smoothness/100), giving
-	// the user a smooth knob from "raw motion" to "fully suppressed".
+	// 0..100 scale. 0 = pose untouched (no suppression). Higher values apply
+	// stronger tracker prediction suppression and one-euro position smoothing.
+	// 100 is the strongest setting, with more lag allowed than lower values, but
+	// it is not a hard pose freeze.
 	//
 	// The overlay enforces a hard block on suppressing the calibration
 	// reference / target trackers and the HMD: those values are forced to 0

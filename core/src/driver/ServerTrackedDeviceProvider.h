@@ -223,20 +223,18 @@ private:
 		// system fallback rather than an overlay-supplied per-ID value. Used to
 		// snap on the first activation of fallback.
 		bool fallbackActive = false;
-		// When true, every pose update for this device gets its velocity /
-		// Prediction-suppression strength on a 0..100 scale. The pose's
-		// velocity / acceleration / poseTimeOffset fields are scaled by
-		// (1 - smoothness/100) before any other processing. 0 = pose
-		// untouched. 100 = fields zeroed (matches the old binary "freeze"
-		// behaviour). The overlay enforces the hard block on HMD / ref /
-		// target, so by the time we see a non-zero value here the sender
-		// has already vetted that suppressing this device is safe.
+		// Prediction-suppression strength on a 0..100 scale. The pose's velocity
+		// / acceleration / poseTimeOffset fields and position filter are tuned
+		// from this value. 0 = pose untouched; 100 = strongest smoothing with
+		// bounded release, not a hard pose freeze. The overlay enforces the hard
+		// block on HMD / ref / target, so by the time we see a non-zero value
+		// here the sender has already vetted that suppressing this device is safe.
 		uint8_t predictionSmoothness = 0;
 
 		// One-euro smoothing. When predictionSmoothness > 0 the device's reported
 		// position -- and, in dev builds with smartEnabled on, rotation -- is run
 		// through a speed-adaptive low-pass (SmartSmoothingShadowMath.h): heavy
-		// smoothing at rest, little lag in motion, and never frozen. Position
+		// smoothing at rest, bounded release in motion, and never frozen. Position
 		// smoothing is the baseline for every user; smartEnabled is only the
 		// dev-only rotation preview toggle. All fields below are guarded by
 		// stateMutex, same as predictionSmoothness.

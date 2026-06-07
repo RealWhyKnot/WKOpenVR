@@ -801,8 +801,8 @@ void ServerTrackedDeviceProvider::SetDevicePrediction(const protocol::SetDeviceP
 	const bool newSmart = cfg.smart_enabled != 0;
 
 	// Cheap to write unconditionally; HandleDevicePoseUpdated reads it once
-	// per pose update for the velocity / acceleration / poseTimeOffset
-	// scaling. 0 = pose untouched, 100 = predictor fully defeated.
+	// per pose update for prediction suppression and position-filter tuning.
+	// 0 = pose untouched, 100 = strongest smoothing with bounded release.
 	tf.predictionSmoothness = cfg.predictionSmoothness;
 	tf.smartEnabled = newSmart;
 	tf.smartShadowParams = prediction::smart_shadow::BuildParams(cfg.predictionSmoothness);
@@ -1086,10 +1086,11 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		if (smoothness > 100) smoothness = 100;
 
 		// One-euro speed-adaptive smoothing: low-pass the reported position
-		// (heavy at rest, light in motion, never frozen) and scale the velocity
-		// / acceleration / lookahead fields by a release-modulated factor so
-		// extrapolation is suppressed at rest but active during motion. Replaces
-		// the old freeze-prone position EWM + motion-ramp gate.
+		// (heavy at rest, bounded release in motion, never frozen) and scale the
+		// velocity / acceleration / lookahead fields by a release-modulated
+		// factor so extrapolation is suppressed at rest but still available
+		// during motion. Replaces the old freeze-prone position EWM +
+		// motion-ramp gate.
 		ApplySmartSmoothing(openVRID, tf, rawSmoothingInput, pose, smoothness);
 	}
 	else {

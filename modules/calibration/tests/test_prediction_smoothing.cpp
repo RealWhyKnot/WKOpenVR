@@ -17,6 +17,60 @@ using prediction::SmoothnessToFactor;
 
 namespace {
 
+struct FilterVariance
+{
+	double input = 0.0;
+	double output = 0.0;
+};
+
+FilterVariance MeasureRestJitterVariance(uint8_t smoothness)
+{
+	using namespace prediction::smart_shadow;
+	FilterState s;
+	const Params p = BuildParams(smoothness);
+	const double dt = 1.0 / 90.0;
+	double rot[4] = {1, 0, 0, 0};
+	double seed[3] = {1.0, 0, 0};
+	FilterStep(s, p, seed, rot, 0.0, 0.0, dt);
+
+	const double amp = 0.0005; // 0.5 mm alternating jitter
+	for (int i = 0; i < 60; ++i) {
+		double cur[3] = {1.0 + (i % 2 ? amp : -amp), 0, 0};
+		FilterStep(s, p, cur, rot, 0.0, 0.0, dt);
+	}
+
+	FilterVariance v;
+	for (int i = 0; i < 400; ++i) {
+		double cur[3] = {1.0 + (i % 2 ? amp : -amp), 0, 0};
+		FilterStep(s, p, cur, rot, 0.0, 0.0, dt);
+		v.input += (cur[0] - 1.0) * (cur[0] - 1.0);
+		v.output += (s.filteredPos[0] - 1.0) * (s.filteredPos[0] - 1.0);
+	}
+	v.input /= 400.0;
+	v.output /= 400.0;
+	return v;
+}
+
+double MeasureFastMotionLag(uint8_t smoothness)
+{
+	using namespace prediction::smart_shadow;
+	FilterState s;
+	const Params p = BuildParams(smoothness);
+	const double dt = 1.0 / 90.0;
+	double rot[4] = {1, 0, 0, 0};
+	double pos0[3] = {0, 0, 0};
+	FilterStep(s, p, pos0, rot, 0.0, 0.0, dt);
+
+	const double speed = 1.0;
+	double x = 0.0;
+	for (int i = 0; i < 90; ++i) {
+		x += speed * dt;
+		double cur[3] = {x, 0, 0};
+		FilterStep(s, p, cur, rot, speed, 0.0, dt);
+	}
+	return x - s.filteredPos[0];
+}
+
 // ---------------------------------------------------------------------------
 // Factor curve monotonicity and boundary values.
 // ---------------------------------------------------------------------------
@@ -187,6 +241,27 @@ TEST(PredictionSmoothingTest, SmartParamsIncreaseRestSmoothingWithSlider)
 	EXPECT_GT(p80.rotBetaHzPerRadps, p20.rotBetaHzPerRadps);
 }
 
+TEST(PredictionSmoothingTest, SmartParamsKeepCurrentCurveBeforeHighEnd)
+{
+	const auto p80 = prediction::smart_shadow::BuildParams(80);
+	EXPECT_NEAR(p80.posMinCutoffHz, 0.45 + 16.0 * std::pow(0.2, 1.8), 1e-12);
+	EXPECT_NEAR(p80.posBetaHzPerMps, 6.0 + 18.0 * 0.8, 1e-12);
+	EXPECT_DOUBLE_EQ(p80.releaseScale, 1.0);
+	EXPECT_DOUBLE_EQ(p80.linMovingSpeed, 0.35);
+	EXPECT_DOUBLE_EQ(p80.angMovingSpeed, 1.20);
+}
+
+TEST(PredictionSmoothingTest, SmartParamsMakeHundredStrongerButNonzero)
+{
+	const auto p100 = prediction::smart_shadow::BuildParams(100);
+	EXPECT_NEAR(p100.posMinCutoffHz, 0.25, 1e-12);
+	EXPECT_GT(p100.posMinCutoffHz, 0.0);
+	EXPECT_NEAR(p100.releaseScale, 0.40, 1e-12);
+	EXPECT_NEAR(p100.linMovingSpeed, 0.60, 1e-12);
+	EXPECT_NEAR(p100.angMovingSpeed, 2.00, 1e-12);
+	EXPECT_LT(p100.posBetaHzPerMps, 24.0);
+}
+
 TEST(PredictionSmoothingTest, ReleasedPredictionFactorMovesTowardPassThrough)
 {
 	using prediction::smart_shadow::ReleasedPredictionFactor;
@@ -270,51 +345,33 @@ TEST(PredictionSmoothingFilterTest, LongGapReseeds)
 
 TEST(PredictionSmoothingFilterTest, ReducesRestJitter)
 {
-	using namespace prediction::smart_shadow;
-	FilterState s;
-	const Params p = BuildParams(80);
-	const double dt = 1.0 / 90.0;
-	double rot[4] = {1, 0, 0, 0};
-	double seed[3] = {1.0, 0, 0};
-	FilterStep(s, p, seed, rot, 0.0, 0.0, dt);
 	// Realistic sub-mm rest jitter from a stationary tracker (reported velocity
 	// ~0). Large coherent jitter would derive a high speed and the filter would
 	// (correctly) release -- that is motion, not rest -- so it would not, and
 	// should not, be smoothed away.
-	const double amp = 0.0005; // 0.5 mm alternating jitter
-	// Warm up so the post-seed release envelope settles before measuring.
-	for (int i = 0; i < 60; ++i) {
-		double cur[3] = {1.0 + (i % 2 ? amp : -amp), 0, 0};
-		FilterStep(s, p, cur, rot, 0.0, 0.0, dt);
-	}
-	double sumSqIn = 0.0, sumSqOut = 0.0;
-	for (int i = 0; i < 400; ++i) {
-		double cur[3] = {1.0 + (i % 2 ? amp : -amp), 0, 0};
-		FilterStep(s, p, cur, rot, 0.0, 0.0, dt);
-		sumSqIn += (cur[0] - 1.0) * (cur[0] - 1.0);
-		sumSqOut += (s.filteredPos[0] - 1.0) * (s.filteredPos[0] - 1.0);
-	}
-	EXPECT_LT(sumSqOut, sumSqIn * 0.10) << "one-euro at s=80 should cut sub-mm rest jitter variance by >90%";
+	const FilterVariance v80 = MeasureRestJitterVariance(80);
+	EXPECT_LT(v80.output, v80.input * 0.10) << "one-euro at s=80 should cut sub-mm rest jitter variance by >90%";
+}
+
+TEST(PredictionSmoothingFilterTest, HundredSmoothsRestJitterMoreThanEighty)
+{
+	const FilterVariance v80 = MeasureRestJitterVariance(80);
+	const FilterVariance v100 = MeasureRestJitterVariance(100);
+	EXPECT_LT(v100.output, v80.output * 0.75) << "s=100 should visibly strengthen rest damping over s=80";
 }
 
 TEST(PredictionSmoothingFilterTest, TracksFastMotionWithLowLag)
 {
-	using namespace prediction::smart_shadow;
-	FilterState s;
-	const Params p = BuildParams(80);
-	const double dt = 1.0 / 90.0;
-	double rot[4] = {1, 0, 0, 0};
-	double pos0[3] = {0, 0, 0};
-	FilterStep(s, p, pos0, rot, 0.0, 0.0, dt);
-	const double speed = 1.0; // 1 m/s releases the gate
-	double x = 0.0;
-	for (int i = 0; i < 90; ++i) {
-		x += speed * dt;
-		double cur[3] = {x, 0, 0};
-		FilterStep(s, p, cur, rot, speed, 0.0, dt);
-	}
-	EXPECT_LT(x - s.filteredPos[0], 0.02)
-	    << "fast motion should track within 20 mm (lag=" << (x - s.filteredPos[0]) << " m)";
+	const double lag80 = MeasureFastMotionLag(80);
+	EXPECT_LT(lag80, 0.02) << "fast motion should track within 20 mm (lag=" << lag80 << " m)";
+}
+
+TEST(PredictionSmoothingFilterTest, HundredAllowsMoreLagButStaysBounded)
+{
+	const double lag80 = MeasureFastMotionLag(80);
+	const double lag100 = MeasureFastMotionLag(100);
+	EXPECT_GT(lag100, lag80 + 0.001) << "s=100 should be stronger than s=80 during motion";
+	EXPECT_LT(lag100, 0.04) << "s=100 should not wedge behind normal fast motion (lag=" << lag100 << " m)";
 }
 
 TEST(PredictionSmoothingFilterTest, RotationConvergesTowardHeldTarget)
