@@ -1,6 +1,18 @@
 param(
 	# Verify formatting without changing files.
-	[switch]$Check
+	[switch]$Check,
+
+	# Fast path for format-only failures. Skips clang-tidy entirely; use this
+	# when CI reports clang-format or dotnet format drift and no C++ analysis is
+	# needed.
+	[Alias("SkipTidy")]
+	[switch]$FormatOnly,
+
+	# Limit format operations to files changed from ChangedBase plus staged,
+	# unstaged, and untracked files. Pair with -FormatOnly for quick local checks.
+	[switch]$ChangedOnly,
+
+	[string]$ChangedBase = "origin/main"
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,6 +89,57 @@ function Get-RepoFiles {
 	return @($files | ForEach-Object { $_ -replace "\\", "/" })
 }
 
+function Get-ChangedRepoFiles {
+	param([Parameter(Mandatory=$true)][string]$BaseRef)
+
+	$paths = New-Object System.Collections.Generic.List[string]
+	$diffSources = @()
+
+	$mergeBase = & git merge-base HEAD $BaseRef 2>$null
+	if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($mergeBase)) {
+		$diffSources += @($mergeBase.Trim() + "...HEAD")
+	} else {
+		Write-Host "changed-only: could not resolve merge-base with $BaseRef; using HEAD only."
+	}
+
+	$diffSources += @("--cached", "")
+	foreach ($source in $diffSources) {
+		$gitArgs = @("diff", "--name-only", "--diff-filter=ACMRTUXB")
+		if (-not [string]::IsNullOrWhiteSpace($source)) {
+			$gitArgs += $source
+		}
+		$diffPaths = @(& git @gitArgs)
+		if ($LASTEXITCODE -ne 0) {
+			throw "Unable to list changed files."
+		}
+		foreach ($path in $diffPaths) {
+			if (-not [string]::IsNullOrWhiteSpace($path)) {
+				$paths.Add(($path -replace "\\", "/"))
+			}
+		}
+	}
+
+	$untracked = @(& git ls-files --others --exclude-standard)
+	if ($LASTEXITCODE -ne 0) {
+		throw "Unable to list untracked files."
+	}
+	foreach ($path in $untracked) {
+		if (-not [string]::IsNullOrWhiteSpace($path)) {
+			$paths.Add(($path -replace "\\", "/"))
+		}
+	}
+
+	return @($paths | Sort-Object -Unique)
+}
+
+function Test-IsChangedFile {
+	param([Parameter(Mandatory=$true)][string]$Path)
+
+	if (-not $ChangedOnly) { return $true }
+	if ($null -eq $script:ChangedFileLookup) { return $false }
+	return $script:ChangedFileLookup.ContainsKey($Path)
+}
+
 function Test-IsProjectCppFile {
 	param([Parameter(Mandatory=$true)][string]$Path)
 
@@ -91,9 +154,10 @@ function Invoke-ClangFormat {
 	param([Parameter(Mandatory=$true)][string]$ClangFormat)
 
 	$patterns = @("*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hpp")
-	$files = @(Get-RepoFiles -Patterns $patterns | Where-Object { Test-IsProjectCppFile $_ } | Sort-Object -Unique)
+	$files = @(Get-RepoFiles -Patterns $patterns | Where-Object { (Test-IsProjectCppFile $_) -and (Test-IsChangedFile $_) } | Sort-Object -Unique)
 	if ($files.Count -eq 0) {
-		Write-Host "clang-format: no project C/C++ files found."
+		$message = if ($ChangedOnly) { "clang-format: no changed project C/C++ files found." } else { "clang-format: no project C/C++ files found." }
+		Write-Host $message
 		return
 	}
 
@@ -185,6 +249,7 @@ function Invoke-DotNetFormatCommand {
 		[Parameter(Mandatory=$true)][string]$CommandName,
 		[string[]]$Exclude = @(),
 		[string[]]$ExcludeDiagnostics = @(),
+		[string[]]$Include = @(),
 		[string[]]$ExtraArgs = @()
 	)
 
@@ -195,6 +260,9 @@ function Invoke-DotNetFormatCommand {
 
 	$formatArgs = @("format", $Workspace, $CommandName)
 	if ($Check) { $formatArgs += "--verify-no-changes" }
+	foreach ($path in $Include) {
+		$formatArgs += @("--include", $path)
+	}
 	foreach ($path in $Exclude) {
 		$formatArgs += @("--exclude", $path)
 	}
@@ -220,34 +288,61 @@ function Invoke-DotNetFormat {
 	)
 	$styleExcludes = @("IDE0060")
 	$testProject = "tests/e2e/facetracking_test_module/WKOpenVR.FaceTracking.TestModule.csproj"
+	$changedCsFiles = @()
+	if ($ChangedOnly -and $null -ne $script:ChangedFiles) {
+		$changedCsFiles = @($script:ChangedFiles | Where-Object { $_ -match "\.cs$" })
+		if ($changedCsFiles.Count -eq 0) {
+			Write-Host "dotnet format: no changed C# files found."
+			return
+		}
+		Write-Host "dotnet format: changed-only includes $($changedCsFiles.Count) C# file(s)."
+	}
 
-	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $hostSolution -CommandName "whitespace" -Exclude $hostExcludes -ExtraArgs @("-v", "minimal")
-	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $hostSolution -CommandName "style" -Exclude $hostExcludes -ExcludeDiagnostics $styleExcludes -ExtraArgs @("--severity", "info", "-v", "minimal")
+	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $hostSolution -CommandName "whitespace" -Exclude $hostExcludes -Include $changedCsFiles -ExtraArgs @("-v", "minimal")
+	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $hostSolution -CommandName "style" -Exclude $hostExcludes -ExcludeDiagnostics $styleExcludes -Include $changedCsFiles -ExtraArgs @("--severity", "info", "-v", "minimal")
 
-	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $testProject -CommandName "whitespace" -ExtraArgs @("-v", "minimal")
-	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $testProject -CommandName "style" -ExcludeDiagnostics $styleExcludes -ExtraArgs @("--severity", "info", "-v", "minimal")
+	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $testProject -CommandName "whitespace" -Include $changedCsFiles -ExtraArgs @("-v", "minimal")
+	Invoke-DotNetFormatCommand -DotNet $DotNet -Workspace $testProject -CommandName "style" -ExcludeDiagnostics $styleExcludes -Include $changedCsFiles -ExtraArgs @("--severity", "info", "-v", "minimal")
+}
+
+if ($ChangedOnly) {
+	$script:ChangedFiles = @(Get-ChangedRepoFiles -BaseRef $ChangedBase)
+	$script:ChangedFileLookup = @{}
+	foreach ($path in $script:ChangedFiles) {
+		$script:ChangedFileLookup[$path] = $true
+	}
+	Write-Host "changed-only: considering $($script:ChangedFiles.Count) file(s) from $ChangedBase, index, working tree, and untracked files."
+} else {
+	$script:ChangedFiles = $null
+	$script:ChangedFileLookup = $null
 }
 
 $clangFormat = Resolve-RequiredCommand "clang-format" "Install LLVM and make clang-format available on PATH."
-$clangTidy = Resolve-RequiredCommand "clang-tidy" "Install LLVM and make clang-tidy available on PATH."
-$clangApplyReplacements = Resolve-RequiredCommand "clang-apply-replacements" "Install LLVM and make clang-apply-replacements available on PATH."
-$cmake = Resolve-RequiredCommand "cmake" "Install CMake and make cmake available on PATH."
-$ninja = Resolve-RequiredCommand "ninja" "Install Ninja and make ninja available on PATH."
-$python = Resolve-RequiredCommand "python" "Install Python and make python available on PATH."
-$runClangTidy = Resolve-RunClangTidy -ClangTidy $clangTidy
 $dotnet = Resolve-RequiredCommand "dotnet" "Install the .NET SDK required by modules/facetracking/src/host/global.json."
 
 Invoke-ClangFormat -ClangFormat $clangFormat
 Invoke-DotNetFormat -DotNet $dotnet
-Invoke-ClangTidy `
-	-CMake $cmake `
-	-Ninja $ninja `
-	-Python $python `
-	-RunClangTidy $runClangTidy `
-	-ClangTidy $clangTidy `
-	-ClangApplyReplacements $clangApplyReplacements
-if (-not $Check) {
-	Invoke-ClangFormat -ClangFormat $clangFormat
+
+if (-not $FormatOnly) {
+	$clangTidy = Resolve-RequiredCommand "clang-tidy" "Install LLVM and make clang-tidy available on PATH."
+	$clangApplyReplacements = Resolve-RequiredCommand "clang-apply-replacements" "Install LLVM and make clang-apply-replacements available on PATH."
+	$cmake = Resolve-RequiredCommand "cmake" "Install CMake and make cmake available on PATH."
+	$ninja = Resolve-RequiredCommand "ninja" "Install Ninja and make ninja available on PATH."
+	$python = Resolve-RequiredCommand "python" "Install Python and make python available on PATH."
+	$runClangTidy = Resolve-RunClangTidy -ClangTidy $clangTidy
+
+	Invoke-ClangTidy `
+		-CMake $cmake `
+		-Ninja $ninja `
+		-Python $python `
+		-RunClangTidy $runClangTidy `
+		-ClangTidy $clangTidy `
+		-ClangApplyReplacements $clangApplyReplacements
+	if (-not $Check) {
+		Invoke-ClangFormat -ClangFormat $clangFormat
+	}
+} else {
+	Write-Host "format-only: skipped clang-tidy."
 }
 
 if ($Check) {
