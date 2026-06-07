@@ -25,6 +25,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Add in-process body completion (998ec69)
 - **facetracking:** Gate expression corrections (22c222c)
 - **calibration:** Simplify tracking style setup (9bc21c2)
+- **facetracking:** Load native SDK face modules (09d81d4)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -125,6 +126,11 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Process canonical signal output (617d09a)
 - **inputhealth:** Harden compensation policy (ce9aac8)
 - **smoothing:** Hide smart toggle and test finger smoothing (7c74ca3)
+- **facetracking:** Invalidate absent native streams (e7e7376)
+- **calibration:** Limit device locks to continuous style (90e86b5)
+- **calibration:** Gate HMD recovery to continuous style (94323e5)
+- **captions:** Stabilize router publishing and pack installs (3370933)
+- **calibration:** Unify tracking style actions (3ac0b6b)
 
 ---
 
