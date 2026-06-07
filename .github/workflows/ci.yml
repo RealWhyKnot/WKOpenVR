@@ -1,8 +1,10 @@
 name: CI
 
 # Triggered on PRs against main, direct pushes to main, and manual dispatch.
-# The push-to-main trigger catches commits that land outside of a tag release
-# (doc updates, hotfixes, etc.) and gives early signal before the next tag.
+# Per-push CI is deliberately fast: a format-only lint (clang-format + dotnet
+# format) plus the C++ build + unit tests. The slow passes live elsewhere:
+#   - full clang-tidy        -> .github/workflows/nightly-tidy.yml (scheduled)
+#   - installer validation   -> .github/workflows/release.yml (on tag)
 on:
   push:
     branches: [main]
@@ -33,9 +35,9 @@ permissions:
 
 jobs:
   lint:
-    name: lint
+    name: lint (format)
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -48,11 +50,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
-
       - name: Cache NuGet packages
         uses: actions/cache@v5
         with:
@@ -61,60 +58,33 @@ jobs:
           restore-keys: |
             nuget-lint-${{ runner.os }}-
 
-      - name: Install LLVM tools
+      - name: Cache LLVM
+        uses: actions/cache@v5
+        with:
+          path: 'C:\Program Files\LLVM'
+          key: llvm-${{ runner.os }}-22.1.0
+
+      - name: Install clang-format
+        # Per-push lint runs format only; the heavy clang-tidy pass moved to the
+        # nightly-tidy workflow. Only clang-format is needed here, restored from
+        # the LLVM cache when available (~1-2 min choco install otherwise).
         shell: pwsh
         run: |
-          function Test-RunClangTidyAvailable {
-            $command = Get-Command run-clang-tidy -ErrorAction SilentlyContinue
-            if ($command) { return $true }
-
-            $clangTidy = Get-Command clang-tidy -ErrorAction SilentlyContinue
-            if (-not $clangTidy) { return $false }
-
-            $clangTidyDir = Split-Path -Parent $clangTidy.Source
-            $candidates = @(
-              (Join-Path $clangTidyDir 'run-clang-tidy'),
-              (Join-Path $clangTidyDir 'run-clang-tidy.py')
-            )
-            foreach ($candidate in $candidates) {
-              if (Test-Path -LiteralPath $candidate) { return $true }
-            }
-            return $false
-          }
-
-          $llvmVersion = '22.1.0'
-          Write-Host "Installing LLVM package $llvmVersion."
-          choco install llvm --version $llvmVersion -y --no-progress --force
-          if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
-
           $llvmBin = 'C:\Program Files\LLVM\bin'
-          if (-not (Test-Path -LiteralPath $llvmBin)) {
-            throw "LLVM bin directory missing at $llvmBin"
+          if (Test-Path (Join-Path $llvmBin 'clang-format.exe')) {
+            Write-Host "LLVM present (cache hit) -- skipping choco install."
+          } else {
+            choco install llvm --version 22.1.0 -y --no-progress --force
+            if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
+          }
+          if (-not (Test-Path (Join-Path $llvmBin 'clang-format.exe'))) {
+            throw "clang-format.exe not found at $llvmBin after install."
           }
           $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          $env:PATH = "$llvmBin;$env:PATH"
 
-          $llvmTools = @('clang-format', 'clang-tidy', 'clang-apply-replacements')
-          foreach ($tool in $llvmTools) {
-            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              throw "$tool was not found after installing LLVM."
-            }
-          }
-
-          if (-not (Test-RunClangTidyAvailable)) {
-            throw "run-clang-tidy was not found after installing LLVM."
-          }
-
-          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
-            choco install ninja -y --no-progress
-            if ($LASTEXITCODE -ne 0) { throw "Ninja install failed (exit $LASTEXITCODE)" }
-          } else {
-            Write-Host "Ninja already available."
-          }
-
-      - name: Run lint check
+      - name: Run format check
         shell: pwsh
-        run: .\lint.ps1 -Check
+        run: .\lint.ps1 -FormatOnly -Check
 
   build:
     name: cmake + msbuild (windows)
@@ -128,10 +98,8 @@ jobs:
           submodules: recursive
 
       - name: Validate workflow / script PowerShell syntax
-        # Catches the class of latent PowerShell parser bug that took
-        # down recent release attempts. Runs first so a syntax mistake
-        # fails the PR / push in seconds instead of after a 5-minute
-        # build.
+        # Catches the class of latent PowerShell parser bug that took down recent
+        # release attempts. Runs first so a syntax mistake fails in seconds.
         shell: pwsh
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
@@ -139,18 +107,17 @@ jobs:
           ./.github/scripts/Test-GenerateReleaseNotes.ps1
 
       - name: Set up .NET 10 SDK
-        # Pinned by modules/facetracking/src/host/global.json. Without an
-        # explicit setup the runner default may not include 10.x and the
-        # CMake host target silently skips itself, masking the gap until
-        # release time.
+        # Pinned by modules/facetracking/src/host/global.json. Without an explicit
+        # setup the runner default may not include 10.x and the CMake host target
+        # silently skips itself, masking the gap until release time.
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Cache build directory
-        # CMake handles incremental builds natively; restoring build/
-        # cuts ~5 min off the cold MSVC pass when a PR touches only a
-        # few files. Falls back to the most recent build on a hash miss.
+        # CMake handles incremental builds natively; restoring build/ cuts the
+        # cold MSVC pass when a change touches only a few files. Falls back to
+        # the most recent build on a hash miss.
         uses: actions/cache@v5
         with:
           path: build
@@ -165,12 +132,6 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('modules/facetracking/src/host/**/*.csproj', 'modules/facetracking/src/host/**/packages.lock.json') }}
           restore-keys: |
             nuget-${{ runner.os }}-
-
-      - name: Cache NSIS install
-        uses: actions/cache@v5
-        with:
-          path: 'C:\Program Files (x86)\NSIS'
-          key: nsis-${{ runner.os }}-3.12
 
       - name: Configure
         # The minhook submodule declares cmake_minimum_required(2.8.12) which
@@ -193,92 +154,19 @@ jobs:
           }
 
       - name: Run captions host self-test
+        # Release builds gate captions off (disabled-in-release.flag), so this dev
+        # build is the only place the captions host smoke-tests. The host links as
+        # SUBSYSTEM:WINDOWS, so `& exe` would start it detached without waiting;
+        # Start-Process -Wait blocks and exposes the real exit code.
         shell: pwsh
         run: |
           $hostExe = 'build/driver_wkopenvr/resources/captions/host/WKOpenVR.CaptionsHost.exe'
           if (-not (Test-Path -LiteralPath $hostExe)) {
             throw "Captions host missing at $hostExe"
           }
-          # The captions host links as SUBSYSTEM:WINDOWS to avoid a console flash
-          # on driver-side spawn. PowerShell's `& exe` does not wait for
-          # SUBSYSTEM:WINDOWS processes -- it starts them detached and leaves
-          # $LASTEXITCODE unset. Start-Process -Wait blocks until exit and
-          # exposes the real exit code on the returned process object.
           $p = Start-Process -FilePath $hostExe -ArgumentList '--self-test' `
               -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "Captions host self-test failed (exit $($p.ExitCode))" }
-
-      - name: Install NSIS
-        # No-op when the NSIS cache step above restored the install tree.
-        shell: pwsh
-        run: |
-          if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
-            Write-Host "NSIS already present (cache hit) -- skipping choco install."
-            exit 0
-          }
-          choco install nsis -y --no-progress
-          if ($LASTEXITCODE -ne 0) { throw "NSIS install failed (exit $LASTEXITCODE)" }
-
-      - name: Verify NSIS input artifacts staged
-        # Same precondition check release.yml uses, run in CI so a staging
-        # gap fails the PR / push instead of surfacing only at tag time.
-        shell: pwsh
-        run: |
-          $required = @(
-            'build/artifacts/Release/WKOpenVR.exe',
-            'build/artifacts/Release/openvr_api.dll',
-            'build/artifacts/Release/manifest.vrmanifest',
-            'build/artifacts/Release/dashboard_icon.png',
-            'build/artifacts/Release/boundary_icon.png',
-            'build/artifacts/Release/resources/face-module-sync.ps1',
-            'build/artifacts/Release/resources/questapp/install-platform-tools.ps1',
-            'build/artifacts/Release/resources/questapp/uninstall-questapp.ps1',
-            'build/artifacts/Release/resources/questapp/WKOpenVRQuestCompanion.apk',
-            'build/driver_wkopenvr/driver.vrdrivermanifest',
-            'build/driver_wkopenvr/resources/driver.vrresources',
-            'build/driver_wkopenvr/resources/settings/default.vrsettings',
-            'build/driver_wkopenvr/bin/win64/driver_wkopenvr.dll',
-            'build/driver_wkopenvr/resources/facetracking/host/WKOpenVR.FaceModuleHost.exe',
-            'build/driver_wkopenvr/resources/captions/host/WKOpenVR.CaptionsHost.exe',
-            'build/driver_wkopenvr/resources/captions/host/openvr_api.dll',
-            'build/driver_wkopenvr/resources/captions/host/resources/captions-packs.json',
-            'build/driver_wkopenvr/resources/captions/host/resources/install-captions-pack.ps1',
-            'build/driver_wkopenvr/resources/phantom/host/WKOpenVRPhantomSidecar.exe'
-          )
-          $missing = @()
-          foreach ($p in $required) {
-            if (-not (Test-Path -LiteralPath $p)) { $missing += $p }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Host "Missing artifacts required by installer.nsi:"
-            $missing | ForEach-Object { Write-Host "  - $_" }
-            throw "NSIS input artifacts are not fully staged."
-          }
-          Write-Host "All NSIS input artifacts present."
-
-      - name: Validate NSIS installer script
-        shell: pwsh
-        run: |
-          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
-          if (-not (Test-Path $makensis)) { $makensis = "C:\Program Files\NSIS\makensis.exe" }
-          if (-not (Test-Path $makensis)) { throw "makensis.exe not found." }
-          # Dry-run umbrella build.
-          Push-Location install
-          & $makensis /V2 installer.nsi
-          $exitUmbrella = $LASTEXITCODE
-          # Dry-run one per-feature build to exercise the FEATURE= code path.
-          & $makensis /V2 /DFEATURE=Calibration installer.nsi
-          $exitFeature = $LASTEXITCODE
-          Pop-Location
-          if ($exitUmbrella -ne 0) { throw "makensis (umbrella) exited $exitUmbrella" }
-          if ($exitFeature  -ne 0) { throw "makensis (Calibration) exited $exitFeature" }
-
-      - name: Test installer uninstall/reinstall
-        shell: pwsh
-        run: |
-          ./.github/scripts/Test-InstallerRoundTrip.ps1 `
-            -InstallerPath 'build/artifacts/Release/WKOpenVR-Installer.exe' `
-            -AllowUserDataRemoval
 
       - name: Stage artifacts
         shell: pwsh

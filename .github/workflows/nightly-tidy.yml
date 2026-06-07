@@ -1,0 +1,90 @@
+name: Nightly clang-tidy
+
+# Full clang-tidy over core/ + modules/ + tests/ is slow (~20-30 min on a 4-core
+# runner), so it runs nightly and on demand instead of on every push. Per-push CI
+# (ci.yml) runs format-only; the pre-push hook also gates format locally. This job
+# keeps full static-analysis coverage without putting it on the per-commit path.
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-tidy
+  cancel-in-progress: true
+
+jobs:
+  tidy:
+    name: clang-tidy (full)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-lint-${{ runner.os }}-${{ hashFiles('modules/facetracking/src/host/**/*.csproj', 'tests/e2e/facetracking_test_module/**/*.csproj', 'modules/facetracking/src/host/**/packages.lock.json') }}
+          restore-keys: |
+            nuget-lint-${{ runner.os }}-
+
+      - name: Cache LLVM
+        uses: actions/cache@v5
+        with:
+          path: 'C:\Program Files\LLVM'
+          key: llvm-${{ runner.os }}-22.1.0
+
+      - name: Cache clang-tidy build
+        # lint.ps1 configures a Ninja compile database under build/lint-tidy.
+        # Caching it keeps the configure + analysis incremental across nights.
+        uses: actions/cache@v5
+        with:
+          path: build/lint-tidy
+          key: tidy-build-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            tidy-build-${{ runner.os }}-
+
+      - name: Install LLVM tools
+        shell: pwsh
+        run: |
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (Test-Path (Join-Path $llvmBin 'clang-tidy.exe')) {
+            Write-Host "LLVM present (cache hit) -- skipping choco install."
+          } else {
+            choco install llvm --version 22.1.0 -y --no-progress --force
+            if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
+          }
+          if (-not (Test-Path -LiteralPath $llvmBin)) { throw "LLVM bin missing at $llvmBin" }
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:PATH = "$llvmBin;$env:PATH"
+          foreach ($tool in @('clang-format', 'clang-tidy', 'clang-apply-replacements')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "$tool was not found after installing LLVM."
+            }
+          }
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install ninja -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Ninja install failed (exit $LASTEXITCODE)" }
+          }
+
+      - name: Run full lint (clang-format + clang-tidy)
+        shell: pwsh
+        run: .\lint.ps1 -Check
