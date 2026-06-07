@@ -27,6 +27,11 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Simplify tracking style setup (9bc21c2)
 - **facetracking:** Load native SDK face modules (09d81d4)
 - **facetracking:** Expose native module versions (b948bd4)
+- **smoothing:** Label headset synthesis tracker (eab7843)
+- **facetracking:** Validate native module sdk abi (7abeba1)
+- **phantom:** Add dropout timing presets (97a9306)
+- **captions:** Add private caption preview (c5be597)
+- **modules:** Gate chatbox captions and virtual tracker roles (e526af6)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -52,6 +57,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Remove custom module bridge (4e9271a)
 - **logging:** Clean face and osc diagnostics (d965f52)
 - **modules:** Centralize module metadata (e89e52f)
+- style: apply dotnet format to native module adapter (dd40d84)
+- style: apply formatter output (02af6b7)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -133,6 +140,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Stabilize router publishing and pack installs (3370933)
 - **calibration:** Unify tracking style actions (3ac0b6b)
 - **runtime:** Stabilize tracking settings and deploy flags (f67c695)
+- **smoothing:** Strengthen tracker smoothing max (7c51929)
+- **facetracking:** Disable continuous calibration (65b0e48)
 
 ---
 
