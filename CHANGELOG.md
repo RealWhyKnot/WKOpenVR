@@ -131,6 +131,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Gate HMD recovery to continuous style (94323e5)
 - **captions:** Stabilize router publishing and pack installs (3370933)
 - **calibration:** Unify tracking style actions (3ac0b6b)
+- **runtime:** Stabilize tracking settings and deploy flags (f67c695)
 
 ---
 
