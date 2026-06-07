@@ -142,6 +142,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **runtime:** Stabilize tracking settings and deploy flags (f67c695)
 - **smoothing:** Strengthen tracker smoothing max (7c51929)
 - **facetracking:** Disable continuous calibration (65b0e48)
+- **facetracking:** Deterministic eyelid-sync smoothing on sub-ms dt (33f33d2)
 
 ---
 
