@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Pre-push guard: block pushes that would fail CI's formatting/style check, so the
+# same clang-format / dotnet-format drift stops reaching CI over and over.
+#
+# - Check-only: never modifies files (no clang-format -i, no churn).
+# - Changed-only + format-only: fast (seconds), skips the heavy clang-tidy pass.
+# - Skips gracefully when the formatters are not installed, so it can never block a
+#   push on a machine without the toolchain. Bypass in an emergency: git push --no-verify
+set -uo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -f "$repo_root/lint.ps1" ] || exit 0
+
+pwsh_bin=""
+for c in pwsh pwsh.exe powershell.exe powershell; do
+  if command -v "$c" >/dev/null 2>&1; then pwsh_bin="$c"; break; fi
+done
+if [ -z "$pwsh_bin" ]; then
+  echo "pre-push: PowerShell not found; skipping format check." >&2
+  exit 0
+fi
+
+if ! command -v clang-format >/dev/null 2>&1 || ! command -v dotnet >/dev/null 2>&1; then
+  echo "pre-push: clang-format/dotnet not found; skipping format check (install LLVM + .NET to enable)." >&2
+  exit 0
+fi
+
+echo "pre-push: checking formatting (lint.ps1 -FormatOnly -Check -ChangedOnly)..." >&2
+"$pwsh_bin" -NoProfile -ExecutionPolicy Bypass -File "$repo_root/lint.ps1" -FormatOnly -Check -ChangedOnly
+if [ "$?" -ne 0 ]; then
+  {
+    echo ""
+    echo "pre-push BLOCKED: formatting/style drift would fail CI's lint job."
+    echo "  Fix:    pwsh ./lint.ps1 -FormatOnly      (applies clang-format + dotnet format)"
+    echo "  Then:   git add -u && git commit and push again."
+    echo "  Bypass: git push --no-verify             (only if you are certain)"
+  } >&2
+  exit 1
+fi
+
+echo "pre-push: format check passed." >&2
+exit 0
