@@ -26,6 +26,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Gate expression corrections (22c222c)
 - **calibration:** Simplify tracking style setup (9bc21c2)
 - **facetracking:** Load native SDK face modules (09d81d4)
+- **facetracking:** Expose native module versions (b948bd4)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
