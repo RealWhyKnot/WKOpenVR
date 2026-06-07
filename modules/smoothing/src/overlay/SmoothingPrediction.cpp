@@ -153,6 +153,11 @@ void SmoothingPlugin::DrawPredictionTab()
 	// trackers does to the SC math. Avoids a wall of intro text on entry.
 	ImGui::TextWrapped("Per-tracker prediction suppression. 0 = raw motion, 100 = fully suppressed.");
 	ImGui::Spacing();
+	// The synthesized (locked) HMD pose is not a tracked device in this list, so
+	// its smoothing lives with the head-mount lock. Point the user there.
+	ImGui::TextDisabled("Locked-headset smoothing (headset driven by a head-mounted tracker) is under");
+	ImGui::TextDisabled("Space Calibration -> head-mounted tracker -> \"Smooth locked headset\".");
+	ImGui::Spacing();
 	ImGui::SeparatorText("Per-tracker smoothness");
 	ImGui::Spacing();
 

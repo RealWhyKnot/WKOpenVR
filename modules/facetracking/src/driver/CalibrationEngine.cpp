@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -296,6 +297,22 @@ bool CalibrationEngine::IsShapeWarm(int idx) const
 {
 	if (idx < 0 || idx >= kTotalShapes) return false;
 	return shapes_[idx].warm;
+}
+
+std::string CalibrationEngine::DebugSummary() const
+{
+	const ShapeCalib& oL = shapes_[kIdxOpenL];
+	const ShapeCalib& oR = shapes_[kIdxOpenR];
+	const ShapeCalib& pL = shapes_[kIdxPupilL];
+	const ShapeCalib& jaw = shapes_[26];   // JawOpen
+	const ShapeCalib& smile = shapes_[45]; // MouthSmileLeft
+	char buf[320];
+	std::snprintf(buf, sizeof buf,
+	              "warm=%d/%d openL[%.2f..%.2f w%d] openR[%.2f..%.2f w%d] pupilL[%.2f..%.2f w%d] "
+	              "jaw[%.2f..%.2f w%d] smileL[%.2f..%.2f w%d]",
+	              WarmShapeCount(), TotalShapeCount(), oL.p02, oL.p98, (int)oL.warm, oR.p02, oR.p98, (int)oR.warm,
+	              pL.p02, pL.p98, (int)pL.warm, jaw.p02, jaw.p98, (int)jaw.warm, smile.p02, smile.p98, (int)smile.warm);
+	return std::string(buf);
 }
 
 void CalibrationEngine::Reset(protocol::FaceCalibrationOp op)

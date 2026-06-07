@@ -310,6 +310,11 @@ static const uint8_t FACETRACKING_EXPR_CORRECT_SMILE_OPEN = 0x02;
 static const uint8_t FACETRACKING_EXPR_CORRECT_IDLE_CLOSE = 0x04;
 static const uint8_t FACETRACKING_EXPR_CORRECT_BROW_SYNC = 0x08;
 
+// FaceTrackingConfig::eyelid_sync_mode values. Eye openness is 0..1 where
+// 0 = fully closed and 1 = fully open.
+static const uint8_t FACETRACKING_EYELID_SYNC_MOST_CLOSED = 0;
+static const uint8_t FACETRACKING_EYELID_SYNC_MOST_OPEN = 1;
+
 // v15 (2026-05-12): face-tracking master config.
 //
 // POD-only, fits in the existing Request union -- the static_assert below
@@ -350,6 +355,8 @@ struct FaceTrackingConfig
 	uint8_t vergence_lock_strength;
 	uint8_t gaze_smoothing;
 	uint8_t openness_smoothing;
+	uint8_t eyelid_sync_mode;
+	uint8_t _reserved_face_config;
 
 	// OSC target. Driver forwards these to the host over the host control
 	// pipe; the host owns the UDP socket. Default 127.0.0.1:9000 (VRChat).
@@ -673,7 +680,8 @@ struct SetHeadMountConfig
 	uint16_t driverSynthBlendToFallbackMs;
 	uint16_t driverSynthStableBeforeSynthMs;
 	uint16_t driverSynthBlendToSynthMs;
-	uint8_t _pad[2];
+	uint8_t lockedHeadsetSmoothing; // 0..100, 0 = off (v30)
+	uint8_t _pad[1];
 };
 
 struct Request

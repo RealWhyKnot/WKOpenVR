@@ -159,17 +159,35 @@ static void WriteUtf8File(const std::wstring& path, const char* body)
 	CloseHandle(h);
 }
 
-TEST(FaceOscAddressFilter, MissingFileBlocksWhenActive)
+TEST(FaceOscAddressFilter, MissingFilePassesThroughWhenEmpty)
 {
 	std::wstring path = TempAllowListPath();
 	facetracking::FaceOscAddressFilter filter(path);
 
 	EXPECT_TRUE(filter.ReloadIfChanged());
-	EXPECT_TRUE(filter.Active());
+	// A missing allowlist yields no addresses, so filtering stays off and every
+	// address passes through rather than blocking all face output.
+	EXPECT_FALSE(filter.Active());
 	EXPECT_EQ(filter.AllowedCount(), 0u);
 	EXPECT_EQ(filter.LastLoadStatus(), facetracking::FaceOscAddressFilterLoadStatus::Missing);
 	EXPECT_STREQ(facetracking::FaceOscAddressFilterLoadStatusName(filter.LastLoadStatus()), "missing");
-	EXPECT_FALSE(filter.Allows("/avatar/parameters/JawOpen"));
+}
+
+TEST(FaceOscAddressFilter, EmptyFilePassesThroughWhenLoaded)
+{
+	std::wstring path = TempAllowListPath();
+	WriteUtf8File(path, "");
+
+	facetracking::FaceOscAddressFilter filter(path);
+	EXPECT_TRUE(filter.ReloadIfChanged());
+	// An empty avatar parameter list (avatar OSCQuery config not available) must
+	// not suppress all output: the filter loads but stays inactive so the
+	// publisher sends every parameter.
+	EXPECT_EQ(filter.LastLoadStatus(), facetracking::FaceOscAddressFilterLoadStatus::Loaded);
+	EXPECT_EQ(filter.AllowedCount(), 0u);
+	EXPECT_FALSE(filter.Active());
+
+	DeleteFileW(path.c_str());
 }
 
 TEST(FaceOscAddressFilter, LoadsAndReloadsAddresses)
@@ -181,6 +199,7 @@ TEST(FaceOscAddressFilter, LoadsAndReloadsAddresses)
 	facetracking::FaceOscAddressFilter filter(path);
 	EXPECT_TRUE(filter.ReloadIfChanged());
 	EXPECT_EQ(filter.AllowedCount(), 2u);
+	EXPECT_TRUE(filter.Active());
 	EXPECT_EQ(filter.LastLoadStatus(), facetracking::FaceOscAddressFilterLoadStatus::Loaded);
 	EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/JawOpen"));
 	EXPECT_TRUE(filter.Allows("/avatar/parameters/v2/EyeLidLeft"));

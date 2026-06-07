@@ -21,8 +21,10 @@
 #include <windows.h>
 #include <openvr_driver.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -30,6 +32,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace facetracking {
 namespace {
@@ -293,7 +296,7 @@ public:
 				const std::string new_uuid =
 				    FixedString(config_.active_module_uuid, protocol::FACETRACKING_MODULE_UUID_LEN);
 				FT_LOG_DRV("[module] config update: master=%u->%u osc=%u->%u native=%u->%u "
-				           "module='%s'->'%s' calib=%u->%u eyelid=%u/%u->%u/%u "
+				           "module='%s'->'%s' calib=%u->%u eyelid=%u/%u/mode=%u->%u/%u/mode=%u "
 				           "vergence=%u/%u->%u/%u smooth(gaze=%u->%u open=%u->%u) "
 				           "corr=0x%02x->0x%02x corr_strengths=0x%04x->0x%04x osc_port=%u->%u",
 				           (unsigned)old.master_enabled, (unsigned)config_.master_enabled,
@@ -301,8 +304,9 @@ public:
 				           (unsigned)old._reserved_native, (unsigned)config_._reserved_native, old_uuid.c_str(),
 				           new_uuid.c_str(), (unsigned)old.continuous_calib_mode,
 				           (unsigned)config_.continuous_calib_mode, (unsigned)old.eyelid_sync_enabled,
-				           (unsigned)old.eyelid_sync_strength, (unsigned)config_.eyelid_sync_enabled,
-				           (unsigned)config_.eyelid_sync_strength, (unsigned)old.vergence_lock_enabled,
+				           (unsigned)old.eyelid_sync_strength, (unsigned)old.eyelid_sync_mode,
+				           (unsigned)config_.eyelid_sync_enabled, (unsigned)config_.eyelid_sync_strength,
+				           (unsigned)config_.eyelid_sync_mode, (unsigned)old.vergence_lock_enabled,
 				           (unsigned)old.vergence_lock_strength, (unsigned)config_.vergence_lock_enabled,
 				           (unsigned)config_.vergence_lock_strength, (unsigned)old.gaze_smoothing,
 				           (unsigned)config_.gaze_smoothing, (unsigned)old.openness_smoothing,
@@ -409,6 +413,25 @@ private:
 	uint64_t diag_osc_deduped_ = 0;
 	uint64_t diag_osc_remapped_ = 0;
 
+	// Face-frame anomaly diagnostics. Accumulated per period and emitted on the
+	// 5s tick so the log stays low-noise. The anomaly fields capture the worst
+	// frame in the window; the pre-correction snapshot captures the most recent
+	// frame so the period line can show, per shape, what the module sent vs what
+	// the correction pass produced.
+	uint32_t diag_max_oob_ = 0;        // expressions outside [0,1] (worst frame)
+	uint32_t diag_max_nan_ = 0;        // non-finite expressions (worst frame)
+	float diag_max_expr_val_ = 0.0f;   // largest expression magnitude (>1 => bulge)
+	int diag_max_expr_idx_ = -1;       // which shape held diag_max_expr_val_
+	float diag_min_gaze_len_ = 9.0f;   // smallest gaze unit-length (0 => dead eyes)
+	float diag_max_gaze_len_ = 0.0f;   // largest gaze unit-length (>1 => overshoot)
+	float diag_pre_jaw_ = 0.0f;
+	float diag_pre_mouthClose_ = 0.0f;
+	float diag_pre_smileL_ = 0.0f;
+	float diag_pre_sadL_ = 0.0f;
+	float diag_pre_cheekL_ = 0.0f;
+	float diag_pre_browInnerL_ = 0.0f;
+	float diag_pre_eyeWideL_ = 0.0f;
+
 	FaceOscPublishCounts MaybePublishOsc(const protocol::FaceTrackingConfig& cfg,
 	                                     const protocol::FaceTrackingFrameBody& frame, bool eye_valid,
 	                                     bool expr_nonzero)
@@ -451,7 +474,10 @@ private:
 			           (unsigned)osc_filter_.AllowedCount());
 		}
 
-		counts = PublishFaceFrameOsc(frame, &osc_filter_);
+		// On the first publish, also capture the exact addresses emitted so we
+		// can log a one-shot manifest (what the avatar is actually driven with).
+		std::vector<std::string> manifest;
+		counts = PublishFaceFrameOsc(frame, &osc_filter_, osc_first_publish_ ? nullptr : &manifest);
 		osc_messages_sent_ += counts.sent;
 		osc_messages_dropped_ += counts.dropped;
 
@@ -462,10 +488,48 @@ private:
 			           (unsigned)counts.filtered, (unsigned)counts.deduped, (unsigned)counts.remapped,
 			           frame.expressions[26], // index 26 = JawOpen
 			           frame.eye_openness_l, (unsigned)frame.flags);
+			LogOscManifest(manifest);
 			osc_first_publish_ = true;
 		}
 
 		return counts;
+	}
+
+	// One-shot dump of the distinct OSC addresses emitted in the first frame.
+	// Never repeats, so it adds no ongoing noise; it shows which
+	// parameters drive the avatar (and whether legacy + v2 families are both
+	// sent, which can over-drive shapes on avatars that map both families).
+	void LogOscManifest(const std::vector<std::string>& emitted)
+	{
+		std::vector<std::string> uniq(emitted.begin(), emitted.end());
+		std::sort(uniq.begin(), uniq.end());
+		uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
+		unsigned legacy = 0;
+		unsigned v2 = 0;
+		for (const auto& a : uniq) {
+			if (a.find("/v2/") != std::string::npos) {
+				++v2;
+			}
+			else {
+				++legacy;
+			}
+		}
+		FT_LOG_DRV("[facetracking][osc-manifest] distinct=%u legacy=%u v2=%u (full list follows)",
+		           (unsigned)uniq.size(), legacy, v2);
+		std::string line;
+		unsigned col = 0;
+		for (const auto& a : uniq) {
+			line += a;
+			line += ' ';
+			if (++col >= 8) {
+				FT_LOG_DRV("[facetracking][osc-manifest]   %s", line.c_str());
+				line.clear();
+				col = 0;
+			}
+		}
+		if (!line.empty()) {
+			FT_LOG_DRV("[facetracking][osc-manifest]   %s", line.c_str());
+		}
 	}
 
 	void ResetDebugPeriodCounters()
@@ -481,6 +545,12 @@ private:
 		diag_osc_filtered_ = 0;
 		diag_osc_deduped_ = 0;
 		diag_osc_remapped_ = 0;
+		diag_max_oob_ = 0;
+		diag_max_nan_ = 0;
+		diag_max_expr_val_ = 0.0f;
+		diag_max_expr_idx_ = -1;
+		diag_min_gaze_len_ = 9.0f;
+		diag_max_gaze_len_ = 0.0f;
 	}
 
 	// -----------------------------------------------------------------------
@@ -603,6 +673,18 @@ private:
 				cfg = config_;
 			}
 
+			// Pre-correction (module-remapped) values for the shapes whose
+			// wrongness is most visible on the avatar, captured before the
+			// vergence/eyelid/signal-processor transforms so the periodic diag
+			// can show module-output vs our-corrected per shape.
+			diag_pre_jaw_ = frame.expressions[26];
+			diag_pre_mouthClose_ = frame.expressions[40];
+			diag_pre_smileL_ = frame.expressions[45];
+			diag_pre_sadL_ = frame.expressions[47];
+			diag_pre_cheekL_ = frame.expressions[20];
+			diag_pre_browInnerL_ = frame.expressions[14];
+			diag_pre_eyeWideL_ = frame.expressions[8];
+
 			// Continuous calibration ingestion + normalization.
 			if (cfg.continuous_calib_mode > 0) {
 				calib_.IngestFrame(frame);
@@ -616,7 +698,8 @@ private:
 
 			// Eyelid sync.
 			if (cfg.eyelid_sync_enabled) {
-				eyelid_.Apply(frame, cfg.eyelid_sync_strength, cfg.eyelid_sync_preserve_winks != 0);
+				eyelid_.Apply(frame, cfg.eyelid_sync_strength, cfg.eyelid_sync_preserve_winks != 0,
+				              cfg.eyelid_sync_mode);
 			}
 
 			signal_processor_.Apply(frame, cfg);
@@ -658,11 +741,51 @@ private:
 				diag_osc_deduped_ += counts.deduped;
 				diag_osc_remapped_ += counts.remapped;
 
+				// Per-frame anomaly scan -- out-of-range / non-finite expressions
+				// and gaze unit-length drift are the usual sources of a bulging or
+				// spazzing avatar. Keep only the worst frame of the period.
+				{
+					uint32_t oob = 0;
+					uint32_t nan = 0;
+					float maxVal = 0.0f;
+					int maxIdx = -1;
+					for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+						const float v = frame.expressions[i];
+						if (!std::isfinite(v)) {
+							++nan;
+							continue;
+						}
+						if (v < 0.0f || v > 1.0f) ++oob;
+						const float mag = v < 0.0f ? -v : v;
+						if (mag > maxVal) {
+							maxVal = mag;
+							maxIdx = (int)i;
+						}
+					}
+					if (oob > diag_max_oob_) diag_max_oob_ = oob;
+					if (nan > diag_max_nan_) diag_max_nan_ = nan;
+					if (maxVal > diag_max_expr_val_) {
+						diag_max_expr_val_ = maxVal;
+						diag_max_expr_idx_ = maxIdx;
+					}
+					if (eye_valid) {
+						const float* g[2] = {frame.eye_gaze_l, frame.eye_gaze_r};
+						for (int e = 0; e < 2; ++e) {
+							const float len =
+							    std::sqrt(g[e][0] * g[e][0] + g[e][1] * g[e][1] + g[e][2] * g[e][2]);
+							if (std::isfinite(len)) {
+								if (len < diag_min_gaze_len_) diag_min_gaze_len_ = len;
+								if (len > diag_max_gaze_len_) diag_max_gaze_len_ = len;
+							}
+						}
+					}
+				}
+
 				if (!first_frame_diag_logged_) {
 					first_frame_diag_logged_ = true;
 					FT_LOG_DRV("[facetracking][diag] first-frame flags_in=0x%x flags_out=0x%x "
 					           "host_state=%u hb_age_ms=%llu module='%s' osc=%u calib=%u "
-					           "eyelid=%u/%u vergence=%u/%u corr=0x%02x smooth(gaze=%u open=%u) "
+					           "eyelid=%u/%u/mode=%u vergence=%u/%u corr=0x%02x smooth(gaze=%u open=%u) "
 					           "jaw(raw=%.3f out=%.3f mouthClosedRaw=%.3f) "
 					           "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) "
 					           "pupil=(%.3f,%.3f) rawEyeWideL=%.3f allowlist=%u allowlist_status=%s",
@@ -670,7 +793,8 @@ private:
 					           static_cast<unsigned long long>(hb_age_ms), cfg.active_module_uuid,
 					           (unsigned)cfg.output_osc_enabled, (unsigned)cfg.continuous_calib_mode,
 					           (unsigned)cfg.eyelid_sync_enabled, (unsigned)cfg.eyelid_sync_strength,
-					           (unsigned)cfg.vergence_lock_enabled, (unsigned)cfg.vergence_lock_strength,
+					           (unsigned)cfg.eyelid_sync_mode, (unsigned)cfg.vergence_lock_enabled,
+					           (unsigned)cfg.vergence_lock_strength,
 					           (unsigned)cfg.expression_correction_flags, (unsigned)cfg.gaze_smoothing,
 					           (unsigned)cfg.openness_smoothing, input_jaw_open, frame.expressions[26],
 					           input_mouth_closed, frame.eye_openness_l, frame.eye_openness_r, frame.eye_gaze_l[0],
@@ -689,7 +813,7 @@ private:
 					    "zero_expr=%llu host_state=%u hb_age_ms=%llu module='%s' "
 					    "osc=%u osc_delta=(attempt=%llu sent=%llu drop=%llu filtered=%llu deduped=%llu remapped=%llu) "
 					    "total_osc=(sent=%llu drop=%llu) allowlist=%u allowlist_status=%s read_fail=%llu "
-					    "calib=%u eyelid=%u vergence=%u corr=0x%02x "
+					    "calib=%u eyelid=%u/mode=%u vergence=%u corr=0x%02x "
 					    "last_jaw=%.3f last_eye=(%.3f,%.3f) last_pupil=(%.3f,%.3f)",
 					    static_cast<unsigned long long>(diag_frames_), static_cast<unsigned long long>(diag_eye_valid_),
 					    static_cast<unsigned long long>(diag_expr_valid_),
@@ -705,9 +829,48 @@ private:
 					    static_cast<unsigned long long>(osc_messages_dropped_), (unsigned)osc_filter_.AllowedCount(),
 					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()),
 					    static_cast<unsigned long long>(diag_read_failures_), (unsigned)cfg.continuous_calib_mode,
-					    (unsigned)cfg.eyelid_sync_enabled, (unsigned)cfg.vergence_lock_enabled,
-					    (unsigned)cfg.expression_correction_flags, frame.expressions[26], frame.eye_openness_l,
-					    frame.eye_openness_r, frame.pupil_dilation_l, frame.pupil_dilation_r);
+					    (unsigned)cfg.eyelid_sync_enabled, (unsigned)cfg.eyelid_sync_mode,
+					    (unsigned)cfg.vergence_lock_enabled, (unsigned)cfg.expression_correction_flags,
+					    frame.expressions[26], frame.eye_openness_l, frame.eye_openness_r, frame.pupil_dilation_l,
+					    frame.pupil_dilation_r);
+
+					// Per-shape module-output vs our-corrected for the avatar's
+					// most-visible shapes (latest frame). A large pre->post swing
+					// points at our corrections; a wrong pre points upstream.
+					FT_LOG_DRV(
+					    "[facetracking][shapes] jaw=%.3f->%.3f mouthClose=%.3f->%.3f smileL=%.3f->%.3f "
+					    "sadL=%.3f->%.3f cheekL=%.3f->%.3f browInnerL=%.3f->%.3f eyeWideL=%.3f->%.3f "
+					    "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) gazeR=(%.3f,%.3f,%.3f)",
+					    diag_pre_jaw_, frame.expressions[26], diag_pre_mouthClose_, frame.expressions[40],
+					    diag_pre_smileL_, frame.expressions[45], diag_pre_sadL_, frame.expressions[47],
+					    diag_pre_cheekL_, frame.expressions[20], diag_pre_browInnerL_, frame.expressions[14],
+					    diag_pre_eyeWideL_, frame.expressions[8], frame.eye_openness_l, frame.eye_openness_r,
+					    frame.eye_gaze_l[0], frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.eye_gaze_r[0],
+					    frame.eye_gaze_r[1], frame.eye_gaze_r[2]);
+
+					// Health: worst-frame anomalies + the OSC family/filter state.
+					// filter_active=0 means fail-open: BOTH the legacy and v2
+					// families are sent unfiltered with dedup off, which can
+					// over-drive an avatar that maps both parameter families.
+					const bool diag_filter_active = osc_filter_.Active();
+					FT_LOG_DRV(
+					    "[facetracking][health] worst_oob=%u worst_nan=%u max_expr=%s:%.3f gaze_len=[%.3f..%.3f] "
+					    "filter_active=%d families=%s allowlist=%u status=%s",
+					    (unsigned)diag_max_oob_, (unsigned)diag_max_nan_,
+					    diag_max_expr_idx_ >= 0
+					        ? facetracking::FaceExpressionOscName((uint32_t)diag_max_expr_idx_)
+					        : "n/a",
+					    diag_max_expr_val_, diag_min_gaze_len_, diag_max_gaze_len_, (int)diag_filter_active,
+					    diag_filter_active ? "filtered" : "legacy+v2+vrcft(failopen,dedup-off)",
+					    (unsigned)osc_filter_.AllowedCount(),
+					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
+
+					// Continuous-cal learned ranges: shows the [p02..p98] window each
+					// signal is mapping to [0,1], so a mis-learned range that
+					// exaggerates/flattens a shape (the "looks weird" report) is visible.
+					if (cfg.continuous_calib_mode > 0) {
+						FT_LOG_DRV("[facetracking][calib] %s", calib_.DebugSummary().c_str());
+					}
 					ResetDebugPeriodCounters();
 					last_diag_log_ = diag_now;
 				}

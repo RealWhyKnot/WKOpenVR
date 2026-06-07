@@ -372,6 +372,7 @@ private:
 		bool hideTracker = true;
 		bool offsetCalibrated = false;
 		bool allowRawHmdFallback = true;
+		uint8_t lockedHeadsetSmoothing = 0; // 0..100, 0 = off; smooths the synth HMD pose
 		wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming;
 	};
 	mutable std::mutex m_headMountStateMutex;
@@ -388,6 +389,11 @@ private:
 	driver_synth::TrackerSnapshot m_trackerSnap;
 	driver_synth::SourceBlendState m_driverSynthBlendState;
 	std::atomic<bool> m_driverSynthBlendReset{false};
+
+	// Optional speed-adaptive low-pass for the synthesized (locked) HMD pose.
+	// Dedicated filter state so it is independent of any per-device smoothing.
+	prediction::smart_shadow::FilterState m_driverSynthHmdFilter;
+	LARGE_INTEGER m_driverSynthHmdFilterLastSample{};
 
 	// Finger-smoothing config packed into an atomic uint64_t. Single-writer
 	// (IPC thread, on user UI input -- rare) / many-reader (skeletal hook
@@ -463,6 +469,13 @@ private:
 	// unmodified pose, pose is mutated in place.
 	void ApplySmartSmoothing(uint32_t openVRID, DeviceTransform& device, const vr::DriverPose_t& rawPose,
 	                         vr::DriverPose_t& pose, uint8_t smoothness) const;
+
+	// Speed-adaptive low-pass for the synthesized (locked) HMD pose. Unlike the
+	// per-device smoothing this also filters rotation, since a head-mounted
+	// tracker's orientation jitter is the main discomfort when locked; the
+	// one-euro release keeps real head motion responsive. smoothness == 0 leaves
+	// the pose untouched and reseeds the filter.
+	void ApplyLockedHeadsetSmoothing(vr::DriverPose_t& pose, uint8_t smoothness);
 #if WKOPENVR_BUILD_IS_DEV
 	void UpdateSmartSmoothingShadow(uint32_t openVRID, DeviceTransform& device, const vr::DriverPose_t& rawPose,
 	                                const vr::DriverPose_t& livePose) const;

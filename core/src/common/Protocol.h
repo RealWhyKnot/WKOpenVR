@@ -252,7 +252,17 @@ namespace protocol {
 // DriverSynth can distinguish recovery mode from hard tracker lock. The
 // field uses existing payload padding, but the semantic change still
 // requires paired overlay+driver install.
-const uint32_t Version = 29;
+//
+// v30 (2026-06-05): SetHeadMountConfig carries lockedHeadsetSmoothing
+// (0..100, 0 = off) for an optional speed-adaptive low-pass on the
+// synthesized HMD pose when locked to a head-mounted tracker -- tames
+// lighthouse jitter without lagging real head motion. Consumes one existing
+// _pad byte (no size change); still requires paired overlay+driver install.
+//
+// v31 (2026-06-06): FaceTrackingConfig carries eyelid_sync_mode so eyelid
+// sync can target either the most closed eye or the most open eye instead of
+// always averaging both eyelid openness values.
+const uint32_t Version = 31;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

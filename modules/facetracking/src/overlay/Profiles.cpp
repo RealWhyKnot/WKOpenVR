@@ -42,6 +42,10 @@ FacetrackingProfile Decode(const picojson::value& v)
 	getBool("eyelid_sync_enabled", p.eyelid_sync_enabled);
 	getBool("eyelid_sync_preserve_winks", p.eyelid_sync_preserve_winks);
 	getInt("eyelid_sync_strength", p.eyelid_sync_strength);
+	getInt("eyelid_sync_mode", p.eyelid_sync_mode);
+	if (p.eyelid_sync_mode != protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN) {
+		p.eyelid_sync_mode = protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED;
+	}
 	getBool("vergence_lock_enabled", p.vergence_lock_enabled);
 	getInt("vergence_lock_strength", p.vergence_lock_strength);
 	getInt("continuous_calib_mode", p.continuous_calib_mode);
@@ -85,6 +89,7 @@ std::string Encode(const FacetrackingProfile& p)
 	obj["eyelid_sync_enabled"] = picojson::value(p.eyelid_sync_enabled);
 	obj["eyelid_sync_preserve_winks"] = picojson::value(p.eyelid_sync_preserve_winks);
 	obj["eyelid_sync_strength"] = picojson::value((double)p.eyelid_sync_strength);
+	obj["eyelid_sync_mode"] = picojson::value((double)p.eyelid_sync_mode);
 	obj["vergence_lock_enabled"] = picojson::value(p.vergence_lock_enabled);
 	obj["vergence_lock_strength"] = picojson::value((double)p.vergence_lock_strength);
 	obj["continuous_calib_mode"] = picojson::value((double)p.continuous_calib_mode);

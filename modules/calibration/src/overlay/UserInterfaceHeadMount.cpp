@@ -36,6 +36,7 @@ void CCal_SendHeadMountConfig()
 	p.hideTracker = hm.hideTracker;
 	p.offsetCalibrated = hm.offsetCalibrated;
 	p.allowRawHmdFallback = hm.allowRawHmdFallback;
+	p.lockedHeadsetSmoothing = hm.lockedHeadsetSmoothing;
 	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	p.driverSynthStaleLimitMs = static_cast<uint16_t>(timing.staleLimitMs);
 	p.driverSynthGraceHoldMs = static_cast<uint16_t>(timing.graceHoldMs);
@@ -77,6 +78,85 @@ void CCal_SendHeadMountConfig()
 namespace {
 
 bool s_offsetSlidersOpen = false;
+
+bool DrawDriverSynthTimingControl(const char* label, int& value, int minValue, int maxValue, const char* tooltip)
+{
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(label);
+	ImGui::TableSetColumnIndex(1);
+	ImGui::PushItemWidth(-1.0f);
+	const bool changed = ImGui::SliderInt("##value", &value, minValue, maxValue, "%d ms");
+	ImGui::PopItemWidth();
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("%s", tooltip);
+	}
+	return changed;
+}
+
+void DrawDriverSynthTimingPanel(HeadMountConfig& hm)
+{
+	if (hm.mode != HeadMountMode::DriverSynth) return;
+
+	ImGui::Spacing();
+	ImGui::SetNextItemOpen(false, ImGuiCond_FirstUseEver);
+	if (!ImGui::CollapsingHeader("Advanced fallback timing")) return;
+
+	ImGui::Indent();
+	if (ImGui::BeginTable("driver_synth_timing", 2,
+	                      ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
+		auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
+		bool changed = false;
+		ImGui::PushID("stale_limit");
+		changed |= DrawDriverSynthTimingControl(
+		    "Tracker stale limit", timing.staleLimitMs, wkopenvr::headmount::kDriverSynthStaleLimitMsMin,
+		    wkopenvr::headmount::kDriverSynthStaleLimitMsMax,
+		    "How old the last tracker pose can be before it is treated as missing. Raise this so brief\n"
+		    "tracker dropouts do not fall back to the raw headset (which can move with inside-out relocalization).");
+		ImGui::PopID();
+		ImGui::PushID("grace_hold");
+		changed |= DrawDriverSynthTimingControl(
+		    "Grace hold", timing.graceHoldMs, wkopenvr::headmount::kDriverSynthTransitionMsMin,
+		    wkopenvr::headmount::kDriverSynthTransitionMsMax,
+		    "How long to keep the last tracker-synth pose before fading to headset tracking.");
+		ImGui::PopID();
+		ImGui::PushID("blend_out");
+		changed |= DrawDriverSynthTimingControl(
+		    "Blend to fallback", timing.blendToFallbackMs, wkopenvr::headmount::kDriverSynthTransitionMsMin,
+		    wkopenvr::headmount::kDriverSynthTransitionMsMax,
+		    "Fade duration from tracker-synth pose to headset tracking after grace expires.");
+		ImGui::PopID();
+		ImGui::PushID("stable_return");
+		changed |= DrawDriverSynthTimingControl(
+		    "Stable before return", timing.stableBeforeSynthMs, wkopenvr::headmount::kDriverSynthTransitionMsMin,
+		    wkopenvr::headmount::kDriverSynthTransitionMsMax,
+		    "How long the tracker must be good again before WKOpenVR blends back to it.");
+		ImGui::PopID();
+		ImGui::PushID("blend_in");
+		changed |= DrawDriverSynthTimingControl("Blend back to tracker", timing.blendToSynthMs,
+		                                        wkopenvr::headmount::kDriverSynthTransitionMsMin,
+		                                        wkopenvr::headmount::kDriverSynthTransitionMsMax,
+		                                        "Fade duration from headset tracking back to tracker-synth pose.");
+		ImGui::PopID();
+		ImGui::EndTable();
+
+		if (changed) {
+			hm.driverSynthTiming = timing;
+			SaveProfile(CalCtx);
+			CCal_SendHeadMountConfig();
+		}
+	}
+	if (ImGui::Button("Reset fallback timing")) {
+		hm.driverSynthTiming = {};
+		SaveProfile(CalCtx);
+		CCal_SendHeadMountConfig();
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Restore the default fallback timing values.");
+	}
+	ImGui::Unindent();
+}
 
 } // namespace
 
@@ -178,6 +258,21 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 		                    TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) ? "on" : "off");
 		if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle)) {
 			ImGui::TextDisabled("Raw HMD fallback: %s", hm.allowRawHmdFallback ? "on" : "off");
+			int lockedSmoothing = (int)hm.lockedHeadsetSmoothing;
+			ImGui::SetNextItemWidth(200.0f);
+			const char* smoothFmt = lockedSmoothing > 0 ? "%d" : "off";
+			if (ImGui::SliderInt("Smooth locked headset", &lockedSmoothing, 0, 100, smoothFmt)) {
+				if (lockedSmoothing < 0) lockedSmoothing = 0;
+				if (lockedSmoothing > 100) lockedSmoothing = 100;
+				hm.lockedHeadsetSmoothing = (uint8_t)lockedSmoothing;
+				SaveProfile(CalCtx);
+				CCal_SendHeadMountConfig();
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Speed-adaptive low-pass on the headset pose while the head-mounted tracker\n"
+				                  "drives it. Higher = steadier at rest; real head motion stays responsive. 0 = off.");
+			}
+			DrawDriverSynthTimingPanel(hm);
 		}
 
 		// Auto-correct headset tracker offset is demoted to shadow-log-only: the

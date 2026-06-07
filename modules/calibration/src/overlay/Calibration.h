@@ -178,6 +178,9 @@ struct HeadMountConfig
 	bool offsetCalibrated = false;
 	bool autoCorrectOffset = true;
 	bool allowRawHmdFallback = true;
+	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
+	// head-mounted tracker (0..100, 0 = off). Tames lighthouse jitter.
+	uint8_t lockedHeadsetSmoothing = 0;
 	wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming;
 	// Runtime-resolved OpenVR device ID; not persisted. -1 means unresolved.
 	// Set each AssignTargets() call by matching trackerSerial + trackerTrackingSystem.

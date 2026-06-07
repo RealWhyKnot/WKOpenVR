@@ -17,6 +17,7 @@ struct FacetrackingProfile
 	bool eyelid_sync_enabled = false;
 	bool eyelid_sync_preserve_winks = true;
 	int eyelid_sync_strength = 70; // 0..100
+	int eyelid_sync_mode = protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED;
 
 	bool vergence_lock_enabled = false;
 	int vergence_lock_strength = 60; // 0..100

@@ -315,6 +315,7 @@ TEST(FaceTrackingProfileDefaults, PreferenceCorrectionsAreOptIn)
 	FacetrackingProfile profile;
 
 	EXPECT_FALSE(profile.eyelid_sync_enabled);
+	EXPECT_EQ(profile.eyelid_sync_mode, protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED);
 	EXPECT_EQ(profile.gaze_smoothing, 0);
 	EXPECT_EQ(profile.openness_smoothing, 0);
 	EXPECT_FALSE(profile.mouth_close_compensation_enabled);

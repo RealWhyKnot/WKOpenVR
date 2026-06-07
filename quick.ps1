@@ -14,6 +14,10 @@ param(
 	# Copy and verify, but do not relaunch SteamVR afterward.
 	[switch]$NoRestart,
 
+	# Deploy even if VRChat is running. By default the script refuses to stop
+	# SteamVR/Steam while VRChat is open so a deploy never kills a game session.
+	[switch]$AllowGameRunning,
+
 	# Override the deployed install dir.
 	[string]$InstallDir = "C:\Program Files\WKOpenVR",
 
@@ -395,7 +399,8 @@ function Copy-DriverTree {
 		New-Item -ItemType Directory -Force -Path $preserveRoot | Out-Null
 
 		$resourcesDir = Join-Path $Plan.DriverDestDir "resources"
-		if (Test-Path -LiteralPath $resourcesDir) {
+		$resourcesPreExisted = Test-Path -LiteralPath $resourcesDir
+		if ($resourcesPreExisted) {
 			foreach ($flag in Get-ChildItem -LiteralPath $resourcesDir -Filter "*.flag" -File -ErrorAction SilentlyContinue) {
 				$rel = Join-Path "resources" $flag.Name
 				$tempPath = Join-Path $preserveRoot $rel
@@ -421,6 +426,21 @@ function Copy-DriverTree {
 			$dst = Join-Path $Plan.DriverDestDir $item.Rel
 			New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
 			Copy-Item -LiteralPath $item.Temp -Destination $dst -Force
+		}
+
+		# Module enable-flags are user state. On a REDEPLOY (the resources dir
+		# already existed) the deployed set is authoritative: remove any
+		# enable_*.flag the fresh build re-added that the user did not have, so a
+		# module the user disabled stays disabled. A first install (no prior
+		# resources dir) keeps the build's defaults.
+		if ($resourcesPreExisted) {
+			$keptFlagNames = @($preserved | ForEach-Object { Split-Path -Leaf $_.Rel })
+			$destResources = Join-Path $Plan.DriverDestDir "resources"
+			foreach ($flag in Get-ChildItem -LiteralPath $destResources -Filter "enable_*.flag" -File -ErrorAction SilentlyContinue) {
+				if ($keptFlagNames -notcontains $flag.Name) {
+					Remove-Item -LiteralPath $flag.FullName -Force -ErrorAction SilentlyContinue
+				}
+			}
 		}
 	} finally {
 		if (Test-Path -LiteralPath $preserveRoot) {
@@ -685,6 +705,20 @@ if ($DryRun) {
 	exit 0
 }
 
+# Never kill an active game. VRChat running means SteamVR is up, so a deploy
+# would stop it out from under the session. Refuse unless explicitly overridden.
+# (DryRun already exited above, so this never blocks a no-op preview.)
+$runningGame = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -ieq 'VRChat' })
+if ($runningGame.Count -gt 0 -and -not $AllowGameRunning) {
+	Write-Host ""
+	Write-Host "==================== DEPLOY BLOCKED ====================" -ForegroundColor Yellow
+	Write-Host " VRChat is running -- this deploy would stop SteamVR and" -ForegroundColor Yellow
+	Write-Host " kill your game session. Close VRChat first, then re-run." -ForegroundColor Yellow
+	Write-Host " (Override with -AllowGameRunning if you really mean it.)" -ForegroundColor Yellow
+	Write-Host "=======================================================" -ForegroundColor Yellow
+	exit 3
+}
+
 if (-not $Yes) {
 	Write-Host ""
 	if ($restartSteamVrAfterDeploy -and -not $NoRestart) {
@@ -733,12 +767,33 @@ if ($driverLockers.Count -gt 0) {
 }
 
 Write-Step "Deploying"
+$driverResourcesDir = Join-Path $plan.DriverDestDir "resources"
+$driverResourcesPreExisted = Test-Path -LiteralPath $driverResourcesDir
+$preDeployEnableFlags = @{}
+if ($driverResourcesPreExisted) {
+	foreach ($flag in Get-ChildItem -LiteralPath $driverResourcesDir -Filter "enable_*.flag" -File -ErrorAction SilentlyContinue) {
+		$preDeployEnableFlags[$flag.Name.ToLowerInvariant()] = $true
+	}
+}
 Invoke-ElevatedDeployCopy -Plan $plan
 
 Write-Step "Verifying"
 $entries = @(Get-DeployEntries -Plan ([pscustomobject]$plan))
 $mismatches = @()
 foreach ($entry in $entries) {
+	if ($driverResourcesPreExisted -and $entry.Label -like "driver_wkopenvr\resources\enable_*.flag") {
+		$flagName = (Split-Path -Leaf $entry.Label).ToLowerInvariant()
+		$wasEnabled = $preDeployEnableFlags.ContainsKey($flagName)
+		$isEnabled = Test-Path -LiteralPath $entry.Destination
+		if ($wasEnabled -and -not $isEnabled) {
+			$mismatches += ("{0}: enabled before deploy but missing after deploy" -f $entry.Label)
+		}
+		elseif (-not $wasEnabled -and $isEnabled) {
+			$mismatches += ("{0}: disabled before deploy but present after deploy" -f $entry.Label)
+		}
+		continue
+	}
+
 	$srcSha = Get-Sha $entry.Source
 	$dstSha = Get-Sha $entry.Destination
 	if ($srcSha -ne $dstSha) {

@@ -113,6 +113,12 @@ public:
 	// [0, kTotalShapes).  Returns false for out-of-range indices.
 	bool IsShapeWarm(int idx) const;
 
+	// Compact diagnostic of the learned normalization windows for the signals
+	// most likely to look wrong (eye openness, pupil, jaw, smile). Shows the
+	// [p02..p98] range each is mapping to [0,1] so a mis-learned range that
+	// exaggerates or flattens a shape is visible in the log. Not hot-path.
+	std::string DebugSummary() const;
+
 private:
 	// Layout:
 	//   [0..62]  expressions[0..62]

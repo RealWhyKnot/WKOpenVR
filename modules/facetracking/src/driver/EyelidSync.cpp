@@ -11,17 +11,30 @@ namespace facetracking {
 static constexpr float kWinkThreshold = 0.45f; // |lid_L - lid_R| threshold
 static constexpr float kWinkConfMin = 0.6f;    // minimum confidence for wink detection
 static constexpr float kWinkDwellMs = 120.f;   // ms asymmetry must hold
-static constexpr float kSmoothTimeMs = 80.f;   // temporal smoothing time constant
-// The 80 ms smooth makes blink onsets look natural instead of popping.
-// alpha = 1 - exp(-dt/tau); at 120 Hz, dt ~ 8.3 ms, tau = 80 ms -> alpha ~ 0.098.
-// We do a simplified frame-rate-independent lerp using a fixed alpha tuned for
-// 120 Hz.  At 90 Hz the smoother is slightly heavier; at 144 Hz slightly lighter.
-// Acceptable range for a cosmetic filter.
-static constexpr float kSmoothAlpha = 0.10f; // per-frame EMA alpha at ~120 Hz
+// Frame-rate-independent asymmetric smoothing time constants. A fast attack on
+// closing keeps real blinks (a ~100-150 ms event) from being averaged away,
+// while a gentle release on reopening keeps the look smooth. The previous fixed
+// per-frame alpha (0.10) was tuned for 120 Hz but the module delivers ~60 Hz,
+// giving a ~155 ms effective constant that masked blinks.
+static constexpr float kCloseTauMs = 18.f; // closing (eye shutting) -- fast attack
+static constexpr float kOpenTauMs = 70.f;  // opening (eye reopening) -- cosmetic
 
 EyelidSync::EyelidSync()
-    : wink_start_qpc_(0), wink_stable_(false), smooth_l_(0.5f), smooth_r_(0.5f), smooth_init_(false), qpc_freq_{}
+    : wink_start_qpc_(0), wink_stable_(false), smooth_l_(0.5f), smooth_r_(0.5f), smooth_init_(false), last_qpc_(0),
+      qpc_freq_{}
 {
+}
+
+float EyelidSync::SmoothToward(float current, float target, double dtSeconds)
+{
+	// A long gap (e.g. tracking paused): snap rather than crawl. A zero/negative
+	// delta can happen in tight test loops or same-tick frames; use a nominal
+	// frame step so a one-frame spike still smooths instead of snapping.
+	if (dtSeconds > 0.5) return target;
+	if (dtSeconds <= 0.0) dtSeconds = 1.0 / 120.0;
+	const double tauMs = (target < current) ? kCloseTauMs : kOpenTauMs;
+	const double alpha = 1.0 - std::exp(-(dtSeconds * 1000.0) / tauMs);
+	return current + static_cast<float>(alpha) * (target - current);
 }
 
 LARGE_INTEGER EyelidSync::QpcFreq() const
@@ -30,7 +43,8 @@ LARGE_INTEGER EyelidSync::QpcFreq() const
 	return qpc_freq_;
 }
 
-void EyelidSync::Apply(protocol::FaceTrackingFrameBody& frame, uint8_t strength_0_to_100, bool preserve_winks)
+void EyelidSync::Apply(protocol::FaceTrackingFrameBody& frame, uint8_t strength_0_to_100, bool preserve_winks,
+                       uint8_t sync_mode)
 {
 	if (!(frame.flags & 1u)) return; // eye fields not valid
 	if (strength_0_to_100 == 0) return;
@@ -39,6 +53,15 @@ void EyelidSync::Apply(protocol::FaceTrackingFrameBody& frame, uint8_t strength_
 	const float lid_R = frame.eye_openness_r;
 	const float c_L = frame.eye_confidence_l;
 	const float c_R = frame.eye_confidence_r;
+
+	// Frame-rate-independent dt for the asymmetric smoother below.
+	LARGE_INTEGER now_dt{};
+	QueryPerformanceCounter(&now_dt);
+	double dt = 0.0;
+	if (last_qpc_ != 0) {
+		dt = (double)((uint64_t)now_dt.QuadPart - last_qpc_) / (double)QpcFreq().QuadPart;
+	}
+	last_qpc_ = (uint64_t)now_dt.QuadPart;
 
 	// Seed the smoother on first call so there is no step from 0.5 to reality.
 	if (!smooth_init_) {
@@ -84,22 +107,23 @@ void EyelidSync::Apply(protocol::FaceTrackingFrameBody& frame, uint8_t strength_
 		// bug -- the smoother diverged from the raw value instead of tracking
 		// it, and re-engagement of sync popped exactly the gap the smoother
 		// was meant to close.
-		smooth_l_ = smooth_l_ + kSmoothAlpha * (lid_L - smooth_l_);
-		smooth_r_ = smooth_r_ + kSmoothAlpha * (lid_R - smooth_r_);
+		smooth_l_ = SmoothToward(smooth_l_, lid_L, dt);
+		smooth_r_ = SmoothToward(smooth_r_, lid_R, dt);
 		return;
 	}
 
-	// Confidence-weighted target.
-	float denom = c_L + c_R + 1e-6f;
-	float target = (c_L * lid_L + c_R * lid_R) / denom;
+	float target = std::min(lid_L, lid_R);
+	if (sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN) {
+		target = std::max(lid_L, lid_R);
+	}
 
 	float k = (float)strength_0_to_100 / 100.f;
 	float blended_L = lid_L + k * (target - lid_L);
 	float blended_R = lid_R + k * (target - lid_R);
 
-	// 80 ms temporal smoothing.
-	smooth_l_ = smooth_l_ + kSmoothAlpha * (blended_L - smooth_l_);
-	smooth_r_ = smooth_r_ + kSmoothAlpha * (blended_R - smooth_r_);
+	// Asymmetric, frame-rate-independent smoothing: fast close, gentle reopen.
+	smooth_l_ = SmoothToward(smooth_l_, blended_L, dt);
+	smooth_r_ = SmoothToward(smooth_r_, blended_R, dt);
 
 	frame.eye_openness_l = std::max(0.f, std::min(1.f, smooth_l_));
 	frame.eye_openness_r = std::max(0.f, std::min(1.f, smooth_r_));

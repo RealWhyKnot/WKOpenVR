@@ -5,7 +5,11 @@
 namespace wkopenvr::headmount {
 
 constexpr int kDriverSynthStaleLimitMsDefault = 80;
-constexpr int kDriverSynthGraceHoldMsDefault = 750;
+// Hold the last good tracker-synth pose for this long before fading to the raw
+// headset. Longer is gentler: the raw headset moves with inside-out
+// relocalization, so a longer hold keeps a brief tracker dropout from snapping
+// the locked view. The per-profile slider can raise this further.
+constexpr int kDriverSynthGraceHoldMsDefault = 1000;
 constexpr int kDriverSynthBlendToFallbackMsDefault = 500;
 constexpr int kDriverSynthStableBeforeSynthMsDefault = 350;
 constexpr int kDriverSynthBlendToSynthMsDefault = 500;

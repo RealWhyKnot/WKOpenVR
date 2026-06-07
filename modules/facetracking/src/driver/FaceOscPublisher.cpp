@@ -42,6 +42,7 @@ struct OscCounts
 
 static thread_local const FaceOscAddressFilter* t_addressFilter = nullptr;
 static thread_local std::unordered_set<std::string>* t_filteredDestinations = nullptr;
+static thread_local std::vector<std::string>* t_manifestSink = nullptr;
 
 static inline void OscPublishFloat(OscCounts& counts, const char* address, float value)
 {
@@ -59,6 +60,8 @@ static inline void OscPublishFloat(OscCounts& counts, const char* address, float
 		if (*compatibleAddress != address) ++counts.remapped;
 		address = compatibleAddress->c_str();
 	}
+
+	if (t_manifestSink) t_manifestSink->push_back(address);
 
 	uint32_t bits;
 	std::memcpy(&bits, &value, sizeof(bits));
@@ -717,13 +720,15 @@ static OscCounts PublishCurrentVrcft(const protocol::FaceTrackingFrameBody& fram
 } // namespace
 
 FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& frame,
-                                         const FaceOscAddressFilter* filter)
+                                         const FaceOscAddressFilter* filter, std::vector<std::string>* manifest)
 {
 	const FaceOscAddressFilter* previousFilter = t_addressFilter;
 	std::unordered_set<std::string> filteredDestinations;
 	std::unordered_set<std::string>* previousFilteredDestinations = t_filteredDestinations;
+	std::vector<std::string>* previousManifestSink = t_manifestSink;
 	t_addressFilter = filter;
 	t_filteredDestinations = (filter && filter->Active()) ? &filteredDestinations : nullptr;
+	t_manifestSink = manifest;
 
 	FaceOscPublishCounts counts;
 	if ((frame.flags & 0x1u) != 0) counts.Add(PublishEye(frame).Public());
@@ -740,6 +745,7 @@ FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& 
 
 	t_filteredDestinations = previousFilteredDestinations;
 	t_addressFilter = previousFilter;
+	t_manifestSink = previousManifestSink;
 	return counts;
 }
 

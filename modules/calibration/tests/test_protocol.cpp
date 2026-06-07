@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 TEST(ProtocolTest, VersionPinnedToCurrent)
 {
-	EXPECT_EQ(protocol::Version, 29u) << "Protocol version changed without updating the test pin. If this is "
+	EXPECT_EQ(protocol::Version, 31u) << "Protocol version changed without updating the test pin. If this is "
 	                                     "intentional: bump the literal here and document the wire change.";
 }
 
@@ -213,6 +213,7 @@ TEST(ProtocolTest, SetHeadMountConfigLayout)
 	EXPECT_FALSE(hm.hideTracker);
 	EXPECT_FALSE(hm.offsetCalibrated);
 	EXPECT_FALSE(hm.allowRawHmdFallback);
+	EXPECT_EQ(hm.lockedHeadsetSmoothing, 0u);
 	EXPECT_EQ(hm.driverSynthStaleLimitMs, 0u);
 	EXPECT_EQ(hm.driverSynthGraceHoldMs, 0u);
 	EXPECT_EQ(hm.driverSynthBlendToFallbackMs, 0u);

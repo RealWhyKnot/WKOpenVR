@@ -628,6 +628,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.trackerTrackingSystem = "lighthouse";
 	src.headMount.offsetCalibrated = true;
 	src.headMount.autoCorrectOffset = false;
+	src.headMount.lockedHeadsetSmoothing = 65;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
 	src.headMount.driverSynthTiming.graceHoldMs = 1400;
 	src.headMount.driverSynthTiming.blendToFallbackMs = 900;
@@ -663,6 +664,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.offsetCalibrated);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
+	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.staleLimitMs, 120);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.graceHoldMs, 1400);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.blendToFallbackMs, 900);

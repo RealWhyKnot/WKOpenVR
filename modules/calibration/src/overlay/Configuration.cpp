@@ -351,6 +351,12 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 	if (obj["offset_calibrated"].is<bool>()) hm.offsetCalibrated = obj["offset_calibrated"].get<bool>();
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
+	if (obj["locked_headset_smoothing"].is<double>()) {
+		double v = obj["locked_headset_smoothing"].get<double>();
+		if (v < 0.0) v = 0.0;
+		if (v > 100.0) v = 100.0;
+		hm.lockedHeadsetSmoothing = (uint8_t)v;
+	}
 	if (obj["driver_synth_stale_limit_ms"].is<double>())
 		hm.driverSynthTiming.staleLimitMs = (int)obj["driver_synth_stale_limit_ms"].get<double>();
 	if (obj["driver_synth_grace_hold_ms"].is<double>())
@@ -409,6 +415,8 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
+	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
+	obj["locked_headset_smoothing"].set<double>(lockedSmoothing);
 	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	double staleMs = (double)timing.staleLimitMs;
 	double graceMs = (double)timing.graceHoldMs;
@@ -1039,6 +1047,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
 	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
+	    ctx.headMount.lockedHeadsetSmoothing != 0 ||
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}
@@ -1222,6 +1231,18 @@ void LoadProfile(CalibrationContext& ctx)
 		         str.size(), (int)ctx.validProfile, transMagCm, ctx.calibratedRotation.x(), ctx.calibratedRotation.y(),
 		         ctx.calibratedRotation.z(), ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
 		Metrics::WriteLogAnnotation(loadBuf);
+		// Surface the resolved tracking style so a session reader can tell at a
+		// glance whether the headset is raw (Continuous/Manual) or driven by the
+		// head-mount tracker (DriverSynth), and whether the raw-HMD fallback is
+		// permitted. headMountMode 3 == DriverSynth.
+		char styleBuf[256];
+		snprintf(styleBuf, sizeof styleBuf,
+		         "profile_loaded_tracking_style: style=%d (%s) headMountMode=%d allowRawHmdFallback=%d"
+		         " lockMode=%d synthStaleMs=%d",
+		         (int)ctx.trackingStyle, TrackingStyleLabel(ctx.trackingStyle), (int)ctx.headMount.mode,
+		         (int)ctx.headMount.allowRawHmdFallback, (int)ctx.lockRelativePositionMode,
+		         ctx.headMount.driverSynthTiming.staleLimitMs);
+		Metrics::WriteLogAnnotation(styleBuf);
 	}
 	catch (const std::runtime_error& e) {
 		std::cerr << "Error loading profile: " << e.what() << '\n';

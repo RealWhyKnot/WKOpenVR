@@ -1614,7 +1614,7 @@ void CalibrationTick(double time)
 			}
 			char hbBuf[1024];
 			snprintf(hbBuf, sizeof hbBuf,
-			         "[cal-heartbeat] state=%d lockMode=%d lockRel=%d autoLockEff=%d"
+			         "[cal-heartbeat] state=%d trackingStyle=%d headMountMode=%d lockMode=%d lockRel=%d autoLockEff=%d"
 			         " autoLockPending=%d autoLockPendingTo=%d autoLockHeldSec=%.2f"
 			         " autoLockHistory=%zu/%zu translMad_mm=%.3f rotMad_deg=%.3f"
 			         " mad_floor_mm=%.3f enter_threshold_mm=%.3f"
@@ -1627,7 +1627,8 @@ void CalibrationTick(double time)
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
 			         " mad_floor_source=%s wr_validation=%s",
-			         (int)ctx.state, (int)ctx.lockRelativePositionMode, (int)ctx.lockRelativePosition,
+			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode,
+			         (int)ctx.lockRelativePositionMode, (int)ctx.lockRelativePosition,
 			         (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
 			         spacecal::autolock::kSamplesNeeded, translMadMm, rotMadDeg, madFloorMm, enterMm,

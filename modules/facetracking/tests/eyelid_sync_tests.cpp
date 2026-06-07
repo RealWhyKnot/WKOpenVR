@@ -3,10 +3,10 @@
 // Coverage:
 //   - Strength 0 leaves the frame untouched.
 //   - Strength 100 on a symmetric input keeps both eyes at the same value.
-//   - Strength 100 on an asymmetric low-confidence input narrows the gap.
+//   - Strength 100 can target either the most closed or most open eye.
 //   - preserve_winks=true with sustained large asymmetry and high confidence
 //     bypasses sync (a deliberate wink survives).
-//   - Single-frame asymmetric spike does not pop both eyes (80 ms smoothing).
+//   - Single-frame asymmetric spike does not pop both eyes.
 
 #include "EyelidSync.h"
 #include "Protocol.h"
@@ -56,24 +56,46 @@ TEST(EyelidSync, SymmetricInputUnchanged)
 	EXPECT_NEAR(f.eye_openness_r, 0.5f, 0.01f);
 }
 
-TEST(EyelidSync, AsymmetricLowConfidenceConverges)
+TEST(EyelidSync, MostClosedModeUsesLowerOpenness)
+{
+	facetracking::EyelidSync sync;
+	protocol::FaceTrackingFrameBody f{};
+
+	for (int i = 0; i < 200; ++i) {
+		f = MakeFrame(0.9f, 0.1f, 0.3f, 0.3f);
+		sync.Apply(f, 100, false, protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED);
+	}
+
+	EXPECT_NEAR(f.eye_openness_l, 0.1f, 0.02f);
+	EXPECT_NEAR(f.eye_openness_r, 0.1f, 0.02f);
+}
+
+TEST(EyelidSync, MostOpenModeUsesHigherOpenness)
+{
+	facetracking::EyelidSync sync;
+	protocol::FaceTrackingFrameBody f{};
+
+	for (int i = 0; i < 200; ++i) {
+		f = MakeFrame(0.9f, 0.1f, 0.3f, 0.3f);
+		sync.Apply(f, 100, false, protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN);
+	}
+
+	EXPECT_NEAR(f.eye_openness_l, 0.9f, 0.02f);
+	EXPECT_NEAR(f.eye_openness_r, 0.9f, 0.02f);
+}
+
+TEST(EyelidSync, DefaultModeUsesMoreClosedEye)
 {
 	facetracking::EyelidSync sync;
 
-	// Asymmetric input below the wink threshold and with low confidence so
-	// the wink detector never trips, even with preserve_winks=true.  After
-	// enough frames the synced output should pull toward the confidence-
-	// weighted mean.
 	protocol::FaceTrackingFrameBody f{};
 	for (int i = 0; i < 200; ++i) {
 		f = MakeFrame(0.2f, 0.4f, 0.3f, 0.3f);
 		sync.Apply(f, 100, true);
 	}
 
-	// Both eyes should be approximately equal and inside the original [0.2, 0.4]
-	// range.  Tolerance is wide because the temporal smoothing is asymmetric
-	// and the confidence-weighted mean depends on both confidences (equal here).
-	EXPECT_NEAR(f.eye_openness_l, f.eye_openness_r, 0.05f);
+	EXPECT_NEAR(f.eye_openness_l, 0.2f, 0.05f);
+	EXPECT_NEAR(f.eye_openness_r, 0.2f, 0.05f);
 }
 
 TEST(EyelidSync, WinkSurvivesPreserveOn)
@@ -102,8 +124,8 @@ TEST(EyelidSync, WinkCollapsedWhenPreserveOff)
 	facetracking::EyelidSync sync;
 
 	// Same large asymmetry as above but with preserve_winks=false.  The sync
-	// should drive both eyes toward the confidence-weighted mean and the
-	// asymmetry should collapse.
+	// should drive both eyes toward the selected target and collapse the
+	// asymmetry.
 	protocol::FaceTrackingFrameBody f{};
 	for (int i = 0; i < 200; ++i) {
 		f = MakeFrame(0.9f, 0.1f, 0.95f, 0.95f);
@@ -125,12 +147,31 @@ TEST(EyelidSync, SingleFrameGlitchSmoothed)
 		sync.Apply(f, 100, false);
 	}
 
-	// Inject a single-frame asymmetric glitch.  With the 80 ms temporal
-	// smoothing on top of confidence blending, the smoothed output should not
-	// pop -- it should remain near the prior symmetric value.
+	// Inject a single-frame asymmetric glitch. The smoothed output should not
+	// pop all the way to the one-frame target.
 	f = MakeFrame(0.7f, 0.1f);
 	sync.Apply(f, 100, false);
 
-	EXPECT_NEAR(f.eye_openness_l, 0.7f, 0.2f);
-	EXPECT_NEAR(f.eye_openness_r, 0.7f, 0.2f);
+	EXPECT_GT(f.eye_openness_l, 0.25f);
+	EXPECT_GT(f.eye_openness_r, 0.25f);
+	EXPECT_LT(f.eye_openness_l, 0.7f);
+	EXPECT_LT(f.eye_openness_r, 0.7f);
+}
+
+TEST(EyelidSync, SmootherFastCloseSlowOpen)
+{
+	// A blink (closing: target below current) must track fast so it reaches the
+	// avatar, while reopening is gentler/cosmetic. At a ~16 ms (60 Hz) frame the
+	// close should cover well over half the gap; the open well under half.
+	const double dt = 0.016;
+	const float closed = facetracking::EyelidSync::SmoothToward(1.0f, 0.0f, dt);
+	const float opened = facetracking::EyelidSync::SmoothToward(0.0f, 1.0f, dt);
+	EXPECT_LT(closed, 0.5f); // closing covers >50% of the gap (blink survives)
+	EXPECT_GT(opened, 0.0f);
+	EXPECT_LT(opened, 0.5f);              // reopening covers <50% of the gap
+	EXPECT_GT(1.0f - closed, opened);     // close moves a larger fraction than open
+	// dt <= 0 uses a nominal step; long gaps snap to the target.
+	EXPECT_GT(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 0.0), 0.2f);
+	EXPECT_LT(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 0.0), 0.8f);
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 1.0), 0.8f);
 }

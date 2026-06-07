@@ -958,6 +958,80 @@ void ServerTrackedDeviceProvider::ApplySmartSmoothing(uint32_t openVRID, DeviceT
 #endif
 }
 
+void ServerTrackedDeviceProvider::ApplyLockedHeadsetSmoothing(vr::DriverPose_t& pose, uint8_t smoothness)
+{
+	namespace ss = prediction::smart_shadow;
+
+	// Off, or no usable performance counter: leave the pose untouched and reseed
+	// so re-enabling (or an honest dt) starts clean.
+	if (smoothness == 0 || qpcFreq.QuadPart <= 0) {
+		m_driverSynthHmdFilter.initialized = false;
+		m_driverSynthHmdFilterLastSample.QuadPart = 0;
+		return;
+	}
+
+	const double rawPos[3] = {pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]};
+	const double rawRot[4] = {pose.qRotation.w, pose.qRotation.x, pose.qRotation.y, pose.qRotation.z};
+
+	// Bad input: leave the pose alone and force a reseed on the next good sample.
+	double normRot[4];
+	if (!ss::IsFinite3(rawPos) || !ss::QuatNormalize(rawRot, normRot)) {
+		m_driverSynthHmdFilter.initialized = false;
+		m_driverSynthHmdFilterLastSample.QuadPart = 0;
+		return;
+	}
+
+	LARGE_INTEGER now{};
+	QueryPerformanceCounter(&now);
+	const double dt =
+	    m_driverSynthHmdFilterLastSample.QuadPart > 0
+	        ? (now.QuadPart - m_driverSynthHmdFilterLastSample.QuadPart) / static_cast<double>(qpcFreq.QuadPart)
+	        : -1.0; // first sample -> FilterStep seeds and passes through
+	m_driverSynthHmdFilterLastSample = now;
+
+	double reportedLinear = 0.0;
+	if (ss::IsFinite3(pose.vecVelocity)) {
+		reportedLinear = std::min(ss::Length3(pose.vecVelocity), 15.0);
+	}
+	double reportedAngular = 0.0;
+	if (ss::IsFinite3(pose.vecAngularVelocity)) {
+		reportedAngular = std::min(ss::Length3(pose.vecAngularVelocity), 80.0);
+	}
+
+	const ss::Params params = ss::BuildParams(smoothness);
+	const ss::StepResult r =
+	    ss::FilterStep(m_driverSynthHmdFilter, params, rawPos, rawRot, reportedLinear, reportedAngular, dt);
+
+	// Suppress extrapolation at rest (where it only re-adds jitter), release in motion.
+	const double base = ss::Saturate(prediction::SmoothnessToFactor(smoothness));
+	const double linFactor = base + (1.0 - base) * r.posRelease;
+	const double angFactor = base + (1.0 - base) * r.rotRelease;
+	pose.vecVelocity[0] *= linFactor;
+	pose.vecVelocity[1] *= linFactor;
+	pose.vecVelocity[2] *= linFactor;
+	pose.vecAcceleration[0] *= linFactor;
+	pose.vecAcceleration[1] *= linFactor;
+	pose.vecAcceleration[2] *= linFactor;
+	pose.vecAngularVelocity[0] *= angFactor;
+	pose.vecAngularVelocity[1] *= angFactor;
+	pose.vecAngularVelocity[2] *= angFactor;
+	pose.vecAngularAcceleration[0] *= angFactor;
+	pose.vecAngularAcceleration[1] *= angFactor;
+	pose.vecAngularAcceleration[2] *= angFactor;
+	pose.poseTimeOffset *= linFactor;
+
+	pose.vecPosition[0] = m_driverSynthHmdFilter.filteredPos[0];
+	pose.vecPosition[1] = m_driverSynthHmdFilter.filteredPos[1];
+	pose.vecPosition[2] = m_driverSynthHmdFilter.filteredPos[2];
+
+	// Rotation IS smoothed here, unlike the per-device path: a locked head's
+	// orientation jitter is the main discomfort. filteredRot is wxyz.
+	pose.qRotation.w = m_driverSynthHmdFilter.filteredRot[0];
+	pose.qRotation.x = m_driverSynthHmdFilter.filteredRot[1];
+	pose.qRotation.y = m_driverSynthHmdFilter.filteredRot[2];
+	pose.qRotation.z = m_driverSynthHmdFilter.filteredRot[3];
+}
+
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t& pose)
 {
 	// Apply debug pose before anything else
@@ -1045,6 +1119,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	int64_t driverSynthTrackerAgeMs = -1;
 	auto driverSynthNow = std::chrono::steady_clock::now();
 	bool driverSynthAllowRawFallback = true;
+	uint8_t driverSynthSmoothing = 0;
 	wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming{};
 	vr::DriverPose_t driverSynthPose{};
 	{
@@ -1087,6 +1162,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			       sizeof synthState.headFromTrackerTrans);
 			memcpy(synthState.headFromTrackerRot, hmState.headFromTrackerRot, sizeof synthState.headFromTrackerRot);
 			driverSynthAllowRawFallback = hmState.allowRawHmdFallback;
+			driverSynthSmoothing = hmState.lockedHeadsetSmoothing;
 			driverSynthTiming = hmState.driverSynthTiming;
 
 			driverSynthNow = std::chrono::steady_clock::now();
@@ -1362,6 +1438,9 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			    driverSynthComposeOk ? "tracker_ready" : driverSynthFallbackReason, blendResult.alpha,
 			    (long long)driverSynthTrackerAgeMs);
 		}
+		// Tame head-mounted-tracker jitter on the locked HMD pose. No-op (and
+		// reseed) when smoothing is off, so disabling it is instantly responsive.
+		ApplyLockedHeadsetSmoothing(pose, driverSynthSmoothing);
 	}
 
 #if OPENVR_PAIR_HAS_PHANTOM_DRIVER
@@ -1439,6 +1518,7 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 	next.hideTracker = cfg.hideTracker;
 	next.offsetCalibrated = cfg.offsetCalibrated;
 	next.allowRawHmdFallback = cfg.allowRawHmdFallback;
+	next.lockedHeadsetSmoothing = cfg.lockedHeadsetSmoothing;
 	next.driverSynthTiming = wkopenvr::headmount::ClampDriverSynthTimingConfig({
 	    (int)cfg.driverSynthStaleLimitMs,
 	    (int)cfg.driverSynthGraceHoldMs,
@@ -1474,7 +1554,8 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		    memcmp(next.trackerTrackingSystem, prev.trackerTrackingSystem, sizeof next.trackerTrackingSystem) != 0 ||
 		    memcmp(next.headFromTrackerTrans, prev.headFromTrackerTrans, sizeof next.headFromTrackerTrans) != 0 ||
 		    memcmp(next.headFromTrackerRot, prev.headFromTrackerRot, sizeof next.headFromTrackerRot) != 0;
-		stateChanged = sourceChanged || next.driverSynthTiming.staleLimitMs != prev.driverSynthTiming.staleLimitMs ||
+		stateChanged = sourceChanged || next.lockedHeadsetSmoothing != prev.lockedHeadsetSmoothing ||
+		               next.driverSynthTiming.staleLimitMs != prev.driverSynthTiming.staleLimitMs ||
 		               next.driverSynthTiming.graceHoldMs != prev.driverSynthTiming.graceHoldMs ||
 		               next.driverSynthTiming.blendToFallbackMs != prev.driverSynthTiming.blendToFallbackMs ||
 		               next.driverSynthTiming.stableBeforeSynthMs != prev.driverSynthTiming.stableBeforeSynthMs ||
@@ -1483,12 +1564,12 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		// the same config on every AssignTargets scan.
 		if (stateChanged) {
 			LOG("[driver-head-mount] config: mode=%d deviceID=%d offsetCalibrated=%d"
-			    " allow_raw_hmd_fallback=%d"
+			    " allow_raw_hmd_fallback=%d locked_smoothing=%d"
 			    " synth_stale_ms=%d grace_ms=%d blend_fallback_ms=%d"
 			    " stable_synth_ms=%d blend_synth_ms=%d",
 			    next.mode, next.deviceId, (int)next.offsetCalibrated, (int)next.allowRawHmdFallback,
-			    next.driverSynthTiming.staleLimitMs, next.driverSynthTiming.graceHoldMs,
-			    next.driverSynthTiming.blendToFallbackMs,
+			    (int)next.lockedHeadsetSmoothing, next.driverSynthTiming.staleLimitMs,
+			    next.driverSynthTiming.graceHoldMs, next.driverSynthTiming.blendToFallbackMs,
 			    next.driverSynthTiming.stableBeforeSynthMs, next.driverSynthTiming.blendToSynthMs);
 		}
 	}

@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace facetracking {
 
@@ -48,7 +49,11 @@ public:
 	bool ReloadIfChanged();
 	bool Allows(const char* address) const;
 	const std::string* CompatibleAddress(const char* address) const;
-	bool Active() const { return !path_.empty(); }
+	// Filtering only engages once a non-empty allowlist is loaded. An empty
+	// allowlist means the active avatar's parameter list is unavailable (the
+	// OSCQuery config has not arrived yet, or the file is empty); pass every
+	// address through in that case rather than suppressing all output.
+	bool Active() const { return !path_.empty() && !allowed_.empty(); }
 	uint32_t AllowedCount() const;
 	FaceOscAddressFilterLoadStatus LastLoadStatus() const { return load_status_; }
 
@@ -62,9 +67,12 @@ private:
 };
 
 // Publishes one already-filtered face frame through the OSC router. Eye data
-// and expression data are gated by FaceTrackingFrameBody::flags.
+// and expression data are gated by FaceTrackingFrameBody::flags. When `manifest`
+// is non-null, every emitted (final, post-filter) address is appended to it --
+// a one-shot diagnostic for seeing exactly which OSC parameters are sent.
 FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& frame,
-                                         const FaceOscAddressFilter* filter = nullptr);
+                                         const FaceOscAddressFilter* filter = nullptr,
+                                         std::vector<std::string>* manifest = nullptr);
 
 const char* FaceExpressionOscName(uint32_t index);
 

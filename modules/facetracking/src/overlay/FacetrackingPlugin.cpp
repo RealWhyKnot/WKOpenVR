@@ -162,6 +162,7 @@ void FacetrackingPlugin::PushConfigToDriver()
 		protocol::Request req(protocol::RequestSetFaceTrackingConfig);
 		auto& cfg = req.setFaceTrackingConfig;
 		auto& p = profile_.current;
+		std::memset(&cfg, 0, sizeof(cfg));
 
 		cfg.master_enabled = 1;
 		cfg.eyelid_sync_enabled = p.eyelid_sync_enabled ? 1 : 0;
@@ -180,6 +181,11 @@ void FacetrackingPlugin::PushConfigToDriver()
 		if (p.eyelid_brow_sync_enabled)
 			cfg.expression_correction_flags |= protocol::FACETRACKING_EXPR_CORRECT_BROW_SYNC;
 		cfg.eyelid_sync_strength = static_cast<uint8_t>(p.eyelid_sync_strength);
+		const int eyelidMode =
+		    (p.eyelid_sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN)
+		        ? protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN
+		        : protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED;
+		cfg.eyelid_sync_mode = static_cast<uint8_t>(eyelidMode);
 		cfg.vergence_lock_strength = static_cast<uint8_t>(p.vergence_lock_strength);
 		cfg.gaze_smoothing = static_cast<uint8_t>(p.gaze_smoothing);
 		cfg.openness_smoothing = static_cast<uint8_t>(p.openness_smoothing);
@@ -216,12 +222,12 @@ void FacetrackingPlugin::PushConfigToDriver()
 			return;
 		}
 		last_error_.clear();
-		FT_LOG_OVL("[ipc] config pushed: osc_enabled=%d active_module='%s' eyelid=%d/%d "
+		FT_LOG_OVL("[ipc] config pushed: osc_enabled=%d active_module='%s' eyelid=%d/%d/mode=%d "
 		           "vergence=%d/%d calib_mode=%d corr=0x%02x corr_strengths=0x%04x "
 		           "smooth(gaze=%d open=%d)",
 		           (int)cfg.output_osc_enabled, cfg.active_module_uuid, (int)cfg.eyelid_sync_enabled,
-		           (int)cfg.eyelid_sync_strength, (int)cfg.vergence_lock_enabled, (int)cfg.vergence_lock_strength,
-		           (int)cfg.continuous_calib_mode, (int)cfg.expression_correction_flags,
+		           (int)cfg.eyelid_sync_strength, (int)cfg.eyelid_sync_mode, (int)cfg.vergence_lock_enabled,
+		           (int)cfg.vergence_lock_strength, (int)cfg.continuous_calib_mode, (int)cfg.expression_correction_flags,
 		           (int)cfg.expression_correction_strengths, (int)cfg.gaze_smoothing, (int)cfg.openness_smoothing);
 	}
 	catch (const std::exception& e) {

@@ -19,7 +19,7 @@ void DrawSettingsTab(FacetrackingPlugin& plugin)
 	DrawSectionHeading("Eyelid Sync");
 
 	if (CheckboxWithTooltip("Eyelid Sync", &p.eyelid_sync_enabled,
-	                        "Blends both eye openness values toward a weighted average\n"
+	                        "Blends both eye openness values toward the selected eyelid target\n"
 	                        "to reduce asymmetric flicker from tracking noise.\n"
 	                        "Strength 0 = no effect even when enabled.")) {
 		plugin.PushConfigToDriver();
@@ -28,10 +28,24 @@ void DrawSettingsTab(FacetrackingPlugin& plugin)
 	if (!p.eyelid_sync_enabled) ImGui::BeginDisabled();
 
 	if (SliderIntWithTooltip("Sync Strength##eyelid", &p.eyelid_sync_strength, 0, 100, "%d%%",
-	                         "How aggressively both eyes are pulled toward the average.\n"
+	                         "How aggressively both eyes are pulled toward the selected target.\n"
 	                         "100 = fully forced equal; 0 = no correction applied.\n"
 	                         "70 is a safe default -- covers sensor noise without\n"
 	                         "flattening deliberate asymmetry.")) {
+		plugin.PushConfigToDriver();
+	}
+
+	if (RadioButtonWithTooltip("Most closed##eyelid_sync_mode",
+	                           p.eyelid_sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED,
+	                           "The more-closed eye drives both eyelids.")) {
+		p.eyelid_sync_mode = protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED;
+		plugin.PushConfigToDriver();
+	}
+	ImGui::SameLine();
+	if (RadioButtonWithTooltip("Most open##eyelid_sync_mode",
+	                           p.eyelid_sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN,
+	                           "The more-open eye drives both eyelids.")) {
+		p.eyelid_sync_mode = protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN;
 		plugin.PushConfigToDriver();
 	}
 
