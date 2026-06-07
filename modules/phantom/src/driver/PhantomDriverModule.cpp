@@ -23,8 +23,10 @@
 #include <openvr_driver.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -246,6 +248,7 @@ private:
 	BodyCompletionInput BuildBodyCompletionInput(int64_t now_qpc) const;
 	void UpdateBodyCompletion(int64_t now_qpc);
 	bool TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const;
+	void RefreshVirtualRoleBlocksLocked();
 	void PublishStateSnapshot();
 
 	LadderTimings timings_ = LadderTimings::Defaults();
@@ -356,6 +359,28 @@ DeviceSlot& PhantomModule::slot(uint32_t openVRID)
 	return slots_[openVRID];
 }
 
+void PhantomModule::RefreshVirtualRoleBlocksLocked()
+{
+	std::array<bool, kBodyRoleCount> blocked{};
+	for (const auto& kv : role_by_serial_hash_) {
+		const auto role = kv.second;
+		const auto idx = static_cast<size_t>(role);
+		if (idx < blocked.size() && BodyRoleToControllerType(role) != nullptr) {
+			blocked[idx] = true;
+		}
+	}
+	for (const auto& s : slots_) {
+		const auto role = s.role;
+		const auto idx = static_cast<size_t>(role);
+		if (idx < blocked.size() && BodyRoleToControllerType(role) != nullptr) {
+			blocked[idx] = true;
+		}
+	}
+	for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+		virtual_trackers_.SetRoleBlocked(static_cast<BodyRole>(i), blocked[i]);
+	}
+}
+
 BodyCompletionInput PhantomModule::BuildBodyCompletionInput(int64_t now_qpc) const
 {
 	BodyCompletionInput input;
@@ -373,7 +398,7 @@ BodyCompletionInput PhantomModule::BuildBodyCompletionInput(int64_t now_qpc) con
 
 	for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
 		const auto role = static_cast<BodyRole>(i);
-		if (virtual_trackers_.IsEnabled(role)) {
+		if (virtual_trackers_.IsEnabled(role) && !virtual_trackers_.IsRoleBlocked(role)) {
 			input.enabled_roles[i] = true;
 		}
 	}
@@ -572,6 +597,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 						++applied_slots;
 					}
 				}
+				RefreshVirtualRoleBlocksLocked();
 			}
 			response.type = protocol::ResponseSuccess;
 			LOG("[phantom][diag] role serial_hash=0x%016llx role=%s applied_slots=%u",

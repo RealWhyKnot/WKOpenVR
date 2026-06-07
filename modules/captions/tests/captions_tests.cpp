@@ -17,6 +17,8 @@
 
 // Pull in the implementation directly (header-only interface test).
 #include "ChatboxPacer.h"
+#include "CaptionsOutputPolicy.h"
+#include "Protocol.h"
 
 TEST(ChatboxPacerTest, MinimumGapEnforced)
 {
@@ -45,6 +47,25 @@ TEST(ChatboxPacerTest, DropOldestWhenFull)
 
 	// The oldest (msg0) should have been dropped; queue holds kQueueCap entries.
 	EXPECT_EQ(pacer.QueueSize(), 8u);
+}
+
+TEST(CaptionsOutputPolicyTest, ChatboxPublishRequiresToggleAndText)
+{
+	EXPECT_FALSE(captions::ShouldPublishChatbox(false, "hello"));
+	EXPECT_FALSE(captions::ShouldPublishChatbox(true, ""));
+	EXPECT_TRUE(captions::ShouldPublishChatbox(true, "hello"));
+}
+
+TEST(CaptionsOutputPolicyTest, QueuedChatboxEntriesAreDroppedWhenToggleIsOff)
+{
+	EXPECT_FALSE(captions::ShouldDrainQueuedChatbox(false));
+	EXPECT_TRUE(captions::ShouldDrainQueuedChatbox(true));
+}
+
+TEST(CaptionsProtocolTest, ZeroedConfigDoesNotPublishToChatbox)
+{
+	protocol::CaptionsConfig cfg{};
+	EXPECT_EQ(cfg.chatbox_enabled, 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -7,13 +7,14 @@
 #include <delayimp.h>
 
 #include "ActionBindings.h"
+#include "Captions.h"
+#include "CaptionsOutputPolicy.h"
 #include "ChatboxPacer.h"
 #include "HostStatus.h"
 #include "Logging.h"
 #include "ModelDownloader.h"
 #include "RouterPublisher.h"
 #include "SileroVad.h"
-#include "Captions.h"
 #include "WasapiCapture.h"
 #include "WhisperEngine.h"
 #include "Win32Paths.h"
@@ -246,6 +247,7 @@ struct HostConfig
 	std::string target_lang = ""; // empty = transcribe only
 	std::string chatbox_address = "/chatbox/input";
 	uint16_t chatbox_port = 9000;
+	bool chatbox_enabled = false;
 	bool notify_sound = false;
 	bool transcript_logging = false;
 	int mode = 0; // 0=PTT, 1=always-on
@@ -321,6 +323,8 @@ static void DispatchControlMessage(char* buf, DWORD got)
 		}
 		else if (key == "notify")
 			g_config.notify_sound = (val != "0");
+		else if (key == "chatbox")
+			g_config.chatbox_enabled = (val != "0");
 		else if (key == "log")
 			g_config.transcript_logging = (val != "0");
 
@@ -958,7 +962,7 @@ try {
 					TH_LOG("[main] translation: %s", output.c_str());
 				}
 
-				if (!output.empty()) {
+				if (captions::ShouldPublishChatbox(cfg.chatbox_enabled, output)) {
 					pacer.Enqueue(output, true, cfg.notify_sound);
 				}
 				status.SetState(HostStatus::State::Idle);
@@ -968,6 +972,9 @@ try {
 		// Drain pacer and publish.
 		ChatboxPacer::Entry entry;
 		while (pacer.Dequeue(entry)) {
+			if (!captions::ShouldDrainQueuedChatbox(cfg.chatbox_enabled)) {
+				continue;
+			}
 			status.SetState(HostStatus::State::Sending);
 			bool sent = publisher.PublishChatbox(cfg.chatbox_address, entry.text, entry.send_immediate, entry.notify);
 			if (sent) {

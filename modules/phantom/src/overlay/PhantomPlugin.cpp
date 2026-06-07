@@ -852,15 +852,9 @@ void PhantomPlugin::DrawCalibrationTab()
 void PhantomPlugin::DrawAbsentTab()
 {
 	ImGui::Spacing();
-	ImGui::TextWrapped("Add body trackers you do not physically own. The driver creates a "
-	                   "virtual SteamVR tracker for each enabled role and feeds it from "
-	                   "headset/controller/physical-tracker body completion when confidence "
-	                   "is high enough. The list follows VRChat's eight supported extra "
-	                   "tracker points.");
-	ImGui::Spacing();
-	ImGui::TextDisabled("Note: SteamVR does not allow live retraction. Disabling a role here "
-	                    "stops pose publishing immediately but the SteamVR device entry stays "
-	                    "until the next vrserver restart.");
+	openvr_pair::overlay::ui::DrawInfoBanner(
+	    "Estimated trackers",
+	    "Enable only the roles you need. When confidence is low, Phantom stops publishing instead of guessing.");
 	ImGui::Spacing();
 
 	ImGui::SeparatorText("Per-role virtual trackers");
@@ -869,19 +863,68 @@ void PhantomPlugin::DrawAbsentTab()
 	    phantom::BodyRole::RightFoot, phantom::BodyRole::LeftKnee,   phantom::BodyRole::RightKnee,
 	    phantom::BodyRole::LeftElbow, phantom::BodyRole::RightElbow,
 	};
-	for (auto role : roles) {
-		bool enabled = cfg_.virtual_enabled.count(role) ? cfg_.virtual_enabled[role] : false;
 
-		ImGui::PushID(static_cast<int>(role));
-		if (ImGui::Checkbox("##en", &enabled)) {
-			cfg_.virtual_enabled[role] = enabled;
-			SendVirtualEnabled(role, enabled);
-			SavePhantomConfig(cfg_);
+	auto physicalRoleAssigned = [&](phantom::BodyRole role) {
+		for (const auto& kv : cfg_.device_role) {
+			if (kv.second == role) return true;
 		}
-		ImGui::SameLine();
-		ImGui::Text("%-18s", phantom::BodyRoleLabel(role));
-		ImGui::PopID();
+		return false;
+	};
+
+	if (ImGui::BeginTable("phantom_absent_roles", 4,
+	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+		ImGui::TableSetupColumn("Enable", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+		ImGui::TableSetupColumn("Role", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+		ImGui::TableSetupColumn("Risk", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+		ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+		ImGui::TableHeadersRow();
+
+		for (auto role : roles) {
+			bool enabled = cfg_.virtual_enabled.count(role) ? cfg_.virtual_enabled[role] : false;
+			const auto tier = phantom::ui::GetVirtualRoleTier(role);
+			const auto readiness =
+			    phantom::ui::EvaluateVirtualRoleReadiness(cfg_.solver.calibrated, physicalRoleAssigned(role));
+			const bool disableToggle = !enabled && !readiness.canEnable;
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::PushID(static_cast<int>(role));
+			{
+				openvr_pair::overlay::ui::DisabledSection gate(disableToggle, readiness.reason);
+				if (ImGui::Checkbox("##en", &enabled)) {
+					cfg_.virtual_enabled[role] = enabled;
+					SendVirtualEnabled(role, enabled);
+					SavePhantomConfig(cfg_);
+				}
+				gate.AttachReasonTooltip();
+			}
+
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(phantom::BodyRoleLabel(role));
+
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(phantom::ui::VirtualRoleTierLabel(tier));
+			openvr_pair::overlay::ui::TooltipOnHover(phantom::ui::VirtualRoleTierHelp(tier));
+
+			ImGui::TableSetColumnIndex(3);
+			if (!readiness.canEnable) {
+				ImGui::TextDisabled("%s", readiness.reason);
+			}
+			else if (enabled) {
+				openvr_pair::overlay::ui::DrawStatusText("Publishing when confident",
+				                                         openvr_pair::overlay::ui::StatusTone::Ok);
+			}
+			else {
+				ImGui::TextDisabled("Ready");
+			}
+			ImGui::PopID();
+		}
+		ImGui::EndTable();
 	}
+
+	ImGui::Spacing();
+	ImGui::TextDisabled(
+	    "SteamVR keeps virtual devices until vrserver restarts; disabling a role stops pose publishing now.");
 }
 
 namespace openvr_pair::overlay {

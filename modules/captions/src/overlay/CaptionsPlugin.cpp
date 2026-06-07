@@ -78,6 +78,7 @@ CaptionsPlugin::CaptionsPlugin()
 	always_on_consented_ = loaded.always_on_consented;
 	source_lang_ = loaded.source_lang;
 	target_lang_ = loaded.target_lang;
+	chatbox_enabled_ = loaded.chatbox_enabled;
 	chatbox_address_ = loaded.chatbox_address;
 	notify_sound_ = loaded.notify_sound;
 }
@@ -89,6 +90,7 @@ void CaptionsPlugin::Persist()
 	cfg.always_on_consented = always_on_consented_;
 	cfg.source_lang = source_lang_;
 	cfg.target_lang = target_lang_;
+	cfg.chatbox_enabled = chatbox_enabled_;
 	cfg.chatbox_address = chatbox_address_;
 	cfg.notify_sound = notify_sound_;
 	SaveCaptionsConfig(cfg);
@@ -112,6 +114,11 @@ void CaptionsPlugin::SetSourceLang(const std::string& s)
 void CaptionsPlugin::SetTargetLang(const std::string& s)
 {
 	target_lang_ = s;
+	Persist();
+}
+void CaptionsPlugin::SetChatboxEnabled(bool v)
+{
+	chatbox_enabled_ = v;
 	Persist();
 }
 void CaptionsPlugin::SetChatboxAddress(const std::string& s)
@@ -183,6 +190,7 @@ void CaptionsPlugin::PushConfigToDriver()
 		cfg.master_enabled = 1;
 		cfg.mode = static_cast<uint8_t>(mode_);
 		cfg.notify_sound = notify_sound_ ? 1 : 0;
+		cfg.chatbox_enabled = chatbox_enabled_ ? 1 : 0;
 		cfg.chatbox_port = 9000;
 
 		std::snprintf(cfg.source_lang, sizeof(cfg.source_lang), "%s", source_lang_.c_str());

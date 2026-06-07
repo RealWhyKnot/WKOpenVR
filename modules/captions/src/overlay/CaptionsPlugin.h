@@ -61,11 +61,13 @@ public:
 
 	const std::string& GetSourceLang() const { return source_lang_; }
 	const std::string& GetTargetLang() const { return target_lang_; }
+	bool GetChatboxEnabled() const { return chatbox_enabled_; }
 	const std::string& GetChatboxAddress() const { return chatbox_address_; }
 	bool GetNotifySound() const { return notify_sound_; }
 
 	void SetSourceLang(const std::string& s);
 	void SetTargetLang(const std::string& s);
+	void SetChatboxEnabled(bool v);
 	void SetChatboxAddress(const std::string& s);
 	void SetNotifySound(bool v);
 
@@ -80,6 +82,7 @@ private:
 	bool always_on_consented_ = false;
 	std::string source_lang_ = "auto";
 	std::string target_lang_ = "";
+	bool chatbox_enabled_ = false;
 	std::string chatbox_address_ = "/chatbox/input";
 	bool notify_sound_ = false;
 

@@ -15,6 +15,7 @@ struct CaptionsConfig
 	bool always_on_consented = false;
 	std::string source_lang = "auto";
 	std::string target_lang = "";
+	bool chatbox_enabled = false;
 	std::string chatbox_address = "/chatbox/input";
 	bool notify_sound = false;
 };

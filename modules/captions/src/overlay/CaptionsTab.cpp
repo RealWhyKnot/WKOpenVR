@@ -309,8 +309,9 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	// Live status strip
 	// -----------------------------------------------------------------------
 	if (snap.valid) {
-		ImGui::Text("Mic: %s  |  State: %s  |  Sent: %lld", snap.mic_name.empty() ? "(unknown)" : snap.mic_name.c_str(),
-		            StateLabel(snap.state), snap.packets_sent);
+		ImGui::Text("Mic: %s  |  State: %s  |  Output: %s  |  Sent: %lld",
+		            snap.mic_name.empty() ? "(unknown)" : snap.mic_name.c_str(), StateLabel(snap.state),
+		            plugin.GetChatboxEnabled() ? "VRChat chatbox" : "local preview", snap.packets_sent);
 		if (!snap.phase.empty()) {
 			ImGui::TextDisabled("Host phase: %s", snap.phase.c_str());
 		}
@@ -467,6 +468,20 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	// Chatbox settings
 	// -----------------------------------------------------------------------
 	{
+		openvr_pair::overlay::ui::DrawSectionHeading("Output");
+
+		bool chatbox = plugin.GetChatboxEnabled();
+		if (ImGui::Checkbox("Publish to VRChat chatbox", &chatbox)) {
+			plugin.SetChatboxEnabled(chatbox);
+			plugin.PushConfigToDriver();
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Off keeps recognized speech local to WKOpenVR.\n"
+			                  "On sends completed captions to the configured OSC chatbox address.");
+
+		openvr_pair::overlay::ui::DisabledSection chatboxGate(
+		    !chatbox, "Enable chatbox publishing before editing VRChat output settings.");
+
 		static const char* kPresets[] = {"VRChat", "Custom"};
 		int preset = 0; // default to VRChat
 		const std::string& addr = plugin.GetChatboxAddress();
@@ -485,6 +500,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("ChilloutVR's OSC spec is not publicly machine-readable; use Custom\nand verify the "
 			                  "address from the CVR docs.");
+		chatboxGate.AttachReasonTooltip();
 
 		if (preset == 1) {
 			char addr_buf[64];
@@ -493,6 +509,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 				plugin.SetChatboxAddress(addr_buf);
 				plugin.PushConfigToDriver();
 			}
+			chatboxGate.AttachReasonTooltip();
 		}
 
 		bool notify = plugin.GetNotifySound();
@@ -503,6 +520,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Play the VRChat chatbox notification sound for each message.\nDefault off to avoid "
 			                  "spamming nearby players.");
+		chatboxGate.AttachReasonTooltip();
 	}
 
 	ImGui::Spacing();

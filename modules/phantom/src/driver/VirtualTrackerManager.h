@@ -41,6 +41,11 @@ public:
 	bool IsEnabled(BodyRole role) const;
 	int EnabledCount() const;
 
+	// Blocks virtual publishing for roles already claimed by a physical
+	// tracker. This protects VRChat from duplicate body-role inputs.
+	void SetRoleBlocked(BodyRole role, bool blocked);
+	bool IsRoleBlocked(BodyRole role) const;
+
 	void SetMasterEnabled(bool enabled);
 	bool MasterEnabled() const;
 
@@ -57,6 +62,7 @@ private:
 
 	std::array<std::unique_ptr<VirtualTrackerDevice>, kBodyRoleCount> devices_{};
 	std::array<bool, kBodyRoleCount> enabled_{};
+	std::array<bool, kBodyRoleCount> blocked_{};
 
 	std::atomic<bool> master_enabled_{false};
 	std::atomic<bool> hmd_pose_seen_{false};

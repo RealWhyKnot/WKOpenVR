@@ -522,11 +522,15 @@ struct CaptionsConfig
 	// When nonzero the sidecar writes transcripts to disk.
 	uint8_t transcript_logging;
 
+	// When nonzero the sidecar publishes completed captions to the
+	// configured OSC chatbox target. 0 keeps captions local to WKOpenVR.
+	uint8_t chatbox_enabled;
+
+	// Padding to align the port field on a natural boundary.
+	uint8_t _pad[1];
+
 	// Target chatbox OSC port (default 9000).
 	uint16_t chatbox_port;
-
-	// Padding to align the string fields on a natural boundary.
-	uint8_t _pad[2];
 
 	// Source language code ("auto" = whisper auto-detect).
 	char source_lang[CAPTIONS_LANG_LEN];

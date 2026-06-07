@@ -45,6 +45,25 @@ bool VirtualTrackerManager::IsEnabled(BodyRole role) const
 	return enabled_[idx];
 }
 
+void VirtualTrackerManager::SetRoleBlocked(BodyRole role, bool blocked)
+{
+	const auto idx = static_cast<size_t>(role);
+	if (idx >= blocked_.size()) return;
+	const bool was_blocked = blocked_[idx];
+	blocked_[idx] = blocked;
+	if (was_blocked != blocked && BodyRoleToControllerType(role) != nullptr) {
+		LOG("[phantom] virtual role %s %s by physical tracker assignment", BodyRoleToKey(role),
+		    blocked ? "blocked" : "unblocked");
+	}
+}
+
+bool VirtualTrackerManager::IsRoleBlocked(BodyRole role) const
+{
+	const auto idx = static_cast<size_t>(role);
+	if (idx >= blocked_.size()) return false;
+	return blocked_[idx];
+}
+
 int VirtualTrackerManager::EnabledCount() const
 {
 	int n = 0;
@@ -112,6 +131,7 @@ void VirtualTrackerManager::MaybeActivate(BodyRole role)
 	if (devices_[idx]) return; // already activated
 	if (!MasterEnabled()) return;
 	if (!enabled_[idx]) return;
+	if (blocked_[idx]) return;
 	if (!hmd_pose_seen_.load(std::memory_order_acquire)) return;
 
 	// openvr#1536 mitigation: wait at least kInitSettleDelay past driver
@@ -156,6 +176,7 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose, const BodyCom
 		auto& dev = devices_[i];
 		if (!dev || !dev->Activated()) continue;
 		if (!enabled_[i]) continue;
+		if (blocked_[i]) continue;
 
 		const auto& solved = body.roles[i];
 		if (solved.valid && solved.confidence >= min_confidence) {

@@ -62,6 +62,9 @@ CaptionsConfig LoadCaptionsConfig()
 		else if (strcmp(key, "target_lang") == 0) {
 			cfg.target_lang = val;
 		}
+		else if (strcmp(key, "chatbox_enabled") == 0) {
+			cfg.chatbox_enabled = (atoi(val) != 0);
+		}
 		else if (strcmp(key, "chatbox_address") == 0) {
 			cfg.chatbox_address = val;
 		}
@@ -89,6 +92,7 @@ void SaveCaptionsConfig(const CaptionsConfig& cfg)
 	appendf("always_on_consented=%d\n", cfg.always_on_consented ? 1 : 0);
 	appendf("source_lang=%s\n", cfg.source_lang.c_str());
 	appendf("target_lang=%s\n", cfg.target_lang.c_str());
+	appendf("chatbox_enabled=%d\n", cfg.chatbox_enabled ? 1 : 0);
 	appendf("chatbox_address=%s\n", cfg.chatbox_address.c_str());
 	appendf("notify_sound=%d\n", cfg.notify_sound ? 1 : 0);
 
