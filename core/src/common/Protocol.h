@@ -140,8 +140,8 @@ namespace protocol {
 //
 // v15 (2026-05-12): adds the FaceTracking subsystem. Driver opens a fourth
 // pipe (\\.\pipe\WKOpenVR-FaceTracking) gated on enable_facetracking.flag,
-// accepts RequestSetFaceTrackingConfig + RequestSetFaceCalibrationCommand +
-// RequestSetFaceActiveModule. A new shmem ring
+// accepts RequestSetFaceTrackingConfig + RequestSetFaceCalibrationCommand
+// (compatibility no-op) + RequestSetFaceActiveModule. A new shmem ring
 // (WKOpenVRFaceTrackingFrameRingV2) carries per-frame face/eye samples
 // from a C# host sidecar (WKOpenVR.FaceModuleHost.exe) into the driver.
 // Wire layout for the existing request types is unchanged; the bump forces
@@ -303,15 +303,14 @@ enum RequestType
 	// strengths, OSC output endpoint, active module uuid). Driver caches
 	// the payload and applies it on its pose-update + frame-publish path.
 	RequestSetFaceTrackingConfig,
-	// v15: calibration command from the overlay -- begin/end/save/reset
-	// learned per-shape envelopes. Driver-side CalibrationEngine owns
-	// the persistent state; this is the only mutation path.
+	// v15: calibration command retained for compatibility. Normal runtime
+	// accepts it without mutating face-signal state.
 	RequestSetFaceCalibrationCommand,
 	// v15: pick which hardware module (Quest Pro, Vive FT, ...) the host
 	// should load. Driver forwards over its host-side control pipe.
 	RequestSetFaceActiveModule,
 	// v15 (2026-05-13): signal the driver to terminate and respawn the
-	// C# module host. Overlay flushes calibration first, then sends this.
+	// C# module host.
 	RequestFaceHostRestart,
 	// v16 (2026-05-13): OSC router control. Driver routes these on the
 	// \\.\pipe\WKOpenVR-OscRouter pipe, gated on kFeatureOscRouter.
@@ -1005,7 +1004,7 @@ public:
 //
 // Single-writer (the C# FaceModuleHost.exe sidecar) and single-reader (the
 // driver's pose-update path). Hardware face/eye samples arrive at ~120 Hz;
-// the driver applies calibration / eyelid-sync / vergence-lock on top before
+// the driver applies eyelid-sync / vergence-lock / signal corrections on top before
 // publishing to SteamVR inputs and the host's OSC sender. A 32-slot ring
 // gives the driver-side filter chain a few frames of look-back without a
 // separate buffer of its own.
@@ -1016,7 +1015,7 @@ public:
 // =========================================================================
 
 // Number of facial-expression shapes the driver and its consumers (OSC
-// publisher, native SteamVR sink, CalibrationEngine) work with. This is
+// publisher, native SteamVR sink, signal processor) work with. This is
 // our internal/consumer-facing layout; the wire-side carries upstream's
 // FACETRACKING_UPSTREAM_EXPRESSION_COUNT and the reader remaps before
 // returning a frame to consumers.
@@ -1061,8 +1060,7 @@ struct FaceTrackingFrameBody
 	float eye_openness_r;
 
 	// Per-eye pupil dilation 0..1. Most hardware exposes this as a relative
-	// signal; the driver's continuous calibration normalises across the
-	// observed range. 0 = constricted, 1 = dilated.
+	// signal. 0 = constricted, 1 = dilated.
 	float pupil_dilation_l;
 	float pupil_dilation_r;
 

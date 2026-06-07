@@ -22,9 +22,11 @@ add_executable(facetracking_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/feature_flags_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/module_sources_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/osc_publish_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/profile_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/upstream_shape_map_tests.cpp
     ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/Logging.cpp
     ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/ModuleSources.cpp
+    ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/Profiles.cpp
     ${FT_DRIVER_SRC}/CalibrationEngine.cpp
     ${FT_DRIVER_SRC}/VergenceLock.cpp
     ${FT_DRIVER_SRC}/EyelidSync.cpp

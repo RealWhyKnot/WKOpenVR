@@ -8,8 +8,7 @@
 
 // Overlay-side settings for the FaceTracking feature.
 // Serialised to %LocalAppDataLow%\WKOpenVR\profiles\facetracking.json.
-// The driver owns its own per-module calibration files; this file holds
-// only settings that the overlay itself needs across sessions.
+// This file holds settings that the overlay itself needs across sessions.
 
 struct FacetrackingProfile
 {
@@ -22,7 +21,9 @@ struct FacetrackingProfile
 	bool vergence_lock_enabled = false;
 	int vergence_lock_strength = 60; // 0..100
 
-	int continuous_calib_mode = 1; // 0=off 1=conservative 2=aggressive
+	// Legacy profile/wire field retained for compatibility. Normal runtime
+	// keeps continuous calibration disabled.
+	int continuous_calib_mode = 0;
 
 	// Drives output_osc_enabled in FaceTrackingConfig: gates the driver's per-frame
 	// OSC publish calls before they reach the router. To disable FT OSC output

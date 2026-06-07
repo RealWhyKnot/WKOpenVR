@@ -1,7 +1,7 @@
 #pragma once
 
 // Polls the driver's driver_telemetry.json sidecar so the overlay can display
-// live vergence readout and shape-readiness dots without requiring a new IPC
+// live host/driver status and vergence readout without requiring a new IPC
 // channel. The driver writes the file atomically (.tmp + rename) every ~500 ms
 // from the worker thread; we re-read at the same cadence on the overlay tick.
 //
@@ -11,7 +11,6 @@
 // parsed snapshot is updated in-place during Tick() and read by the UI draw
 // functions immediately after.
 
-#include <array>
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -34,10 +33,6 @@ struct DriverTelemetrySnapshot
 	bool vergence_enabled = false;
 	float focus_distance_m = 0.f;
 	float ipd_m = 0.f;
-
-	// shape_readiness[0..62]: Unified Expressions v2 shapes (63 entries).
-	// shape_readiness[63..64]: EyeOpen_L, EyeOpen_R (two eye-openness slots).
-	std::array<bool, 65> shape_warm{};
 };
 
 class DriverTelemetryPoller

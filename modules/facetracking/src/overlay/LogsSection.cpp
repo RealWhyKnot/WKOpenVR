@@ -123,7 +123,6 @@ void DrawLogsSection(FacetrackingPlugin& plugin)
 	ImGui::TextWrapped("Driver:    %%LocalAppDataLow%%\\WKOpenVR\\Logs\\facetracking_drv_log.<ts>.txt");
 	ImGui::TextWrapped("Host:      %%LocalAppDataLow%%\\WKOpenVR\\Logs\\facetracking_host_log.<ts>.txt");
 	ImGui::TextWrapped("Profiles:  %%LocalAppDataLow%%\\WKOpenVR\\profiles\\facetracking.json");
-	ImGui::TextWrapped("Calib:     %%LocalAppDataLow%%\\WKOpenVR\\profiles\\facetracking_calib_<uuid>.json");
 	ImGui::TextWrapped("Trust:     %%LocalAppDataLow%%\\WKOpenVR\\facetracking\\trust.json");
 
 	(void)plugin; // profile_.current is not needed here at present

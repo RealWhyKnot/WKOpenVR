@@ -81,8 +81,6 @@ void DrawAdvancedTab(FacetrackingPlugin& plugin)
 	}
 
 	if (ImGui::Button("Restart host process")) {
-		plugin.SendCalibrationCommand(protocol::FaceCalibSave); // flush calib first
-
 		protocol::Request req(protocol::RequestFaceHostRestart);
 		if (plugin.ipc_.IsConnected()) {
 			try {
@@ -99,18 +97,7 @@ void DrawAdvancedTab(FacetrackingPlugin& plugin)
 	}
 	TooltipForLastItem("Signal the driver to terminate and respawn the C# module host.\n"
 	                   "Use this if the host has wedged or a module update requires\n"
-	                   "a clean reload. Calibration data is flushed first.");
-
-	// ---- Value preview ----
-	DrawSectionHeading("Value preview");
-
-	if (CheckboxWithTooltip("Show raw (un-calibrated) values", &p.show_raw_values,
-	                        "When checked, the Calibration tab readiness dots show\n"
-	                        "raw hardware values before normalisation so you can judge\n"
-	                        "the calibration offset directly.")) {
-		// Overlay-only preference; no driver push needed.
-		plugin.profile_.Save();
-	}
+	                   "a clean reload.");
 }
 
 } // namespace facetracking::ui

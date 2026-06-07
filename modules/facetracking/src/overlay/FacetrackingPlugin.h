@@ -18,7 +18,6 @@ class FacetrackingPlugin;
 
 namespace facetracking::ui {
 void DrawSettingsTab(FacetrackingPlugin& plugin);
-void DrawCalibrationTab(FacetrackingPlugin& plugin);
 void DrawModulesTab(FacetrackingPlugin& plugin);
 void DrawAdvancedTab(FacetrackingPlugin& plugin);
 void DrawLogsSection(FacetrackingPlugin& plugin);
@@ -48,9 +47,6 @@ public:
 	// Quiet on success; sets last_error_ and logs on failure.
 	void PushConfigToDriver();
 
-	// Send a FaceCalibrationCommand to the driver.
-	void SendCalibrationCommand(protocol::FaceCalibrationOp op);
-
 	// Persist the user's enabled-modules set and push the active selection
 	// to the driver / host. Backend currently runs a single module at a
 	// time, so the first UUID in `uuids` is the one the host loads; the
@@ -74,7 +70,6 @@ public:
 
 private:
 	friend void facetracking::ui::DrawSettingsTab(FacetrackingPlugin& plugin);
-	friend void facetracking::ui::DrawCalibrationTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawModulesTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawAdvancedTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawLogsSection(FacetrackingPlugin& plugin);

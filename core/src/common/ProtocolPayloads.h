@@ -319,9 +319,9 @@ static const uint8_t FACETRACKING_EYELID_SYNC_MOST_OPEN = 1;
 //
 // POD-only, fits in the existing Request union -- the static_assert below
 // keeps it under sizeof(SetDeviceTransform). The four-tier toggle / strength
-// design lets the user disable any single feature (eyelid sync, vergence
-// lock, continuous calibration) without rebuilding the pipeline, and
-// supports independent OSC + native output (both can be on; user picks).
+// design lets the user disable any single feature without rebuilding the
+// pipeline, and supports independent OSC + native output (both can be on;
+// user picks).
 struct FaceTrackingConfig
 {
 	// Master kill-switch. False = driver's pose-update path forwards
@@ -336,9 +336,8 @@ struct FaceTrackingConfig
 	uint8_t eyelid_sync_preserve_winks;
 	uint8_t vergence_lock_enabled;
 
-	// 0=off, 1=conservative (slow EMA decay, tight outlier gates),
-	// 2=aggressive (faster decay, looser gates). Conservative is the
-	// default for cold-start users.
+	// Retained for profile/wire compatibility. Normal runtime treats this
+	// field as off/no-op and overlays should send 0.
 	uint8_t continuous_calib_mode;
 
 	// Output sink toggles. The host process sends OSC to VRChat when
@@ -382,10 +381,8 @@ enum FaceCalibrationOp : uint8_t
 	FaceCalibResetExpr = 5,
 };
 
-// POD payload for RequestSetFaceCalibrationCommand. Carries an op code
-// for the driver-side CalibrationEngine to act on. Per-shape resets and
-// finer-grained controls go through the host control pipe (CBOR), not
-// here -- this is the small, fixed-shape, IPC-fast path.
+// POD payload for RequestSetFaceCalibrationCommand. Retained for compatibility;
+// normal runtime accepts these commands without applying calibration state.
 struct FaceCalibrationCommand
 {
 	uint8_t op; // see FaceCalibrationOp
@@ -714,9 +711,10 @@ struct Request
 		// v12: per-device prediction smoothness from the Smoothing overlay.
 		// Much smaller than SetDeviceTransform so the union does not grow.
 		SetDevicePrediction setDevicePrediction;
-		// v15: face-tracking master config + calibration commands + module
-		// selection. All three are smaller than SetDeviceTransform so the
-		// union does not grow; the static_asserts below enforce that.
+		// v15: face-tracking master config + compatibility calibration
+		// command + module selection. All three are smaller than
+		// SetDeviceTransform so the union does not grow; the static_asserts
+		// below enforce that.
 		FaceTrackingConfig setFaceTrackingConfig;
 		FaceCalibrationCommand setFaceCalibrationCommand;
 		FaceModuleSelection setFaceActiveModule;

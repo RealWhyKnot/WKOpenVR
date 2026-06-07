@@ -49,6 +49,7 @@ FacetrackingProfile Decode(const picojson::value& v)
 	getBool("vergence_lock_enabled", p.vergence_lock_enabled);
 	getInt("vergence_lock_strength", p.vergence_lock_strength);
 	getInt("continuous_calib_mode", p.continuous_calib_mode);
+	p.continuous_calib_mode = 0;
 	getBool("output_osc_enabled", p.output_osc_enabled);
 	getInt("gaze_smoothing", p.gaze_smoothing);
 	getInt("openness_smoothing", p.openness_smoothing);
@@ -83,6 +84,14 @@ FacetrackingProfile Decode(const picojson::value& v)
 	return p;
 }
 
+bool HasLegacyContinuousCalibrationEnabled(const picojson::value& v)
+{
+	if (!v.is<picojson::object>()) return false;
+	const auto& obj = v.get<picojson::object>();
+	auto it = obj.find("continuous_calib_mode");
+	return it != obj.end() && it->second.is<double>() && static_cast<int>(it->second.get<double>()) != 0;
+}
+
 std::string Encode(const FacetrackingProfile& p)
 {
 	picojson::object obj;
@@ -92,7 +101,7 @@ std::string Encode(const FacetrackingProfile& p)
 	obj["eyelid_sync_mode"] = picojson::value((double)p.eyelid_sync_mode);
 	obj["vergence_lock_enabled"] = picojson::value(p.vergence_lock_enabled);
 	obj["vergence_lock_strength"] = picojson::value((double)p.vergence_lock_strength);
-	obj["continuous_calib_mode"] = picojson::value((double)p.continuous_calib_mode);
+	obj["continuous_calib_mode"] = picojson::value(0.0);
 	obj["output_osc_enabled"] = picojson::value(p.output_osc_enabled);
 	obj["gaze_smoothing"] = picojson::value((double)p.gaze_smoothing);
 	obj["openness_smoothing"] = picojson::value((double)p.openness_smoothing);
@@ -125,6 +134,8 @@ bool FacetrackingProfileStore::Load()
 
 	std::stringstream ss;
 	ss << in.rdbuf();
+	in.close();
+
 	picojson::value v;
 	std::string err;
 	if (!openvr_pair::common::json::Parse(v, ss.str(), &err)) {
@@ -132,6 +143,10 @@ bool FacetrackingProfileStore::Load()
 		return false;
 	}
 	current = Decode(v);
+	if (HasLegacyContinuousCalibrationEnabled(v)) {
+		FT_LOG_OVL("[profiles] disabled legacy continuous calibration mode");
+		Save();
+	}
 	FT_LOG_OVL("[profiles] loaded facetracking.json");
 	return true;
 }

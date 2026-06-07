@@ -1,5 +1,4 @@
 #define _CRT_SECURE_NO_DEPRECATE
-#include "CalibrationEngine.h"
 #include "EyelidSync.h"
 #include "FaceFrameReader.h"
 #include "FaceOscPublisher.h"
@@ -74,7 +73,7 @@ static bool AtomicWriteFile(const std::wstring& final_path, const std::string& c
 static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint64_t frames_read,
                                       uint64_t osc_messages_sent, uint64_t osc_messages_dropped,
                                       const std::string& active_module_uuid, bool vergence_enabled, float focus_m,
-                                      float ipd_m, const CalibrationEngine& calib)
+                                      float ipd_m)
 {
 	// Timestamp.
 	SYSTEMTIME st{};
@@ -107,16 +106,7 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
 	o << "    \"enabled\": " << (vergence_enabled ? "true" : "false") << ",\n";
 	o << "    \"focus_distance_m\": " << focus_m << ",\n";
 	o << "    \"ipd_m\": " << ipd_m << "\n";
-	o << "  },\n";
-
-	// shape_readiness: 63 expressions (indices 0-62) then 2 eye-openness
-	// slots (indices 63-64 in CalibrationEngine's kIdxOpenL/kIdxOpenR).
-	o << "  \"shape_readiness\": [";
-	for (int i = 0; i < 65; ++i) {
-		if (i > 0) o << ", ";
-		o << (calib.IsShapeWarm(i) ? "true" : "false");
-	}
-	o << "]\n";
+	o << "  }\n";
 	o << "}\n";
 	return o.str();
 }
@@ -274,7 +264,6 @@ public:
 		if (supervisor_) supervisor_->Stop();
 		supervisor_.reset();
 
-		calib_.Save();
 		reader_.Close();
 		device_.reset();
 
@@ -327,8 +316,7 @@ public:
 			case protocol::RequestSetFaceCalibrationCommand: {
 				const protocol::FaceCalibrationOp op = (protocol::FaceCalibrationOp)req.setFaceCalibrationCommand.op;
 				std::lock_guard<std::mutex> lk(config_mutex_);
-				FT_LOG_DRV("[module] calibration command op=%s(%u)", FaceCalibrationOpName(op), (unsigned)op);
-				calib_.Reset(op);
+				FT_LOG_DRV("[module] calibration command ignored: op=%s(%u)", FaceCalibrationOpName(op), (unsigned)op);
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
@@ -371,7 +359,6 @@ private:
 	std::unique_ptr<FaceTrackingDevice> device_;
 	std::unique_ptr<HostSupervisor> supervisor_;
 
-	CalibrationEngine calib_;
 	VergenceLock vergence_;
 	EyelidSync eyelid_;
 	FaceSignalProcessor signal_processor_;
@@ -685,12 +672,6 @@ private:
 			diag_pre_browInnerL_ = frame.expressions[14];
 			diag_pre_eyeWideL_ = frame.expressions[8];
 
-			// Continuous calibration ingestion + normalization.
-			if (cfg.continuous_calib_mode > 0) {
-				calib_.IngestFrame(frame);
-				calib_.Normalize(frame);
-			}
-
 			// Vergence lock.
 			if (cfg.vergence_lock_enabled) {
 				vergence_.Apply(frame, cfg.vergence_lock_strength);
@@ -861,12 +842,6 @@ private:
 					    (unsigned)osc_filter_.AllowedCount(),
 					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
 
-					// Continuous-cal learned ranges: shows the [p02..p98] window each
-					// signal is mapping to [0,1], so a mis-learned range that
-					// exaggerates/flattens a shape (the "looks weird" report) is visible.
-					if (cfg.continuous_calib_mode > 0) {
-						FT_LOG_DRV("[facetracking][calib] %s", calib_.DebugSummary().c_str());
-					}
 					ResetDebugPeriodCounters();
 					last_diag_log_ = diag_now;
 				}
@@ -899,7 +874,7 @@ private:
 
 		std::string json =
 		    BuildTelemetryJson(pid, frames_processed_, frames_read_, osc_messages_sent_, osc_messages_dropped_,
-		                       cfg.active_module_uuid, verg_enabled, focus_m, ipd_m, calib_);
+		                       cfg.active_module_uuid, verg_enabled, focus_m, ipd_m);
 
 		if (!AtomicWriteFile(telemetry_path_, json)) {
 			if (!telemetry_write_failed_) {

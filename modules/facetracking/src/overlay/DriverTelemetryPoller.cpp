@@ -107,13 +107,6 @@ void DriverTelemetryPoller::ReadFile()
 		s.ipd_m = static_cast<float>(openvr_pair::common::json::NumberAt(*verg, "ipd_m"));
 	}
 
-	if (const auto* sr = openvr_pair::common::json::ArrayAt(root, "shape_readiness")) {
-		const int n = static_cast<int>(sr->size());
-		for (int i = 0; i < 65 && i < n; ++i) {
-			s.shape_warm[i] = (*sr)[i].is<bool>() && (*sr)[i].get<bool>();
-		}
-	}
-
 	FT_LOG_OVL("DriverTelemetryPoller: refreshed (pid=%d read=%llu processed=%llu osc_sent=%llu osc_drop=%llu verg=%s "
 	           "focus=%.3fm)",
 	           s.driver_pid, (unsigned long long)s.frames_read, (unsigned long long)s.frames_processed,

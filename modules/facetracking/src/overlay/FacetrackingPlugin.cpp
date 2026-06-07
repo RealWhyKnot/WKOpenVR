@@ -1,7 +1,6 @@
 #include "FacetrackingPlugin.h"
 
 #include "AdvancedTab.h"
-#include "CalibrationTab.h"
 #include "DebugLogging.h"
 #include "IPCClient.h"
 #include "Logging.h"
@@ -168,7 +167,7 @@ void FacetrackingPlugin::PushConfigToDriver()
 		cfg.eyelid_sync_enabled = p.eyelid_sync_enabled ? 1 : 0;
 		cfg.eyelid_sync_preserve_winks = p.eyelid_sync_preserve_winks ? 1 : 0;
 		cfg.vergence_lock_enabled = p.vergence_lock_enabled ? 1 : 0;
-		cfg.continuous_calib_mode = static_cast<uint8_t>(p.continuous_calib_mode);
+		cfg.continuous_calib_mode = 0;
 		cfg.output_osc_enabled = p.output_osc_enabled ? 1 : 0;
 		cfg._reserved_native = 0;
 		cfg.expression_correction_flags = 0;
@@ -233,32 +232,6 @@ void FacetrackingPlugin::PushConfigToDriver()
 	catch (const std::exception& e) {
 		last_error_ = std::string("IPC error: ") + e.what();
 		FT_LOG_OVL("[ipc] PushConfigToDriver failed: %s", e.what());
-	}
-}
-
-void FacetrackingPlugin::SendCalibrationCommand(protocol::FaceCalibrationOp op)
-{
-	if (!ipc_.IsConnected()) {
-		last_error_ = "Not connected to the FaceTracking driver.";
-		return;
-	}
-	try {
-		protocol::Request req(protocol::RequestSetFaceCalibrationCommand);
-		req.setFaceCalibrationCommand.op = static_cast<uint8_t>(op);
-		std::memset(req.setFaceCalibrationCommand._reserved, 0, sizeof(req.setFaceCalibrationCommand._reserved));
-		auto resp = ipc_.SendBlocking(req);
-		if (resp.type != protocol::ResponseSuccess) {
-			last_error_ = "Driver rejected calibration command (op=" + std::to_string((int)op) +
-			              " type=" + std::to_string(resp.type) + ")";
-			FT_LOG_OVL("[ipc] driver rejected calib command op=%d: type=%d", (int)op, (int)resp.type);
-			return;
-		}
-		last_error_.clear();
-		FT_LOG_OVL("[ipc] calibration command sent: op=%d", (int)op);
-	}
-	catch (const std::exception& e) {
-		last_error_ = std::string("IPC error: ") + e.what();
-		FT_LOG_OVL("[ipc] SendCalibrationCommand(op=%d) failed: %s", (int)op, e.what());
 	}
 }
 
@@ -424,10 +397,6 @@ void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext& ctx)
 	if (ImGui::BeginTabBar("ft_tabs")) {
 		if (ImGui::BeginTabItem("Settings")) {
 			facetracking::ui::DrawSettingsTab(*this);
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("Calibration")) {
-			facetracking::ui::DrawCalibrationTab(*this);
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Modules")) {
