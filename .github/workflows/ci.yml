@@ -62,25 +62,36 @@ jobs:
         uses: actions/cache@v5
         with:
           path: 'C:\Program Files\LLVM'
-          key: llvm-${{ runner.os }}-22.1.0
+          key: llvm-${{ runner.os }}-22.1.0-v2
 
       - name: Install clang-format
         # Per-push lint runs format only; the heavy clang-tidy pass moved to the
-        # nightly-tidy workflow. Only clang-format is needed here, restored from
-        # the LLVM cache when available (~1-2 min choco install otherwise).
+        # nightly-tidy workflow. The runner image ships its own LLVM, so we must
+        # pin the EXACT clang-format version CI standardizes on (22.1.0) -- a
+        # different version reformats some constructs differently and would flag
+        # files that are actually clean. Install (force) unless 22.1.0 is already
+        # present from the cache.
         shell: pwsh
         run: |
+          $want = '22.1.0'
           $llvmBin = 'C:\Program Files\LLVM\bin'
-          if (Test-Path (Join-Path $llvmBin 'clang-format.exe')) {
-            Write-Host "LLVM present (cache hit) -- skipping choco install."
+          $cf = Join-Path $llvmBin 'clang-format.exe'
+          $have = ''
+          if (Test-Path $cf) {
+            if (((& $cf --version) -join ' ') -match '(\d+\.\d+\.\d+)') { $have = $Matches[1] }
+          }
+          if ($have -eq $want) {
+            Write-Host "clang-format $want already present -- skipping install."
           } else {
-            choco install llvm --version 22.1.0 -y --no-progress --force
+            Write-Host "Installing LLVM $want (found '$have')."
+            choco install llvm --version $want -y --no-progress --force
             if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
           }
-          if (-not (Test-Path (Join-Path $llvmBin 'clang-format.exe'))) {
-            throw "clang-format.exe not found at $llvmBin after install."
-          }
+          if (-not (Test-Path $cf)) { throw "clang-format.exe not found at $llvmBin after install." }
           $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $actual = ((& $cf --version) -join ' ')
+          if ($actual -notmatch [regex]::Escape($want)) { throw "clang-format version mismatch: '$actual' (wanted $want)" }
+          Write-Host "Using $actual"
 
       - name: Run format check
         shell: pwsh

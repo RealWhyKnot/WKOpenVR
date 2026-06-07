@@ -50,7 +50,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: 'C:\Program Files\LLVM'
-          key: llvm-${{ runner.os }}-22.1.0
+          key: llvm-${{ runner.os }}-22.1.0-v2
 
       - name: Cache clang-tidy build
         # lint.ps1 configures a Ninja compile database under build/lint-tidy.
@@ -63,13 +63,23 @@ jobs:
             tidy-build-${{ runner.os }}-
 
       - name: Install LLVM tools
+        # The runner image ships its own LLVM, so pin the exact version CI uses
+        # (22.1.0) rather than skipping on mere presence -- clang-format/tidy
+        # behavior differs across versions. Force-install unless 22.1.0 is cached.
         shell: pwsh
         run: |
+          $want = '22.1.0'
           $llvmBin = 'C:\Program Files\LLVM\bin'
-          if (Test-Path (Join-Path $llvmBin 'clang-tidy.exe')) {
-            Write-Host "LLVM present (cache hit) -- skipping choco install."
+          $ct = Join-Path $llvmBin 'clang-tidy.exe'
+          $have = ''
+          if (Test-Path $ct) {
+            if (((& $ct --version) -join ' ') -match '(\d+\.\d+\.\d+)') { $have = $Matches[1] }
+          }
+          if ($have -eq $want) {
+            Write-Host "LLVM $want already present -- skipping install."
           } else {
-            choco install llvm --version 22.1.0 -y --no-progress --force
+            Write-Host "Installing LLVM $want (found '$have')."
+            choco install llvm --version $want -y --no-progress --force
             if ($LASTEXITCODE -ne 0) { throw "LLVM install failed (exit $LASTEXITCODE)" }
           }
           if (-not (Test-Path -LiteralPath $llvmBin)) { throw "LLVM bin missing at $llvmBin" }
@@ -80,6 +90,8 @@ jobs:
               throw "$tool was not found after installing LLVM."
             }
           }
+          $actual = ((& $ct --version) -join ' ')
+          if ($actual -notmatch [regex]::Escape($want)) { throw "clang-tidy version mismatch: '$actual' (wanted $want)" }
           if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
             choco install ninja -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "Ninja install failed (exit $LASTEXITCODE)" }
