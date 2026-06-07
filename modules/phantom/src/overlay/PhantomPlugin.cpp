@@ -329,6 +329,46 @@ void PhantomPlugin::DrawAdvancedTab()
 	                   "at synth-hold; the device stops publishing at lost-hold.");
 	ImGui::Spacing();
 
+	auto currentTiming = [&] {
+		return phantom::ui::DropoutTimingValues{
+		    cfg_.blend_out_ms, cfg_.blend_in_ms, cfg_.reckon_hold_ms, cfg_.synth_hold_ms, cfg_.lost_hold_ms,
+		};
+	};
+	auto applyTiming = [&](const phantom::ui::DropoutTimingValues& timing) {
+		cfg_.blend_out_ms = timing.blend_out_ms;
+		cfg_.blend_in_ms = timing.blend_in_ms;
+		cfg_.reckon_hold_ms = timing.reckon_hold_ms;
+		cfg_.synth_hold_ms = timing.synth_hold_ms;
+		cfg_.lost_hold_ms = timing.lost_hold_ms;
+		SendConfig();
+		SavePhantomConfig(cfg_);
+	};
+
+	const auto preset = phantom::ui::ClassifyDropoutTiming(currentTiming());
+	if (ImGui::BeginCombo("Timing preset", phantom::ui::DropoutTimingPresetLabel(preset))) {
+		const phantom::ui::DropoutTimingPreset presets[] = {
+		    phantom::ui::DropoutTimingPreset::Conservative,
+		    phantom::ui::DropoutTimingPreset::Balanced,
+		    phantom::ui::DropoutTimingPreset::Extended,
+		};
+		for (const auto candidate : presets) {
+			const bool selected = preset == candidate;
+			if (ImGui::Selectable(phantom::ui::DropoutTimingPresetLabel(candidate), selected)) {
+				applyTiming(phantom::ui::ValuesForDropoutTimingPreset(candidate));
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", phantom::ui::DropoutTimingPresetHelp(candidate));
+			}
+			if (selected) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("%s", phantom::ui::DropoutTimingPresetHelp(preset));
+	}
+
+	ImGui::Spacing();
+
 	auto sliderMs = [&](const char* label, uint32_t& v, uint32_t lo, uint32_t hi, const char* tip) {
 		int tmp = static_cast<int>(v);
 		if (ImGui::SliderInt(label, &tmp, (int)lo, (int)hi, "%d ms")) {

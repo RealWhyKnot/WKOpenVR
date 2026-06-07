@@ -53,3 +53,30 @@ TEST(PhantomUiLogic, VirtualRoleEnableAllowedWhenCalibratedAndUnclaimed)
 	EXPECT_TRUE(readiness.canEnable);
 	EXPECT_EQ(readiness.reason, nullptr);
 }
+
+TEST(PhantomUiLogic, DropoutTimingDefaultsClassifyAsBalanced)
+{
+	const auto balanced = phantom::ui::ValuesForDropoutTimingPreset(phantom::ui::DropoutTimingPreset::Balanced);
+	EXPECT_EQ(phantom::ui::ClassifyDropoutTiming(balanced), phantom::ui::DropoutTimingPreset::Balanced);
+	EXPECT_EQ(balanced.synth_hold_ms, phantom::DefaultTimings::kSynthHoldMs);
+	EXPECT_EQ(balanced.lost_hold_ms, phantom::DefaultTimings::kLostHoldMs);
+}
+
+TEST(PhantomUiLogic, DropoutTimingPresetsHaveDistinctBridgeLengths)
+{
+	const auto conservative = phantom::ui::ValuesForDropoutTimingPreset(phantom::ui::DropoutTimingPreset::Conservative);
+	const auto balanced = phantom::ui::ValuesForDropoutTimingPreset(phantom::ui::DropoutTimingPreset::Balanced);
+	const auto extended = phantom::ui::ValuesForDropoutTimingPreset(phantom::ui::DropoutTimingPreset::Extended);
+
+	EXPECT_LT(conservative.synth_hold_ms, balanced.synth_hold_ms);
+	EXPECT_LT(balanced.synth_hold_ms, extended.synth_hold_ms);
+	EXPECT_LT(conservative.lost_hold_ms, balanced.lost_hold_ms);
+	EXPECT_LT(balanced.lost_hold_ms, extended.lost_hold_ms);
+}
+
+TEST(PhantomUiLogic, NonPresetDropoutTimingClassifiesAsCustom)
+{
+	auto values = phantom::ui::ValuesForDropoutTimingPreset(phantom::ui::DropoutTimingPreset::Balanced);
+	++values.synth_hold_ms;
+	EXPECT_EQ(phantom::ui::ClassifyDropoutTiming(values), phantom::ui::DropoutTimingPreset::Custom);
+}
