@@ -962,14 +962,13 @@ public sealed class SubprocessManager : IDisposable
                     invalidEyeSignals++;
                 }
 
-                float headYaw = 0.0f;
                 float headPitch = 0.0f;
                 float headRoll = 0.0f;
                 float headPosX = 0.0f;
                 float headPosY = 0.0f;
                 float headPosZ = 0.0f;
                 bool headValid =
-                    TryFiniteSignal(decoded.GetHeadYaw(), out headYaw) &&
+                    TryFiniteSignal(decoded.GetHeadYaw(), out float headYaw) &&
                     TryFiniteSignal(decoded.GetHeadPitch(), out headPitch) &&
                     TryFiniteSignal(decoded.GetHeadRoll(), out headRoll) &&
                     TryFiniteSignal(decoded.GetHeadPosX(), out headPosX) &&

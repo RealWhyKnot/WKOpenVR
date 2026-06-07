@@ -7,7 +7,8 @@
 
 namespace wkopenvr::tracking_style_ui {
 
-struct ActionInputs {
+struct ActionInputs
+{
 	TrackingStyle style = TrackingStyle::Manual;
 	CalibrationState state = CalibrationState::None;
 	bool vrReady = true;

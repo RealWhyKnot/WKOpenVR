@@ -418,12 +418,12 @@ private:
 	// frame in the window; the pre-correction snapshot captures the most recent
 	// frame so the period line can show, per shape, what the module sent vs what
 	// the correction pass produced.
-	uint32_t diag_max_oob_ = 0;        // expressions outside [0,1] (worst frame)
-	uint32_t diag_max_nan_ = 0;        // non-finite expressions (worst frame)
-	float diag_max_expr_val_ = 0.0f;   // largest expression magnitude (>1 => bulge)
-	int diag_max_expr_idx_ = -1;       // which shape held diag_max_expr_val_
-	float diag_min_gaze_len_ = 9.0f;   // smallest gaze unit-length (0 => dead eyes)
-	float diag_max_gaze_len_ = 0.0f;   // largest gaze unit-length (>1 => overshoot)
+	uint32_t diag_max_oob_ = 0;      // expressions outside [0,1] (worst frame)
+	uint32_t diag_max_nan_ = 0;      // non-finite expressions (worst frame)
+	float diag_max_expr_val_ = 0.0f; // largest expression magnitude (>1 => bulge)
+	int diag_max_expr_idx_ = -1;     // which shape held diag_max_expr_val_
+	float diag_min_gaze_len_ = 9.0f; // smallest gaze unit-length (0 => dead eyes)
+	float diag_max_gaze_len_ = 0.0f; // largest gaze unit-length (>1 => overshoot)
 	float diag_pre_jaw_ = 0.0f;
 	float diag_pre_mouthClose_ = 0.0f;
 	float diag_pre_smileL_ = 0.0f;
@@ -771,8 +771,7 @@ private:
 					if (eye_valid) {
 						const float* g[2] = {frame.eye_gaze_l, frame.eye_gaze_r};
 						for (int e = 0; e < 2; ++e) {
-							const float len =
-							    std::sqrt(g[e][0] * g[e][0] + g[e][1] * g[e][1] + g[e][2] * g[e][2]);
+							const float len = std::sqrt(g[e][0] * g[e][0] + g[e][1] * g[e][1] + g[e][2] * g[e][2]);
 							if (std::isfinite(len)) {
 								if (len < diag_min_gaze_len_) diag_min_gaze_len_ = len;
 								if (len > diag_max_gaze_len_) diag_max_gaze_len_ = len;
@@ -794,12 +793,11 @@ private:
 					           (unsigned)cfg.output_osc_enabled, (unsigned)cfg.continuous_calib_mode,
 					           (unsigned)cfg.eyelid_sync_enabled, (unsigned)cfg.eyelid_sync_strength,
 					           (unsigned)cfg.eyelid_sync_mode, (unsigned)cfg.vergence_lock_enabled,
-					           (unsigned)cfg.vergence_lock_strength,
-					           (unsigned)cfg.expression_correction_flags, (unsigned)cfg.gaze_smoothing,
-					           (unsigned)cfg.openness_smoothing, input_jaw_open, frame.expressions[26],
-					           input_mouth_closed, frame.eye_openness_l, frame.eye_openness_r, frame.eye_gaze_l[0],
-					           frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.pupil_dilation_l, frame.pupil_dilation_r,
-					           input_eye_wide_l, (unsigned)osc_filter_.AllowedCount(),
+					           (unsigned)cfg.vergence_lock_strength, (unsigned)cfg.expression_correction_flags,
+					           (unsigned)cfg.gaze_smoothing, (unsigned)cfg.openness_smoothing, input_jaw_open,
+					           frame.expressions[26], input_mouth_closed, frame.eye_openness_l, frame.eye_openness_r,
+					           frame.eye_gaze_l[0], frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.pupil_dilation_l,
+					           frame.pupil_dilation_r, input_eye_wide_l, (unsigned)osc_filter_.AllowedCount(),
 					           FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
 				}
 
@@ -837,16 +835,15 @@ private:
 					// Per-shape module-output vs our-corrected for the avatar's
 					// most-visible shapes (latest frame). A large pre->post swing
 					// points at our corrections; a wrong pre points upstream.
-					FT_LOG_DRV(
-					    "[facetracking][shapes] jaw=%.3f->%.3f mouthClose=%.3f->%.3f smileL=%.3f->%.3f "
-					    "sadL=%.3f->%.3f cheekL=%.3f->%.3f browInnerL=%.3f->%.3f eyeWideL=%.3f->%.3f "
-					    "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) gazeR=(%.3f,%.3f,%.3f)",
-					    diag_pre_jaw_, frame.expressions[26], diag_pre_mouthClose_, frame.expressions[40],
-					    diag_pre_smileL_, frame.expressions[45], diag_pre_sadL_, frame.expressions[47],
-					    diag_pre_cheekL_, frame.expressions[20], diag_pre_browInnerL_, frame.expressions[14],
-					    diag_pre_eyeWideL_, frame.expressions[8], frame.eye_openness_l, frame.eye_openness_r,
-					    frame.eye_gaze_l[0], frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.eye_gaze_r[0],
-					    frame.eye_gaze_r[1], frame.eye_gaze_r[2]);
+					FT_LOG_DRV("[facetracking][shapes] jaw=%.3f->%.3f mouthClose=%.3f->%.3f smileL=%.3f->%.3f "
+					           "sadL=%.3f->%.3f cheekL=%.3f->%.3f browInnerL=%.3f->%.3f eyeWideL=%.3f->%.3f "
+					           "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) gazeR=(%.3f,%.3f,%.3f)",
+					           diag_pre_jaw_, frame.expressions[26], diag_pre_mouthClose_, frame.expressions[40],
+					           diag_pre_smileL_, frame.expressions[45], diag_pre_sadL_, frame.expressions[47],
+					           diag_pre_cheekL_, frame.expressions[20], diag_pre_browInnerL_, frame.expressions[14],
+					           diag_pre_eyeWideL_, frame.expressions[8], frame.eye_openness_l, frame.eye_openness_r,
+					           frame.eye_gaze_l[0], frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.eye_gaze_r[0],
+					           frame.eye_gaze_r[1], frame.eye_gaze_r[2]);
 
 					// Health: worst-frame anomalies + the OSC family/filter state.
 					// filter_active=0 means fail-open: BOTH the legacy and v2
@@ -857,9 +854,8 @@ private:
 					    "[facetracking][health] worst_oob=%u worst_nan=%u max_expr=%s:%.3f gaze_len=[%.3f..%.3f] "
 					    "filter_active=%d families=%s allowlist=%u status=%s",
 					    (unsigned)diag_max_oob_, (unsigned)diag_max_nan_,
-					    diag_max_expr_idx_ >= 0
-					        ? facetracking::FaceExpressionOscName((uint32_t)diag_max_expr_idx_)
-					        : "n/a",
+					    diag_max_expr_idx_ >= 0 ? facetracking::FaceExpressionOscName((uint32_t)diag_max_expr_idx_)
+					                            : "n/a",
 					    diag_max_expr_val_, diag_min_gaze_len_, diag_max_gaze_len_, (int)diag_filter_active,
 					    diag_filter_active ? "filtered" : "legacy+v2+vrcft(failopen,dedup-off)",
 					    (unsigned)osc_filter_.AllowedCount(),

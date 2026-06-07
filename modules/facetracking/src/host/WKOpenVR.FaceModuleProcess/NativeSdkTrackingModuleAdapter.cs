@@ -70,7 +70,7 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
         ModuleInformation = new ModuleMetadata
         {
             Name = GetModuleName(),
-            StaticImages = new List<Stream>()
+            StaticImages = []
         };
     }
 
@@ -98,7 +98,7 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
         var request = Activator.CreateInstance(requestType, eyeAvailable, expressionAvailable, true)
             ?? throw new InvalidOperationException("Could not create native FaceModuleInitRequest.");
 
-        var result = AwaitAsyncResult(initializeAsync.Invoke(module, new[] { context, request, CancellationToken.None }));
+        var result = AwaitAsyncResult(initializeAsync.Invoke(module, [context, request, CancellationToken.None]));
         bool eyeActive = GetBool(result, "EyeActive");
         bool expressionActive = GetBool(result, "ExpressionActive");
 
@@ -110,15 +110,15 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
 
     public override void Update()
     {
-        clearFrame?.Invoke(frame, Array.Empty<object>());
-        AwaitAsyncResult(updateAsync.Invoke(module, new[] { frame, CancellationToken.None }));
-        sanitizeFrame?.Invoke(null, new[] { frame });
+        clearFrame?.Invoke(frame, []);
+        AwaitAsyncResult(updateAsync.Invoke(module, [frame, CancellationToken.None]));
+        sanitizeFrame?.Invoke(null, [frame]);
         CopyNativeFrameToUnifiedTracking();
     }
 
     public override void Teardown()
     {
-        AwaitAsyncResult(teardownAsync.Invoke(module, new object[] { CancellationToken.None }));
+        AwaitAsyncResult(teardownAsync.Invoke(module, [CancellationToken.None]));
     }
 
     private void CopyNativeFrameToUnifiedTracking()
@@ -254,7 +254,7 @@ internal sealed class NativeSdkTrackingModuleAdapter : ExtTrackingModule
         MethodInfo? asTask = result.GetType().GetMethod("AsTask", Type.EmptyTypes);
         if (asTask != null)
         {
-            var valueTaskAsTask = (Task?)asTask.Invoke(result, Array.Empty<object>());
+            var valueTaskAsTask = (Task?)asTask.Invoke(result, []);
             if (valueTaskAsTask == null)
             {
                 return null;

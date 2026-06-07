@@ -1627,9 +1627,8 @@ void CalibrationTick(double time)
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
 			         " mad_floor_source=%s wr_validation=%s",
-			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode,
-			         (int)ctx.lockRelativePositionMode, (int)ctx.lockRelativePosition,
-			         (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
+			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
+			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
 			         spacecal::autolock::kSamplesNeeded, translMadMm, rotMadDeg, madFloorMm, enterMm,
 			         settled ? "yes" : "no", settled ? secsSinceLastFlip : 0.0, errLast, errSeries.size(),

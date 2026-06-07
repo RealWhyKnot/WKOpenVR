@@ -181,10 +181,9 @@ void FacetrackingPlugin::PushConfigToDriver()
 		if (p.eyelid_brow_sync_enabled)
 			cfg.expression_correction_flags |= protocol::FACETRACKING_EXPR_CORRECT_BROW_SYNC;
 		cfg.eyelid_sync_strength = static_cast<uint8_t>(p.eyelid_sync_strength);
-		const int eyelidMode =
-		    (p.eyelid_sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN)
-		        ? protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN
-		        : protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED;
+		const int eyelidMode = (p.eyelid_sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN)
+		                           ? protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN
+		                           : protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED;
 		cfg.eyelid_sync_mode = static_cast<uint8_t>(eyelidMode);
 		cfg.vergence_lock_strength = static_cast<uint8_t>(p.vergence_lock_strength);
 		cfg.gaze_smoothing = static_cast<uint8_t>(p.gaze_smoothing);
@@ -227,8 +226,9 @@ void FacetrackingPlugin::PushConfigToDriver()
 		           "smooth(gaze=%d open=%d)",
 		           (int)cfg.output_osc_enabled, cfg.active_module_uuid, (int)cfg.eyelid_sync_enabled,
 		           (int)cfg.eyelid_sync_strength, (int)cfg.eyelid_sync_mode, (int)cfg.vergence_lock_enabled,
-		           (int)cfg.vergence_lock_strength, (int)cfg.continuous_calib_mode, (int)cfg.expression_correction_flags,
-		           (int)cfg.expression_correction_strengths, (int)cfg.gaze_smoothing, (int)cfg.openness_smoothing);
+		           (int)cfg.vergence_lock_strength, (int)cfg.continuous_calib_mode,
+		           (int)cfg.expression_correction_flags, (int)cfg.expression_correction_strengths,
+		           (int)cfg.gaze_smoothing, (int)cfg.openness_smoothing);
 	}
 	catch (const std::exception& e) {
 		last_error_ = std::string("IPC error: ") + e.what();

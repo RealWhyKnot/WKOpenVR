@@ -3,8 +3,8 @@
 #include "CalibrationMetrics.h" // WriteLogAnnotation -- profile_loaded_calibration
                                 // diagnostic line on launch.
 #include "TrackingStyle.h"
-#include "WedgeDetector.h"      // kMaxPlausibleCalibrationMagnitudeCm -- shared
-                                // with the runtime wedge detector in Calibration.cpp.
+#include "WedgeDetector.h" // kMaxPlausibleCalibrationMagnitudeCm -- shared
+                           // with the runtime wedge detector in Calibration.cpp.
 
 #include <picojson.h>
 
@@ -165,12 +165,13 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 				const bool allowFallback =
 				    !hmObj["allow_raw_hmd_fallback"].is<bool>() || hmObj["allow_raw_hmd_fallback"].get<bool>();
 				if (driverSynth) {
-					style = allowFallback ? (int)TrackingStyle::LockedWithRecovery : (int)TrackingStyle::HardTrackerLock;
+					style =
+					    allowFallback ? (int)TrackingStyle::LockedWithRecovery : (int)TrackingStyle::HardTrackerLock;
 				}
 			}
 			auto autostartIt = profile.find("autostart_continuous_calibration");
-			if (style == (int)TrackingStyle::Manual && autostartIt != profile.end() &&
-			    autostartIt->second.is<bool>() && autostartIt->second.get<bool>()) {
+			if (style == (int)TrackingStyle::Manual && autostartIt != profile.end() && autostartIt->second.is<bool>() &&
+			    autostartIt->second.get<bool>()) {
 				style = (int)TrackingStyle::Continuous;
 			}
 		}

@@ -168,8 +168,8 @@ TEST(EyelidSync, SmootherFastCloseSlowOpen)
 	const float opened = facetracking::EyelidSync::SmoothToward(0.0f, 1.0f, dt);
 	EXPECT_LT(closed, 0.5f); // closing covers >50% of the gap (blink survives)
 	EXPECT_GT(opened, 0.0f);
-	EXPECT_LT(opened, 0.5f);              // reopening covers <50% of the gap
-	EXPECT_GT(1.0f - closed, opened);     // close moves a larger fraction than open
+	EXPECT_LT(opened, 0.5f);          // reopening covers <50% of the gap
+	EXPECT_GT(1.0f - closed, opened); // close moves a larger fraction than open
 	// dt <= 0 uses a nominal step; long gaps snap to the target.
 	EXPECT_GT(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 0.0), 0.2f);
 	EXPECT_LT(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 0.0), 0.8f);

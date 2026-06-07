@@ -41,10 +41,7 @@ public:
 		SetEnvironmentVariableW(name_.c_str(), value.c_str());
 	}
 
-	~ScopedEnvVar()
-	{
-		SetEnvironmentVariableW(name_.c_str(), hadPrevious_ ? previous_.c_str() : nullptr);
-	}
+	~ScopedEnvVar() { SetEnvironmentVariableW(name_.c_str(), hadPrevious_ ? previous_.c_str() : nullptr); }
 
 private:
 	std::wstring name_;

@@ -250,10 +250,9 @@ TEST(ConfigurationTest, MigrateV4VerySlowSpeedPreservesSlowContinuousChoice)
 TEST(ConfigurationTest, MigrateV5AutoLockBecomesContinuousStyleWithExplicitOffLock)
 {
 	std::string v5Json = MakeMinimalProfile(
-	    /*schemaVersion=*/5,
-	    "\"autostart_continuous_calibration\":true,"
-	    "\"lock_relative_position_mode\":2,"
-	    "\"additional_calibrations\":[{\"target_tracking_system\":\"vive\",\"lock_mode\":2}]");
+	    /*schemaVersion=*/5, "\"autostart_continuous_calibration\":true,"
+	                         "\"lock_relative_position_mode\":2,"
+	                         "\"additional_calibrations\":[{\"target_tracking_system\":\"vive\",\"lock_mode\":2}]");
 
 	CalibrationContext ctx;
 	std::stringstream io(v5Json);

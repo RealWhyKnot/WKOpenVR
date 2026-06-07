@@ -1548,8 +1548,7 @@ void ServerTrackedDeviceProvider::SetHeadMountConfig(const protocol::SetHeadMoun
 		m_headMountState = next;
 		sourceChanged =
 		    next.mode != prev.mode || next.deviceId != prev.deviceId || next.hideTracker != prev.hideTracker ||
-		    next.offsetCalibrated != prev.offsetCalibrated ||
-		    next.allowRawHmdFallback != prev.allowRawHmdFallback ||
+		    next.offsetCalibrated != prev.offsetCalibrated || next.allowRawHmdFallback != prev.allowRawHmdFallback ||
 		    memcmp(next.trackerSerial, prev.trackerSerial, sizeof next.trackerSerial) != 0 ||
 		    memcmp(next.trackerTrackingSystem, prev.trackerTrackingSystem, sizeof next.trackerTrackingSystem) != 0 ||
 		    memcmp(next.headFromTrackerTrans, prev.headFromTrackerTrans, sizeof next.headFromTrackerTrans) != 0 ||
