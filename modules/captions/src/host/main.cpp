@@ -303,6 +303,11 @@ static void DispatchControlMessage(char* buf, DWORD got)
 	buf[got] = '\0'; // caller guarantees buf has room for one extra byte
 	std::string msg(buf, got);
 	TH_LOG("[control] received: %s", msg.c_str());
+	if (msg == "shutdown" || msg == "shutdown\n" || msg == "shutdown\r\n") {
+		TH_LOG("[control] shutdown requested");
+		g_shutdown.store(true, std::memory_order_release);
+		return;
+	}
 	if (msg.rfind("config:", 0) != 0) return;
 
 	std::lock_guard<std::mutex> lk(g_config_mutex);

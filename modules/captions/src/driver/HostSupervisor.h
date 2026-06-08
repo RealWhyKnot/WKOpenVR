@@ -24,6 +24,10 @@ public:
 	// not available yet, retry after the next spawn/reconnect.
 	void SetHostConfigCommand(const std::string& command);
 
+	// Ask a responsive host to exit cleanly. Stop() still handles tracked
+	// spawned processes; this covers connect-first attachments.
+	void RequestHostShutdown();
+
 protected:
 	std::string ControlPipeName() const override;
 	std::wstring SingletonMutexName() const override;

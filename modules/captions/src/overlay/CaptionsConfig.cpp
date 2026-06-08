@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_DEPRECATE
 #include "CaptionsConfig.h"
 
 #include "Win32Paths.h"
@@ -44,7 +45,10 @@ CaptionsConfig LoadCaptionsConfig()
 		const char* key = line;
 		const char* val = eq + 1;
 
-		if (strcmp(key, "mode") == 0) {
+		if (strcmp(key, "sidecar_enabled") == 0) {
+			cfg.sidecar_enabled = (atoi(val) != 0);
+		}
+		else if (strcmp(key, "mode") == 0) {
 			int n = atoi(val);
 			// Two valid modes today; clamp defensively against a hand-edit
 			// setting an unsupported value rather than letting the UI render
@@ -100,6 +104,7 @@ void SaveCaptionsConfig(const CaptionsConfig& cfg)
 		int n = std::snprintf(buf, sizeof buf, fmt, std::forward<decltype(args)>(args)...);
 		if (n > 0) body.append(buf, (size_t)n);
 	};
+	appendf("sidecar_enabled=%d\n", cfg.sidecar_enabled ? 1 : 0);
 	appendf("mode=%d\n", cfg.mode);
 	appendf("always_on_consented=%d\n", cfg.always_on_consented ? 1 : 0);
 	appendf("source_lang=%s\n", cfg.source_lang.c_str());

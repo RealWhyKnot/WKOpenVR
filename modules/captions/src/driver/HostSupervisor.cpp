@@ -95,6 +95,12 @@ void HostSupervisor::SetHostConfigCommand(const std::string& command)
 	if (!command.empty()) TrySendCommand(command);
 }
 
+void HostSupervisor::RequestHostShutdown()
+{
+	static constexpr char kShutdownCommand[] = "shutdown\n";
+	SendBytesOverControlPipe(kShutdownCommand, sizeof(kShutdownCommand) - 1);
+}
+
 void HostSupervisor::OnHostReady()
 {
 	std::string command;

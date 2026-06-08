@@ -63,6 +63,7 @@ public:
 	void SetMode(int m);
 	bool HasAlwaysOnConsent() const { return always_on_consented_; }
 	void SetAlwaysOnConsented(bool v);
+	bool GetSidecarEnabled() const { return sidecar_enabled_; }
 
 	const std::string& GetSourceLang() const { return source_lang_; }
 	const std::string& GetTargetLang() const { return target_lang_; }
@@ -80,6 +81,7 @@ public:
 
 	void SetSourceLang(const std::string& s);
 	void SetTargetLang(const std::string& s);
+	void SetSidecarEnabled(bool v);
 	void SetChatboxEnabled(bool v);
 	void SetChatboxAddress(const std::string& s);
 	void SetNotifySound(bool v);
@@ -98,6 +100,7 @@ private:
 	captions::CaptionPreviewHistory preview_history_;
 
 	// Settings cached here and pushed to the driver.
+	bool sidecar_enabled_ = true;
 	int mode_ = 0; // 0=PTT, 1=always-on
 	bool always_on_consented_ = false;
 	std::string source_lang_ = "auto";

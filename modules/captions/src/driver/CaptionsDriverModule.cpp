@@ -7,6 +7,7 @@
 #include "ModuleRegistry.h"
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
+#include "Win32Paths.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -50,6 +51,32 @@ std::string ResolveHostExePath()
 	}
 	path += "\\resources\\captions\\host\\WKOpenVR.CaptionsHost.exe";
 	return path;
+}
+
+bool ReadSavedSidecarEnabled()
+{
+	std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", false);
+	if (dir.empty()) return true;
+	std::wstring path = dir + L"\\captions.txt";
+
+	FILE* f = _wfopen(path.c_str(), L"r");
+	if (!f) return true;
+
+	char line[512];
+	while (fgets(line, sizeof line, f)) {
+		size_t len = strlen(line);
+		while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n')) {
+			line[--len] = '\0';
+		}
+		static constexpr const char* kKey = "sidecar_enabled=";
+		const size_t key_len = strlen(kKey);
+		if (strncmp(line, kKey, key_len) != 0) continue;
+		bool enabled = strcmp(line + key_len, "0") != 0;
+		fclose(f);
+		return enabled;
+	}
+	fclose(f);
+	return true;
 }
 
 class CaptionsDriverModule final : public DriverModule
@@ -101,13 +128,13 @@ public:
 		}
 
 		supervisor_ = std::make_unique<HostSupervisor>(host_path);
-		// Pre-spawn sweep: if a prior SteamVR session left a wedged host
-		// process (singleton mutex held, pipe unresponsive), terminate it
-		// before Start() so connect-first attach does not lock onto a dead
-		// peer.
-		supervisor_->CleanupStaleHostIfWedged();
-		if (!supervisor_->Start()) {
-			TR_LOG_DRV("[module] host initial spawn failed; supervisor monitor will retry");
+		config_.master_enabled = ReadSavedSidecarEnabled() ? 1 : 0;
+		TR_LOG_DRV("[module] saved captions sidecar setting: %s", config_.master_enabled ? "enabled" : "disabled");
+		if (config_.master_enabled) {
+			ApplySidecarState(true, BuildHostConfigCommand(config_));
+		}
+		else {
+			TR_LOG_DRV("[module] captions sidecar disabled; host will not be started");
 		}
 
 		TR_LOG_DRV("[module] Init complete");
@@ -117,7 +144,7 @@ public:
 	void Shutdown() override
 	{
 		TR_LOG_DRV("[module] Shutdown()");
-		if (supervisor_) supervisor_->Stop();
+		StopSupervisor();
 		supervisor_.reset();
 		TR_LOG_DRV("[module] shutdown complete");
 	}
@@ -127,24 +154,34 @@ public:
 		switch (req.type) {
 			case protocol::RequestSetCaptionsConfig: {
 				std::string cmd;
-				std::lock_guard<std::mutex> lk(config_mutex_);
-				config_ = req.setCaptionsConfig;
-				// Forward relevant settings to the host via the control pipe.
-				// The host re-reads its config via a simple tagged line protocol.
-				cmd = BuildHostConfigCommand(config_);
-				if (supervisor_) supervisor_->SetHostConfigCommand(cmd);
+				bool enabled = false;
+				{
+					std::lock_guard<std::mutex> lk(config_mutex_);
+					config_ = req.setCaptionsConfig;
+					enabled = config_.master_enabled != 0;
+					// Forward relevant settings to the host via the control pipe.
+					// The host re-reads its config via a simple tagged line protocol.
+					cmd = BuildHostConfigCommand(config_);
+				}
+				ApplySidecarState(enabled, cmd);
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
 			case protocol::RequestCaptionsRestartHost: {
 				TR_LOG_DRV("[module] host restart requested by overlay");
-				if (supervisor_) supervisor_->Restart();
 				std::string cmd;
+				bool enabled = false;
 				{
 					std::lock_guard<std::mutex> lk(config_mutex_);
+					enabled = config_.master_enabled != 0;
 					cmd = BuildHostConfigCommand(config_);
 				}
-				if (supervisor_) supervisor_->SetHostConfigCommand(cmd);
+				if (enabled) {
+					RestartSupervisor(cmd);
+				}
+				else {
+					TR_LOG_DRV("[module] restart ignored; captions sidecar disabled");
+				}
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
@@ -163,6 +200,57 @@ public:
 	}
 
 private:
+	void StartSupervisor(const std::string& cmd)
+	{
+		std::lock_guard<std::mutex> lk(supervisor_mutex_);
+		if (!supervisor_) return;
+		supervisor_->SetHostConfigCommand(cmd);
+		if (supervisor_started_) return;
+
+		supervisor_->CleanupStaleHostIfWedged();
+		if (!supervisor_->Start()) {
+			TR_LOG_DRV("[module] host initial spawn failed; supervisor monitor will retry");
+		}
+		supervisor_started_ = true;
+	}
+
+	void StopSupervisor()
+	{
+		std::lock_guard<std::mutex> lk(supervisor_mutex_);
+		if (!supervisor_ || !supervisor_started_) return;
+
+		TR_LOG_DRV("[module] stopping captions sidecar");
+		supervisor_->RequestHostShutdown();
+		supervisor_->Stop();
+		supervisor_started_ = false;
+	}
+
+	void RestartSupervisor(const std::string& cmd)
+	{
+		std::lock_guard<std::mutex> lk(supervisor_mutex_);
+		if (!supervisor_) return;
+		supervisor_->SetHostConfigCommand(cmd);
+		if (!supervisor_started_) {
+			supervisor_->CleanupStaleHostIfWedged();
+			if (!supervisor_->Start()) {
+				TR_LOG_DRV("[module] host initial spawn failed; supervisor monitor will retry");
+			}
+			supervisor_started_ = true;
+			return;
+		}
+		supervisor_->Restart();
+	}
+
+	void ApplySidecarState(bool enabled, const std::string& cmd)
+	{
+		if (enabled) {
+			StartSupervisor(cmd);
+		}
+		else {
+			StopSupervisor();
+		}
+	}
+
 	static std::string BuildHostConfigCommand(const protocol::CaptionsConfig& config)
 	{
 		return std::string("config:") + "src=" + config.source_lang + ",tgt=" + config.target_lang +
@@ -176,6 +264,8 @@ private:
 	}
 
 	std::unique_ptr<HostSupervisor> supervisor_;
+	bool supervisor_started_ = false;
+	mutable std::mutex supervisor_mutex_;
 
 	protocol::CaptionsConfig config_{};
 	mutable std::mutex config_mutex_;

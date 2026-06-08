@@ -714,6 +714,18 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	// -----------------------------------------------------------------------
 	ImGui::Separator();
 	DrawSectionHeading("Host controls");
+	bool sidecar = plugin.GetSidecarEnabled();
+	if (CheckboxWithTooltip("Run captions sidecar", &sidecar,
+	                        "Runs speech recognition and translation in the captions host process.\n"
+	                        "Turn off to stop speech recognition without uninstalling packs.")) {
+		plugin.SetSidecarEnabled(sidecar);
+		plugin.PushConfigToDriver();
+		if (!sidecar) {
+			plugin.HostStatus().SetSupervisorStatus(false, 0, {});
+		}
+	}
+
+	DisabledSection restartGate(!sidecar, "Turn on Run captions sidecar before restarting the host.");
 	if (ImGui::Button("Restart host")) {
 		plugin.SendRestartHost();
 		// Optimistically clear the halted indicator; PollSupervisorStatus will
@@ -722,6 +734,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	}
 	TooltipForLastItem("Terminate and respawn the captions sidecar process.\n"
 	                   "Use when the host appears stuck or crashed.");
+	if (!sidecar) restartGate.AttachReasonTooltip();
 }
 
 } // namespace captions::ui

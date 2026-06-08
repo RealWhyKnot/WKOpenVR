@@ -80,6 +80,7 @@ TEST(CaptionsOutputPolicyTest, QueuedChatboxEntriesAreDroppedWhenToggleIsOff)
 TEST(CaptionsProtocolTest, ZeroedConfigDoesNotPublishToChatbox)
 {
 	protocol::CaptionsConfig cfg{};
+	EXPECT_EQ(cfg.master_enabled, 0);
 	EXPECT_EQ(cfg.chatbox_enabled, 0);
 	EXPECT_EQ(cfg.realtime_flags, 0);
 	EXPECT_EQ(cfg.speech_model, 0);
@@ -109,6 +110,7 @@ TEST(CaptionsRealtimeFlagsTest, DefaultsEnableRealtimeOptions)
 	                                                  captions::kCaptionsRealtimeRandomCaptionMask));
 
 	CaptionsConfig cfg;
+	EXPECT_TRUE(cfg.sidecar_enabled);
 	EXPECT_EQ(cfg.realtime_flags, captions::kCaptionsRealtimeDefaultFlags);
 	EXPECT_EQ(cfg.speech_model, captions::kCaptionsSpeechModelBalanced);
 }

@@ -10,12 +10,13 @@
 // settings. Stored at %LocalAppDataLow%\WKOpenVR\profiles\captions.txt as a
 // minimal key=value file (same pattern as smoothing's Config.cpp).
 //
-// Persists: mode (PTT vs always-on), source / target language, OSC chatbox
-// path, audible notify-sound flag, speech model, realtime behavior flags, and
-// the always-on consent sentinel so the user doesn't have to re-confirm every
-// restart.
+// Persists: sidecar runtime state, mode (PTT vs always-on), source / target
+// language, OSC chatbox path, audible notify-sound flag, speech model,
+// realtime behavior flags, and the always-on consent sentinel so the user
+// doesn't have to re-confirm every restart.
 struct CaptionsConfig
 {
+	bool sidecar_enabled = true;
 	int mode = 0; // 0 = PTT, 1 = always-on
 	bool always_on_consented = false;
 	std::string source_lang = "auto";

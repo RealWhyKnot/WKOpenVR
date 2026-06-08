@@ -100,6 +100,7 @@ CaptionsPlugin::CaptionsPlugin()
 	// Hydrate runtime-mutable settings from disk. Missing file -> defaults
 	// (the constructor in the header already seeds reasonable defaults).
 	CaptionsConfig loaded = LoadCaptionsConfig();
+	sidecar_enabled_ = loaded.sidecar_enabled;
 	mode_ = loaded.mode;
 	always_on_consented_ = loaded.always_on_consented;
 	source_lang_ = loaded.source_lang;
@@ -118,6 +119,7 @@ CaptionsPlugin::CaptionsPlugin()
 void CaptionsPlugin::Persist()
 {
 	CaptionsConfig cfg;
+	cfg.sidecar_enabled = sidecar_enabled_;
 	cfg.mode = mode_;
 	cfg.always_on_consented = always_on_consented_;
 	cfg.source_lang = source_lang_;
@@ -149,6 +151,11 @@ void CaptionsPlugin::SetSourceLang(const std::string& s)
 void CaptionsPlugin::SetTargetLang(const std::string& s)
 {
 	target_lang_ = s;
+	Persist();
+}
+void CaptionsPlugin::SetSidecarEnabled(bool v)
+{
+	sidecar_enabled_ = v;
 	Persist();
 }
 void CaptionsPlugin::SetChatboxEnabled(bool v)
@@ -247,7 +254,7 @@ void CaptionsPlugin::PushConfigToDriver()
 		auto& cfg = req.setCaptionsConfig;
 		memset(&cfg, 0, sizeof(cfg));
 
-		cfg.master_enabled = 1;
+		cfg.master_enabled = sidecar_enabled_ ? 1 : 0;
 		cfg.mode = static_cast<uint8_t>(mode_);
 		cfg.notify_sound = notify_sound_ ? 1 : 0;
 		cfg.chatbox_enabled = chatbox_enabled_ ? 1 : 0;
@@ -458,6 +465,13 @@ void CaptionsPlugin::MaintainDriverConnection()
 
 void CaptionsPlugin::DrawStatusBanner()
 {
+	if (!sidecar_enabled_) {
+		openvr_pair::overlay::ui::DrawInfoBanner(
+		    "Captions sidecar is off",
+		    "Speech recognition is stopped. Turn on Run captions sidecar when you want live captions.");
+		return;
+	}
+
 	if (!last_error_.empty()) {
 		openvr_pair::overlay::ui::DrawErrorBanner("Captions driver problem", last_error_.c_str());
 	}
