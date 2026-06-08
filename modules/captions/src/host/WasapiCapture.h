@@ -16,13 +16,13 @@
 // WASAPI shared-mode microphone capture.
 //
 // Captures audio from the default input endpoint in shared mode, converts to
-// 16 kHz mono float32, and calls FrameCallback with non-overlapping 30 ms
-// chunks (~480 samples each). Thread-safe start/stop; device-change handling
+// 16 kHz mono float32, and calls FrameCallback with non-overlapping 32 ms
+// chunks (512 samples each). Thread-safe start/stop; device-change handling
 // via IMMNotificationClient restarts the capture session automatically.
 class WasapiCapture
 {
 public:
-	// Called on the capture thread with 30 ms of 16 kHz mono PCM (float32).
+	// Called on the capture thread with 32 ms of 16 kHz mono PCM (float32).
 	using FrameCallback = std::function<void(const float*, size_t)>;
 
 	WasapiCapture();
@@ -80,9 +80,10 @@ private:
 	mutable std::mutex name_mutex_;
 	std::string device_name_;
 
-	// 30 ms PCM accumulator (16 kHz mono float32).
+	// 32 ms PCM accumulator (16 kHz mono float32). Silero VAD v4 expects
+	// exactly 512 samples at 16 kHz.
 	std::vector<float> accum_;
-	static constexpr size_t kFrameSamples = 480; // 30 ms at 16 kHz
+	static constexpr size_t kFrameSamples = 512; // 32 ms at 16 kHz
 
 	// Per-packet downmix scratch (capture thread only). Reused across packets
 	// so a 100 Hz capture loop does not allocate every frame.
@@ -97,6 +98,6 @@ private:
 	bool OpenSelectedDevice();
 
 	// Resample `in_samples` frames from `in_rate` Hz mono float to 16 kHz mono float.
-	// Appends resampled frames to accum_ and flushes 30 ms chunks via callback_.
+	// Appends resampled frames to accum_ and flushes 32 ms chunks via callback_.
 	void ResampleAndAccumulate(const float* data, size_t frames, uint32_t in_rate);
 };

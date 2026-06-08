@@ -26,6 +26,7 @@
 #include "AudioLevel.h"
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsTabLogic.h"
+#include "EnergySpeechGate.h"
 
 TEST(ChatboxPacerTest, MinimumGapEnforced)
 {
@@ -282,6 +283,27 @@ TEST(AudioLevelTest, DecayRisesInstantlyAndFallsSlowly)
 	EXPECT_FLOAT_EQ(captions::DecayLevel(1.0f, 0.0f, 0.85f), 0.85f);
 }
 
+TEST(EnergySpeechGateTest, SileroSpeechProbabilityOpensGate)
+{
+	EXPECT_TRUE(captions::SpeechGateIsSpeech(0.5f, 0.0f));
+	EXPECT_TRUE(captions::SpeechGateIsSpeech(0.7f, 0.0f));
+}
+
+TEST(EnergySpeechGateTest, InputLevelFallbackOpensGate)
+{
+	EXPECT_FALSE(captions::SpeechGateIsSpeech(-1.0f, 0.079f));
+	EXPECT_TRUE(captions::SpeechGateIsSpeech(-1.0f, 0.08f));
+	EXPECT_TRUE(captions::SpeechGateIsSpeech(0.1f, 0.2f));
+}
+
+TEST(EnergySpeechGateTest, SilenceRequiresBothLowVadAndLowLevel)
+{
+	EXPECT_TRUE(captions::SpeechGateIsSilence(-1.0f, 0.0f));
+	EXPECT_TRUE(captions::SpeechGateIsSilence(0.2f, 0.025f));
+	EXPECT_FALSE(captions::SpeechGateIsSilence(0.4f, 0.0f));
+	EXPECT_FALSE(captions::SpeechGateIsSilence(0.1f, 0.026f));
+}
+
 // ---------------------------------------------------------------------------
 // Selected-device file (cross-process contract)
 // ---------------------------------------------------------------------------
@@ -317,7 +339,9 @@ TEST(AudioInputFileTest, ReadRoundTripFromTempDir)
 	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(dir), "{0.0.1.00000000}.{device-guid}");
 
 	// Empty file => system default.
-	{ std::ofstream of(path.c_str(), std::ios::trunc); }
+	{
+		std::ofstream of(path.c_str(), std::ios::trunc);
+	}
 	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(dir), "");
 
 	DeleteFileW(path.c_str());

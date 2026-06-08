@@ -11,6 +11,8 @@
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsOutputPolicy.h"
 #include "ChatboxPacer.h"
+#include "AudioLevel.h"
+#include "EnergySpeechGate.h"
 #include "HostStatus.h"
 #include "Logging.h"
 #include "ModelDownloader.h"
@@ -747,9 +749,7 @@ try {
 	ChatboxPacer pacer(1.2);
 
 	// VAD state machine.
-	constexpr float kSpeechThreshold = 0.5f;
-	constexpr float kSilenceThreshold = 0.35f;
-	constexpr int kSilenceFrames = 20; // ~600 ms of silence
+	constexpr int kSilenceFrames = 20; // ~640 ms of silence at 512 samples / 16 kHz
 	int silence_count = 0;
 	bool in_speech = false;
 	bool ptt_was_held = false;
@@ -758,7 +758,7 @@ try {
 	TH_LOG("[startup] phase=initializing-audio-capture");
 	status.SetPhase("initializing-audio-capture");
 	status.Flush();
-	// WASAPI capture: 30 ms chunks fed through a thread-safe queue.
+	// WASAPI capture: 32 ms chunks fed through a thread-safe queue.
 	std::mutex audio_mutex;
 	std::vector<std::vector<float>> audio_queue;
 
@@ -919,19 +919,28 @@ try {
 		const bool always_on = (cfg.mode == 1);
 
 		for (const auto& frame : frames) {
-			// VAD gate (PTT mode skips it).
-			if (always_on && vad && vad->IsLoaded()) {
-				float prob = vad->Feed(frame.data(), frame.size());
-				if (prob >= kSpeechThreshold) {
+			// VAD gate (PTT mode skips it). Silero is the primary gate; the
+			// frame peak is a conservative fallback for capture paths where the
+			// model stays below threshold despite clear microphone input.
+			if (always_on) {
+				float prob = -1.0f;
+				if (vad && vad->IsLoaded()) {
+					prob = vad->Feed(frame.data(), frame.size());
+				}
+				const float peak = captions::ComputeBufferPeak(frame.data(), frame.size());
+				if (captions::SpeechGateIsSpeech(prob, peak)) {
 					if (!in_speech) {
 						in_speech = true;
-						vad->Reset();
+						if (vad) vad->Reset();
 						speech_buf.clear();
 						status.SetState(HostStatus::State::Listening);
+						if (prob < 0.5f) {
+							TH_LOG("[vad] speech gate opened by input level peak=%.3f prob=%.3f", peak, prob);
+						}
 					}
 					silence_count = 0;
 				}
-				else if (in_speech) {
+				else if (in_speech && captions::SpeechGateIsSilence(prob, peak)) {
 					++silence_count;
 					if (silence_count >= kSilenceFrames) {
 						in_speech = false;
