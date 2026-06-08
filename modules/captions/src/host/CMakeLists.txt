@@ -230,6 +230,7 @@ set(HOST_SOURCES
     Captions.h
     WasapiCapture.cpp
     WasapiCapture.h
+    TranscriptText.h
     WhisperEngine.cpp
     WhisperEngine.h
     main.cpp)

@@ -28,6 +28,7 @@
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsTabLogic.h"
 #include "EnergySpeechGate.h"
+#include "TranscriptText.h"
 #include "WhisperPromptHistory.h"
 
 TEST(ChatboxPacerTest, MinimumGapEnforced)
@@ -382,9 +383,10 @@ TEST(EnergySpeechGateTest, AlwaysOnUsesLongerMinimumThanPushToTalk)
 
 TEST(EnergySpeechGateTest, AlwaysOnKeepsShortPrerollAndModerateSilenceTail)
 {
-	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 12);
-	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 26);
+	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 20);
+	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 30);
 	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(), 128000u);
+	EXPECT_EQ(captions::AlwaysOnContinuationOverlapSamples(), 6400u);
 }
 
 TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
@@ -435,6 +437,91 @@ TEST(EnergySpeechGateTest, AdaptiveGateStillTrustsVad)
 	EXPECT_TRUE(gate.IsSpeech(0.50f, 0.0f));
 	EXPECT_TRUE(gate.IsSpeech(0.35f, gate.SoftSpeechPeakThreshold()));
 	EXPECT_FALSE(gate.IsSpeech(0.31f, gate.SoftSpeechPeakThreshold()));
+}
+
+TEST(EnergySpeechGateTest, PossibleSpeechSitsBetweenSilenceAndOpen)
+{
+	captions::AdaptiveSpeechGate gate;
+	for (int i = 0; i < 120; ++i) {
+		gate.ObserveAmbient(0.002f);
+	}
+
+	const float possible = gate.PossibleSpeechPeakThreshold();
+	EXPECT_LT(possible, gate.SpeechPeakThreshold());
+	EXPECT_GT(possible, gate.SilencePeakThreshold());
+	EXPECT_FALSE(gate.IsSpeech(-1.0f, possible));
+	EXPECT_TRUE(gate.IsPossibleSpeech(-1.0f, possible));
+	EXPECT_FALSE(gate.IsSilence(-1.0f, possible));
+}
+
+TEST(EnergySpeechGateTest, ActivationWindowAllowsJitterySpeechFrames)
+{
+	captions::SpeechActivationWindow window;
+	window.Push(true, true);
+	EXPECT_FALSE(window.ShouldOpen());
+	window.Push(false, true);
+	EXPECT_FALSE(window.ShouldOpen());
+	window.Push(true, true);
+
+	EXPECT_TRUE(window.ShouldOpen());
+	EXPECT_EQ(window.SpeechFrames(), 2);
+	EXPECT_EQ(window.PossibleFrames(), 3);
+}
+
+TEST(EnergySpeechGateTest, ActivationWindowAllowsOneSpeechFrameWithPossibleContext)
+{
+	captions::SpeechActivationWindow window;
+	window.Push(false, true);
+	window.Push(true, true);
+	window.Push(false, true);
+
+	EXPECT_TRUE(window.ShouldOpen());
+	EXPECT_EQ(window.SpeechFrames(), 1);
+	EXPECT_EQ(window.PossibleFrames(), captions::AlwaysOnActivationPossibleFrames());
+}
+
+TEST(EnergySpeechGateTest, ActivationWindowRejectsPossibleOnlyNoise)
+{
+	captions::SpeechActivationWindow window;
+	for (int i = 0; i < captions::AlwaysOnActivationWindowFrames(); ++i) {
+		window.Push(false, true);
+	}
+
+	EXPECT_FALSE(window.ShouldOpen());
+	EXPECT_EQ(window.SpeechFrames(), 0);
+	EXPECT_EQ(window.PossibleFrames(), captions::AlwaysOnActivationWindowFrames());
+}
+
+TEST(EnergySpeechGateTest, CopyTrailingSamplesKeepsBoundedContinuationOverlap)
+{
+	std::vector<float> pcm(10000);
+	for (size_t i = 0; i < pcm.size(); ++i) {
+		pcm[i] = static_cast<float>(i);
+	}
+
+	std::vector<float> tail = captions::CopyTrailingSamples(pcm, captions::AlwaysOnContinuationOverlapSamples());
+	ASSERT_EQ(tail.size(), captions::AlwaysOnContinuationOverlapSamples());
+	EXPECT_FLOAT_EQ(tail.front(), 3600.0f);
+	EXPECT_FLOAT_EQ(tail.back(), 9999.0f);
+
+	std::vector<float> short_tail = captions::CopyTrailingSamples(std::vector<float>{1.0f, 2.0f, 3.0f}, 6400);
+	EXPECT_EQ(short_tail, (std::vector<float>{1.0f, 2.0f, 3.0f}));
+}
+
+TEST(TranscriptTextTest, RemovesMultiWordOverlapIgnoringCaseAndPunctuation)
+{
+	const std::string previous = "I want this to keep every boundary word.";
+	const std::string current = "Every boundary word, even if I keep speaking.";
+
+	EXPECT_EQ(captions::RemoveOverlappingTranscriptPrefix(previous, current), "even if I keep speaking.");
+}
+
+TEST(TranscriptTextTest, KeepsSingleRepeatedWordToAvoidDroppingRealSpeech)
+{
+	const std::string previous = "I said hello";
+	const std::string current = "hello hello again";
+
+	EXPECT_EQ(captions::RemoveOverlappingTranscriptPrefix(previous, current), current);
 }
 
 // ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@
 #include "ModelDownloader.h"
 #include "RouterPublisher.h"
 #include "SileroVad.h"
+#include "TranscriptText.h"
 #include "WasapiCapture.h"
 #include "WhisperEngine.h"
 #include "WhisperPromptHistory.h"
@@ -37,6 +38,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -765,15 +767,17 @@ try {
 
 	// VAD state machine.
 	int silence_count = 0;
-	int speech_candidate_count = 0;
 	bool in_speech = false;
 	bool ptt_was_held = false;
 	size_t speech_samples_since_open = 0;
 	float speech_max_vad_probability = -1.0f;
 	float speech_max_frame_peak = 0.0f;
 	captions::AdaptiveSpeechGate speech_gate;
+	captions::SpeechActivationWindow speech_activation;
 	std::deque<std::vector<float>> preroll_frames;
 	std::vector<float> speech_buf;
+	bool speech_buf_has_continuation_overlap = false;
+	std::string last_transcript_for_overlap;
 
 	TH_LOG("[startup] phase=initializing-audio-capture");
 	status.SetPhase("initializing-audio-capture");
@@ -871,6 +875,7 @@ try {
 			whisper_prompt.Clear();
 			whisper.SetInitialPrompt("");
 			whisper_prompt_lang_key = prompt_lang_key;
+			last_transcript_for_overlap.clear();
 		}
 		if (!whisper.IsLoaded() && FileExistsA(cfg.whisper_model_path) && loop_now >= next_whisper_load_attempt) {
 			whisper_load_attempted = true;
@@ -949,17 +954,20 @@ try {
 		if (!always_on && in_speech) {
 			in_speech = false;
 			silence_count = 0;
-			speech_candidate_count = 0;
+			speech_activation.Reset();
 			speech_samples_since_open = 0;
 			speech_max_vad_probability = -1.0f;
 			speech_max_frame_peak = 0.0f;
 			preroll_frames.clear();
 			speech_buf.clear();
+			speech_buf_has_continuation_overlap = false;
 			set_typing_indicator(false, cfg);
 			status.SetState(HostStatus::State::Idle);
 		}
 
 		for (const auto& frame : frames) {
+			bool continue_after_transcribe = false;
+
 			// VAD gate (PTT mode skips it). Silero is the primary gate; the
 			// frame peak is a conservative fallback for capture paths where the
 			// model stays below threshold despite clear microphone input.
@@ -970,29 +978,31 @@ try {
 				}
 				const float peak = captions::ComputeBufferPeak(frame.data(), frame.size());
 				const bool speech_frame = speech_gate.IsSpeech(prob, peak);
+				const bool possible_speech_frame = speech_gate.IsPossibleSpeech(prob, peak);
+				if (!in_speech) {
+					speech_activation.Push(speech_frame, possible_speech_frame);
+				}
+				if (!in_speech && speech_activation.ShouldOpen()) {
+					in_speech = true;
+					if (vad) vad->Reset();
+					speech_buf.clear();
+					speech_buf_has_continuation_overlap = false;
+					speech_samples_since_open = 0;
+					speech_max_vad_probability = -1.0f;
+					speech_max_frame_peak = 0.0f;
+					for (const auto& preroll : preroll_frames) {
+						speech_buf.insert(speech_buf.end(), preroll.begin(), preroll.end());
+					}
+					preroll_frames.clear();
+					speech_activation.Reset();
+					status.SetState(HostStatus::State::Listening);
+					set_typing_indicator(true, cfg);
+					if (prob < 0.5f) {
+						TH_LOG("[vad] speech gate opened by input level peak=%.3f threshold=%.3f noise=%.3f prob=%.3f",
+						       peak, speech_gate.SpeechPeakThreshold(), speech_gate.AmbientPeak(), prob);
+					}
+				}
 				if (speech_frame) {
-					if (!in_speech) {
-						++speech_candidate_count;
-					}
-					if (!in_speech && speech_candidate_count >= 2) {
-						in_speech = true;
-						if (vad) vad->Reset();
-						speech_buf.clear();
-						speech_samples_since_open = 0;
-						speech_max_vad_probability = -1.0f;
-						speech_max_frame_peak = 0.0f;
-						for (const auto& preroll : preroll_frames) {
-							speech_buf.insert(speech_buf.end(), preroll.begin(), preroll.end());
-						}
-						preroll_frames.clear();
-						status.SetState(HostStatus::State::Listening);
-						set_typing_indicator(true, cfg);
-						if (prob < 0.5f) {
-							TH_LOG("[vad] speech gate opened by input level peak=%.3f threshold=%.3f noise=%.3f "
-							       "prob=%.3f",
-							       peak, speech_gate.SpeechPeakThreshold(), speech_gate.AmbientPeak(), prob);
-						}
-					}
 					if (in_speech) {
 						silence_count = 0;
 					}
@@ -1001,14 +1011,14 @@ try {
 					++silence_count;
 					if (silence_count >= captions::AlwaysOnSilenceFrames()) {
 						in_speech = false;
-						speech_candidate_count = 0;
+						speech_activation.Reset();
 						set_typing_indicator(false, cfg);
 						status.SetState(HostStatus::State::Transcribing);
 						goto transcribe;
 					}
 				}
-				else if (!in_speech) {
-					speech_candidate_count = 0;
+				else if (in_speech && possible_speech_frame && silence_count > 0) {
+					--silence_count;
 				}
 				if (in_speech) {
 					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
@@ -1016,15 +1026,15 @@ try {
 					speech_max_vad_probability = std::max(speech_max_vad_probability, prob);
 					speech_max_frame_peak = std::max(speech_max_frame_peak, peak);
 					if (speech_samples_since_open >= captions::AlwaysOnMaxSpeechSamples()) {
-						in_speech = false;
-						speech_candidate_count = 0;
-						set_typing_indicator(false, cfg);
+						continue_after_transcribe = true;
 						status.SetState(HostStatus::State::Transcribing);
 						goto transcribe;
 					}
 				}
 				else {
-					speech_gate.ObserveAmbient(peak);
+					if (!possible_speech_frame) {
+						speech_gate.ObserveAmbient(peak);
+					}
 					preroll_frames.push_back(frame);
 					while (preroll_frames.size() > static_cast<size_t>(captions::AlwaysOnPrerollFrames())) {
 						preroll_frames.pop_front();
@@ -1038,6 +1048,7 @@ try {
 				if (ptt_held) {
 					if (!ptt_was_held) {
 						speech_buf.clear();
+						speech_buf_has_continuation_overlap = false;
 						speech_samples_since_open = 0;
 						speech_max_vad_probability = -1.0f;
 						speech_max_frame_peak = 0.0f;
@@ -1061,10 +1072,12 @@ try {
 			if (!captions::SpeechSegmentShouldTranscribe(speech_samples_since_open, always_on,
 			                                             speech_max_vad_probability, speech_max_frame_peak,
 			                                             speech_gate.SpeechPeakThreshold())) {
+				in_speech = false;
 				speech_buf.clear();
+				speech_buf_has_continuation_overlap = false;
 				speech_samples_since_open = 0;
 				silence_count = 0;
-				speech_candidate_count = 0;
+				speech_activation.Reset();
 				speech_max_vad_probability = -1.0f;
 				speech_max_frame_peak = 0.0f;
 				status.SetState(HostStatus::State::Idle);
@@ -1072,25 +1085,55 @@ try {
 			}
 
 			{
+				const bool resume_after_transcribe = continue_after_transcribe && always_on;
+				const bool segment_had_continuation_overlap = speech_buf_has_continuation_overlap;
+				std::vector<float> segment_pcm = speech_buf;
+				std::vector<float> continuation_overlap;
+				if (resume_after_transcribe) {
+					continuation_overlap =
+					    captions::CopyTrailingSamples(segment_pcm, captions::AlwaysOnContinuationOverlapSamples());
+				}
+
 				std::string detected_lang;
 				std::string transcript;
 				if (whisper.IsLoaded()) {
 					whisper.SetInitialPrompt(whisper_prompt.Text());
-					transcript = whisper.Transcribe(speech_buf, &detected_lang);
+					transcript = whisper.Transcribe(segment_pcm, &detected_lang);
 				}
 				else if (whisper_load_attempted && whisper_load_failed) {
 					status.SetLastError("Whisper model failed to load.");
 				}
-				speech_buf.clear();
+
+				if (segment_had_continuation_overlap && !transcript.empty() && !last_transcript_for_overlap.empty()) {
+					std::string trimmed =
+					    captions::RemoveOverlappingTranscriptPrefix(last_transcript_for_overlap, transcript);
+					if (trimmed.size() != transcript.size()) {
+						TH_LOG("[main] trimmed overlapping transcript prefix: before=%zu after=%zu", transcript.size(),
+						       trimmed.size());
+					}
+					transcript = trimmed;
+				}
+
+				if (resume_after_transcribe) {
+					speech_buf = std::move(continuation_overlap);
+					speech_buf_has_continuation_overlap = !speech_buf.empty();
+					in_speech = true;
+				}
+				else {
+					speech_buf.clear();
+					speech_buf_has_continuation_overlap = false;
+					in_speech = false;
+				}
 				speech_samples_since_open = 0;
 				silence_count = 0;
-				speech_candidate_count = 0;
+				speech_activation.Reset();
 				speech_max_vad_probability = -1.0f;
 				speech_max_frame_peak = 0.0f;
 				status.SetLastTranscript(transcript);
 				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
 				if (!transcript.empty()) {
 					whisper_prompt.Observe(transcript);
+					last_transcript_for_overlap = transcript;
 				}
 
 				// Translation step.
@@ -1109,7 +1152,7 @@ try {
 				if (captions::ShouldPublishChatbox(cfg.chatbox_enabled, output)) {
 					pacer.Enqueue(output, true, cfg.notify_sound);
 				}
-				status.SetState(HostStatus::State::Idle);
+				status.SetState(resume_after_transcribe ? HostStatus::State::Listening : HostStatus::State::Idle);
 			}
 		}
 
@@ -1129,6 +1172,10 @@ try {
 				status.SetLastError("OSC router publish pipe unavailable.");
 			}
 			status.SetState(HostStatus::State::Idle);
+		}
+
+		if (in_speech) {
+			status.SetState(HostStatus::State::Listening);
 		}
 
 		status.SetMicName(capture.DeviceName());
