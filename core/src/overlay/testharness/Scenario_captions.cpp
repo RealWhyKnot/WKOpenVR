@@ -73,8 +73,8 @@ ScenarioResult RunScenario_captions(ScenarioContext& ctx)
 		return Fail("captions", duration_now(), std::string("SetCaptionsConfig failed: ") + ex.what());
 	}
 
-	// Query the supervisor status. Even with master_enabled=0 the driver
-	// keeps the supervisor block updated and the response should carry the
+	// Query the supervisor status. With master_enabled=0 the driver keeps the
+	// host stopped, but the response should still carry the
 	// CaptionsSupervisorStatus payload.
 	try {
 		ctx.log.Step("sending CaptionsGetSupervisorStatus");

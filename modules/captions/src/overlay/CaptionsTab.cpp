@@ -211,10 +211,28 @@ static void DrawPackActionButton(const char* label, const char* id, bool disable
 	}
 }
 
+static void DrawSidecarToggle(CaptionsPlugin& plugin)
+{
+	using namespace openvr_pair::overlay::ui;
+	bool sidecar = plugin.GetSidecarEnabled();
+	if (CheckboxWithTooltip("Run live captions", &sidecar,
+	                        "Runs speech recognition and translation.\n"
+	                        "Turn off to stop the captions host without uninstalling packs.")) {
+		plugin.SetSidecarEnabled(sidecar);
+		plugin.PushConfigToDriver();
+		if (!sidecar) {
+			plugin.HostStatus().SetSupervisorStatus(false, 0, {});
+		}
+	}
+	ImGui::Spacing();
+}
+
 static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot& snap)
 {
 	using namespace openvr_pair::overlay::ui;
 	DrawSectionHeading("Setup");
+
+	DrawSidecarToggle(plugin);
 
 	bool high_accuracy_model = plugin.GetSpeechModel() == captions::kCaptionsSpeechModelHighAccuracy;
 	if (CheckboxWithTooltip("High accuracy speech model", &high_accuracy_model,
@@ -532,11 +550,11 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	}
 
 	if (ImGui::BeginPopupModal("##tr_aon_consent", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::TextUnformatted("Always-on captures your microphone while WKOpenVR is open.");
+		ImGui::TextUnformatted("Always-on listens for speech while WKOpenVR is open.");
 		ImGui::SameLine();
 		DrawHelpMarker("Audio is processed in memory and recognized locally (whisper.cpp + Silero VAD); nothing is "
 		               "written to disk unless you enable transcript logging, and nothing leaves your PC.\n"
-		               "To stop capture: switch back to Push-to-Talk or close WKOpenVR.");
+		               "To stop speech recognition: switch back to Push-to-Talk or turn off Run live captions.");
 		ImGui::Spacing();
 		if (ImGui::Button("Enable always-on")) {
 			plugin.SetAlwaysOnConsented(true);
@@ -554,7 +572,10 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	// -----------------------------------------------------------------------
 	// Live status
 	// -----------------------------------------------------------------------
-	DrawStatusStrip(plugin, snap);
+	const bool sidecar = plugin.GetSidecarEnabled();
+	if (sidecar) {
+		DrawStatusStrip(plugin, snap);
+	}
 
 	ImGui::Separator();
 	DrawSetup(plugin, snap);
@@ -566,13 +587,14 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	DrawSectionHeading("Mode");
 	{
 		int mode = plugin.GetMode();
-		if (RadioButtonWithTooltip("Push-to-Talk", mode == 0, "Capture only while the bound SteamVR button is held.")) {
+		if (RadioButtonWithTooltip("Push-to-Talk", mode == 0,
+		                           "Recognize speech only while the bound SteamVR button is held.")) {
 			plugin.SetMode(0);
 			plugin.PushConfigToDriver();
 		}
 		ImGui::SameLine();
 		if (RadioButtonWithTooltip("Always-on", mode == 1,
-		                           "Continuously capture your microphone while WKOpenVR is open.\n"
+		                           "Continuously listens for speech while WKOpenVR is open.\n"
 		                           "Audio is processed locally; nothing is transmitted.")) {
 			if (!plugin.HasAlwaysOnConsent()) {
 				s_consent_pending = true;
@@ -714,18 +736,8 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	// -----------------------------------------------------------------------
 	ImGui::Separator();
 	DrawSectionHeading("Host controls");
-	bool sidecar = plugin.GetSidecarEnabled();
-	if (CheckboxWithTooltip("Run captions sidecar", &sidecar,
-	                        "Runs speech recognition and translation in the captions host process.\n"
-	                        "Turn off to stop speech recognition without uninstalling packs.")) {
-		plugin.SetSidecarEnabled(sidecar);
-		plugin.PushConfigToDriver();
-		if (!sidecar) {
-			plugin.HostStatus().SetSupervisorStatus(false, 0, {});
-		}
-	}
-
-	DisabledSection restartGate(!sidecar, "Turn on Run captions sidecar before restarting the host.");
+	const bool restart_enabled = plugin.GetSidecarEnabled();
+	DisabledSection restartGate(!restart_enabled, "Turn on Run live captions before restarting the host.");
 	if (ImGui::Button("Restart host")) {
 		plugin.SendRestartHost();
 		// Optimistically clear the halted indicator; PollSupervisorStatus will
@@ -734,7 +746,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	}
 	TooltipForLastItem("Terminate and respawn the captions sidecar process.\n"
 	                   "Use when the host appears stuck or crashed.");
-	if (!sidecar) restartGate.AttachReasonTooltip();
+	if (!restart_enabled) restartGate.AttachReasonTooltip();
 }
 
 } // namespace captions::ui

@@ -466,9 +466,9 @@ void CaptionsPlugin::MaintainDriverConnection()
 void CaptionsPlugin::DrawStatusBanner()
 {
 	if (!sidecar_enabled_) {
-		openvr_pair::overlay::ui::DrawInfoBanner(
-		    "Captions sidecar is off",
-		    "Speech recognition is stopped. Turn on Run captions sidecar when you want live captions.");
+		openvr_pair::overlay::ui::DrawInfoBanner("Live captions are off",
+		                                         "Speech recognition is stopped. Turn on Run live captions when you "
+		                                         "want captions.");
 		return;
 	}
 

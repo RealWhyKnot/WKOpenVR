@@ -135,6 +135,7 @@ public:
 		}
 		else {
 			TR_LOG_DRV("[module] captions sidecar disabled; host will not be started");
+			StopSupervisor();
 		}
 
 		TR_LOG_DRV("[module] Init complete");
@@ -217,10 +218,12 @@ private:
 	void StopSupervisor()
 	{
 		std::lock_guard<std::mutex> lk(supervisor_mutex_);
-		if (!supervisor_ || !supervisor_started_) return;
+		if (!supervisor_) return;
+
+		supervisor_->RequestHostShutdown();
+		if (!supervisor_started_) return;
 
 		TR_LOG_DRV("[module] stopping captions sidecar");
-		supervisor_->RequestHostShutdown();
 		supervisor_->Stop();
 		supervisor_started_ = false;
 	}

@@ -504,40 +504,6 @@ static void UpdatePackStatus(HostStatus& status, const HostConfig& cfg)
 	status.SetLastError(err.str());
 }
 
-static int RunE2eFakePublish(const std::string& text, HostStatus& status)
-{
-	status.SetPhase("e2e-fake-publishing");
-	status.SetLastTranscript(text);
-	status.SetLastTranslation(text);
-	status.SetState(HostStatus::State::Sending);
-	status.Flush();
-
-	RouterPublisher publisher;
-	bool sent = false;
-	for (int i = 0; i < 8 && !sent; ++i) {
-		sent = publisher.PublishChatbox("/chatbox/input", text, true, false);
-		if (!sent) Sleep(100);
-	}
-
-	if (sent) {
-		status.IncrementPacketsSent();
-		status.SetState(HostStatus::State::Idle);
-		status.SetPhase("e2e-fake-complete");
-		status.Flush();
-		TH_LOG("[e2e] fake captions output published: %s", text.c_str());
-		CaptionsHostFlushLog();
-		return 0;
-	}
-
-	status.SetState(HostStatus::State::Error);
-	status.SetPhase("e2e-fake-failed");
-	status.SetLastError("OSC router publish pipe unavailable.");
-	status.Flush();
-	TH_LOG("[e2e] fake captions output failed: router publish pipe unavailable");
-	CaptionsHostFlushLog();
-	return 2;
-}
-
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -584,8 +550,7 @@ try {
 	TH_LOG("[captions-host] startup-phase=dll-probe-done");
 
 	bool self_test = false;
-	bool e2e_fake_publish = false;
-	std::string e2e_fake_text = "WKOpenVR fake captions";
+	std::string rejected_live_publish_arg;
 	std::wstring status_path_override;
 
 	// Parse optional command-line overrides: --model <path> --silero <path>
@@ -598,16 +563,10 @@ try {
 			if (strcmp(argv[i], "--self-test") == 0 || strcmp(argv[i], "--healthcheck") == 0) {
 				self_test = true;
 			}
-			else if (i + 1 < argc && (strcmp(argv[i], "--e2e-fake-chatbox") == 0 ||
-			                          strcmp(argv[i], "--e2e-fake-captions-output") == 0 ||
-			                          strcmp(argv[i], "--e2e-fake-translator-output") == 0)) {
-				if (strcmp(argv[i], "--e2e-fake-translator-output") == 0) {
-					fprintf(stderr, "[captions-host] warning: --e2e-fake-translator-output is deprecated; use "
-					                "--e2e-fake-captions-output\n");
-				}
-				e2e_fake_publish = true;
-				e2e_fake_text = argv[i + 1];
-				++i;
+			else if (strcmp(argv[i], "--e2e-fake-chatbox") == 0 || strcmp(argv[i], "--e2e-fake-captions-output") == 0 ||
+			         strcmp(argv[i], "--e2e-fake-translator-output") == 0) {
+				rejected_live_publish_arg = argv[i];
+				if (i + 1 < argc) ++i;
 			}
 			else if (i + 1 < argc && strcmp(argv[i], "--status-file") == 0) {
 				status_path_override = openvr_pair::common::Utf8ToWide(argv[i + 1]);
@@ -634,8 +593,14 @@ try {
 	status.SetState(HostStatus::State::Idle);
 	status.Flush();
 
-	if (e2e_fake_publish) {
-		return RunE2eFakePublish(e2e_fake_text, status);
+	if (!rejected_live_publish_arg.empty()) {
+		status.SetState(HostStatus::State::Error);
+		status.SetPhase("unsupported-argument");
+		status.SetLastError("Live OSC fake publish command is disabled.");
+		status.Flush();
+		TH_LOG("[startup] rejected removed live OSC fake publish argument: %s", rejected_live_publish_arg.c_str());
+		CaptionsHostFlushLog();
+		return 2;
 	}
 
 	if (self_test) {

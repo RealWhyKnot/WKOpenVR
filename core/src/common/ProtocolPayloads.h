@@ -505,7 +505,7 @@ enum CaptionsMode : uint8_t
 // -- enforced by the static_assert below.
 struct CaptionsConfig
 {
-	// Master enable. 0 = sidecar runs but produces no output (muted).
+	// Master enable. 0 = driver keeps the captions sidecar stopped.
 	uint8_t master_enabled;
 
 	// Operating mode: PTT or always-on.
