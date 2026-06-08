@@ -31,6 +31,8 @@ struct HostStatusSnapshot
 	std::string active_translation_pair;
 	long long captions_completed = 0;
 	long long packets_sent = 0;
+	float audio_level = 0.0f;        // 0..1 input level (mic meter)
+	long long frames_captured = 0;   // total frames delivered by the endpoint
 };
 
 // Polls %LocalAppDataLow%\WKOpenVR\captions\host_status.json.

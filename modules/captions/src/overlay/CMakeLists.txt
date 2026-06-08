@@ -10,6 +10,8 @@ add_library(openvr_pair_feature_captions_overlay STATIC
     CaptionsIpcClient.h
     CaptionsConfig.cpp
     CaptionsConfig.h
+    AudioInputDevices.cpp
+    AudioInputDevices.h
     CaptionsPlugin.cpp
     CaptionsPlugin.h
     CaptionsTab.cpp
@@ -25,7 +27,8 @@ target_include_directories(openvr_pair_feature_captions_overlay PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/openvr/headers)
 
 target_link_libraries(openvr_pair_feature_captions_overlay PRIVATE
-    openvr_pair_common)
+    openvr_pair_common
+    Ole32)
 
 target_compile_definitions(openvr_pair_feature_captions_overlay PRIVATE
     NOMINMAX

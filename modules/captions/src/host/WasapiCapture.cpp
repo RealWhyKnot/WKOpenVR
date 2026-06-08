@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 
 #include "WasapiCapture.h"
+#include "AudioLevel.h"
 #include "Logging.h"
 
 #include <algorithm>
@@ -48,6 +49,18 @@ std::string WasapiCapture::DeviceName() const
 {
 	std::lock_guard<std::mutex> lk(name_mutex_);
 	return device_name_;
+}
+
+void WasapiCapture::SetDevice(const std::string& endpointId)
+{
+	{
+		std::lock_guard<std::mutex> lk(device_mutex_);
+		if (desired_device_id_ == endpointId) return; // no change
+		desired_device_id_ = endpointId;
+	}
+	device_dirty_.store(true, std::memory_order_release);
+	TH_LOG("[wasapi] device selection changed; will reopen (id='%s')",
+	       endpointId.empty() ? "(system default)" : endpointId.c_str());
 }
 
 std::vector<std::string> WasapiCapture::EnumerateDevices()
@@ -107,8 +120,8 @@ void WasapiCapture::CaptureLoop()
 	constexpr int kMaxBackoffMs = 10000;
 
 	while (running_.load(std::memory_order_acquire)) {
-		if (!OpenDefaultDevice()) {
-			TH_LOG("[wasapi] failed to open default device; retry in %d ms", backoff_ms);
+		if (!OpenSelectedDevice()) {
+			TH_LOG("[wasapi] failed to open capture device; retry in %d ms", backoff_ms);
 			Sleep(static_cast<DWORD>(backoff_ms));
 			backoff_ms = std::min(backoff_ms * 2, kMaxBackoffMs);
 			continue;
@@ -141,13 +154,17 @@ void WasapiCapture::CaptureLoop()
 
 		UINT32 nChannels = mixFmt->nChannels;
 		UINT32 nSampleRate = mixFmt->nSamplesPerSec;
+		WORD bitsPerSample = mixFmt->wBitsPerSample;
 		bool isFloat = (mixFmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
 		               (mixFmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
 		                reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFmt)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+		// Read every field we need before freeing mixFmt; dereferencing it after
+		// CoTaskMemFree would be a use-after-free.
 		CoTaskMemFree(mixFmt);
+		mixFmt = nullptr;
 
-		if (!isFloat && mixFmt->wBitsPerSample != 16) {
-			TH_LOG("[wasapi] unsupported sample format; bits=%u", (unsigned)mixFmt->wBitsPerSample);
+		if (!isFloat && bitsPerSample != 16) {
+			TH_LOG("[wasapi] unsupported sample format; bits=%u", (unsigned)bitsPerSample);
 			ReleaseCom();
 			continue;
 		}
@@ -160,8 +177,17 @@ void WasapiCapture::CaptureLoop()
 
 		TH_LOG("[wasapi] capture started at %u Hz %u ch", (unsigned)nSampleRate, (unsigned)nChannels);
 
+		// Per-tick decay so the level meter falls back toward silence between
+		// utterances and reaches 0 when the device stops delivering audio.
+		constexpr float kLevelDecay = 0.85f;
+
 		while (running_.load(std::memory_order_acquire)) {
 			Sleep(10); // 10 ms polling
+
+			// A device selection change tears down and re-opens cleanly.
+			if (device_dirty_.load(std::memory_order_acquire)) break;
+
+			float tickPeak = 0.0f;
 
 			UINT32 packetLen = 0;
 			hr = capture_client_->GetNextPacketSize(&packetLen);
@@ -177,30 +203,39 @@ void WasapiCapture::CaptureLoop()
 					break;
 				}
 
-				if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && frames > 0 && data) {
-					// Convert to float mono. mono_scratch_ persists across
-					// packets so the 100 Hz capture loop does not allocate.
-					mono_scratch_.resize(frames);
-					if (isFloat) {
-						const float* src = reinterpret_cast<const float*>(data);
-						for (UINT32 i = 0; i < frames; ++i) {
-							float s = 0.f;
-							for (UINT32 ch = 0; ch < nChannels; ++ch)
-								s += src[i * nChannels + ch];
-							mono_scratch_[i] = s / static_cast<float>(nChannels);
+				if (frames > 0) {
+					// Count every delivered frame, even silent ones: a live but
+					// muted endpoint advances this counter while a dead endpoint
+					// (e.g. an idle virtual cable) does not.
+					frames_captured_.fetch_add(frames, std::memory_order_relaxed);
+
+					if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data) {
+						// Convert to float mono. mono_scratch_ persists across
+						// packets so the 100 Hz capture loop does not allocate.
+						mono_scratch_.resize(frames);
+						if (isFloat) {
+							const float* src = reinterpret_cast<const float*>(data);
+							for (UINT32 i = 0; i < frames; ++i) {
+								float s = 0.f;
+								for (UINT32 ch = 0; ch < nChannels; ++ch)
+									s += src[i * nChannels + ch];
+								mono_scratch_[i] = s / static_cast<float>(nChannels);
+							}
 						}
-					}
-					else {
-						// PCM16
-						const int16_t* src = reinterpret_cast<const int16_t*>(data);
-						for (UINT32 i = 0; i < frames; ++i) {
-							float s = 0.f;
-							for (UINT32 ch = 0; ch < nChannels; ++ch)
-								s += static_cast<float>(src[i * nChannels + ch]) / 32768.f;
-							mono_scratch_[i] = s / static_cast<float>(nChannels);
+						else {
+							// PCM16
+							const int16_t* src = reinterpret_cast<const int16_t*>(data);
+							for (UINT32 i = 0; i < frames; ++i) {
+								float s = 0.f;
+								for (UINT32 ch = 0; ch < nChannels; ++ch)
+									s += static_cast<float>(src[i * nChannels + ch]) / 32768.f;
+								mono_scratch_[i] = s / static_cast<float>(nChannels);
+							}
 						}
+						float pk = captions::ComputeBufferPeak(mono_scratch_.data(), frames);
+						if (pk > tickPeak) tickPeak = pk;
+						ResampleAndAccumulate(mono_scratch_.data(), frames, nSampleRate);
 					}
-					ResampleAndAccumulate(mono_scratch_.data(), frames, nSampleRate);
 				}
 
 				capture_client_->ReleaseBuffer(frames);
@@ -210,24 +245,55 @@ void WasapiCapture::CaptureLoop()
 					break;
 				}
 			}
+
+			// Rise instantly to the loudest packet this tick; otherwise decay.
+			float cur = peak_level_.load(std::memory_order_relaxed);
+			peak_level_.store(std::max(tickPeak, cur * kLevelDecay), std::memory_order_relaxed);
 		}
 
 		audio_client_->Stop();
 		ReleaseCom();
+		peak_level_.store(0.0f, std::memory_order_relaxed);
 	}
 
 	CoUninitialize();
 	TH_LOG("[wasapi] capture thread exiting");
 }
 
-bool WasapiCapture::OpenDefaultDevice()
+bool WasapiCapture::OpenSelectedDevice()
 {
 	HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator_));
 	if (FAILED(hr)) return false;
 
+	// Snapshot the desired endpoint id and consume the dirty flag together so a
+	// SetDevice() racing this read either lands here or trips the flag again.
+	std::string wantId;
+	{
+		std::lock_guard<std::mutex> lk(device_mutex_);
+		wantId = desired_device_id_;
+		device_dirty_.store(false, std::memory_order_release);
+	}
+
 	ComPtr<IMMDevice> device;
-	hr = enumerator_->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
-	if (FAILED(hr)) return false;
+	if (!wantId.empty()) {
+		int wn = MultiByteToWideChar(CP_UTF8, 0, wantId.c_str(), -1, nullptr, 0);
+		if (wn > 0) {
+			std::wstring idW(wn, L'\0');
+			MultiByteToWideChar(CP_UTF8, 0, wantId.c_str(), -1, idW.data(), wn);
+			idW.resize(idW.size() - 1); // drop NUL
+			hr = enumerator_->GetDevice(idW.c_str(), &device);
+			if (FAILED(hr) || !device.Get()) {
+				TH_LOG("[wasapi] selected device unavailable (id='%s'); falling back to system default",
+				       wantId.c_str());
+				device.Reset();
+			}
+		}
+	}
+
+	if (!device.Get()) {
+		hr = enumerator_->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+		if (FAILED(hr)) return false;
+	}
 
 	// Capture friendly name for the status poller.
 	{

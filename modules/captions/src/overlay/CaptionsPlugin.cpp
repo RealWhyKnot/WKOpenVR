@@ -4,6 +4,7 @@
 #include "CaptionsIpcClient.h"
 #include "CaptionsTab.h"
 #include "UiHelpers.h"
+#include "Win32Paths.h"
 
 #include <imgui/imgui.h>
 
@@ -66,6 +67,31 @@ bool FileExists(const std::wstring& path)
 	return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
+// Write the chosen capture endpoint id to the host-readable audio_input.txt in
+// the shared captions dir. Atomic tmp+rename so the host never reads a partial
+// id. An empty id is written as an empty file (host treats it as "default").
+void WriteAudioInputFile(const std::string& deviceId)
+{
+	std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"captions", true);
+	if (dir.empty()) return;
+	std::wstring path = dir + L"\\audio_input.txt";
+	std::wstring tmp = path + L".tmp";
+
+	HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return;
+	DWORD written = 0;
+	BOOL ok = TRUE;
+	if (!deviceId.empty()) {
+		ok = WriteFile(h, deviceId.data(), (DWORD)deviceId.size(), &written, nullptr);
+	}
+	CloseHandle(h);
+	if (!ok) {
+		DeleteFileW(tmp.c_str());
+		return;
+	}
+	MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
 } // namespace
 
 CaptionsPlugin::CaptionsPlugin()
@@ -81,6 +107,10 @@ CaptionsPlugin::CaptionsPlugin()
 	chatbox_enabled_ = loaded.chatbox_enabled;
 	chatbox_address_ = loaded.chatbox_address;
 	notify_sound_ = loaded.notify_sound;
+	input_device_ = loaded.input_device;
+	// Mirror the saved selection to the host-readable file in case it drifted
+	// from captions.txt (e.g. a manual edit or an interrupted earlier write).
+	WriteAudioInputFile(input_device_);
 }
 
 void CaptionsPlugin::Persist()
@@ -93,6 +123,7 @@ void CaptionsPlugin::Persist()
 	cfg.chatbox_enabled = chatbox_enabled_;
 	cfg.chatbox_address = chatbox_address_;
 	cfg.notify_sound = notify_sound_;
+	cfg.input_device = input_device_;
 	SaveCaptionsConfig(cfg);
 }
 
@@ -130,6 +161,12 @@ void CaptionsPlugin::SetNotifySound(bool v)
 {
 	notify_sound_ = v;
 	Persist();
+}
+void CaptionsPlugin::SetInputDevice(const std::string& endpointId)
+{
+	input_device_ = endpointId;
+	Persist();                       // captions.txt (UI state across restarts)
+	WriteAudioInputFile(input_device_); // host-readable file the capture loop polls
 }
 
 void CaptionsPlugin::OnStart(openvr_pair::overlay::ShellContext& ctx)

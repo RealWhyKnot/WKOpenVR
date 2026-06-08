@@ -35,6 +35,11 @@ public:
 	void IncrementCaptionsCompleted() noexcept;
 	void IncrementPacketsSent() noexcept;
 
+	// Live capture instrumentation surfaced to the overlay so the user can see
+	// whether the selected microphone is actually delivering audio.
+	void SetAudioLevel(float level) noexcept;
+	void SetFramesCaptured(long long frames) noexcept;
+
 	// Write the JSON file to disk if at least 1 s has elapsed since the
 	// last write. Call periodically from the main loop.
 	void MaybeFlush();
@@ -61,6 +66,8 @@ private:
 	std::string active_translation_pair_;
 	long long captions_completed_ = 0;
 	long long packets_sent_ = 0;
+	float audio_level_ = 0.0f;
+	long long frames_captured_ = 0;
 
 	void WritePath(const std::wstring& status_path);
 	void DoFlush();

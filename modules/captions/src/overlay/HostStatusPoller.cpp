@@ -100,6 +100,8 @@ void HostStatusPoller::ReadFile()
 	s.active_translation_pair = openvr_pair::common::json::StringAt(root, "active_translation_pair");
 	s.captions_completed = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "captions_completed"));
 	s.packets_sent = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "packets_sent"));
+	s.audio_level = static_cast<float>(openvr_pair::common::json::NumberAt(root, "audio_level"));
+	s.frames_captured = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "frames_captured"));
 
 	snapshot_ = std::move(s);
 }

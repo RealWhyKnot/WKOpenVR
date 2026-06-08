@@ -8,6 +8,7 @@
 
 #include "ActionBindings.h"
 #include "Captions.h"
+#include "CaptionsAudioInputFile.h"
 #include "CaptionsOutputPolicy.h"
 #include "ChatboxPacer.h"
 #include "HostStatus.h"
@@ -761,7 +762,23 @@ try {
 	std::mutex audio_mutex;
 	std::vector<std::vector<float>> audio_queue;
 
+	// Selected capture device: the overlay writes the chosen WASAPI endpoint id
+	// to captions\audio_input.txt; an empty/missing file means "system default".
+	// Resolve the directory once and seed the device before capture starts so
+	// the first open targets the user's choice, then watch the file for changes.
+	const std::wstring captions_dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"captions", true);
+	const std::wstring audio_input_path = captions_dir.empty() ? std::wstring() : captions_dir + L"\\audio_input.txt";
+	int64_t audio_input_mtime = audio_input_path.empty() ? 0 : openvr_pair::common::FileLastWriteTime(audio_input_path);
+	auto next_device_check = std::chrono::steady_clock::now();
+
 	WasapiCapture capture;
+	{
+		std::string initial_device = captions::ReadCaptionsInputDeviceId(captions_dir);
+		if (!initial_device.empty()) {
+			TH_LOG("[main] using saved capture device id='%s'", initial_device.c_str());
+		}
+		capture.SetDevice(initial_device);
+	}
 	bool cap_ok = capture.Start([&](const float* pcm, size_t n) {
 		std::lock_guard<std::mutex> lk(audio_mutex);
 		audio_queue.push_back(std::vector<float>(pcm, pcm + n));
@@ -782,6 +799,21 @@ try {
 
 	while (!g_shutdown.load(std::memory_order_acquire)) {
 		const auto loop_now = std::chrono::steady_clock::now();
+
+		// Watch for a capture-device change written by the overlay (~2 Hz). A
+		// changed mtime re-reads the file and hands the new endpoint id to the
+		// capture thread, which re-opens on its next iteration.
+		if (!audio_input_path.empty() && loop_now >= next_device_check) {
+			next_device_check = loop_now + std::chrono::milliseconds(500);
+			int64_t mt = openvr_pair::common::FileLastWriteTime(audio_input_path);
+			if (mt != audio_input_mtime) {
+				audio_input_mtime = mt;
+				std::string id = captions::ReadCaptionsInputDeviceId(captions_dir);
+				TH_LOG("[main] capture device file changed; selecting id='%s'",
+				       id.empty() ? "(system default)" : id.c_str());
+				capture.SetDevice(id);
+			}
+		}
 
 		// Poll PTT action.
 		bool ptt_held = actions.Poll();
@@ -991,6 +1023,8 @@ try {
 		}
 
 		status.SetMicName(capture.DeviceName());
+		status.SetAudioLevel(capture.Level());
+		status.SetFramesCaptured(static_cast<long long>(capture.FramesCaptured()));
 		status.MaybeFlush();
 
 		Sleep(10); // 10 ms main-loop cadence

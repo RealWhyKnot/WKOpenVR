@@ -18,6 +18,9 @@ struct CaptionsConfig
 	bool chatbox_enabled = false;
 	std::string chatbox_address = "/chatbox/input";
 	bool notify_sound = false;
+
+	// Selected capture endpoint id (IMMDevice::GetId). Empty = system default.
+	std::string input_device = "";
 };
 
 // Load from disk. Returns a default-constructed struct if the file is

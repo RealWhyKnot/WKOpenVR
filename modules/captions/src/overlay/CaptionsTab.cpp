@@ -1,5 +1,7 @@
 #include "CaptionsTab.h"
+#include "AudioInputDevices.h"
 #include "CaptionsPlugin.h"
+#include "CaptionsTabLogic.h"
 #include "HostStatusPoller.h"
 #include "UiHelpers.h"
 #include "Win32Paths.h"
@@ -24,6 +26,15 @@
 // ---------------------------------------------------------------------------
 
 static bool s_consent_pending = false;
+
+// Capture-device list, refreshed when the picker combo is opened.
+static std::vector<captions::AudioInputDevice> s_devices;
+static bool s_devices_loaded = false;
+
+// "No audio reaching the host" tracking: remember the last frame counter and
+// when it last advanced so the warning only fires after a sustained stall.
+static long long s_last_frames = -1;
+static std::chrono::steady_clock::time_point s_last_frames_change{};
 
 // ---------------------------------------------------------------------------
 // Diagnostics: read last N lines from the newest captions log file.
@@ -147,29 +158,6 @@ static bool IsSetupStatus(const std::string& message)
 	       message == "Translation runtime not installed." || message.rfind("Translation pack ", 0) == 0;
 }
 
-static void PackActionTooltip(const char* text)
-{
-	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-		ImGui::SetTooltip("%s", text);
-	}
-}
-
-static void DrawPackActionButton(const char* label, const char* id, bool disabled, const char* tooltip,
-                                 const std::function<void()>& action)
-{
-	openvr_pair::overlay::ui::DisabledSection gate(disabled, "A captions pack action is already running.");
-	std::string button = std::string(label) + "##" + id;
-	if (ImGui::SmallButton(button.c_str())) {
-		action();
-	}
-	if (disabled) {
-		gate.AttachReasonTooltip();
-	}
-	else {
-		PackActionTooltip(tooltip);
-	}
-}
-
 static const char* SpeechPackStatus(const captions::HostStatusSnapshot& snap)
 {
 	if (!snap.valid) return "Unknown";
@@ -197,81 +185,168 @@ static const char* TranslationPackStatus(const captions::HostStatusSnapshot& sna
 	return "Installed";
 }
 
+// Map a pack status string to a status-cell tone.
+static openvr_pair::overlay::ui::StatusTone PackTone(const char* status)
+{
+	using T = openvr_pair::overlay::ui::StatusTone;
+	if (strcmp(status, "Installed") == 0) return T::Ok;
+	if (strcmp(status, "Runtime missing") == 0) return T::Warn;
+	if (strcmp(status, "Updating") == 0) return T::Pending;
+	return T::Idle; // Not installed / Unknown / Unavailable
+}
+
+// A pack action button: greyed via DisabledSection, with a tooltip that always
+// shows (even while disabled) so the reason for a greyed button is visible.
+static void DrawPackActionButton(const char* label, const char* id, bool disabled, const char* tooltip,
+                                 const std::function<void()>& action)
+{
+	openvr_pair::overlay::ui::DisabledSection gate(disabled);
+	std::string button = std::string(label) + "##" + id;
+	if (ImGui::SmallButton(button.c_str())) {
+		action();
+	}
+	if (tooltip && tooltip[0] && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+		ImGui::SetTooltip("%s", tooltip);
+	}
+}
+
 static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot& snap)
 {
-	openvr_pair::overlay::ui::DrawSectionHeading("Setup");
+	using namespace openvr_pair::overlay::ui;
+	DrawSectionHeading("Setup");
 
 	const bool busy = plugin.IsPackActionRunning();
 	const std::string translation_pack = plugin.CurrentTranslationPackId();
+	const char* kBusyReason = "A captions pack action is already running.";
 
-	if (ImGui::BeginTable("captions_setup", 4,
-	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Pack", ImGuiTableColumnFlags_WidthStretch, 2.0f);
-		ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.2f);
-		ImGui::TableSetupColumn("Install", ImGuiTableColumnFlags_WidthFixed, 98.0f);
-		ImGui::TableSetupColumn("Remove", ImGuiTableColumnFlags_WidthFixed, 98.0f);
-		ImGui::TableHeadersRow();
+	TableScope table("captions_setup", 4,
+	                 ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
+	if (table) {
+		SetupStretchColumn("Pack", 2.0f);
+		SetupStretchColumn("Status", 1.2f);
+		SetupFixedColumn("Install", 98.0f);
+		SetupFixedColumn("Remove", 98.0f);
+		DrawTableHeader();
 
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
+		// --- Speech row ---
+		const bool speechInstalled = SpeechInstalled(snap);
+		NextRow();
+		SetColumn(0);
 		ImGui::TextUnformatted("Speech");
-		openvr_pair::overlay::ui::TooltipOnHover("Whisper base model, Silero VAD model, and ONNX Runtime.\n"
-		                                         "Stored under %LocalAppDataLow%\\WKOpenVR\\captions.");
-		ImGui::TableSetColumnIndex(1);
-		ImGui::TextUnformatted(SpeechPackStatus(snap));
-		ImGui::TableSetColumnIndex(2);
-		DrawPackActionButton("Install", "speech_install", busy, "Download and verify the speech pack.",
+		TooltipOnHover("Whisper base model, Silero VAD model, and ONNX Runtime.\n"
+		               "Stored under %LocalAppDataLow%\\WKOpenVR\\captions.");
+		SetColumn(1);
+		{
+			const char* st = SpeechPackStatus(snap);
+			DrawStatusCell(st, PackTone(st));
+		}
+		SetColumn(2);
+		DrawPackActionButton(speechInstalled ? "Installed" : "Install", "speech_install",
+		                     !SpeechInstallEnabled(snap, busy),
+		                     speechInstalled ? "The speech pack is already installed."
+		                     : busy          ? kBusyReason
+		                                     : "Download and verify the speech pack.",
 		                     [&]() { plugin.InstallSpeechPack(); });
-		ImGui::TableSetColumnIndex(3);
-		DrawPackActionButton("Uninstall", "speech_uninstall", busy,
-		                     "Remove speech models and runtime files from this PC.",
+		SetColumn(3);
+		DrawPackActionButton("Uninstall", "speech_uninstall", !SpeechUninstallEnabled(snap, busy),
+		                     !speechInstalled ? "The speech pack is not installed."
+		                     : busy           ? kBusyReason
+		                                      : "Remove speech models and runtime files from this PC.",
 		                     [&]() { plugin.UninstallSpeechPack(); });
 
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
+		// --- Translation row ---
+		const bool translationInstalled = TranslationInstalled(snap, translation_pack);
+		NextRow();
+		SetColumn(0);
 		ImGui::TextUnformatted("Translation");
-		openvr_pair::overlay::ui::TooltipOnHover(
-		    "CTranslate2 CPU runtime plus the model for the selected language pair.\n"
-		    "Runtime files are removed when the last translation pack is uninstalled.");
-		ImGui::TableSetColumnIndex(1);
+		TooltipOnHover("CTranslate2 CPU runtime plus the model for the selected language pair.\n"
+		               "Runtime files are removed when the last translation pack is uninstalled.");
+		SetColumn(1);
 		if (plugin.GetTargetLang().empty()) {
-			ImGui::TextDisabled("Transcribe only");
+			DrawStatusCell("Transcribe only", StatusTone::Idle);
 		}
 		else if (translation_pack.empty()) {
-			ImGui::TextDisabled("No pack");
-			openvr_pair::overlay::ui::TooltipOnHover(
-			    "Managed packs currently cover English to German, Spanish, French, Russian, and Chinese.");
+			DrawStatusCell("No pack", StatusTone::Idle);
+			TooltipOnHover("Managed packs currently cover English to German, Spanish, French, Russian, and Chinese.");
 		}
 		else {
-			ImGui::TextUnformatted(TranslationPackStatus(snap, translation_pack));
+			const char* st = TranslationPackStatus(snap, translation_pack);
+			DrawStatusCell(st, PackTone(st));
 		}
-		ImGui::TableSetColumnIndex(2);
-		{
-			const bool disabled = busy || translation_pack.empty();
-			DrawPackActionButton("Install", "translation_install", disabled,
-			                     "Download and verify the selected translation pack.",
-			                     [&]() { plugin.InstallTranslationPack(); });
-		}
-		ImGui::TableSetColumnIndex(3);
-		{
-			const bool disabled = busy || translation_pack.empty();
-			DrawPackActionButton("Uninstall", "translation_uninstall", disabled,
-			                     "Remove this language-pair model. Shared runtime files stay until no installed "
-			                     "translation pack needs them.",
-			                     [&]() { plugin.UninstallTranslationPack(); });
-		}
-
-		ImGui::EndTable();
+		SetColumn(2);
+		DrawPackActionButton(translationInstalled ? "Installed" : "Install", "translation_install",
+		                     !TranslationInstallEnabled(snap, busy, translation_pack),
+		                     translation_pack.empty() ? "Pick a target language with a managed pack first."
+		                     : translationInstalled   ? "This translation pack is already installed."
+		                     : busy                   ? kBusyReason
+		                                              : "Download and verify the selected translation pack.",
+		                     [&]() { plugin.InstallTranslationPack(); });
+		SetColumn(3);
+		DrawPackActionButton("Uninstall", "translation_uninstall",
+		                     !TranslationUninstallEnabled(snap, busy, translation_pack),
+		                     translation_pack.empty()  ? "No translation pack is selected."
+		                     : !translationInstalled   ? "This translation pack is not installed."
+		                     : busy                    ? kBusyReason
+		                                               : "Remove this language-pair model. Shared runtime files stay "
+		                                                 "until no installed translation pack needs them.",
+		                     [&]() { plugin.UninstallTranslationPack(); });
 	}
 
 	if (!plugin.PackActionStatus().empty()) {
-		ImGui::TextDisabled("%s", plugin.PackActionStatus().c_str());
+		DrawStatusText(plugin.PackActionStatus().c_str(), StatusTone::Info);
 	}
+}
+
+// Microphone picker: "System default" plus each active capture endpoint.
+static void DrawMicPicker(CaptionsPlugin& plugin)
+{
+	using namespace openvr_pair::overlay::ui;
+	const std::string& current = plugin.GetInputDevice();
+
+	if (!s_devices_loaded) {
+		s_devices = captions::EnumerateCaptureDevices();
+		s_devices_loaded = true;
+	}
+
+	// Resolve a friendly label for the current selection.
+	std::string label = "System default";
+	if (!current.empty()) {
+		label = current; // fall back to the raw id if the device is gone
+		for (const auto& d : s_devices) {
+			if (d.id == current) {
+				label = d.name;
+				break;
+			}
+		}
+	}
+
+	if (ImGui::BeginCombo("Microphone", label.c_str())) {
+		// Re-enumerate while open so hot-plugged devices appear.
+		s_devices = captions::EnumerateCaptureDevices();
+
+		bool defSel = current.empty();
+		if (ImGui::Selectable("System default", defSel)) {
+			plugin.SetInputDevice("");
+		}
+		if (defSel) ImGui::SetItemDefaultFocus();
+
+		for (const auto& d : s_devices) {
+			bool sel = (d.id == current);
+			if (ImGui::Selectable(d.name.c_str(), sel)) {
+				plugin.SetInputDevice(d.id);
+			}
+			if (sel) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	TooltipForLastItem("Which microphone the captions host listens to.\n"
+	                   "\"System default\" follows your Windows default input device.");
 }
 
 static void DrawPrivatePreview(CaptionsPlugin& plugin)
 {
-	openvr_pair::overlay::ui::DrawSectionHeading("Private preview");
+	using namespace openvr_pair::overlay::ui;
+	DrawSectionHeading("Private preview");
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Clear##captions_private_preview")) {
 		plugin.ClearPreviewHistory();
@@ -279,95 +354,85 @@ static void DrawPrivatePreview(CaptionsPlugin& plugin)
 
 	const auto& entries = plugin.PreviewHistory().Entries();
 	if (entries.empty()) {
-		ImGui::TextDisabled("No captions yet");
+		DrawEmptyState("No captions yet");
 		return;
 	}
 
-	if (ImGui::BeginTable("captions_private_preview_table", 2,
-	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Caption", ImGuiTableColumnFlags_WidthStretch, 2.2f);
-		ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-		ImGui::TableHeadersRow();
+	TableScope table("captions_private_preview_table", 2,
+	                 ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
+	if (table) {
+		SetupStretchColumn("Caption", 2.2f);
+		SetupStretchColumn("Source", 1.4f);
+		DrawTableHeader();
 		for (const auto& entry : entries) {
 			const std::string& caption = entry.translation.empty() ? entry.transcript : entry.translation;
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
+			NextRow();
+			SetColumn(0);
 			ImGui::TextWrapped("%s", caption.c_str());
-			ImGui::TableSetColumnIndex(1);
+			SetColumn(1);
 			if (!entry.translation.empty() && entry.translation != entry.transcript) {
 				ImGui::TextWrapped("%s", entry.transcript.c_str());
 			}
 			else {
-				ImGui::TextDisabled("Transcribe only");
+				DrawEmptyState("Transcribe only");
 			}
 		}
-		ImGui::EndTable();
 	}
 }
 
-void DrawCaptionsTab(CaptionsPlugin& plugin)
+// Live status: mic + input level + state, plus contextual banners.
+static void DrawStatusStrip(CaptionsPlugin& plugin, const captions::HostStatusSnapshot& snap)
 {
-	const auto& snap = plugin.HostStatus().Snapshot();
+	using namespace openvr_pair::overlay::ui;
 
-	// -----------------------------------------------------------------------
-	// Always-on consent modal
-	// -----------------------------------------------------------------------
-	if (s_consent_pending) {
-		ImGui::OpenPopup("##tr_aon_consent");
-		s_consent_pending = false;
-	}
-
-	if (ImGui::BeginPopupModal("##tr_aon_consent", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::TextUnformatted("Mic capture active while WKOpenVR is running");
-		ImGui::Separator();
-		ImGui::TextWrapped("Always-on mode captures audio from your microphone continuously\n"
-		                   "and runs speech recognition locally on this machine.\n"
-		                   "No audio or transcripts leave your PC.\n\n"
-		                   "  - Audio is processed in memory and discarded after each sentence.\n"
-		                   "  - Nothing is written to disk unless you enable transcript logging.\n"
-		                   "  - All inference runs locally: whisper.cpp, Silero VAD, translation model.\n"
-		                   "  - To stop capture: disable always-on in this tab or close WKOpenVR.");
-		ImGui::Spacing();
-		if (ImGui::Button("OK, enable always-on")) {
-			plugin.SetAlwaysOnConsented(true);
-			plugin.SetMode(1);
-			plugin.PushConfigToDriver();
-			ImGui::CloseCurrentPopup();
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Cancel")) {
-			ImGui::CloseCurrentPopup();
-		}
-		ImGui::EndPopup();
-	}
-
-	// -----------------------------------------------------------------------
-	// Live status strip
-	// -----------------------------------------------------------------------
 	if (snap.valid) {
-		ImGui::Text("Mic: %s  |  State: %s  |  Output: %s  |  Sent: %lld",
-		            snap.mic_name.empty() ? "(unknown)" : snap.mic_name.c_str(), StateLabel(snap.state),
+		ImGui::Text("Mic: %s", snap.mic_name.empty() ? "(unknown)" : snap.mic_name.c_str());
+
+		// Input level meter -- the direct proof that audio is reaching the host.
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted("Input level");
+		ImGui::SameLine();
+		char pct[16];
+		std::snprintf(pct, sizeof(pct), "%d%%", (int)(snap.audio_level * 100.0f + 0.5f));
+		ImGui::ProgressBar(snap.audio_level, ImVec2(180.0f, 0.0f), pct);
+
+		ImGui::Text("State: %s  |  Output: %s  |  Sent: %lld", StateLabel(snap.state),
 		            plugin.GetChatboxEnabled() ? "VRChat chatbox" : "local preview", snap.packets_sent);
-		if (!snap.phase.empty()) {
+		if (!snap.phase.empty() && snap.phase != "running") {
 			ImGui::TextDisabled("Host phase: %s", snap.phase.c_str());
 		}
+
+		// No-audio warning: the endpoint has delivered no new frames for a while.
+		auto now = std::chrono::steady_clock::now();
+		if (snap.frames_captured != s_last_frames) {
+			s_last_frames = snap.frames_captured;
+			s_last_frames_change = now;
+		}
+		double since = std::chrono::duration<double>(now - s_last_frames_change).count();
+		if (ShouldWarnNoAudio(snap.valid, since)) {
+			DrawWaitingBanner("No audio is reaching the captions host from this device. Pick a different "
+			                  "microphone under \"Input\" below, or check that it is active and receiving sound.");
+		}
+
 		if (plugin.GetMode() == 0 && !snap.ptt_registered) {
 			const char* detail =
 			    snap.ptt_error.empty() ? "SteamVR push-to-talk binding is not registered." : snap.ptt_error.c_str();
-			openvr_pair::overlay::ui::DrawWaitingBanner(detail);
+			DrawWaitingBanner(detail);
 		}
 		if (!snap.last_transcript.empty()) ImGui::Text("Transcript: %s", snap.last_transcript.c_str());
 		if (!snap.last_translation.empty()) ImGui::Text("Translation: %s", snap.last_translation.c_str());
 		if (!snap.last_error.empty()) {
 			if (IsSetupStatus(snap.last_error)) {
-				openvr_pair::overlay::ui::DrawWaitingBanner(snap.last_error.c_str());
+				DrawWaitingBanner(snap.last_error.c_str());
 			}
 			else {
-				openvr_pair::overlay::ui::DrawErrorBanner("Host error", snap.last_error.c_str());
+				DrawErrorBanner("Host error", snap.last_error.c_str());
 			}
 		}
+		return;
 	}
-	else if (snap.host_halted) {
+
+	if (snap.host_halted) {
 		char detail[512];
 		if (!snap.last_exit_description.empty()) {
 			std::snprintf(detail, sizeof(detail), "%s\nExit code: 0x%08X. Open diagnostics for the latest host log.",
@@ -378,22 +443,17 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 			              "The host exited repeatedly before reporting status.\n"
 			              "Open diagnostics for the latest host log and crash note.");
 		}
-		openvr_pair::overlay::ui::DrawErrorBanner("Captions host failed to start", detail);
+		DrawErrorBanner("Captions host failed to start", detail);
 
 		// Diagnostics collapsible: shows log tail + crash dump on demand.
-		// The driver captions log contains the DLL probe lines from Init().
-		// The host crash dump (if any) names the specific DLL that failed.
 		if (ImGui::TreeNode("Show diagnostics")) {
 			s_diag.expanded = true;
 			RefreshDiagnostics();
 
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.75f, 0.75f, 0.75f, 1.f));
-			ImGui::TextWrapped("Logs: %%LocalAppDataLow%%\\WKOpenVR\\Logs\\");
-			ImGui::PopStyleColor();
+			DrawFilePath("%LocalAppDataLow%\\WKOpenVR\\Logs\\");
 			ImGui::Spacing();
 
 			if (!s_diag.log_tail.empty()) {
-				// InputTextMultiline gives a scrollable read-only text area.
 				ImGui::InputTextMultiline("##diag_log", const_cast<char*>(s_diag.log_tail.c_str()),
 				                          s_diag.log_tail.size() + 1, ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 12),
 				                          ImGuiInputTextFlags_ReadOnly);
@@ -407,28 +467,69 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 		else {
 			s_diag.expanded = false;
 		}
-	}
-	else {
-		ImGui::TextDisabled("Host not running");
+		return;
 	}
 
-	ImGui::Separator();
-	DrawPrivatePreview(plugin);
+	DrawEmptyState("Host not running");
+}
+
+void DrawCaptionsTab(CaptionsPlugin& plugin)
+{
+	using namespace openvr_pair::overlay::ui;
+	const auto& snap = plugin.HostStatus().Snapshot();
+
+	// -----------------------------------------------------------------------
+	// Always-on consent modal (detail lives in the help marker, not a blob).
+	// -----------------------------------------------------------------------
+	if (s_consent_pending) {
+		ImGui::OpenPopup("##tr_aon_consent");
+		s_consent_pending = false;
+	}
+
+	if (ImGui::BeginPopupModal("##tr_aon_consent", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextUnformatted("Always-on captures your microphone while WKOpenVR is open.");
+		ImGui::SameLine();
+		DrawHelpMarker("Audio is processed in memory and recognized locally (whisper.cpp + Silero VAD); nothing is "
+		               "written to disk unless you enable transcript logging, and nothing leaves your PC.\n"
+		               "To stop capture: switch back to Push-to-Talk or close WKOpenVR.");
+		ImGui::Spacing();
+		if (ImGui::Button("Enable always-on")) {
+			plugin.SetAlwaysOnConsented(true);
+			plugin.SetMode(1);
+			plugin.PushConfigToDriver();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel")) {
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	// -----------------------------------------------------------------------
+	// Live status
+	// -----------------------------------------------------------------------
+	DrawStatusStrip(plugin, snap);
+
 	ImGui::Separator();
 	DrawSetup(plugin, snap);
-	ImGui::Separator();
 
 	// -----------------------------------------------------------------------
-	// Mode selection
+	// Mode
 	// -----------------------------------------------------------------------
+	ImGui::Separator();
+	DrawSectionHeading("Mode");
 	{
 		int mode = plugin.GetMode();
-		if (ImGui::RadioButton("Push-to-Talk", mode == 0)) {
+		if (RadioButtonWithTooltip("Push-to-Talk", mode == 0,
+		                           "Capture only while the bound SteamVR button is held.")) {
 			plugin.SetMode(0);
 			plugin.PushConfigToDriver();
 		}
 		ImGui::SameLine();
-		if (ImGui::RadioButton("Always-on", mode == 1)) {
+		if (RadioButtonWithTooltip("Always-on", mode == 1,
+		                           "Continuously capture your microphone while WKOpenVR is open.\n"
+		                           "Audio is processed locally; nothing is transmitted.")) {
 			if (!plugin.HasAlwaysOnConsent()) {
 				s_consent_pending = true;
 			}
@@ -437,16 +538,15 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 				plugin.PushConfigToDriver();
 			}
 		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Always-on continuously captures your microphone while WKOpenVR is open.\nAudio is "
-			                  "processed locally; nothing is transmitted.");
 	}
 
-	ImGui::Spacing();
+	// -----------------------------------------------------------------------
+	// Input (microphone) + language
+	// -----------------------------------------------------------------------
+	ImGui::Separator();
+	DrawSectionHeading("Input");
+	DrawMicPicker(plugin);
 
-	// -----------------------------------------------------------------------
-	// Language dropdowns
-	// -----------------------------------------------------------------------
 	{
 		static const char* kSrcLangs[] = {"auto", "en", "zh", "ja", "ko", "ru", "de", "fr", "es", "pt"};
 		static const char* kTgtLangs[] = {"(transcribe only)", "en", "zh", "ja", "ko", "ru", "de", "fr", "es", "pt"};
@@ -471,9 +571,8 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 			}
 			ImGui::EndCombo();
 		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("\"auto\" lets whisper.cpp detect the language per utterance.\nSetting an explicit code "
-			                  "skips detection and saves ~50-100 ms per chunk.");
+		TooltipForLastItem("\"auto\" lets whisper.cpp detect the language per utterance.\n"
+		                   "Setting an explicit code skips detection and saves ~50-100 ms per chunk.");
 
 		// Target.
 		const std::string& tgt = plugin.GetTargetLang();
@@ -495,30 +594,25 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 			}
 			ImGui::EndCombo();
 		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("\"transcribe only\" sends speech text without translation.\nPick a target to download "
-			                  "an OPUS-MT checkpoint for that pair (~75-120 MB).");
+		TooltipForLastItem("\"transcribe only\" sends speech text without translation.\n"
+		                   "Pick a target to download an OPUS-MT checkpoint for that pair (~75-120 MB).");
 	}
 
-	ImGui::Spacing();
-
 	// -----------------------------------------------------------------------
-	// Chatbox settings
+	// Output
 	// -----------------------------------------------------------------------
+	ImGui::Separator();
+	DrawSectionHeading("Output");
 	{
-		openvr_pair::overlay::ui::DrawSectionHeading("Output");
-
 		bool chatbox = plugin.GetChatboxEnabled();
-		if (ImGui::Checkbox("Publish to VRChat chatbox", &chatbox)) {
+		if (CheckboxWithTooltip("Publish to VRChat chatbox", &chatbox,
+		                        "Off keeps recognized speech local to WKOpenVR.\n"
+		                        "On sends completed captions to the configured OSC chatbox address.")) {
 			plugin.SetChatboxEnabled(chatbox);
 			plugin.PushConfigToDriver();
 		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Off keeps recognized speech local to WKOpenVR.\n"
-			                  "On sends completed captions to the configured OSC chatbox address.");
 
-		openvr_pair::overlay::ui::DisabledSection chatboxGate(
-		    !chatbox, "Enable chatbox publishing before editing VRChat output settings.");
+		DisabledSection chatboxGate(!chatbox, "Enable chatbox publishing before editing VRChat output settings.");
 
 		static const char* kPresets[] = {"VRChat", "Custom"};
 		int preset = 0; // default to VRChat
@@ -535,10 +629,9 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 			}
 			ImGui::EndCombo();
 		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("ChilloutVR's OSC spec is not publicly machine-readable; use Custom\nand verify the "
-			                  "address from the CVR docs.");
-		chatboxGate.AttachReasonTooltip();
+		TooltipForLastItem("ChilloutVR's OSC spec is not publicly machine-readable; use Custom\n"
+		                   "and verify the address from the CVR docs.");
+		if (!chatbox) chatboxGate.AttachReasonTooltip();
 
 		if (preset == 1) {
 			char addr_buf[64];
@@ -547,34 +640,38 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 				plugin.SetChatboxAddress(addr_buf);
 				plugin.PushConfigToDriver();
 			}
-			chatboxGate.AttachReasonTooltip();
+			if (!chatbox) chatboxGate.AttachReasonTooltip();
 		}
 
 		bool notify = plugin.GetNotifySound();
-		if (ImGui::Checkbox("Notify listeners", &notify)) {
+		if (CheckboxWithTooltip("Notify listeners", &notify,
+		                        "Play the VRChat chatbox notification sound for each message.\n"
+		                        "Default off to avoid spamming nearby players.")) {
 			plugin.SetNotifySound(notify);
 			plugin.PushConfigToDriver();
 		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Play the VRChat chatbox notification sound for each message.\nDefault off to avoid "
-			                  "spamming nearby players.");
-		chatboxGate.AttachReasonTooltip();
+		if (!chatbox) chatboxGate.AttachReasonTooltip();
 	}
 
-	ImGui::Spacing();
+	// -----------------------------------------------------------------------
+	// Recent captions
+	// -----------------------------------------------------------------------
+	ImGui::Separator();
+	DrawPrivatePreview(plugin);
 
 	// -----------------------------------------------------------------------
 	// Host controls
 	// -----------------------------------------------------------------------
+	ImGui::Separator();
+	DrawSectionHeading("Host controls");
 	if (ImGui::Button("Restart host")) {
 		plugin.SendRestartHost();
 		// Optimistically clear the halted indicator; PollSupervisorStatus will
 		// confirm the new state on the next tick.
 		plugin.HostStatus().SetSupervisorStatus(false, 0, {});
 	}
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip(
-		    "Terminate and respawn the captions sidecar process.\nUse when the host appears stuck or crashed.");
+	TooltipForLastItem("Terminate and respawn the captions sidecar process.\n"
+	                   "Use when the host appears stuck or crashed.");
 }
 
 } // namespace captions::ui

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,11 @@
 #include "CaptionPreviewHistory.h"
 #include "CaptionsOutputPolicy.h"
 #include "Protocol.h"
+
+// Header-only host + overlay logic under test (no ImGui / COM / device access).
+#include "AudioLevel.h"
+#include "CaptionsAudioInputFile.h"
+#include "CaptionsTabLogic.h"
 
 TEST(ChatboxPacerTest, MinimumGapEnforced)
 {
@@ -246,4 +252,160 @@ TEST(ModelPathTest, DefaultDirNonEmpty)
 	(void)appdata; // may be null in CI; that is acceptable
 	// If the env var is present, the path should end with \WKOpenVR\models.
 	SUCCEED(); // compilation correctness check
+}
+
+// ---------------------------------------------------------------------------
+// Microphone input level (host-side pure helpers)
+// ---------------------------------------------------------------------------
+
+TEST(AudioLevelTest, SilenceIsZero)
+{
+	std::vector<float> silence(480, 0.0f);
+	EXPECT_FLOAT_EQ(captions::ComputeBufferPeak(silence.data(), silence.size()), 0.0f);
+	EXPECT_FLOAT_EQ(captions::ComputeBufferPeak(nullptr, 0), 0.0f);
+}
+
+TEST(AudioLevelTest, PeakIsMaxAbsAndClamped)
+{
+	float samples[] = {0.1f, -0.6f, 0.3f, -0.2f};
+	EXPECT_FLOAT_EQ(captions::ComputeBufferPeak(samples, 4), 0.6f);
+
+	float hot[] = {2.0f, -3.0f};
+	EXPECT_FLOAT_EQ(captions::ComputeBufferPeak(hot, 2), 1.0f); // clamped to 1.0
+}
+
+TEST(AudioLevelTest, DecayRisesInstantlyAndFallsSlowly)
+{
+	// Louder peak takes over immediately.
+	EXPECT_FLOAT_EQ(captions::DecayLevel(0.2f, 0.8f, 0.85f), 0.8f);
+	// Quieter peak decays from the current level.
+	EXPECT_FLOAT_EQ(captions::DecayLevel(1.0f, 0.0f, 0.85f), 0.85f);
+}
+
+// ---------------------------------------------------------------------------
+// Selected-device file (cross-process contract)
+// ---------------------------------------------------------------------------
+
+TEST(AudioInputFileTest, ParseTrimsWhitespaceAndNewlines)
+{
+	EXPECT_EQ(captions::ParseAudioInputDeviceId("{0.0.1.00000000}.{abc}"), "{0.0.1.00000000}.{abc}");
+	EXPECT_EQ(captions::ParseAudioInputDeviceId("  {id}\r\n"), "{id}");
+	EXPECT_EQ(captions::ParseAudioInputDeviceId("\t{id}\t"), "{id}");
+	EXPECT_EQ(captions::ParseAudioInputDeviceId(""), "");
+	EXPECT_EQ(captions::ParseAudioInputDeviceId("\r\n  \t"), ""); // blank => system default
+}
+
+TEST(AudioInputFileTest, ReadRoundTripFromTempDir)
+{
+	wchar_t tmp[MAX_PATH];
+	DWORD n = GetTempPathW(MAX_PATH, tmp);
+	ASSERT_GT(n, 0u);
+	std::wstring dir(tmp, n);
+	if (!dir.empty() && dir.back() == L'\\') dir.pop_back();
+
+	std::wstring path = dir + L"\\audio_input.txt";
+
+	// Missing file => system default ("").
+	DeleteFileW(path.c_str());
+	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(dir), "");
+
+	// Written id (with a trailing newline) round-trips trimmed.
+	{
+		std::ofstream of(path.c_str());
+		of << "{0.0.1.00000000}.{device-guid}\n";
+	}
+	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(dir), "{0.0.1.00000000}.{device-guid}");
+
+	// Empty file => system default.
+	{ std::ofstream of(path.c_str(), std::ios::trunc); }
+	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(dir), "");
+
+	DeleteFileW(path.c_str());
+	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(L""), ""); // empty dir is safe
+}
+
+// ---------------------------------------------------------------------------
+// Setup tab: Install / Uninstall button gating
+// ---------------------------------------------------------------------------
+
+static captions::HostStatusSnapshot MakeSnap(bool valid, bool speechInstalled)
+{
+	captions::HostStatusSnapshot s;
+	s.valid = valid;
+	s.speech_pack_installed = speechInstalled;
+	return s;
+}
+
+TEST(SetupGatingTest, SpeechButtonsAreMutuallyExclusiveByInstallState)
+{
+	using namespace captions::ui;
+
+	// Installed: Install disabled, Uninstall enabled.
+	auto installed = MakeSnap(true, true);
+	EXPECT_FALSE(SpeechInstallEnabled(installed, false));
+	EXPECT_TRUE(SpeechUninstallEnabled(installed, false));
+
+	// Not installed: Install enabled, Uninstall disabled.
+	auto missing = MakeSnap(true, false);
+	EXPECT_TRUE(SpeechInstallEnabled(missing, false));
+	EXPECT_FALSE(SpeechUninstallEnabled(missing, false));
+}
+
+TEST(SetupGatingTest, BusyDisablesBothSpeechButtons)
+{
+	using namespace captions::ui;
+	auto installed = MakeSnap(true, true);
+	EXPECT_FALSE(SpeechInstallEnabled(installed, true));
+	EXPECT_FALSE(SpeechUninstallEnabled(installed, true));
+}
+
+TEST(SetupGatingTest, InvalidSnapshotTreatsSpeechAsNotInstalled)
+{
+	using namespace captions::ui;
+	auto unknown = MakeSnap(false, true); // host not reporting yet
+	EXPECT_FALSE(SpeechInstalled(unknown));
+	EXPECT_FALSE(SpeechUninstallEnabled(unknown, false));
+}
+
+TEST(SetupGatingTest, TranslationGatingFollowsSelectedPackAndState)
+{
+	using namespace captions::ui;
+	captions::HostStatusSnapshot s;
+	s.valid = true;
+
+	// No pack selected: neither button is actionable.
+	EXPECT_FALSE(TranslationInstallEnabled(s, false, ""));
+	EXPECT_FALSE(TranslationUninstallEnabled(s, false, ""));
+
+	// Pack selected but not installed: Install on, Uninstall off.
+	s.translation_pack_installed = false;
+	EXPECT_TRUE(TranslationInstallEnabled(s, false, "translation-en-de"));
+	EXPECT_FALSE(TranslationUninstallEnabled(s, false, "translation-en-de"));
+
+	// Pack installed and active pair matches: Install off, Uninstall on.
+	s.translation_pack_installed = true;
+	s.active_translation_pair = "en-de";
+	EXPECT_FALSE(TranslationInstallEnabled(s, false, "translation-en-de"));
+	EXPECT_TRUE(TranslationUninstallEnabled(s, false, "translation-en-de"));
+
+	// Host mid-switch to a different pair: this pack reads as not-installed.
+	s.active_translation_pair = "en-fr";
+	EXPECT_FALSE(TranslationInstalled(s, "translation-en-de"));
+	EXPECT_TRUE(TranslationInstallEnabled(s, false, "translation-en-de"));
+}
+
+// ---------------------------------------------------------------------------
+// "No audio reaching the host" warning
+// ---------------------------------------------------------------------------
+
+TEST(NoAudioWarningTest, FiresOnlyAfterSustainedStallWithLiveHost)
+{
+	using namespace captions::ui;
+	// Host down: never warn.
+	EXPECT_FALSE(ShouldWarnNoAudio(false, 10.0));
+	// Host up but within the grace window: no warning yet.
+	EXPECT_FALSE(ShouldWarnNoAudio(true, 1.0));
+	// Host up and frames stalled past the threshold: warn.
+	EXPECT_TRUE(ShouldWarnNoAudio(true, 3.0));
+	EXPECT_TRUE(ShouldWarnNoAudio(true, 30.0));
 }

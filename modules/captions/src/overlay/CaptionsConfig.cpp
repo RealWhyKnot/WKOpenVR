@@ -71,6 +71,9 @@ CaptionsConfig LoadCaptionsConfig()
 		else if (strcmp(key, "notify_sound") == 0) {
 			cfg.notify_sound = (atoi(val) != 0);
 		}
+		else if (strcmp(key, "input_device") == 0) {
+			cfg.input_device = val;
+		}
 	}
 	fclose(f);
 	return cfg;
@@ -95,6 +98,7 @@ void SaveCaptionsConfig(const CaptionsConfig& cfg)
 	appendf("chatbox_enabled=%d\n", cfg.chatbox_enabled ? 1 : 0);
 	appendf("chatbox_address=%s\n", cfg.chatbox_address.c_str());
 	appendf("notify_sound=%d\n", cfg.notify_sound ? 1 : 0);
+	appendf("input_device=%s\n", cfg.input_device.c_str());
 
 	std::wstring tmpPath = path + L".tmp";
 	HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

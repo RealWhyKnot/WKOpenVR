@@ -129,6 +129,16 @@ void HostStatus::IncrementPacketsSent() noexcept
 {
 	++packets_sent_;
 }
+void HostStatus::SetAudioLevel(float level) noexcept
+{
+	if (level < 0.0f) level = 0.0f;
+	if (level > 1.0f) level = 1.0f;
+	audio_level_ = level;
+}
+void HostStatus::SetFramesCaptured(long long frames) noexcept
+{
+	frames_captured_ = frames;
+}
 
 void HostStatus::MaybeFlush()
 {
@@ -167,10 +177,13 @@ void HostStatus::DoFlush()
 	o << "  \"translation_runtime_available\": " << (translation_runtime_available_ ? "true" : "false") << ",\n";
 	o << "  \"translation_pack_installed\": " << (translation_pack_installed_ ? "true" : "false") << ",\n";
 	o << "  \"active_translation_pair\": \"" << EscapeJson(active_translation_pair_) << "\",\n";
+	char level_buf[32];
+	snprintf(level_buf, sizeof(level_buf), "%.3f", audio_level_);
+
 	o << "  \"captions_completed\": " << captions_completed_ << ",\n";
 	o << "  \"packets_sent\": " << packets_sent_ << ",\n";
-	o << "  \"frames_written\": 0,\n";
-	o << "  \"frames_read\": 0,\n";
+	o << "  \"audio_level\": " << level_buf << ",\n";
+	o << "  \"frames_captured\": " << frames_captured_ << ",\n";
 	o << "  \"osc_messages_sent\": " << packets_sent_ << ",\n";
 	o << "  \"last_exit_code\": 0,\n";
 	o << "  \"last_restart_time\": \"\"\n";
