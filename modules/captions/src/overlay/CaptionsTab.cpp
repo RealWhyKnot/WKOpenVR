@@ -154,8 +154,9 @@ static const char* StateLabel(int state)
 static bool IsSetupStatus(const std::string& message)
 {
 	return message == "Speech pack not installed." || message == "Whisper model not installed." ||
-	       message == "Speech VAD model not installed." || message == "Speech detection runtime not installed." ||
-	       message == "Translation runtime not installed." || message.rfind("Translation pack ", 0) == 0;
+	       message == "High accuracy speech model not installed." || message == "Speech VAD model not installed." ||
+	       message == "Speech detection runtime not installed." || message == "Translation runtime not installed." ||
+	       message.rfind("Translation pack ", 0) == 0;
 }
 
 static const char* SpeechPackStatus(const captions::HostStatusSnapshot& snap)
@@ -215,6 +216,14 @@ static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot
 	using namespace openvr_pair::overlay::ui;
 	DrawSectionHeading("Setup");
 
+	bool high_accuracy_model = plugin.GetSpeechModel() == captions::kCaptionsSpeechModelHighAccuracy;
+	if (CheckboxWithTooltip("High accuracy speech model", &high_accuracy_model,
+	                        "Uses the larger speech model when installed. Turn it off for the smaller base model.")) {
+		plugin.SetSpeechModel(high_accuracy_model ? captions::kCaptionsSpeechModelHighAccuracy
+		                                          : captions::kCaptionsSpeechModelBalanced);
+		plugin.PushConfigToDriver();
+	}
+
 	const bool busy = plugin.IsPackActionRunning();
 	const std::string translation_pack = plugin.CurrentTranslationPackId();
 	const char* kBusyReason = "A captions pack action is already running.";
@@ -233,7 +242,7 @@ static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot
 		NextRow();
 		SetColumn(0);
 		ImGui::TextUnformatted("Speech");
-		TooltipOnHover("Whisper base model, Silero VAD model, and ONNX Runtime.\n"
+		TooltipOnHover("Selected speech model, Silero VAD model, and ONNX Runtime.\n"
 		               "Stored under %LocalAppDataLow%\\WKOpenVR\\captions.");
 		SetColumn(1);
 		{
@@ -352,21 +361,28 @@ static void DrawRealtimeOption(CaptionsPlugin& plugin, const char* label, uint8_
 	}
 }
 
-static void DrawRealtimeTuning(CaptionsPlugin& plugin)
+static void DrawRealtimeOptionMask(CaptionsPlugin& plugin, const char* label, uint8_t mask, const char* tooltip)
+{
+	bool enabled = plugin.GetRealtimeOptionMask(mask);
+	if (openvr_pair::overlay::ui::CheckboxWithTooltip(label, &enabled, tooltip)) {
+		plugin.SetRealtimeOptionMask(mask, enabled);
+		plugin.PushConfigToDriver();
+	}
+}
+
+static void DrawCaptionBehavior(CaptionsPlugin& plugin)
 {
 	using namespace openvr_pair::overlay::ui;
-	DrawSectionHeading("Realtime tuning");
+	DrawSectionHeading("Caption behavior");
 
-	DrawRealtimeOption(plugin, "Extended speech timing", captions::kCaptionsRealtimeExtendedTiming,
-	                   "Uses a longer pre-roll, a slightly longer silence tail, faster continuous-speech flushes, "
-	                   "and a larger overlap between continuous chunks.");
-	DrawRealtimeOption(plugin, "Require speech evidence", captions::kCaptionsRealtimeSpeechEvidenceGate,
-	                   "Ignores very short always-on opens unless VAD or input level actually indicated speech.");
-	DrawRealtimeOption(
-	    plugin, "Confidence filter", captions::kCaptionsRealtimeConfidenceFilter,
-	    "Suppresses likely silence hallucinations, low-confidence output, and repeated decode artifacts.");
-	DrawRealtimeOption(plugin, "Trim overlap duplicates", captions::kCaptionsRealtimeOverlapCleanup,
-	                   "Removes repeated words created by overlapping continuous speech chunks.");
+	DrawRealtimeOptionMask(plugin, "Speech pickup assist", captions::kCaptionsRealtimeSpeechPickupMask,
+	                       "Keeps more speech around chunk boundaries and removes repeated overlap.");
+	DrawRealtimeOptionMask(plugin, "Reduce random captions", captions::kCaptionsRealtimeRandomCaptionMask,
+	                       "Uses speech confidence and no-speech probability to reject likely silence output.");
+	DrawRealtimeOption(plugin, "Use recent context", captions::kCaptionsRealtimePromptContext,
+	                   "Gives the speech model recent caption text so names and phrases stay consistent.");
+	DrawRealtimeOption(plugin, "Typing indicator", captions::kCaptionsRealtimeTypingIndicator,
+	                   "Shows typing while speech is being captured for chatbox output.");
 	DrawRealtimeOption(
 	    plugin, "Split long chatbox messages", captions::kCaptionsRealtimeChatboxSplitting,
 	    "Sends long captions as multiple paced messages instead of allowing VRChat output to be cut off.");
@@ -569,10 +585,10 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	}
 
 	// -----------------------------------------------------------------------
-	// Realtime tuning
+	// Caption behavior
 	// -----------------------------------------------------------------------
 	ImGui::Separator();
-	DrawRealtimeTuning(plugin);
+	DrawCaptionBehavior(plugin);
 
 	// -----------------------------------------------------------------------
 	// Input (microphone) + language

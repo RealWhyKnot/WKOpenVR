@@ -108,6 +108,7 @@ CaptionsPlugin::CaptionsPlugin()
 	chatbox_address_ = loaded.chatbox_address;
 	notify_sound_ = loaded.notify_sound;
 	realtime_flags_ = loaded.realtime_flags;
+	speech_model_ = loaded.speech_model;
 	input_device_ = loaded.input_device;
 	// Mirror the saved selection to the host-readable file in case it drifted
 	// from captions.txt (e.g. a manual edit or an interrupted earlier write).
@@ -125,6 +126,7 @@ void CaptionsPlugin::Persist()
 	cfg.chatbox_address = chatbox_address_;
 	cfg.notify_sound = notify_sound_;
 	cfg.realtime_flags = realtime_flags_;
+	cfg.speech_model = speech_model_;
 	cfg.input_device = input_device_;
 	SaveCaptionsConfig(cfg);
 }
@@ -167,6 +169,16 @@ void CaptionsPlugin::SetNotifySound(bool v)
 void CaptionsPlugin::SetRealtimeOption(uint8_t flag, bool enabled)
 {
 	realtime_flags_ = captions::SetCaptionsRealtimeFlag(realtime_flags_, flag, enabled);
+	Persist();
+}
+void CaptionsPlugin::SetRealtimeOptionMask(uint8_t mask, bool enabled)
+{
+	realtime_flags_ = captions::SetCaptionsRealtimeMask(realtime_flags_, mask, enabled);
+	Persist();
+}
+void CaptionsPlugin::SetSpeechModel(uint8_t model)
+{
+	speech_model_ = captions::NormalizeCaptionsSpeechModel(model);
 	Persist();
 }
 void CaptionsPlugin::SetInputDevice(const std::string& endpointId)
@@ -240,6 +252,7 @@ void CaptionsPlugin::PushConfigToDriver()
 		cfg.notify_sound = notify_sound_ ? 1 : 0;
 		cfg.chatbox_enabled = chatbox_enabled_ ? 1 : 0;
 		cfg.realtime_flags = realtime_flags_;
+		cfg.speech_model = speech_model_;
 		cfg.chatbox_port = 9000;
 
 		std::snprintf(cfg.source_lang, sizeof(cfg.source_lang), "%s", source_lang_.c_str());
@@ -273,12 +286,12 @@ void CaptionsPlugin::SendRestartHost()
 
 void CaptionsPlugin::InstallSpeechPack()
 {
-	StartPackAction("speech-base", false);
+	StartPackAction(captions::CaptionsSpeechModelPackId(speech_model_), false);
 }
 
 void CaptionsPlugin::UninstallSpeechPack()
 {
-	StartPackAction("speech-base", true);
+	StartPackAction(captions::CaptionsSpeechModelPackId(speech_model_), true);
 }
 
 void CaptionsPlugin::InstallTranslationPack()

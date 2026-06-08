@@ -42,6 +42,23 @@
       ]
     },
     {
+      "id": "speech-large-v3-turbo",
+      "label": "Speech pack: Whisper large-v3-turbo",
+      "kind": "speech",
+      "dependencies": [ "speech-base" ],
+      "licenses": [
+        "whisper.cpp MIT"
+      ],
+      "files": [
+        {
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+          "destination": "models/ggml-large-v3-turbo-q5_0.bin",
+          "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+          "size": 574041195
+        }
+      ]
+    },
+    {
       "id": "translation-runtime-cpu",
       "label": "Translation runtime: CTranslate2 CPU",
       "kind": "runtime",

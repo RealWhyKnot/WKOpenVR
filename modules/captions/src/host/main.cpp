@@ -11,6 +11,7 @@
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsOutputPolicy.h"
 #include "CaptionsRealtimeFlags.h"
+#include "CaptionsSpeechModels.h"
 #include "ChatboxText.h"
 #include "ChatboxPacer.h"
 #include "AudioLevel.h"
@@ -262,9 +263,11 @@ struct HostConfig
 	bool transcript_logging = false;
 	int mode = 0; // 0=PTT, 1=always-on
 	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
+	uint8_t speech_model = captions::kCaptionsSpeechModelBalanced;
 
 	// Paths: resolved once at startup. Overrideable via command-line.
 	std::string whisper_model_path;
+	bool whisper_model_path_overridden = false;
 	std::string silero_model_path;
 
 	bool RealtimeEnabled(uint8_t flag) const { return captions::CaptionsRealtimeFlagEnabled(realtime_flags, flag); }
@@ -348,6 +351,12 @@ static void DispatchControlMessage(char* buf, DWORD got)
 				g_config.realtime_flags = static_cast<uint8_t>(parsed);
 			}
 		}
+		else if (key == "model") {
+			int parsed = 0;
+			if (TryParseInt(val, parsed)) {
+				g_config.speech_model = captions::NormalizeCaptionsSpeechModel(parsed);
+			}
+		}
 
 		if (comma == std::string::npos) break;
 		pos = comma + 1;
@@ -402,11 +411,31 @@ static void ControlPipeThread()
 // Default model paths
 // ---------------------------------------------------------------------------
 
-static std::string DefaultWhisperModelPath()
+static std::string DefaultWhisperModelPath(uint8_t speech_model = captions::kCaptionsSpeechModelBalanced)
 {
 	std::string dir = ModelDownloader::DefaultModelDir();
 	if (dir.empty()) return {};
-	return dir + "\\ggml-base.bin";
+	return dir + "\\" + captions::CaptionsSpeechModelFileName(speech_model);
+}
+
+static std::string RequiredWhisperModelPath(const HostConfig& cfg)
+{
+	return cfg.whisper_model_path_overridden ? cfg.whisper_model_path : DefaultWhisperModelPath(cfg.speech_model);
+}
+
+static std::string ActiveWhisperModelPath(const HostConfig& cfg)
+{
+	if (cfg.whisper_model_path_overridden) return cfg.whisper_model_path;
+
+	const std::string selected = DefaultWhisperModelPath(cfg.speech_model);
+	if (FileExistsA(selected)) return selected;
+
+	if (cfg.speech_model == captions::kCaptionsSpeechModelHighAccuracy) {
+		const std::string fallback = DefaultWhisperModelPath(captions::kCaptionsSpeechModelBalanced);
+		if (FileExistsA(fallback)) return fallback;
+	}
+
+	return selected;
 }
 
 static std::string DefaultSileroModelPath()
@@ -432,7 +461,7 @@ static std::string ResolveCaptionsModelDir(const std::string& src, const std::st
 
 static void UpdatePackStatus(HostStatus& status, const HostConfig& cfg)
 {
-	const bool whisper_model = FileExistsA(cfg.whisper_model_path);
+	const bool whisper_model = FileExistsA(RequiredWhisperModelPath(cfg));
 	const bool vad_model = FileExistsA(cfg.silero_model_path);
 	const bool speech_pack = whisper_model && vad_model;
 	const bool vad_runtime = SileroVad::RuntimeAvailable();
@@ -450,7 +479,10 @@ static void UpdatePackStatus(HostStatus& status, const HostConfig& cfg)
 
 	std::ostringstream err;
 	if (!whisper_model) {
-		err << "Whisper model not installed.";
+		if (cfg.speech_model == captions::kCaptionsSpeechModelHighAccuracy && !cfg.whisper_model_path_overridden)
+			err << "High accuracy speech model not installed.";
+		else
+			err << "Whisper model not installed.";
 	}
 	else if (!vad_model) {
 		err << "Speech VAD model not installed.";
@@ -555,6 +587,7 @@ try {
 	{
 		std::lock_guard<std::mutex> lk(g_config_mutex);
 		g_config.whisper_model_path = DefaultWhisperModelPath();
+		g_config.whisper_model_path_overridden = false;
 		g_config.silero_model_path = DefaultSileroModelPath();
 		for (int i = 1; i < argc; ++i) {
 			if (strcmp(argv[i], "--self-test") == 0 || strcmp(argv[i], "--healthcheck") == 0) {
@@ -577,6 +610,7 @@ try {
 			}
 			else if (i + 1 < argc && strcmp(argv[i], "--model") == 0) {
 				g_config.whisper_model_path = argv[i + 1];
+				g_config.whisper_model_path_overridden = true;
 				++i;
 			}
 			else if (i + 1 < argc && strcmp(argv[i], "--silero") == 0) {
@@ -721,6 +755,7 @@ try {
 	WhisperEngine whisper;
 	captions::WhisperPromptHistory whisper_prompt;
 	std::string whisper_prompt_lang_key;
+	std::string loaded_whisper_model_path;
 	bool whisper_load_attempted = false;
 	bool whisper_load_failed = false;
 	auto next_whisper_load_attempt = std::chrono::steady_clock::time_point{};
@@ -728,7 +763,7 @@ try {
 		std::string model_path;
 		{
 			std::lock_guard<std::mutex> lk(g_config_mutex);
-			model_path = g_config.whisper_model_path;
+			model_path = ActiveWhisperModelPath(g_config);
 		}
 		if (FileExistsA(model_path)) {
 			whisper_load_attempted = true;
@@ -736,6 +771,9 @@ try {
 				whisper_load_failed = true;
 				next_whisper_load_attempt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 				TH_LOG("[main] Whisper model load failed; path='%s'", model_path.c_str());
+			}
+			else {
+				loaded_whisper_model_path = model_path;
 			}
 		}
 		else {
@@ -766,7 +804,9 @@ try {
 	RouterPublisher publisher;
 	bool typing_indicator_active = false;
 	auto set_typing_indicator = [&](bool active, const HostConfig& current_cfg) {
-		if (!current_cfg.chatbox_enabled) active = false;
+		if (!current_cfg.chatbox_enabled || !current_cfg.RealtimeEnabled(captions::kCaptionsRealtimeTypingIndicator)) {
+			active = false;
+		}
 		if (typing_indicator_active == active) return;
 
 		if (!publisher.PublishTyping(active)) {
@@ -891,15 +931,31 @@ try {
 			whisper_prompt_lang_key = prompt_lang_key;
 			last_transcript_for_overlap.clear();
 		}
-		if (!whisper.IsLoaded() && FileExistsA(cfg.whisper_model_path) && loop_now >= next_whisper_load_attempt) {
+		const std::string desired_whisper_model_path = ActiveWhisperModelPath(cfg);
+		if (whisper.IsLoaded() && desired_whisper_model_path != loaded_whisper_model_path) {
+			TH_LOG("[main] switching Whisper model: '%s' -> '%s'", loaded_whisper_model_path.c_str(),
+			       desired_whisper_model_path.c_str());
+			whisper.Unload();
+			loaded_whisper_model_path.clear();
+			whisper_prompt.Clear();
+			whisper.SetInitialPrompt("");
+			last_transcript_for_overlap.clear();
+			whisper_load_attempted = false;
+			whisper_load_failed = false;
+			next_whisper_load_attempt = loop_now;
+		}
+		if (!whisper.IsLoaded() && FileExistsA(desired_whisper_model_path) && loop_now >= next_whisper_load_attempt) {
 			whisper_load_attempted = true;
-			whisper_load_failed = !whisper.Load(cfg.whisper_model_path);
+			whisper_load_failed = !whisper.Load(desired_whisper_model_path);
 			if (whisper_load_failed) {
 				next_whisper_load_attempt = loop_now + std::chrono::seconds(5);
 				status.SetLastError("Whisper model failed to load.");
 			}
+			else {
+				loaded_whisper_model_path = desired_whisper_model_path;
+			}
 		}
-		else if (!whisper.IsLoaded() && FileExistsA(cfg.whisper_model_path) && whisper_load_attempted &&
+		else if (!whisper.IsLoaded() && FileExistsA(desired_whisper_model_path) && whisper_load_attempted &&
 		         whisper_load_failed) {
 			status.SetLastError("Whisper model failed to load.");
 		}
@@ -963,7 +1019,8 @@ try {
 
 		const bool always_on = (cfg.mode == 1);
 		const bool extended_timing = cfg.RealtimeEnabled(captions::kCaptionsRealtimeExtendedTiming);
-		if (typing_indicator_active && !cfg.chatbox_enabled) {
+		if (typing_indicator_active &&
+		    (!cfg.chatbox_enabled || !cfg.RealtimeEnabled(captions::kCaptionsRealtimeTypingIndicator))) {
 			set_typing_indicator(false, cfg);
 		}
 		if (!always_on && in_speech) {
@@ -1130,8 +1187,16 @@ try {
 				std::string transcript;
 				WhisperTranscriptResult whisper_result;
 				if (whisper.IsLoaded()) {
-					whisper.SetInitialPrompt(whisper_prompt.Text());
-					whisper_result = whisper.TranscribeDetailed(segment_pcm);
+					const bool prompt_context = cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext);
+					if (!prompt_context && !whisper_prompt.Text().empty()) {
+						whisper_prompt.Clear();
+					}
+					whisper.SetInitialPrompt(prompt_context ? whisper_prompt.Text() : "");
+					WhisperDecodeOptions decode_options;
+					decode_options.use_no_speech_threshold =
+					    cfg.RealtimeEnabled(captions::kCaptionsRealtimeWhisperNoSpeechGate);
+					decode_options.no_speech_threshold = captions::TranscriptNoSpeechProbabilityThreshold();
+					whisper_result = whisper.TranscribeDetailed(segment_pcm, decode_options);
 					detected_lang = whisper_result.detected_lang;
 					transcript = whisper_result.text;
 				}
@@ -1174,22 +1239,30 @@ try {
 
 				std::string publish_transcript = captions::CleanTranscriptForPublish(transcript);
 				const bool skip_non_speech = !transcript.empty() && publish_transcript.empty();
+				const bool skip_no_speech = cfg.RealtimeEnabled(captions::kCaptionsRealtimeWhisperNoSpeechGate) &&
+				                            captions::TranscriptShouldSuppressByNoSpeechProbability(
+				                                publish_transcript, always_on, whisper_result.max_no_speech_probability,
+				                                whisper_result.average_token_log_probability);
 				const bool skip_confidence =
 				    cfg.RealtimeEnabled(captions::kCaptionsRealtimeConfidenceFilter) &&
 				    captions::TranscriptShouldSuppressByConfidence(
 				        publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
 				        segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
 				        whisper_result.average_token_log_probability, whisper_result.token_count);
-				if (skip_non_speech || skip_confidence) {
+				if (skip_non_speech || skip_no_speech || skip_confidence) {
+					const char* suppression_reason = skip_non_speech  ? "non-speech"
+					                                 : skip_no_speech ? "no-speech-probability"
+					                                                  : "low-confidence";
 					TH_LOG("[main] suppressed transcript as %s: raw='%s' vad=%.3f peak=%.3f nospeech=%.3f avglog=%.3f",
-					       skip_non_speech ? "non-speech" : "low-confidence", transcript.c_str(),
-					       segment_max_vad_probability, segment_max_frame_peak,
+					       suppression_reason, transcript.c_str(), segment_max_vad_probability, segment_max_frame_peak,
 					       whisper_result.max_no_speech_probability, whisper_result.average_token_log_probability);
 					publish_transcript.clear();
 					status.SetLastTranslation("");
 				}
 				else if (!publish_transcript.empty()) {
-					whisper_prompt.Observe(publish_transcript);
+					if (cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext)) {
+						whisper_prompt.Observe(publish_transcript);
+					}
 					last_transcript_for_overlap = publish_transcript;
 				}
 

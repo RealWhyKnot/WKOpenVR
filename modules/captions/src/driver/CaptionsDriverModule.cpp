@@ -171,7 +171,8 @@ private:
 		       ",notify=" + std::to_string((int)config.notify_sound) +
 		       ",chatbox=" + std::to_string((int)config.chatbox_enabled) +
 		       ",log=" + std::to_string((int)config.transcript_logging) +
-		       ",flags=" + std::to_string((int)config.realtime_flags) + "\n";
+		       ",flags=" + std::to_string((int)config.realtime_flags) +
+		       ",model=" + std::to_string((int)config.speech_model) + "\n";
 	}
 
 	std::unique_ptr<HostSupervisor> supervisor_;

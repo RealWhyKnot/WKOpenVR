@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CaptionsRealtimeFlags.h"
+#include "CaptionsSpeechModels.h"
 
 #include <cstdint>
 #include <string>
@@ -10,8 +11,9 @@
 // minimal key=value file (same pattern as smoothing's Config.cpp).
 //
 // Persists: mode (PTT vs always-on), source / target language, OSC chatbox
-// path, audible notify-sound flag, realtime tuning flags, and the always-on
-// consent sentinel so the user doesn't have to re-confirm every restart.
+// path, audible notify-sound flag, speech model, realtime behavior flags, and
+// the always-on consent sentinel so the user doesn't have to re-confirm every
+// restart.
 struct CaptionsConfig
 {
 	int mode = 0; // 0 = PTT, 1 = always-on
@@ -22,6 +24,7 @@ struct CaptionsConfig
 	std::string chatbox_address = "/chatbox/input";
 	bool notify_sound = false;
 	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
+	uint8_t speech_model = captions::kCaptionsSpeechModelBalanced;
 
 	// Selected capture endpoint id (IMMDevice::GetId). Empty = system default.
 	std::string input_device = "";

@@ -186,6 +186,24 @@ inline bool TranscriptHasWeakAudioEvidence(float maxVadProbability, float maxFra
 	return maxVadProbability < 0.38f && maxFramePeak < std::max(0.032f, speechPeakThreshold * 1.10f);
 }
 
+inline float TranscriptNoSpeechProbabilityThreshold()
+{
+	return 0.60f;
+}
+
+inline float TranscriptNoSpeechAverageLogProbabilityThreshold()
+{
+	return -1.00f;
+}
+
+inline bool TranscriptShouldSuppressByNoSpeechProbability(const std::string& cleanedText, bool alwaysOn,
+                                                          float noSpeechProbability, float averageTokenLogProbability)
+{
+	if (!alwaysOn || cleanedText.empty()) return false;
+	return noSpeechProbability >= TranscriptNoSpeechProbabilityThreshold() &&
+	       averageTokenLogProbability < TranscriptNoSpeechAverageLogProbabilityThreshold();
+}
+
 inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
                                                  float maxFramePeak, float speechPeakThreshold,
                                                  float noSpeechProbability, float averageTokenLogProbability,

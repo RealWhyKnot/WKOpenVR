@@ -24,6 +24,7 @@
 #include "CaptionsConfig.h"
 #include "CaptionsOutputPolicy.h"
 #include "CaptionsRealtimeFlags.h"
+#include "CaptionsSpeechModels.h"
 #include "Protocol.h"
 
 // Header-only host + overlay logic under test (no ImGui / COM / device access).
@@ -81,6 +82,7 @@ TEST(CaptionsProtocolTest, ZeroedConfigDoesNotPublishToChatbox)
 	protocol::CaptionsConfig cfg{};
 	EXPECT_EQ(cfg.chatbox_enabled, 0);
 	EXPECT_EQ(cfg.realtime_flags, 0);
+	EXPECT_EQ(cfg.speech_model, 0);
 }
 
 TEST(CaptionsRealtimeFlagsTest, DefaultsEnableRealtimeOptions)
@@ -95,9 +97,20 @@ TEST(CaptionsRealtimeFlagsTest, DefaultsEnableRealtimeOptions)
 	                                                  captions::kCaptionsRealtimeOverlapCleanup));
 	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
 	                                                  captions::kCaptionsRealtimeChatboxSplitting));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeWhisperNoSpeechGate));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimePromptContext));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeTypingIndicator));
+	EXPECT_TRUE(captions::CaptionsRealtimeMaskEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeSpeechPickupMask));
+	EXPECT_TRUE(captions::CaptionsRealtimeMaskEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeRandomCaptionMask));
 
 	CaptionsConfig cfg;
 	EXPECT_EQ(cfg.realtime_flags, captions::kCaptionsRealtimeDefaultFlags);
+	EXPECT_EQ(cfg.speech_model, captions::kCaptionsSpeechModelBalanced);
 }
 
 TEST(CaptionsRealtimeFlagsTest, SetClearsIndividualOptions)
@@ -109,6 +122,31 @@ TEST(CaptionsRealtimeFlagsTest, SetClearsIndividualOptions)
 
 	flags = captions::SetCaptionsRealtimeFlag(flags, captions::kCaptionsRealtimeConfidenceFilter, true);
 	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(flags, captions::kCaptionsRealtimeConfidenceFilter));
+}
+
+TEST(CaptionsRealtimeFlagsTest, SetClearsGroupedOptions)
+{
+	uint8_t flags = captions::kCaptionsRealtimeDefaultFlags;
+	flags = captions::SetCaptionsRealtimeMask(flags, captions::kCaptionsRealtimeRandomCaptionMask, false);
+	EXPECT_FALSE(captions::CaptionsRealtimeFlagEnabled(flags, captions::kCaptionsRealtimeConfidenceFilter));
+	EXPECT_FALSE(captions::CaptionsRealtimeFlagEnabled(flags, captions::kCaptionsRealtimeWhisperNoSpeechGate));
+	EXPECT_FALSE(captions::CaptionsRealtimeMaskEnabled(flags, captions::kCaptionsRealtimeRandomCaptionMask));
+
+	flags = captions::SetCaptionsRealtimeMask(flags, captions::kCaptionsRealtimeRandomCaptionMask, true);
+	EXPECT_TRUE(captions::CaptionsRealtimeMaskEnabled(flags, captions::kCaptionsRealtimeRandomCaptionMask));
+}
+
+TEST(CaptionsSpeechModelTest, NormalizesAndMapsModels)
+{
+	EXPECT_EQ(captions::NormalizeCaptionsSpeechModel(-1), captions::kCaptionsSpeechModelBalanced);
+	EXPECT_EQ(captions::NormalizeCaptionsSpeechModel(99), captions::kCaptionsSpeechModelBalanced);
+	EXPECT_EQ(captions::NormalizeCaptionsSpeechModel(captions::kCaptionsSpeechModelHighAccuracy),
+	          captions::kCaptionsSpeechModelHighAccuracy);
+	EXPECT_STREQ(captions::CaptionsSpeechModelFileName(captions::kCaptionsSpeechModelBalanced), "ggml-base.bin");
+	EXPECT_STREQ(captions::CaptionsSpeechModelFileName(captions::kCaptionsSpeechModelHighAccuracy),
+	             "ggml-large-v3-turbo-q5_0.bin");
+	EXPECT_STREQ(captions::CaptionsSpeechModelPackId(captions::kCaptionsSpeechModelHighAccuracy),
+	             "speech-large-v3-turbo");
 }
 
 TEST(CaptionPreviewHistoryTest, AddsEachCompletedCaptionOnce)
@@ -609,6 +647,15 @@ TEST(TranscriptTextTest, ConfidenceSuppressionRequiresWeakAudioOrBadDecode)
 	    captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.70f, 0.01f, 0.04f, 0.90f, -0.20f, 4));
 	EXPECT_FALSE(
 	    captions::TranscriptShouldSuppressByConfidence("hello there", false, 0.10f, 0.01f, 0.04f, 0.90f, -2.00f, 4));
+}
+
+TEST(TranscriptTextTest, NoSpeechProbabilityUsesWhisperThresholds)
+{
+	EXPECT_TRUE(captions::TranscriptShouldSuppressByNoSpeechProbability("hello there", true, 0.60f, -1.01f));
+	EXPECT_FALSE(captions::TranscriptShouldSuppressByNoSpeechProbability("hello there", true, 0.59f, -1.01f));
+	EXPECT_FALSE(captions::TranscriptShouldSuppressByNoSpeechProbability("hello there", true, 0.90f, -0.99f));
+	EXPECT_FALSE(captions::TranscriptShouldSuppressByNoSpeechProbability("hello there", false, 0.90f, -2.00f));
+	EXPECT_FALSE(captions::TranscriptShouldSuppressByNoSpeechProbability("", true, 0.90f, -2.00f));
 }
 
 // ---------------------------------------------------------------------------

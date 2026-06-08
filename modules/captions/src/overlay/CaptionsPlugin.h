@@ -6,6 +6,7 @@
 #include "HostStatusPoller.h"
 #include "Protocol.h"
 #include "CaptionsIpcClient.h"
+#include "CaptionsSpeechModels.h"
 
 #include <chrono>
 #include <string>
@@ -70,7 +71,12 @@ public:
 	bool GetNotifySound() const { return notify_sound_; }
 	const std::string& GetInputDevice() const { return input_device_; }
 	bool GetRealtimeOption(uint8_t flag) const { return captions::CaptionsRealtimeFlagEnabled(realtime_flags_, flag); }
+	bool GetRealtimeOptionMask(uint8_t mask) const
+	{
+		return captions::CaptionsRealtimeMaskEnabled(realtime_flags_, mask);
+	}
 	uint8_t GetRealtimeFlags() const { return realtime_flags_; }
+	uint8_t GetSpeechModel() const { return speech_model_; }
 
 	void SetSourceLang(const std::string& s);
 	void SetTargetLang(const std::string& s);
@@ -78,6 +84,8 @@ public:
 	void SetChatboxAddress(const std::string& s);
 	void SetNotifySound(bool v);
 	void SetRealtimeOption(uint8_t flag, bool enabled);
+	void SetRealtimeOptionMask(uint8_t mask, bool enabled);
+	void SetSpeechModel(uint8_t model);
 	// Select the capture endpoint (IMMDevice id; empty = system default).
 	// Persists to captions.txt and writes the host-readable audio_input.txt.
 	void SetInputDevice(const std::string& endpointId);
@@ -98,6 +106,7 @@ private:
 	std::string chatbox_address_ = "/chatbox/input";
 	bool notify_sound_ = false;
 	uint8_t realtime_flags_ = captions::kCaptionsRealtimeDefaultFlags;
+	uint8_t speech_model_ = captions::kCaptionsSpeechModelBalanced;
 	std::string input_device_ = ""; // capture endpoint id; empty = system default
 
 	std::string last_error_;

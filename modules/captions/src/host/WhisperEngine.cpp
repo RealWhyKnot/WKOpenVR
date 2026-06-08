@@ -62,7 +62,8 @@ std::string WhisperEngine::Transcribe(const std::vector<float>& pcm16k, std::str
 	return result.text;
 }
 
-WhisperTranscriptResult WhisperEngine::TranscribeDetailed(const std::vector<float>& pcm16k)
+WhisperTranscriptResult WhisperEngine::TranscribeDetailed(const std::vector<float>& pcm16k,
+                                                          const WhisperDecodeOptions& options)
 {
 	WhisperTranscriptResult result;
 	if (!ctx_ || pcm16k.empty()) return {};
@@ -75,6 +76,8 @@ WhisperTranscriptResult WhisperEngine::TranscribeDetailed(const std::vector<floa
 	params.single_segment = false;
 	params.translate = false; // translation handled downstream
 	params.initial_prompt = initial_prompt_.empty() ? nullptr : initial_prompt_.c_str();
+	params.no_speech_thold = options.use_no_speech_threshold ? options.no_speech_threshold : 1.1f;
+	params.suppress_nst = options.suppress_non_speech_tokens;
 
 	if (!language_hint_.empty() && language_hint_ != "auto") {
 		params.language = language_hint_.c_str();

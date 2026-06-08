@@ -524,6 +524,11 @@ struct CaptionsConfig
 	// Captions realtime tuning flags. See CaptionsRealtimeFlags.h.
 	uint8_t realtime_flags;
 
+	// Speech model selection. See CaptionsSpeechModels.h.
+	uint8_t speech_model;
+
+	uint8_t _pad[1];
+
 	// Target chatbox OSC port (default 9000).
 	uint16_t chatbox_port;
 
