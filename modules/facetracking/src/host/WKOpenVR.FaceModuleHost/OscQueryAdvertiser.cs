@@ -30,6 +30,10 @@ public sealed class OscQueryAdvertiser : IDisposable
     private Task? _udpLoop;
 
     private int _inboundOscCount;
+    private readonly HashSet<string> _observedAvatarParameters = new(StringComparer.Ordinal);
+    private int _lastInferenceObservedCount;
+    private int _allowListInferenceInFlight;
+    private int _allowListInferenceResolved;
 
     public OscQueryAdvertiser()
     {
@@ -40,7 +44,7 @@ public sealed class OscQueryAdvertiser : IDisposable
     public async Task StartAsync(HostLogger logger, CancellationToken ct)
     {
         _ct = ct;
-        AvatarParameterAllowList.Clear(logger);
+        AvatarParameterAllowList.RestoreLastKnown(logger);
 
         // --- 1. Bind a private OSC receive socket -------------------------------
         _udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
@@ -169,9 +173,19 @@ public sealed class OscQueryAdvertiser : IDisposable
             if (string.Equals(address, "/avatar/change", StringComparison.Ordinal))
             {
                 string avatarId = TryReadFirstOscStringArgument(result.Buffer);
+                lock (_observedAvatarParameters)
+                {
+                    _observedAvatarParameters.Clear();
+                    _lastInferenceObservedCount = 0;
+                }
+                Volatile.Write(ref _allowListInferenceResolved, 0);
                 _ = Task.Run(
                     () => AvatarParameterAllowList.RefreshForAvatarAsync(avatarId, logger, ct),
                     CancellationToken.None);
+            }
+            else
+            {
+                MaybeScheduleAllowListInference(address, logger, ct);
             }
 
             if (count == 1 || count % 100000 == 0
@@ -180,6 +194,54 @@ public sealed class OscQueryAdvertiser : IDisposable
                 logger.Info($"[ftq] received OSC callback count={count} addr={address}");
             }
         }
+    }
+
+    private void MaybeScheduleAllowListInference(string address, HostLogger logger, CancellationToken ct)
+    {
+        if (Volatile.Read(ref _allowListInferenceResolved) != 0 ||
+            !address.StartsWith("/avatar/parameters/", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        string[] snapshot;
+        lock (_observedAvatarParameters)
+        {
+            if (!_observedAvatarParameters.Add(address))
+            {
+                return;
+            }
+
+            if (_observedAvatarParameters.Count < 16 ||
+                _observedAvatarParameters.Count < _lastInferenceObservedCount + 16)
+            {
+                return;
+            }
+
+            _lastInferenceObservedCount = _observedAvatarParameters.Count;
+            snapshot = _observedAvatarParameters.ToArray();
+        }
+
+        if (Interlocked.CompareExchange(ref _allowListInferenceInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                bool restored = await AvatarParameterAllowList.RefreshFromObservedParametersAsync(snapshot, logger, ct);
+                if (restored)
+                {
+                    Volatile.Write(ref _allowListInferenceResolved, 1);
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref _allowListInferenceInFlight, 0);
+            }
+        }, CancellationToken.None);
     }
 
     private void HandleRequest(HttpListenerContext ctx, HostLogger logger)

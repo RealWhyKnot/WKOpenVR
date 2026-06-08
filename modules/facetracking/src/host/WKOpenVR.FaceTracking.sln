@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WKOpenVR.FaceTracking.Upstr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WKOpenVR.FaceModuleProcess", "WKOpenVR.FaceModuleProcess\WKOpenVR.FaceModuleProcess.csproj", "{A1B2C3D4-0006-0000-0000-000000000006}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WKOpenVR.FaceModuleHost.Tests", "WKOpenVR.FaceModuleHost.Tests\WKOpenVR.FaceModuleHost.Tests.csproj", "{1355AC9A-C7BE-4F69-8BED-C16EEF07F95E}"
+EndProject
 Global
     GlobalSection(SolutionConfigurationPlatforms) = preSolution
         Debug|x64 = Debug|x64
@@ -39,5 +41,9 @@ Global
         {A1B2C3D4-0006-0000-0000-000000000006}.Debug|x64.Build.0 = Debug|Any CPU
         {A1B2C3D4-0006-0000-0000-000000000006}.Release|x64.ActiveCfg = Release|Any CPU
         {A1B2C3D4-0006-0000-0000-000000000006}.Release|x64.Build.0 = Release|Any CPU
+        {1355AC9A-C7BE-4F69-8BED-C16EEF07F95E}.Debug|x64.ActiveCfg = Debug|Any CPU
+        {1355AC9A-C7BE-4F69-8BED-C16EEF07F95E}.Debug|x64.Build.0 = Debug|Any CPU
+        {1355AC9A-C7BE-4F69-8BED-C16EEF07F95E}.Release|x64.ActiveCfg = Release|Any CPU
+        {1355AC9A-C7BE-4F69-8BED-C16EEF07F95E}.Release|x64.Build.0 = Release|Any CPU
     EndGlobalSection
 EndGlobal
