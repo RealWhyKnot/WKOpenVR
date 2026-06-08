@@ -26,7 +26,7 @@ public:
 
 	// Send an OSC chatbox ,sTT packet. Connects (or reconnects) on demand.
 	// text must be <= 144 UTF-8 bytes; longer strings are truncated at the
-	// last whitespace boundary before byte 144.
+	// last whitespace boundary that leaves room for an ellipsis.
 	// address defaults to VRChat's /chatbox/input; custom endpoints must be
 	// absolute OSC addresses.
 	// send_immediate: chatbox sendImmediate flag (true = PTT / final).

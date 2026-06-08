@@ -142,6 +142,74 @@ inline std::vector<TranscriptWordSpan> TranscriptWords(const std::string& text)
 	return words;
 }
 
+inline bool TranscriptLooksRepetitive(const std::string& text)
+{
+	std::vector<std::string> words;
+	for (const auto& span : TranscriptWords(text)) {
+		words.push_back(span.normalized);
+	}
+	if (words.size() < 6) return false;
+
+	int run = 1;
+	for (size_t i = 1; i < words.size(); ++i) {
+		if (words[i] == words[i - 1]) {
+			++run;
+			if (run >= 6) return true;
+		}
+		else {
+			run = 1;
+		}
+	}
+
+	for (size_t phraseLen = 2; phraseLen <= words.size() / 2; ++phraseLen) {
+		if (words.size() % phraseLen != 0) continue;
+		bool repeats = true;
+		for (size_t i = phraseLen; i < words.size(); ++i) {
+			if (words[i] != words[i % phraseLen]) {
+				repeats = false;
+				break;
+			}
+		}
+		if (repeats) return true;
+	}
+
+	return false;
+}
+
+inline bool TranscriptHasStrongAudioEvidence(float maxVadProbability, float maxFramePeak, float speechPeakThreshold)
+{
+	return maxVadProbability >= 0.55f || maxFramePeak >= std::max(0.045f, speechPeakThreshold * 1.35f);
+}
+
+inline bool TranscriptHasWeakAudioEvidence(float maxVadProbability, float maxFramePeak, float speechPeakThreshold)
+{
+	return maxVadProbability < 0.38f && maxFramePeak < std::max(0.032f, speechPeakThreshold * 1.10f);
+}
+
+inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
+                                                 float maxFramePeak, float speechPeakThreshold,
+                                                 float noSpeechProbability, float averageTokenLogProbability,
+                                                 int tokenCount)
+{
+	if (!alwaysOn || cleanedText.empty()) return false;
+
+	const bool strong_audio = TranscriptHasStrongAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold);
+	const bool weak_audio = TranscriptHasWeakAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold);
+
+	if (TranscriptLooksLikeCommonHallucination(cleanedText) && !strong_audio) return true;
+	if (noSpeechProbability >= 0.85f && !strong_audio) return true;
+	if (weak_audio && noSpeechProbability >= 0.65f) return true;
+	if (tokenCount > 0 && averageTokenLogProbability < -1.35f && noSpeechProbability >= 0.45f && !strong_audio) {
+		return true;
+	}
+	if (TranscriptLooksRepetitive(cleanedText) && tokenCount > 0 && averageTokenLogProbability < -0.85f &&
+	    !strong_audio) {
+		return true;
+	}
+
+	return false;
+}
+
 inline std::string TrimTranscriptLeadingSeparators(const std::string& text, size_t start)
 {
 	while (start < text.size() && !TranscriptIsWordChar(static_cast<unsigned char>(text[start]))) {

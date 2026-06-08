@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #include "RouterPublisher.h"
+#include "ChatboxText.h"
 #include "Logging.h"
 
 #include <algorithm>
@@ -139,27 +140,6 @@ size_t RouterPublisher::EncodeBoolPacket(uint8_t* buf, size_t buf_size, const ch
 	return static_cast<size_t>(out - buf);
 }
 
-// ---------------------------------------------------------------------------
-// Truncate text to at most 144 UTF-8 bytes at a whitespace boundary.
-// ---------------------------------------------------------------------------
-
-static std::string TruncateToVrchatLimit(const std::string& text)
-{
-	static constexpr size_t kLimit = 144;
-	if (text.size() <= kLimit) return text;
-
-	// Find last whitespace at or before byte 144.
-	size_t cut = kLimit;
-	while (cut > 0 && text[cut] != ' ' && text[cut] != '\t' && text[cut] != '\r' && text[cut] != '\n') {
-		--cut;
-	}
-	if (cut == 0) cut = kLimit; // no whitespace found; hard truncate
-
-	std::string result = text.substr(0, cut);
-	result += "...";
-	return result;
-}
-
 bool RouterPublisher::PublishPacket(const uint8_t* packet, size_t packet_size)
 {
 	if (!packet || packet_size == 0) return false;
@@ -199,7 +179,7 @@ bool RouterPublisher::PublishPacket(const uint8_t* packet, size_t packet_size)
 bool RouterPublisher::PublishChatbox(const std::string& address, const std::string& text_in, bool send_immediate,
                                      bool notify)
 {
-	std::string text = TruncateToVrchatLimit(text_in);
+	std::string text = captions::TruncateTextForChatbox(text_in);
 	const char* packet_address = (!address.empty() && address.front() == '/') ? address.c_str() : "/chatbox/input";
 
 	uint8_t pkt[1024];

@@ -19,6 +19,7 @@
 
 // Pull in the implementation directly (header-only interface test).
 #include "ChatboxPacer.h"
+#include "ChatboxText.h"
 #include "CaptionPreviewHistory.h"
 #include "CaptionsOutputPolicy.h"
 #include "Protocol.h"
@@ -52,12 +53,12 @@ TEST(ChatboxPacerTest, DropOldestWhenFull)
 	ChatboxPacer pacer(1000.0); // effectively infinite gap
 
 	// Fill the queue to capacity + 1.
-	for (int i = 0; i < 9; ++i) {
+	for (int i = 0; i < 17; ++i) {
 		pacer.Enqueue("msg" + std::to_string(i), true, false);
 	}
 
 	// The oldest (msg0) should have been dropped; queue holds kQueueCap entries.
-	EXPECT_EQ(pacer.QueueSize(), 8u);
+	EXPECT_EQ(pacer.QueueSize(), 16u);
 }
 
 TEST(CaptionsOutputPolicyTest, ChatboxPublishRequiresToggleAndText)
@@ -249,39 +250,52 @@ TEST(OscPacketTest, TypingIndicatorUsesBoolTypetag)
 // 144-byte truncation
 // ---------------------------------------------------------------------------
 
-static std::string TruncateToVrchatLimit(const std::string& text)
-{
-	static constexpr size_t kLimit = 144;
-	if (text.size() <= kLimit) return text;
-
-	size_t cut = kLimit;
-	while (cut > 0 && text[cut] != ' ' && text[cut] != '\t' && text[cut] != '\r' && text[cut] != '\n') {
-		--cut;
-	}
-	if (cut == 0) cut = kLimit;
-	return text.substr(0, cut) + "...";
-}
-
 TEST(TruncationTest, ShortStringUnchanged)
 {
 	std::string s = "Hello world";
-	EXPECT_EQ(TruncateToVrchatLimit(s), s);
+	EXPECT_EQ(captions::TruncateTextForChatbox(s), s);
 }
 
 TEST(TruncationTest, LongStringTruncatedAtWhitespace)
 {
 	std::string s(140, 'a');
 	s += " extra words here that push past the limit";
-	std::string result = TruncateToVrchatLimit(s);
-	EXPECT_LE(result.size(), 144u + 3u); // + "..."
-	EXPECT_TRUE(result.back() == '.' || result.size() <= 144);
+	std::string result = captions::TruncateTextForChatbox(s);
+	EXPECT_LE(result.size(), captions::VrchatChatboxByteLimit());
+	EXPECT_TRUE(result.back() == '.');
 }
 
 TEST(TruncationTest, LongStringWithNoWhitespaceTruncatesHard)
 {
 	std::string s(200, 'x');
-	std::string result = TruncateToVrchatLimit(s);
-	EXPECT_LE(result.size(), 144u + 3u);
+	std::string result = captions::TruncateTextForChatbox(s);
+	EXPECT_LE(result.size(), captions::VrchatChatboxByteLimit());
+}
+
+TEST(ChatboxTextTest, SplitKeepsEveryChunkUnderLimit)
+{
+	const std::string s = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
+	const std::vector<std::string> chunks = captions::SplitTextForChatbox(s, 18);
+	ASSERT_GT(chunks.size(), 1u);
+	for (const auto& chunk : chunks) {
+		EXPECT_LE(chunk.size(), 18u);
+		EXPECT_FALSE(chunk.empty());
+	}
+	EXPECT_EQ(chunks.front(), "alpha beta gamma");
+	EXPECT_EQ(chunks.back(), "iota kappa lambda");
+}
+
+TEST(ChatboxTextTest, SplitDoesNotStartChunkOnUtf8ContinuationByte)
+{
+	const std::string e_accent = "\xC3\xA9";
+	const std::string s = e_accent + e_accent + e_accent + " " + e_accent + e_accent + e_accent;
+	const std::vector<std::string> chunks = captions::SplitTextForChatbox(s, 5);
+	ASSERT_GT(chunks.size(), 1u);
+	for (const auto& chunk : chunks) {
+		EXPECT_LE(chunk.size(), 5u);
+		ASSERT_FALSE(chunk.empty());
+		EXPECT_FALSE(captions::ChatboxUtf8Continuation(static_cast<unsigned char>(chunk.front())));
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -383,10 +397,10 @@ TEST(EnergySpeechGateTest, AlwaysOnUsesLongerMinimumThanPushToTalk)
 
 TEST(EnergySpeechGateTest, AlwaysOnKeepsShortPrerollAndModerateSilenceTail)
 {
-	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 20);
-	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 30);
-	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(), 128000u);
-	EXPECT_EQ(captions::AlwaysOnContinuationOverlapSamples(), 6400u);
+	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 32);
+	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 32);
+	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(), 80000u);
+	EXPECT_EQ(captions::AlwaysOnContinuationOverlapSamples(), 9600u);
 }
 
 TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
@@ -501,7 +515,7 @@ TEST(EnergySpeechGateTest, CopyTrailingSamplesKeepsBoundedContinuationOverlap)
 
 	std::vector<float> tail = captions::CopyTrailingSamples(pcm, captions::AlwaysOnContinuationOverlapSamples());
 	ASSERT_EQ(tail.size(), captions::AlwaysOnContinuationOverlapSamples());
-	EXPECT_FLOAT_EQ(tail.front(), 3600.0f);
+	EXPECT_FLOAT_EQ(tail.front(), 400.0f);
 	EXPECT_FLOAT_EQ(tail.back(), 9999.0f);
 
 	std::vector<float> short_tail = captions::CopyTrailingSamples(std::vector<float>{1.0f, 2.0f, 3.0f}, 6400);
@@ -537,6 +551,25 @@ TEST(TranscriptTextTest, DetectsCommonLowConfidenceHallucinations)
 	EXPECT_TRUE(captions::TranscriptLooksLikeCommonHallucination("Please subscribe"));
 	EXPECT_FALSE(captions::TranscriptLooksLikeCommonHallucination("Thank you for helping me test captions."));
 	EXPECT_FALSE(captions::TranscriptLooksLikeCommonHallucination("I was watching the mirror."));
+}
+
+TEST(TranscriptTextTest, DetectsOnlyLikelyDecodeRepetition)
+{
+	EXPECT_TRUE(captions::TranscriptLooksRepetitive("hello world hello world hello world"));
+	EXPECT_TRUE(captions::TranscriptLooksRepetitive("test test test test test test"));
+	EXPECT_FALSE(captions::TranscriptLooksRepetitive("hello world hello again world hello"));
+}
+
+TEST(TranscriptTextTest, ConfidenceSuppressionRequiresWeakAudioOrBadDecode)
+{
+	EXPECT_TRUE(captions::TranscriptShouldSuppressByConfidence("Thanks for watching", true, 0.10f, 0.01f, 0.04f, 0.30f,
+	                                                           -0.20f, 4));
+	EXPECT_TRUE(
+	    captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.10f, 0.01f, 0.04f, 0.90f, -0.20f, 4));
+	EXPECT_FALSE(
+	    captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.70f, 0.01f, 0.04f, 0.90f, -0.20f, 4));
+	EXPECT_FALSE(
+	    captions::TranscriptShouldSuppressByConfidence("hello there", false, 0.10f, 0.01f, 0.04f, 0.90f, -2.00f, 4));
 }
 
 // ---------------------------------------------------------------------------

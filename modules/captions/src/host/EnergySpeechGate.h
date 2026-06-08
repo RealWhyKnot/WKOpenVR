@@ -9,12 +9,12 @@ namespace captions {
 
 inline int AlwaysOnPrerollFrames()
 {
-	return 20; // ~640 ms at 512 samples / 16 kHz
+	return 32; // ~1024 ms at 512 samples / 16 kHz
 }
 
 inline int AlwaysOnSilenceFrames()
 {
-	return 30; // ~960 ms at 512 samples / 16 kHz
+	return 32; // ~1024 ms at 512 samples / 16 kHz
 }
 
 inline int AlwaysOnActivationWindowFrames()
@@ -44,12 +44,12 @@ inline size_t AlwaysOnShortSpeechSamples()
 
 inline size_t AlwaysOnMaxSpeechSamples()
 {
-	return 128000; // 8 s max before flushing a continuous segment
+	return 80000; // 5 s max before flushing a continuous segment
 }
 
 inline size_t AlwaysOnContinuationOverlapSamples()
 {
-	return 6400; // 400 ms repeated into the next continuous segment
+	return 9600; // 600 ms repeated into the next continuous segment
 }
 
 inline size_t PushToTalkMinSpeechSamples()

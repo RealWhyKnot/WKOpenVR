@@ -31,7 +31,7 @@ public:
 	size_t QueueSize() const noexcept { return queue_.size(); }
 
 private:
-	static constexpr size_t kQueueCap = 8;
+	static constexpr size_t kQueueCap = 16;
 	double min_gap_sec_;
 	std::deque<Entry> queue_;
 	std::chrono::steady_clock::time_point last_send_{};

@@ -9,6 +9,17 @@
 struct whisper_context;
 struct whisper_full_params;
 
+struct WhisperTranscriptResult
+{
+	bool succeeded = false;
+	std::string text;
+	std::string detected_lang;
+	float max_no_speech_probability = 0.0f;
+	float average_token_log_probability = 0.0f;
+	int token_count = 0;
+	int segment_count = 0;
+};
+
 // Wrapper around whisper.cpp.
 //
 // Loads a ggml model file at Load() time. Transcribe() accepts a buffer of
@@ -37,6 +48,7 @@ public:
 	// Returns the concatenated segment text. Writes the detected language
 	// BCP-47 code to `*detected_lang_out` if non-null.
 	std::string Transcribe(const std::vector<float>& pcm16k, std::string* detected_lang_out = nullptr);
+	WhisperTranscriptResult TranscribeDetailed(const std::vector<float>& pcm16k);
 
 private:
 	whisper_context* ctx_ = nullptr;

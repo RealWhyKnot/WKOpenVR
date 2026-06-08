@@ -10,6 +10,7 @@
 #include "Captions.h"
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsOutputPolicy.h"
+#include "ChatboxText.h"
 #include "ChatboxPacer.h"
 #include "AudioLevel.h"
 #include "EnergySpeechGate.h"
@@ -770,6 +771,7 @@ try {
 	bool in_speech = false;
 	bool ptt_was_held = false;
 	size_t speech_samples_since_open = 0;
+	size_t speech_evidence_samples_since_open = 0;
 	float speech_max_vad_probability = -1.0f;
 	float speech_max_frame_peak = 0.0f;
 	captions::AdaptiveSpeechGate speech_gate;
@@ -956,6 +958,7 @@ try {
 			silence_count = 0;
 			speech_activation.Reset();
 			speech_samples_since_open = 0;
+			speech_evidence_samples_since_open = 0;
 			speech_max_vad_probability = -1.0f;
 			speech_max_frame_peak = 0.0f;
 			preroll_frames.clear();
@@ -983,11 +986,14 @@ try {
 					speech_activation.Push(speech_frame, possible_speech_frame);
 				}
 				if (!in_speech && speech_activation.ShouldOpen()) {
+					const size_t activation_evidence_samples =
+					    static_cast<size_t>(speech_activation.PossibleFrames()) * frame.size();
 					in_speech = true;
 					if (vad) vad->Reset();
 					speech_buf.clear();
 					speech_buf_has_continuation_overlap = false;
 					speech_samples_since_open = 0;
+					speech_evidence_samples_since_open = activation_evidence_samples;
 					speech_max_vad_probability = -1.0f;
 					speech_max_frame_peak = 0.0f;
 					for (const auto& preroll : preroll_frames) {
@@ -1023,6 +1029,9 @@ try {
 				if (in_speech) {
 					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
 					speech_samples_since_open += frame.size();
+					if (speech_frame || possible_speech_frame) {
+						speech_evidence_samples_since_open += frame.size();
+					}
 					speech_max_vad_probability = std::max(speech_max_vad_probability, prob);
 					speech_max_frame_peak = std::max(speech_max_frame_peak, peak);
 					if (speech_samples_since_open >= captions::AlwaysOnMaxSpeechSamples()) {
@@ -1050,6 +1059,7 @@ try {
 						speech_buf.clear();
 						speech_buf_has_continuation_overlap = false;
 						speech_samples_since_open = 0;
+						speech_evidence_samples_since_open = 0;
 						speech_max_vad_probability = -1.0f;
 						speech_max_frame_peak = 0.0f;
 						status.SetState(HostStatus::State::Listening);
@@ -1057,6 +1067,7 @@ try {
 					}
 					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
 					speech_samples_since_open += frame.size();
+					speech_evidence_samples_since_open += frame.size();
 					ptt_was_held = true;
 				}
 				else if (ptt_was_held) {
@@ -1069,13 +1080,14 @@ try {
 			continue;
 
 		transcribe:
-			if (!captions::SpeechSegmentShouldTranscribe(speech_samples_since_open, always_on,
+			if (!captions::SpeechSegmentShouldTranscribe(speech_evidence_samples_since_open, always_on,
 			                                             speech_max_vad_probability, speech_max_frame_peak,
 			                                             speech_gate.SpeechPeakThreshold())) {
 				in_speech = false;
 				speech_buf.clear();
 				speech_buf_has_continuation_overlap = false;
 				speech_samples_since_open = 0;
+				speech_evidence_samples_since_open = 0;
 				silence_count = 0;
 				speech_activation.Reset();
 				speech_max_vad_probability = -1.0f;
@@ -1090,6 +1102,7 @@ try {
 				const float segment_max_vad_probability = speech_max_vad_probability;
 				const float segment_max_frame_peak = speech_max_frame_peak;
 				const float segment_speech_peak_threshold = speech_gate.SpeechPeakThreshold();
+				const size_t segment_speech_evidence_samples = speech_evidence_samples_since_open;
 				std::vector<float> segment_pcm = speech_buf;
 				std::vector<float> continuation_overlap;
 				if (resume_after_transcribe) {
@@ -1099,9 +1112,12 @@ try {
 
 				std::string detected_lang;
 				std::string transcript;
+				WhisperTranscriptResult whisper_result;
 				if (whisper.IsLoaded()) {
 					whisper.SetInitialPrompt(whisper_prompt.Text());
-					transcript = whisper.Transcribe(segment_pcm, &detected_lang);
+					whisper_result = whisper.TranscribeDetailed(segment_pcm);
+					detected_lang = whisper_result.detected_lang;
+					transcript = whisper_result.text;
 				}
 				else if (whisper_load_attempted && whisper_load_failed) {
 					status.SetLastError("Whisper model failed to load.");
@@ -1128,24 +1144,28 @@ try {
 					in_speech = false;
 				}
 				speech_samples_since_open = 0;
+				speech_evidence_samples_since_open = 0;
 				silence_count = 0;
 				speech_activation.Reset();
 				speech_max_vad_probability = -1.0f;
 				speech_max_frame_peak = 0.0f;
 				status.SetLastTranscript(transcript);
-				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
+				TH_LOG("[main] transcript (%s nospeech=%.3f avglog=%.3f tokens=%d evidence=%zu): %s",
+				       detected_lang.c_str(), whisper_result.max_no_speech_probability,
+				       whisper_result.average_token_log_probability, whisper_result.token_count,
+				       segment_speech_evidence_samples, transcript.c_str());
 
 				std::string publish_transcript = captions::CleanTranscriptForPublish(transcript);
-				const bool low_confidence_always_on =
-				    always_on && segment_max_vad_probability < 0.45f &&
-				    segment_max_frame_peak < std::max(0.035f, segment_speech_peak_threshold * 1.25f);
 				const bool skip_non_speech = !transcript.empty() && publish_transcript.empty();
-				const bool skip_hallucination =
-				    low_confidence_always_on && captions::TranscriptLooksLikeCommonHallucination(publish_transcript);
-				if (skip_non_speech || skip_hallucination) {
-					TH_LOG("[main] suppressed transcript as %s: raw='%s' vad=%.3f peak=%.3f",
-					       skip_non_speech ? "non-speech" : "low-confidence hallucination", transcript.c_str(),
-					       segment_max_vad_probability, segment_max_frame_peak);
+				const bool skip_confidence = captions::TranscriptShouldSuppressByConfidence(
+				    publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
+				    segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
+				    whisper_result.average_token_log_probability, whisper_result.token_count);
+				if (skip_non_speech || skip_confidence) {
+					TH_LOG("[main] suppressed transcript as %s: raw='%s' vad=%.3f peak=%.3f nospeech=%.3f avglog=%.3f",
+					       skip_non_speech ? "non-speech" : "low-confidence", transcript.c_str(),
+					       segment_max_vad_probability, segment_max_frame_peak,
+					       whisper_result.max_no_speech_probability, whisper_result.average_token_log_probability);
 					publish_transcript.clear();
 					status.SetLastTranslation("");
 				}
@@ -1183,7 +1203,13 @@ try {
 					status.IncrementCaptionsCompleted();
 				}
 				if (captions::ShouldPublishChatbox(cfg.chatbox_enabled, output)) {
-					pacer.Enqueue(output, true, cfg.notify_sound);
+					const std::vector<std::string> chunks = captions::SplitTextForChatbox(output);
+					if (chunks.size() > 1) {
+						TH_LOG("[main] split chatbox output into %zu chunks", chunks.size());
+					}
+					for (const auto& chunk : chunks) {
+						pacer.Enqueue(chunk, true, cfg.notify_sound);
+					}
 				}
 				status.SetState(resume_after_transcribe ? HostStatus::State::Listening : HostStatus::State::Idle);
 			}

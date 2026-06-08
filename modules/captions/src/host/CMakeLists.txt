@@ -260,6 +260,7 @@ set(HOST_SOURCES
     SileroVad.h
     Captions.cpp
     Captions.h
+    ChatboxText.h
     WasapiCapture.cpp
     WasapiCapture.h
     TranscriptText.h
