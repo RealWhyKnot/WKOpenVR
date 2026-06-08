@@ -1087,6 +1087,9 @@ try {
 			{
 				const bool resume_after_transcribe = continue_after_transcribe && always_on;
 				const bool segment_had_continuation_overlap = speech_buf_has_continuation_overlap;
+				const float segment_max_vad_probability = speech_max_vad_probability;
+				const float segment_max_frame_peak = speech_max_frame_peak;
+				const float segment_speech_peak_threshold = speech_gate.SpeechPeakThreshold();
 				std::vector<float> segment_pcm = speech_buf;
 				std::vector<float> continuation_overlap;
 				if (resume_after_transcribe) {
@@ -1131,19 +1134,49 @@ try {
 				speech_max_frame_peak = 0.0f;
 				status.SetLastTranscript(transcript);
 				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
-				if (!transcript.empty()) {
-					whisper_prompt.Observe(transcript);
-					last_transcript_for_overlap = transcript;
+
+				std::string publish_transcript = captions::CleanTranscriptForPublish(transcript);
+				const bool low_confidence_always_on =
+				    always_on && segment_max_vad_probability < 0.45f &&
+				    segment_max_frame_peak < std::max(0.035f, segment_speech_peak_threshold * 1.25f);
+				const bool skip_non_speech = !transcript.empty() && publish_transcript.empty();
+				const bool skip_hallucination =
+				    low_confidence_always_on && captions::TranscriptLooksLikeCommonHallucination(publish_transcript);
+				if (skip_non_speech || skip_hallucination) {
+					TH_LOG("[main] suppressed transcript as %s: raw='%s' vad=%.3f peak=%.3f",
+					       skip_non_speech ? "non-speech" : "low-confidence hallucination", transcript.c_str(),
+					       segment_max_vad_probability, segment_max_frame_peak);
+					publish_transcript.clear();
+					status.SetLastTranslation("");
+				}
+				else if (!publish_transcript.empty()) {
+					whisper_prompt.Observe(publish_transcript);
+					last_transcript_for_overlap = publish_transcript;
 				}
 
 				// Translation step.
-				std::string output = transcript;
-				if (!cfg.target_lang.empty() && captions_engine.IsLoaded()) {
-					status.SetState(HostStatus::State::Translating);
-					output = captions_engine.Translate(
-					    transcript, detected_lang.empty() ? cfg.source_lang : detected_lang, cfg.target_lang);
-					status.SetLastTranslation(output);
-					TH_LOG("[main] translation: %s", output.c_str());
+				std::string output = publish_transcript;
+				const std::string effective_src_lang =
+				    (cfg.source_lang.empty() || cfg.source_lang == "auto") ? detected_lang : cfg.source_lang;
+				const bool translation_requested =
+				    !cfg.target_lang.empty() && (effective_src_lang.empty() || effective_src_lang != cfg.target_lang);
+				if (!publish_transcript.empty() && translation_requested) {
+					if (captions_engine.IsLoaded()) {
+						status.SetState(HostStatus::State::Translating);
+						output = captions_engine.Translate(publish_transcript, effective_src_lang, cfg.target_lang);
+						status.SetLastTranslation(output);
+						TH_LOG("[main] translation: %s", output.c_str());
+					}
+					else {
+						output.clear();
+						status.SetLastTranslation("");
+						status.SetLastError("Translation model is not loaded; skipped chatbox publish.");
+						TH_LOG("[main] translation requested for %s->%s but model is not loaded; skipped publish",
+						       effective_src_lang.c_str(), cfg.target_lang.c_str());
+					}
+				}
+				else if (!translation_requested) {
+					status.SetLastTranslation("");
 				}
 
 				if (!output.empty()) {

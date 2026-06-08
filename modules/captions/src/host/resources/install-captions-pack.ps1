@@ -202,7 +202,8 @@ function Install-HfSnapshot {
     $repo = [string]$Snapshot.repo
     $revision = [string]$Snapshot.revision
     if (-not $revision) { $revision = "main" }
-    $destRoot = Join-InstallPath -RelativePath ([string]$Snapshot.destination)
+    $destRelRoot = ([string]$Snapshot.destination).TrimEnd([char[]]@('\','/'))
+    $destRoot = Join-InstallPath -RelativePath $destRelRoot
 
     if (-not $repo) { throw "hf_snapshot.repo is missing" }
     if (-not $Snapshot.destination) { throw "hf_snapshot.destination is missing" }
@@ -214,21 +215,42 @@ function Install-HfSnapshot {
     }
     if (-not $meta.siblings) { throw "No files found in Hugging Face snapshot $repo@$revision" }
 
-    New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
-    foreach ($file in $meta.siblings) {
-        $rel = [string]$file.rfilename
-        if (-not $rel -or $rel.EndsWith("/")) { continue }
-        if ($rel -eq ".gitattributes" -or $rel -like "*.md") { continue }
+    $tmpRelRoot = "$destRelRoot.install.$PID.$([guid]::NewGuid().ToString('N'))"
+    $tmpDestRoot = Join-InstallPath -RelativePath $tmpRelRoot
+    New-Item -ItemType Directory -Force -Path $tmpDestRoot | Out-Null
+    try {
+        foreach ($file in $meta.siblings) {
+            $rel = [string]$file.rfilename
+            if (-not $rel -or $rel.EndsWith("/")) { continue }
+            if ($rel -eq ".gitattributes" -or $rel -like "*.md") { continue }
 
-        $destRelRoot = ([string]$Snapshot.destination).TrimEnd([char[]]@('\','/'))
-        $target = Join-InstallPath -RelativePath (Join-Path $destRelRoot $rel)
-        $urlRel = [System.Uri]::EscapeDataString($rel).Replace("%2F", "/")
-        $url = "https://huggingface.co/$repo/resolve/$revision/$urlRel"
-        $sha = ""
-        if ($file.lfs -and $file.lfs.sha256) {
-            $sha = [string]$file.lfs.sha256
+            $target = Join-InstallPath -RelativePath (Join-Path $tmpRelRoot $rel)
+            $urlRel = [System.Uri]::EscapeDataString($rel).Replace("%2F", "/")
+            $url = "https://huggingface.co/$repo/resolve/$revision/$urlRel"
+            $sha = ""
+            if ($file.lfs -and $file.lfs.sha256) {
+                $sha = [string]$file.lfs.sha256
+            }
+            Download-VerifiedFile -Url $url -Destination $target -Sha256 $sha
         }
-        Download-VerifiedFile -Url $url -Destination $target -Sha256 $sha
+
+        if ($Snapshot.required_files) {
+            foreach ($required in @($Snapshot.required_files)) {
+                $rel = [string]$required
+                if (-not $rel) { continue }
+                $candidate = Join-InstallPath -RelativePath (Join-Path $tmpRelRoot $rel)
+                if (-not (Test-Path -LiteralPath $candidate)) {
+                    throw "Hugging Face snapshot $repo@$revision is missing required file: $rel"
+                }
+            }
+        }
+
+        Remove-PathIfPresent -Path $destRoot
+        Move-Item -LiteralPath $tmpDestRoot -Destination $destRoot -Force
+        Write-Log "Installed Hugging Face snapshot $repo@$revision -> $destRelRoot"
+    } catch {
+        Remove-PathIfPresent -Path $tmpDestRoot
+        throw
     }
 }
 

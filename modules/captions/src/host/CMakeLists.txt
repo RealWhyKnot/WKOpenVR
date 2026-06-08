@@ -200,6 +200,38 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# SentencePiece (Google, Apache-2.0)
+# OPUS-MT CTranslate2 models expect SentencePiece tokenized input and output.
+# CTranslate2 intentionally accepts tokens, not raw text, so the host needs the
+# tokenizer whenever translation is compiled in.
+# ---------------------------------------------------------------------------
+option(WKOPENVR_CAPTIONS_FETCH_SENTENCEPIECE
+    "Fetch SentencePiece for OPUS-MT tokenization when translation support is enabled."
+    ON)
+
+set(HAVE_SENTENCEPIECE OFF)
+if(HAVE_CT2 AND WKOPENVR_CAPTIONS_FETCH_SENTENCEPIECE)
+    set(SPM_BUILD_TEST OFF CACHE BOOL "" FORCE)
+    set(SPM_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+    set(SPM_ENABLE_TCMALLOC OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        sentencepiece
+        GIT_REPOSITORY https://github.com/google/sentencepiece.git
+        GIT_TAG        v0.2.1
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(sentencepiece)
+    if(TARGET sentencepiece)
+        set(HAVE_SENTENCEPIECE ON)
+        set(SENTENCEPIECE_INCLUDE_DIRS
+            "${sentencepiece_SOURCE_DIR}/src"
+            "${sentencepiece_BINARY_DIR}/src")
+        message(STATUS "SentencePiece found via FetchContent")
+    else()
+        message(WARNING "SentencePiece target was not created; translation will be disabled.")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Host executable
 # ---------------------------------------------------------------------------
 set(CAPTIONS_PAIRDRIVER_ROOT "${CMAKE_SOURCE_DIR}")
@@ -308,6 +340,12 @@ if(HAVE_CT2)
         target_link_libraries(WKOpenVRCaptionsHost PRIVATE ${CT2_LIB})
         target_compile_definitions(WKOpenVRCaptionsHost PRIVATE HAVE_CT2=1)
     endif()
+endif()
+
+if(HAVE_SENTENCEPIECE)
+    target_include_directories(WKOpenVRCaptionsHost PRIVATE ${SENTENCEPIECE_INCLUDE_DIRS})
+    target_link_libraries(WKOpenVRCaptionsHost PRIVATE sentencepiece)
+    target_compile_definitions(WKOpenVRCaptionsHost PRIVATE HAVE_SENTENCEPIECE=1)
 endif()
 
 # ---------------------------------------------------------------------------

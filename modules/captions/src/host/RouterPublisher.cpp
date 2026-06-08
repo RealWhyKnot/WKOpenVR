@@ -183,6 +183,7 @@ bool RouterPublisher::PublishPacket(const uint8_t* packet, size_t packet_size)
 		len_buf[3] = (uint8_t)((len32 >> 24) & 0xFF);
 
 		if (Write(len_buf, 4) && Write(packet, packet_size)) {
+			Disconnect();
 			return true;
 		}
 

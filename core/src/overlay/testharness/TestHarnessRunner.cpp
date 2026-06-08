@@ -9,6 +9,11 @@
 #include "SandboxStaging.h"
 #include "SteamVRConflictGuard.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -77,6 +82,41 @@ bool ShouldRun(const std::set<std::string>& filter, const std::string& slug)
 	return filter.count(slug) != 0;
 }
 
+class ScopedEnvironmentVariable
+{
+public:
+	ScopedEnvironmentVariable(const wchar_t* name, const std::wstring& value) : name_(name)
+	{
+		const DWORD len = GetEnvironmentVariableW(name_.c_str(), nullptr, 0);
+		if (len != 0) {
+			had_previous_ = true;
+			previous_.assign(len, L'\0');
+			const DWORD written = GetEnvironmentVariableW(name_.c_str(), previous_.data(), len);
+			if (written != 0 && written < len) {
+				previous_.resize(written);
+			}
+			else {
+				previous_.clear();
+				had_previous_ = false;
+			}
+		}
+		SetEnvironmentVariableW(name_.c_str(), value.c_str());
+	}
+
+	~ScopedEnvironmentVariable()
+	{
+		SetEnvironmentVariableW(name_.c_str(), had_previous_ ? previous_.c_str() : nullptr);
+	}
+
+	ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+	ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
+
+private:
+	std::wstring name_;
+	std::wstring previous_;
+	bool had_previous_ = false;
+};
+
 } // namespace
 
 int Run(int argc, char** argv)
@@ -118,6 +158,9 @@ int Run(int argc, char** argv)
 		return 4;
 	}
 	std::fprintf(stdout, "[testharness] sandbox staged at %s\n", layout.root.string().c_str());
+
+	const ScopedEnvironmentVariable moduleSafetyRoot(L"WKOPENVR_MODULE_SAFETY_ROOT",
+	                                                 (layout.root / L"module_safety").wstring());
 
 	// 3. Mock runtime + driver loader.
 	MockOpenVRRuntime mock(layout.driver_resources);

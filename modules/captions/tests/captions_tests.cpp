@@ -524,6 +524,21 @@ TEST(TranscriptTextTest, KeepsSingleRepeatedWordToAvoidDroppingRealSpeech)
 	EXPECT_EQ(captions::RemoveOverlappingTranscriptPrefix(previous, current), current);
 }
 
+TEST(TranscriptTextTest, CleansKnownNonSpeechMarkers)
+{
+	EXPECT_EQ(captions::CleanTranscriptForPublish("[Music]"), "");
+	EXPECT_EQ(captions::CleanTranscriptForPublish(" [Laughter]  hello there [Applause] "), "hello there");
+	EXPECT_TRUE(captions::TranscriptIsKnownNonSpeechMarker("[background noise]"));
+}
+
+TEST(TranscriptTextTest, DetectsCommonLowConfidenceHallucinations)
+{
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonHallucination("Thanks for watching."));
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonHallucination("Please subscribe"));
+	EXPECT_FALSE(captions::TranscriptLooksLikeCommonHallucination("Thank you for helping me test captions."));
+	EXPECT_FALSE(captions::TranscriptLooksLikeCommonHallucination("I was watching the mirror."));
+}
+
 // ---------------------------------------------------------------------------
 // Selected-device file (cross-process contract)
 // ---------------------------------------------------------------------------

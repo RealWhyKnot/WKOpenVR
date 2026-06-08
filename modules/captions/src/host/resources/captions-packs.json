@@ -79,9 +79,10 @@
       "dependencies": [ "translation-runtime-cpu" ],
       "licenses": [ "Helsinki-NLP/opus-mt-en-de model terms" ],
       "hf_snapshot": {
-        "repo": "gaudi/opus-mt-en-de-ctranslate2",
+        "repo": "Sams200/opus-mt-en-de",
         "revision": "main",
-        "destination": "models/ct2-opus-mt-en-de"
+        "destination": "models/ct2-opus-mt-en-de",
+        "required_files": [ "config.json", "model.bin", "shared_vocabulary.json", "source.spm", "target.spm" ]
       }
     },
     {
@@ -91,9 +92,10 @@
       "dependencies": [ "translation-runtime-cpu" ],
       "licenses": [ "Helsinki-NLP/opus-mt-en-es model terms" ],
       "hf_snapshot": {
-        "repo": "gaudi/opus-mt-en-es-ctranslate2",
+        "repo": "Sams200/opus-mt-en-es",
         "revision": "main",
-        "destination": "models/ct2-opus-mt-en-es"
+        "destination": "models/ct2-opus-mt-en-es",
+        "required_files": [ "config.json", "model.bin", "shared_vocabulary.json", "source.spm", "target.spm" ]
       }
     },
     {
@@ -103,9 +105,10 @@
       "dependencies": [ "translation-runtime-cpu" ],
       "licenses": [ "Helsinki-NLP/opus-mt-en-fr model terms" ],
       "hf_snapshot": {
-        "repo": "gaudi/opus-mt-en-fr-ctranslate2",
+        "repo": "Sams200/opus-mt-en-fr",
         "revision": "main",
-        "destination": "models/ct2-opus-mt-en-fr"
+        "destination": "models/ct2-opus-mt-en-fr",
+        "required_files": [ "config.json", "model.bin", "shared_vocabulary.json", "source.spm", "target.spm" ]
       }
     },
     {
@@ -115,9 +118,10 @@
       "dependencies": [ "translation-runtime-cpu" ],
       "licenses": [ "Helsinki-NLP/opus-mt-en-ru model terms" ],
       "hf_snapshot": {
-        "repo": "gaudi/opus-mt-en-ru-ctranslate2",
+        "repo": "Sams200/opus-mt-en-ru",
         "revision": "main",
-        "destination": "models/ct2-opus-mt-en-ru"
+        "destination": "models/ct2-opus-mt-en-ru",
+        "required_files": [ "config.json", "model.bin", "shared_vocabulary.json", "source.spm", "target.spm" ]
       }
     },
     {
@@ -127,9 +131,10 @@
       "dependencies": [ "translation-runtime-cpu" ],
       "licenses": [ "Helsinki-NLP/opus-mt-en-zh model terms" ],
       "hf_snapshot": {
-        "repo": "gaudi/opus-mt-en-zh-ctranslate2",
+        "repo": "Sams200/opus-mt-en-zh",
         "revision": "main",
-        "destination": "models/ct2-opus-mt-en-zh"
+        "destination": "models/ct2-opus-mt-en-zh",
+        "required_files": [ "config.json", "model.bin", "shared_vocabulary.json", "source.spm", "target.spm" ]
       }
     }
   ]
