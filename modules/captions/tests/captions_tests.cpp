@@ -28,6 +28,7 @@
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsTabLogic.h"
 #include "EnergySpeechGate.h"
+#include "WhisperPromptHistory.h"
 
 TEST(ChatboxPacerTest, MinimumGapEnforced)
 {
@@ -100,6 +101,37 @@ TEST(CaptionPreviewHistoryTest, KeepsMostRecentEntries)
 	ASSERT_EQ(history.Entries().size(), 2u);
 	EXPECT_EQ(history.Entries()[0].transcript, "two");
 	EXPECT_EQ(history.Entries()[1].transcript, "three");
+}
+
+TEST(WhisperPromptHistoryTest, TrimsAndJoinsRecentTranscripts)
+{
+	captions::WhisperPromptHistory history;
+	history.Observe("  hello there\r\n");
+	history.Observe("\tgeneral kenobi ");
+
+	EXPECT_EQ(history.Text(), "hello there general kenobi");
+}
+
+TEST(WhisperPromptHistoryTest, IgnoresBlankTextAndCanClear)
+{
+	captions::WhisperPromptHistory history;
+	history.Observe("");
+	history.Observe(" \r\n\t ");
+	EXPECT_TRUE(history.Text().empty());
+
+	history.Observe("one");
+	history.Clear();
+	EXPECT_TRUE(history.Text().empty());
+}
+
+TEST(WhisperPromptHistoryTest, KeepsWholeWordsWhenTrimmingBudget)
+{
+	captions::WhisperPromptHistory history(18);
+	history.Observe("alpha beta gamma");
+	history.Observe("delta");
+
+	EXPECT_LE(history.Text().size(), 18u);
+	EXPECT_EQ(history.Text(), "beta gamma delta");
 }
 
 // ---------------------------------------------------------------------------

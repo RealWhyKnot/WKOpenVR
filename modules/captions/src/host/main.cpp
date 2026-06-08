@@ -20,6 +20,7 @@
 #include "SileroVad.h"
 #include "WasapiCapture.h"
 #include "WhisperEngine.h"
+#include "WhisperPromptHistory.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -703,6 +704,8 @@ try {
 	status.Flush();
 	// Load Whisper.
 	WhisperEngine whisper;
+	captions::WhisperPromptHistory whisper_prompt;
+	std::string whisper_prompt_lang_key;
 	bool whisper_load_attempted = false;
 	bool whisper_load_failed = false;
 	auto next_whisper_load_attempt = std::chrono::steady_clock::time_point{};
@@ -863,6 +866,12 @@ try {
 
 		// Update whisper language hint.
 		whisper.SetLanguage(cfg.source_lang == "auto" ? "" : cfg.source_lang);
+		const std::string prompt_lang_key = cfg.source_lang.empty() ? "auto" : cfg.source_lang;
+		if (prompt_lang_key != whisper_prompt_lang_key) {
+			whisper_prompt.Clear();
+			whisper.SetInitialPrompt("");
+			whisper_prompt_lang_key = prompt_lang_key;
+		}
 		if (!whisper.IsLoaded() && FileExistsA(cfg.whisper_model_path) && loop_now >= next_whisper_load_attempt) {
 			whisper_load_attempted = true;
 			whisper_load_failed = !whisper.Load(cfg.whisper_model_path);
@@ -1066,6 +1075,7 @@ try {
 				std::string detected_lang;
 				std::string transcript;
 				if (whisper.IsLoaded()) {
+					whisper.SetInitialPrompt(whisper_prompt.Text());
 					transcript = whisper.Transcribe(speech_buf, &detected_lang);
 				}
 				else if (whisper_load_attempted && whisper_load_failed) {
@@ -1079,6 +1089,9 @@ try {
 				speech_max_frame_peak = 0.0f;
 				status.SetLastTranscript(transcript);
 				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
+				if (!transcript.empty()) {
+					whisper_prompt.Observe(transcript);
+				}
 
 				// Translation step.
 				std::string output = transcript;

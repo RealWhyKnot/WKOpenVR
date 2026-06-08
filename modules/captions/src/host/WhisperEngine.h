@@ -30,6 +30,9 @@ public:
 	// Set source language. "auto" = whisper auto-detect (adds ~50-100 ms).
 	void SetLanguage(const std::string& lang);
 
+	// Set short text context for the next transcription chunk.
+	void SetInitialPrompt(const std::string& prompt);
+
 	// Transcribe `frames` of 16 kHz mono float32 PCM.
 	// Returns the concatenated segment text. Writes the detected language
 	// BCP-47 code to `*detected_lang_out` if non-null.
@@ -38,5 +41,6 @@ public:
 private:
 	whisper_context* ctx_ = nullptr;
 	std::string language_hint_; // "" -> "auto"
+	std::string initial_prompt_;
 	int n_threads_ = 4;
 };

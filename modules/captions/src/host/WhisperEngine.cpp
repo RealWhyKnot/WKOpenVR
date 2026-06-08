@@ -48,6 +48,11 @@ void WhisperEngine::SetLanguage(const std::string& lang)
 	language_hint_ = lang;
 }
 
+void WhisperEngine::SetInitialPrompt(const std::string& prompt)
+{
+	initial_prompt_ = prompt;
+}
+
 std::string WhisperEngine::Transcribe(const std::vector<float>& pcm16k, std::string* detected_lang_out)
 {
 	if (!ctx_ || pcm16k.empty()) return {};
@@ -55,8 +60,10 @@ std::string WhisperEngine::Transcribe(const std::vector<float>& pcm16k, std::str
 	whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
 	params.n_threads = n_threads_;
 	params.no_context = true; // clean chunk boundary
+	params.n_max_text_ctx = 128;
 	params.single_segment = false;
 	params.translate = false; // translation handled downstream
+	params.initial_prompt = initial_prompt_.empty() ? nullptr : initial_prompt_.c_str();
 
 	if (!language_hint_.empty() && language_hint_ != "auto") {
 		params.language = language_hint_.c_str();
