@@ -350,8 +350,59 @@ TEST(EnergySpeechGateTest, AlwaysOnUsesLongerMinimumThanPushToTalk)
 
 TEST(EnergySpeechGateTest, AlwaysOnKeepsShortPrerollAndModerateSilenceTail)
 {
-	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 8);
-	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 24);
+	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 12);
+	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 26);
+	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(), 128000u);
+}
+
+TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
+{
+	const size_t short_samples = captions::AlwaysOnShortSpeechSamples();
+	const float threshold = 0.04f;
+
+	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(short_samples - 1, true, 0.99f, 1.0f, threshold));
+	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.05f, threshold));
+	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.71f, 0.05f, threshold));
+	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.09f, threshold));
+	EXPECT_TRUE(
+	    captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, 0.0f, threshold));
+}
+
+TEST(EnergySpeechGateTest, AdaptiveGateOpensQuietSpeechInQuietRoom)
+{
+	captions::AdaptiveSpeechGate gate;
+	for (int i = 0; i < 120; ++i) {
+		gate.ObserveAmbient(0.002f);
+	}
+
+	EXPECT_LT(gate.SpeechPeakThreshold(), 0.08f);
+	EXPECT_TRUE(gate.IsSpeech(-1.0f, 0.03f));
+	EXPECT_FALSE(gate.IsSilence(-1.0f, 0.03f));
+}
+
+TEST(EnergySpeechGateTest, AdaptiveGateRaisesThresholdInNoisyRoom)
+{
+	captions::AdaptiveSpeechGate gate;
+	for (int i = 0; i < 240; ++i) {
+		gate.ObserveAmbient(0.04f);
+	}
+
+	EXPECT_GT(gate.AmbientPeak(), 0.03f);
+	EXPECT_GT(gate.SpeechPeakThreshold(), 0.08f);
+	EXPECT_FALSE(gate.IsSpeech(-1.0f, 0.06f));
+	EXPECT_TRUE(gate.IsSpeech(-1.0f, 0.11f));
+}
+
+TEST(EnergySpeechGateTest, AdaptiveGateStillTrustsVad)
+{
+	captions::AdaptiveSpeechGate gate;
+	for (int i = 0; i < 240; ++i) {
+		gate.ObserveAmbient(0.04f);
+	}
+
+	EXPECT_TRUE(gate.IsSpeech(0.50f, 0.0f));
+	EXPECT_TRUE(gate.IsSpeech(0.35f, gate.SoftSpeechPeakThreshold()));
+	EXPECT_FALSE(gate.IsSpeech(0.31f, gate.SoftSpeechPeakThreshold()));
 }
 
 // ---------------------------------------------------------------------------

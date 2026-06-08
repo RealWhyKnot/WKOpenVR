@@ -25,6 +25,7 @@
 
 #include <openvr.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -761,9 +762,13 @@ try {
 
 	// VAD state machine.
 	int silence_count = 0;
+	int speech_candidate_count = 0;
 	bool in_speech = false;
 	bool ptt_was_held = false;
 	size_t speech_samples_since_open = 0;
+	float speech_max_vad_probability = -1.0f;
+	float speech_max_frame_peak = 0.0f;
+	captions::AdaptiveSpeechGate speech_gate;
 	std::deque<std::vector<float>> preroll_frames;
 	std::vector<float> speech_buf;
 
@@ -935,7 +940,10 @@ try {
 		if (!always_on && in_speech) {
 			in_speech = false;
 			silence_count = 0;
+			speech_candidate_count = 0;
 			speech_samples_since_open = 0;
+			speech_max_vad_probability = -1.0f;
+			speech_max_frame_peak = 0.0f;
 			preroll_frames.clear();
 			speech_buf.clear();
 			set_typing_indicator(false, cfg);
@@ -952,12 +960,18 @@ try {
 					prob = vad->Feed(frame.data(), frame.size());
 				}
 				const float peak = captions::ComputeBufferPeak(frame.data(), frame.size());
-				if (captions::SpeechGateIsSpeech(prob, peak)) {
+				const bool speech_frame = speech_gate.IsSpeech(prob, peak);
+				if (speech_frame) {
 					if (!in_speech) {
+						++speech_candidate_count;
+					}
+					if (!in_speech && speech_candidate_count >= 2) {
 						in_speech = true;
 						if (vad) vad->Reset();
 						speech_buf.clear();
 						speech_samples_since_open = 0;
+						speech_max_vad_probability = -1.0f;
+						speech_max_frame_peak = 0.0f;
 						for (const auto& preroll : preroll_frames) {
 							speech_buf.insert(speech_buf.end(), preroll.begin(), preroll.end());
 						}
@@ -965,25 +979,43 @@ try {
 						status.SetState(HostStatus::State::Listening);
 						set_typing_indicator(true, cfg);
 						if (prob < 0.5f) {
-							TH_LOG("[vad] speech gate opened by input level peak=%.3f prob=%.3f", peak, prob);
+							TH_LOG("[vad] speech gate opened by input level peak=%.3f threshold=%.3f noise=%.3f "
+							       "prob=%.3f",
+							       peak, speech_gate.SpeechPeakThreshold(), speech_gate.AmbientPeak(), prob);
 						}
 					}
-					silence_count = 0;
+					if (in_speech) {
+						silence_count = 0;
+					}
 				}
-				else if (in_speech && captions::SpeechGateIsSilence(prob, peak)) {
+				else if (in_speech && speech_gate.IsSilence(prob, peak)) {
 					++silence_count;
 					if (silence_count >= captions::AlwaysOnSilenceFrames()) {
 						in_speech = false;
+						speech_candidate_count = 0;
 						set_typing_indicator(false, cfg);
 						status.SetState(HostStatus::State::Transcribing);
 						goto transcribe;
 					}
 				}
+				else if (!in_speech) {
+					speech_candidate_count = 0;
+				}
 				if (in_speech) {
 					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
 					speech_samples_since_open += frame.size();
+					speech_max_vad_probability = std::max(speech_max_vad_probability, prob);
+					speech_max_frame_peak = std::max(speech_max_frame_peak, peak);
+					if (speech_samples_since_open >= captions::AlwaysOnMaxSpeechSamples()) {
+						in_speech = false;
+						speech_candidate_count = 0;
+						set_typing_indicator(false, cfg);
+						status.SetState(HostStatus::State::Transcribing);
+						goto transcribe;
+					}
 				}
 				else {
+					speech_gate.ObserveAmbient(peak);
 					preroll_frames.push_back(frame);
 					while (preroll_frames.size() > static_cast<size_t>(captions::AlwaysOnPrerollFrames())) {
 						preroll_frames.pop_front();
@@ -998,6 +1030,8 @@ try {
 					if (!ptt_was_held) {
 						speech_buf.clear();
 						speech_samples_since_open = 0;
+						speech_max_vad_probability = -1.0f;
+						speech_max_frame_peak = 0.0f;
 						status.SetState(HostStatus::State::Listening);
 						set_typing_indicator(true, cfg);
 					}
@@ -1015,10 +1049,15 @@ try {
 			continue;
 
 		transcribe:
-			if (!captions::SpeechBufferLongEnough(speech_samples_since_open, always_on)) {
+			if (!captions::SpeechSegmentShouldTranscribe(speech_samples_since_open, always_on,
+			                                             speech_max_vad_probability, speech_max_frame_peak,
+			                                             speech_gate.SpeechPeakThreshold())) {
 				speech_buf.clear();
 				speech_samples_since_open = 0;
 				silence_count = 0;
+				speech_candidate_count = 0;
+				speech_max_vad_probability = -1.0f;
+				speech_max_frame_peak = 0.0f;
 				status.SetState(HostStatus::State::Idle);
 				continue;
 			}
@@ -1035,6 +1074,9 @@ try {
 				speech_buf.clear();
 				speech_samples_since_open = 0;
 				silence_count = 0;
+				speech_candidate_count = 0;
+				speech_max_vad_probability = -1.0f;
+				speech_max_frame_peak = 0.0f;
 				status.SetLastTranscript(transcript);
 				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
 
