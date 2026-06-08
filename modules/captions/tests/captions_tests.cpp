@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -141,6 +142,20 @@ static size_t EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const char* tex
 	return static_cast<size_t>(out - buf);
 }
 
+static size_t EncodeTypingPacket(uint8_t* buf, size_t buf_size, bool active)
+{
+	const char* typetag = active ? ",T" : ",F";
+	size_t addr_bytes = Pad4(strlen("/chatbox/typing") + 1);
+	size_t tag_bytes = Pad4(strlen(typetag) + 1);
+	size_t total = addr_bytes + tag_bytes;
+	if (total > buf_size) return 0;
+
+	uint8_t* out = buf;
+	WriteOscString(out, "/chatbox/typing");
+	WriteOscString(out, typetag);
+	return static_cast<size_t>(out - buf);
+}
+
 TEST(OscPacketTest, AddressFieldAlignment)
 {
 	uint8_t buf[512] = {};
@@ -175,6 +190,26 @@ TEST(OscPacketTest, TypetagWithNotify)
 	size_t addr_bytes = Pad4(strlen("/chatbox/input") + 1);
 	const char* typetag = reinterpret_cast<const char*>(buf + addr_bytes);
 	EXPECT_STREQ(typetag, ",sTT");
+}
+
+TEST(OscPacketTest, TypingIndicatorUsesBoolTypetag)
+{
+	uint8_t buf[128] = {};
+	size_t sz = EncodeTypingPacket(buf, sizeof(buf), true);
+	ASSERT_GT(sz, 0u);
+	EXPECT_EQ(sz % 4, 0u);
+	EXPECT_STREQ(reinterpret_cast<const char*>(buf), "/chatbox/typing");
+
+	size_t addr_bytes = Pad4(strlen("/chatbox/typing") + 1);
+	const char* typetag = reinterpret_cast<const char*>(buf + addr_bytes);
+	EXPECT_STREQ(typetag, ",T");
+	EXPECT_EQ(sz, addr_bytes + Pad4(strlen(",T") + 1));
+
+	memset(buf, 0, sizeof(buf));
+	sz = EncodeTypingPacket(buf, sizeof(buf), false);
+	ASSERT_GT(sz, 0u);
+	typetag = reinterpret_cast<const char*>(buf + addr_bytes);
+	EXPECT_STREQ(typetag, ",F");
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +337,21 @@ TEST(EnergySpeechGateTest, SilenceRequiresBothLowVadAndLowLevel)
 	EXPECT_TRUE(captions::SpeechGateIsSilence(0.2f, 0.025f));
 	EXPECT_FALSE(captions::SpeechGateIsSilence(0.4f, 0.0f));
 	EXPECT_FALSE(captions::SpeechGateIsSilence(0.1f, 0.026f));
+}
+
+TEST(EnergySpeechGateTest, AlwaysOnUsesLongerMinimumThanPushToTalk)
+{
+	EXPECT_LT(captions::PushToTalkMinSpeechSamples(), captions::AlwaysOnMinSpeechSamples());
+	EXPECT_FALSE(captions::SpeechBufferLongEnough(captions::AlwaysOnMinSpeechSamples() - 1, true));
+	EXPECT_TRUE(captions::SpeechBufferLongEnough(captions::AlwaysOnMinSpeechSamples(), true));
+	EXPECT_FALSE(captions::SpeechBufferLongEnough(captions::PushToTalkMinSpeechSamples() - 1, false));
+	EXPECT_TRUE(captions::SpeechBufferLongEnough(captions::PushToTalkMinSpeechSamples(), false));
+}
+
+TEST(EnergySpeechGateTest, AlwaysOnKeepsShortPrerollAndModerateSilenceTail)
+{
+	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 8);
+	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 24);
 }
 
 // ---------------------------------------------------------------------------

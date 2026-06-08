@@ -10,7 +10,7 @@
 #include <string>
 
 // Connects to the OSC router's out-of-process publish pipe
-// (\\.\pipe\WKOpenVR-OscRouterPub) and sends /chatbox/input packets.
+// (\\.\pipe\WKOpenVR-OscRouterPub) and sends chatbox OSC packets.
 //
 // Wire protocol (per the router's PubPipeWorkerMain):
 //   1. Connect.
@@ -33,6 +33,9 @@ public:
 	// notify: chatbox playNotification flag.
 	bool PublishChatbox(const std::string& address, const std::string& text, bool send_immediate, bool notify);
 
+	// Toggle VRChat's chatbox typing indicator.
+	bool PublishTyping(bool active);
+
 	// Disconnect and release the pipe handle.
 	void Disconnect();
 
@@ -46,9 +49,13 @@ private:
 
 	bool Connect();
 	bool Write(const void* data, size_t size);
+	bool PublishPacket(const uint8_t* packet, size_t packet_size);
 
 	// Encode a chatbox ,sTT OSC packet into buf.
 	// Returns the number of bytes written, or 0 on error.
 	static size_t EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const char* address, const char* text,
 	                                  bool send_immediate, bool notify);
+
+	// Encode a single-boolean OSC packet into buf using T/F typetags.
+	static size_t EncodeBoolPacket(uint8_t* buf, size_t buf_size, const char* address, bool value);
 };

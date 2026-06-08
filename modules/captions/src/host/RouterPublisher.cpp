@@ -3,6 +3,7 @@
 #include "Logging.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -67,7 +68,7 @@ bool RouterPublisher::Write(const void* data, size_t size)
 // OSC packet encoding
 // ---------------------------------------------------------------------------
 //
-// <address> ,sTT
+// <address> ,sTT or ,T/,F
 //   Address:   OSC address padded to 4-byte boundary
 //   TypeTag:   ",sTT" padded to 4-byte boundary
 //   Arg0 (s):  text as NUL-terminated string padded to 4-byte boundary
@@ -118,6 +119,26 @@ size_t RouterPublisher::EncodeChatboxPacket(uint8_t* buf, size_t buf_size, const
 	return static_cast<size_t>(out - buf);
 }
 
+size_t RouterPublisher::EncodeBoolPacket(uint8_t* buf, size_t buf_size, const char* address, bool value)
+{
+	if (!address || address[0] != '/') return 0;
+
+	char typetag[4];
+	snprintf(typetag, sizeof(typetag), ",%c", value ? 'T' : 'F');
+
+	size_t addr_bytes = Pad4(strlen(address) + 1);
+	size_t tag_bytes = Pad4(strlen(typetag) + 1);
+	size_t total = addr_bytes + tag_bytes;
+
+	if (total > buf_size) return 0;
+
+	uint8_t* out = buf;
+	WriteOscString(out, address);
+	WriteOscString(out, typetag);
+
+	return static_cast<size_t>(out - buf);
+}
+
 // ---------------------------------------------------------------------------
 // Truncate text to at most 144 UTF-8 bytes at a whitespace boundary.
 // ---------------------------------------------------------------------------
@@ -139,11 +160,9 @@ static std::string TruncateToVrchatLimit(const std::string& text)
 	return result;
 }
 
-bool RouterPublisher::PublishChatbox(const std::string& address, const std::string& text_in, bool send_immediate,
-                                     bool notify)
+bool RouterPublisher::PublishPacket(const uint8_t* packet, size_t packet_size)
 {
-	std::string text = TruncateToVrchatLimit(text_in);
-	const char* packet_address = (!address.empty() && address.front() == '/') ? address.c_str() : "/chatbox/input";
+	if (!packet || packet_size == 0) return false;
 
 	// Try to send; reconnect on failure.
 	for (int attempt = 0; attempt < 2; ++attempt) {
@@ -155,22 +174,15 @@ bool RouterPublisher::PublishChatbox(const std::string& address, const std::stri
 			}
 		}
 
-		uint8_t pkt[1024];
-		size_t pkt_size = EncodeChatboxPacket(pkt, sizeof(pkt), packet_address, text.c_str(), send_immediate, notify);
-		if (pkt_size == 0) {
-			TH_LOG("[publisher] failed to encode chatbox packet (addr='%s')", packet_address);
-			return false;
-		}
-
 		// 4-byte LE length prefix.
 		uint8_t len_buf[4];
-		uint32_t len32 = static_cast<uint32_t>(pkt_size);
+		uint32_t len32 = static_cast<uint32_t>(packet_size);
 		len_buf[0] = (uint8_t)(len32 & 0xFF);
 		len_buf[1] = (uint8_t)((len32 >> 8) & 0xFF);
 		len_buf[2] = (uint8_t)((len32 >> 16) & 0xFF);
 		len_buf[3] = (uint8_t)((len32 >> 24) & 0xFF);
 
-		if (Write(len_buf, 4) && Write(pkt, pkt_size)) {
+		if (Write(len_buf, 4) && Write(packet, packet_size)) {
 			return true;
 		}
 
@@ -181,4 +193,32 @@ bool RouterPublisher::PublishChatbox(const std::string& address, const std::stri
 
 	backoff_ms_ = std::min(backoff_ms_ * 2, kMaxBackoffMs);
 	return false;
+}
+
+bool RouterPublisher::PublishChatbox(const std::string& address, const std::string& text_in, bool send_immediate,
+                                     bool notify)
+{
+	std::string text = TruncateToVrchatLimit(text_in);
+	const char* packet_address = (!address.empty() && address.front() == '/') ? address.c_str() : "/chatbox/input";
+
+	uint8_t pkt[1024];
+	size_t pkt_size = EncodeChatboxPacket(pkt, sizeof(pkt), packet_address, text.c_str(), send_immediate, notify);
+	if (pkt_size == 0) {
+		TH_LOG("[publisher] failed to encode chatbox packet (addr='%s')", packet_address);
+		return false;
+	}
+
+	return PublishPacket(pkt, pkt_size);
+}
+
+bool RouterPublisher::PublishTyping(bool active)
+{
+	uint8_t pkt[128];
+	size_t pkt_size = EncodeBoolPacket(pkt, sizeof(pkt), "/chatbox/typing", active);
+	if (pkt_size == 0) {
+		TH_LOG("[publisher] failed to encode chatbox typing packet");
+		return false;
+	}
+
+	return PublishPacket(pkt, pkt_size);
 }

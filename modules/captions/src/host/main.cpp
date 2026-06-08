@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -744,15 +745,26 @@ try {
 
 	// Router publisher.
 	RouterPublisher publisher;
+	bool typing_indicator_active = false;
+	auto set_typing_indicator = [&](bool active, const HostConfig& current_cfg) {
+		if (!current_cfg.chatbox_enabled) active = false;
+		if (typing_indicator_active == active) return;
+
+		if (!publisher.PublishTyping(active)) {
+			status.SetLastError("OSC router publish pipe unavailable.");
+		}
+		typing_indicator_active = active;
+	};
 
 	// Chatbox pacer (1.2 s minimum gap).
 	ChatboxPacer pacer(1.2);
 
 	// VAD state machine.
-	constexpr int kSilenceFrames = 20; // ~640 ms of silence at 512 samples / 16 kHz
 	int silence_count = 0;
 	bool in_speech = false;
 	bool ptt_was_held = false;
+	size_t speech_samples_since_open = 0;
+	std::deque<std::vector<float>> preroll_frames;
 	std::vector<float> speech_buf;
 
 	TH_LOG("[startup] phase=initializing-audio-capture");
@@ -917,6 +929,18 @@ try {
 		}
 
 		const bool always_on = (cfg.mode == 1);
+		if (typing_indicator_active && !cfg.chatbox_enabled) {
+			set_typing_indicator(false, cfg);
+		}
+		if (!always_on && in_speech) {
+			in_speech = false;
+			silence_count = 0;
+			speech_samples_since_open = 0;
+			preroll_frames.clear();
+			speech_buf.clear();
+			set_typing_indicator(false, cfg);
+			status.SetState(HostStatus::State::Idle);
+		}
 
 		for (const auto& frame : frames) {
 			// VAD gate (PTT mode skips it). Silero is the primary gate; the
@@ -933,7 +957,13 @@ try {
 						in_speech = true;
 						if (vad) vad->Reset();
 						speech_buf.clear();
+						speech_samples_since_open = 0;
+						for (const auto& preroll : preroll_frames) {
+							speech_buf.insert(speech_buf.end(), preroll.begin(), preroll.end());
+						}
+						preroll_frames.clear();
 						status.SetState(HostStatus::State::Listening);
+						set_typing_indicator(true, cfg);
 						if (prob < 0.5f) {
 							TH_LOG("[vad] speech gate opened by input level peak=%.3f prob=%.3f", peak, prob);
 						}
@@ -942,14 +972,22 @@ try {
 				}
 				else if (in_speech && captions::SpeechGateIsSilence(prob, peak)) {
 					++silence_count;
-					if (silence_count >= kSilenceFrames) {
+					if (silence_count >= captions::AlwaysOnSilenceFrames()) {
 						in_speech = false;
+						set_typing_indicator(false, cfg);
 						status.SetState(HostStatus::State::Transcribing);
 						goto transcribe;
 					}
 				}
 				if (in_speech) {
 					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
+					speech_samples_since_open += frame.size();
+				}
+				else {
+					preroll_frames.push_back(frame);
+					while (preroll_frames.size() > static_cast<size_t>(captions::AlwaysOnPrerollFrames())) {
+						preroll_frames.pop_front();
+					}
 				}
 				continue;
 			}
@@ -959,13 +997,17 @@ try {
 				if (ptt_held) {
 					if (!ptt_was_held) {
 						speech_buf.clear();
+						speech_samples_since_open = 0;
 						status.SetState(HostStatus::State::Listening);
+						set_typing_indicator(true, cfg);
 					}
 					speech_buf.insert(speech_buf.end(), frame.begin(), frame.end());
+					speech_samples_since_open += frame.size();
 					ptt_was_held = true;
 				}
 				else if (ptt_was_held) {
 					ptt_was_held = false;
+					set_typing_indicator(false, cfg);
 					status.SetState(HostStatus::State::Transcribing);
 					goto transcribe;
 				}
@@ -973,9 +1015,10 @@ try {
 			continue;
 
 		transcribe:
-			if (speech_buf.size() < 1600) {
-				// Less than 100 ms of audio -- too short to transcribe.
+			if (!captions::SpeechBufferLongEnough(speech_samples_since_open, always_on)) {
 				speech_buf.clear();
+				speech_samples_since_open = 0;
+				silence_count = 0;
 				status.SetState(HostStatus::State::Idle);
 				continue;
 			}
@@ -990,6 +1033,8 @@ try {
 					status.SetLastError("Whisper model failed to load.");
 				}
 				speech_buf.clear();
+				speech_samples_since_open = 0;
+				silence_count = 0;
 				status.SetLastTranscript(transcript);
 				TH_LOG("[main] transcript (%s): %s", detected_lang.c_str(), transcript.c_str());
 
@@ -1037,6 +1082,11 @@ try {
 		status.MaybeFlush();
 
 		Sleep(10); // 10 ms main-loop cadence
+	}
+
+	if (typing_indicator_active) {
+		publisher.PublishTyping(false);
+		typing_indicator_active = false;
 	}
 
 	TH_LOG("[main] shutting down");
