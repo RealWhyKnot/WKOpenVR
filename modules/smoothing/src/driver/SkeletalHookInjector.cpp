@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
@@ -31,6 +32,30 @@
 // only after IHook::DestroyAll has removed our hooks, so no in-flight detour
 // can race the clear.
 static ServerTrackedDeviceProvider* g_driver = nullptr;
+
+// Latched when the finger-smoothing detour body throws. Once set, the detour
+// passes the incoming bone transforms straight through so a faulting math path
+// (slerp / quaternion ops on a bad frame) cannot re-throw at ~680 Hz onto
+// SteamVR's input thread, which has no handler -- an escaped throw there
+// terminated vrserver and triggered safe mode. We also fault-mark the smoothing
+// module so the overlay-side recovery can attribute it and the next driver load
+// keeps smoothing disabled. We deliberately do NOT tear the module down from
+// this hot input-thread detour (that path is exercised from the pose hook,
+// which owns the provider); a marker write is thread-safe and sufficient.
+static std::atomic<bool> g_skeletalFaulted{false};
+
+static void SkeletalContainmentFault(const char* what)
+{
+	// First fault only: subsequent calls fast-path out before reaching here.
+	if (g_skeletalFaulted.exchange(true, std::memory_order_relaxed)) return;
+	LOG("[skeletal] finger-smoothing detour threw: %s -- passing fingers through unsmoothed and disabling smoothing on "
+	    "next driver load",
+	    (what && what[0]) ? what : "(unknown exception)");
+	if (const auto* spec =
+	        openvr_pair::common::module_safety::FindById(openvr_pair::common::modules::ModuleId::Smoothing)) {
+		openvr_pair::common::module_safety::MarkFault(*spec, "skeletal_exception");
+	}
+}
 
 // Per-hand smoothing state. Index 0 = left, 1 = right. Frame data is kept in
 // a pure helper state so the per-bone smoothing behavior can be tested without
@@ -424,13 +449,15 @@ DetourPublicCreateSkeletonComponent(vr::IVRDriverInput* _this, vr::PropertyConta
 	return result;
 }
 
-static vr::EVRInputError DetourPublicUpdateSkeletonComponent(vr::IVRDriverInput* _this,
-                                                             vr::VRInputComponentHandle_t ulComponent,
-                                                             vr::EVRSkeletalMotionRange eMotionRange,
-                                                             const vr::VRBoneTransform_t* pTransforms,
-                                                             uint32_t unTransformCount)
+// Body of the finger-smoothing detour. Wrapped by DetourPublicUpdateSkeletonComponent
+// in a try/catch so a throw from the bone math cannot escape onto SteamVR's input
+// thread and terminate vrserver. The wrapper owns the DetourScope.
+static vr::EVRInputError DetourPublicUpdateSkeletonComponentImpl(vr::IVRDriverInput* _this,
+                                                                 vr::VRInputComponentHandle_t ulComponent,
+                                                                 vr::EVRSkeletalMotionRange eMotionRange,
+                                                                 const vr::VRBoneTransform_t* pTransforms,
+                                                                 uint32_t unTransformCount)
 {
-	InterfaceHooks::DetourScope _scope;
 	// Fast passthrough: feature-off, unrecognised inputs, or no driver pointer.
 	// This is the dominant code path when finger smoothing isn't enabled.
 	if (!g_driver || !pTransforms || unTransformCount != 31) {
@@ -621,6 +648,32 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(vr::IVRDriverInput*
 	g_stats[handedness].smoothedCalls.fetch_add(1, std::memory_order_relaxed);
 	MaybeLogStats("UpdateSkeleton");
 	return PublicUpdateSkeletonHook.originalFunc(_this, ulComponent, eMotionRange, smoothed, unTransformCount);
+}
+
+// Registered detour. Thin crash-containment wrapper around the body above: keeps
+// the DetourScope (so DisableHooks can drain in-flight callers), fast-paths to
+// passthrough once smoothing has faulted, and converts any escaped exception
+// into an unsmoothed passthrough so vrserver stays alive.
+static vr::EVRInputError DetourPublicUpdateSkeletonComponent(vr::IVRDriverInput* _this,
+                                                             vr::VRInputComponentHandle_t ulComponent,
+                                                             vr::EVRSkeletalMotionRange eMotionRange,
+                                                             const vr::VRBoneTransform_t* pTransforms,
+                                                             uint32_t unTransformCount)
+{
+	InterfaceHooks::DetourScope _scope;
+	if (g_skeletalFaulted.load(std::memory_order_relaxed)) {
+		return PublicUpdateSkeletonHook.originalFunc(_this, ulComponent, eMotionRange, pTransforms, unTransformCount);
+	}
+	try {
+		return DetourPublicUpdateSkeletonComponentImpl(_this, ulComponent, eMotionRange, pTransforms, unTransformCount);
+	}
+	catch (const std::exception& ex) {
+		SkeletalContainmentFault(ex.what());
+	}
+	catch (...) {
+		SkeletalContainmentFault(nullptr);
+	}
+	return PublicUpdateSkeletonHook.originalFunc(_this, ulComponent, eMotionRange, pTransforms, unTransformCount);
 }
 
 // =============================================================================

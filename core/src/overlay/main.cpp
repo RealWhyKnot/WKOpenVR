@@ -6,6 +6,7 @@
 #include "Migration.h"
 #include "ProcessPerfLog.h"
 #include "RuntimeHealthSummary.h"
+#include "SafeModeRecovery.h"
 #include "ShellContext.h"
 #include "ShellUi.h"
 #include "Theme.h"
@@ -239,6 +240,17 @@ int main(int argc, char** argv)
 	// SteamVR just to open the desktop window.
 	RegisterApplicationManifest(false);
 
+	// Post-crash self-heal. If SteamVR is running but safe mode has blocked the
+	// WKOpenVR driver, and the prior crash is attributable to one of our own
+	// modules, keep that module disabled, re-enable the blocked add-ons, and
+	// relaunch SteamVR -- then exit so the fresh SteamVR auto-launches a clean
+	// overlay. No-op on a normal launch.
+	SafeModeRecoveryResult safeModeResult = RunSafeModeRecoveryIfNeeded();
+	if (safeModeResult.relaunchedSteamVr) {
+		openvr_pair::common::DiagnosticLog("overlay", "exiting after safe-mode recovery relaunch");
+		return 0;
+	}
+
 	glfwSetErrorCallback(GlfwErrorCallback);
 	if (!glfwInit()) {
 		openvr_pair::common::DiagnosticLog("overlay", "glfw_init_failed");
@@ -356,6 +368,9 @@ int main(int argc, char** argv)
 	};
 
 	ShellContext context = CreateShellContext();
+	if (safeModeResult.surfaceNotice && !safeModeResult.noticeMessage.empty()) {
+		context.SetStatus(safeModeResult.noticeMessage, 120.0);
+	}
 	openvr_pair::overlay::ui::ApplyOverlayStyle();
 	openvr_pair::overlay::ui::InitThemeFromDisk(context);
 	openvr_pair::common::DiagnosticLog(

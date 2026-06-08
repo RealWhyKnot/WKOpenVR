@@ -3,6 +3,7 @@
 #include "Logging.h"
 #include "ServerTrackedDeviceProvider.h"
 
+#include <exception>
 #include <vector>
 
 void IPCServer::HandleRequest(const protocol::Request& request, protocol::Response& response)
@@ -107,62 +108,75 @@ void IPCServer::RunThread(IPCServer* _this)
 		}
 	} guard{_this};
 
-	HANDLE connectEvent = _this->connectEvent = CreateEvent(0, TRUE, TRUE, 0);
-	if (!connectEvent) {
-		LOG("CreateEvent failed in RunThread. Error: %d", GetLastError());
-		return;
-	}
-	LOG("IPC[%s] listen event created", _this->pipeName.c_str());
-
-	OVERLAPPED connectOverlap;
-	connectOverlap.hEvent = connectEvent;
-
-	HANDLE nextPipe;
-	BOOL connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
-
-	while (!_this->stop) {
-		DWORD wait = WaitForSingleObjectEx(connectEvent, INFINITE, TRUE);
-
-		if (_this->stop) {
-			break;
-		}
-		else if (wait == 0) {
-			// When connectPending is false, the last call to CreateAndConnectInstance
-			// picked up a connected client and triggered this event, so we can simply
-			// create a new pipe instance for it. If true, the client was still pending
-			// connection when CreateAndConnectInstance returned, so this event was triggered
-			// internally and we need to flush out the result, or something like that.
-			if (connectPending) {
-				DWORD bytesConnect;
-				BOOL success = GetOverlappedResult(nextPipe, &connectOverlap, &bytesConnect, FALSE);
-				if (!success) {
-					LOG("GetOverlappedResult failed in RunThread. Error: %d", GetLastError());
-					// Close the still-pending pipe handle before bailing --
-					// neither CreatePipeInstance (which would have taken
-					// ownership) nor any other path runs on this branch.
-					// Without this, the kernel handle leaks every time the
-					// overlapped wait fails (rare in practice but the leak
-					// is cumulative across the driver's entire load lifetime).
-					CloseHandle(nextPipe);
-					nextPipe = INVALID_HANDLE_VALUE;
-					return;
-				}
-			}
-
-			LOG("IPC[%s] client connected (our_protocol=%u)", _this->pipeName.c_str(), (unsigned)protocol::Version);
-
-			auto pipeInst = _this->CreatePipeInstance(nextPipe);
-			CompletedWriteCallback(0, sizeof(protocol::Response), (LPOVERLAPPED)pipeInst);
-
-			connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
-		}
-		else if (wait != WAIT_IO_COMPLETION) {
-			LOG("WaitForSingleObjectEx failed in RunThread. Error: %d", GetLastError());
+	// RunThread is a std::thread entry point: an exception that escapes here
+	// calls std::terminate and takes vrserver (and every other driver) down.
+	// The IPC request dispatch is already guarded inside HandleIpcRequest; this
+	// outer catch covers the thread body itself (allocations, pipe setup) so a
+	// stray throw drops this one IPC server cleanly instead of crashing the host.
+	try {
+		HANDLE connectEvent = _this->connectEvent = CreateEvent(0, TRUE, TRUE, 0);
+		if (!connectEvent) {
+			LOG("CreateEvent failed in RunThread. Error: %d", GetLastError());
 			return;
 		}
+		LOG("IPC[%s] listen event created", _this->pipeName.c_str());
+
+		OVERLAPPED connectOverlap;
+		connectOverlap.hEvent = connectEvent;
+
+		HANDLE nextPipe;
+		BOOL connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
+
+		while (!_this->stop) {
+			DWORD wait = WaitForSingleObjectEx(connectEvent, INFINITE, TRUE);
+
+			if (_this->stop) {
+				break;
+			}
+			else if (wait == 0) {
+				// When connectPending is false, the last call to CreateAndConnectInstance
+				// picked up a connected client and triggered this event, so we can simply
+				// create a new pipe instance for it. If true, the client was still pending
+				// connection when CreateAndConnectInstance returned, so this event was triggered
+				// internally and we need to flush out the result, or something like that.
+				if (connectPending) {
+					DWORD bytesConnect;
+					BOOL success = GetOverlappedResult(nextPipe, &connectOverlap, &bytesConnect, FALSE);
+					if (!success) {
+						LOG("GetOverlappedResult failed in RunThread. Error: %d", GetLastError());
+						// Close the still-pending pipe handle before bailing --
+						// neither CreatePipeInstance (which would have taken
+						// ownership) nor any other path runs on this branch.
+						// Without this, the kernel handle leaks every time the
+						// overlapped wait fails (rare in practice but the leak
+						// is cumulative across the driver's entire load lifetime).
+						CloseHandle(nextPipe);
+						nextPipe = INVALID_HANDLE_VALUE;
+						return;
+					}
+				}
+
+				LOG("IPC[%s] client connected (our_protocol=%u)", _this->pipeName.c_str(), (unsigned)protocol::Version);
+
+				auto pipeInst = _this->CreatePipeInstance(nextPipe);
+				CompletedWriteCallback(0, sizeof(protocol::Response), (LPOVERLAPPED)pipeInst);
+
+				connectPending = _this->CreateAndConnectInstance(&connectOverlap, nextPipe);
+			}
+			else if (wait != WAIT_IO_COMPLETION) {
+				LOG("WaitForSingleObjectEx failed in RunThread. Error: %d", GetLastError());
+				return;
+			}
+		}
+		// Pipe-instance cleanup runs in the ThreadGuard destructor on all exit
+		// paths (normal + error returns above).
 	}
-	// Pipe-instance cleanup runs in the ThreadGuard destructor on all exit
-	// paths (normal + error returns above).
+	catch (const std::exception& ex) {
+		LOG("IPC[%s] server thread caught exception: %s -- exiting thread cleanly", _this->pipeName.c_str(), ex.what());
+	}
+	catch (...) {
+		LOG("IPC[%s] server thread caught an unknown exception -- exiting thread cleanly", _this->pipeName.c_str());
+	}
 }
 
 BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE& pipe)

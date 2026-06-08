@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <thread>
 
 static ServerTrackedDeviceProvider* Driver = nullptr;
@@ -60,6 +61,26 @@ void DrainInFlightDetours() noexcept
 
 } // namespace InterfaceHooks
 
+// Crash containment for the pose-update detours. A C++ exception thrown by our
+// per-frame pose processing (smoothing / driver-synth / calibration math) used
+// to propagate out of the detour on SteamVR's pose-reporting thread, which has
+// no handler -- std::terminate took vrserver down with it, and SteamVR then
+// safe-mode-blocked every external driver on the next launch. We now catch at
+// the detour boundary, log (throttled -- a faulting path tends to fault on
+// every frame), and let the caller forward the raw pose unchanged. Per-module
+// attribution + disable happens deeper in HandleDevicePoseUpdated (the
+// smoothing / phantom guards); this is the last-resort net that keeps vrserver
+// alive regardless of which path threw.
+static void PoseHookContainmentFault(uint32_t deviceId, const char* what) noexcept
+{
+	static std::atomic<uint64_t> s_count{0};
+	const uint64_t n = s_count.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (n == 1 || (n % 1000) == 0) {
+		LOG("Pose hook caught an exception (device=%u count=%llu): %s -- forwarding raw pose to keep vrserver alive",
+		    deviceId, (unsigned long long)n, (what && what[0]) ? what : "(unknown exception)");
+	}
+}
+
 static Hook<void* (*)(vr::IVRDriverContext*, const char*, vr::EVRInitError*)>
     GetGenericInterfaceHook("IVRDriverContext::GetGenericInterface");
 
@@ -84,7 +105,21 @@ static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost* _this, ui
 	// nothing the size check doesn't already.
 	if (unPoseStructSize == sizeof(vr::DriverPose_t)) {
 		auto pose = newPose;
-		if (Driver->HandleDevicePoseUpdated(unWhichDevice, pose)) {
+		bool forward = true;
+		try {
+			forward = Driver->HandleDevicePoseUpdated(unWhichDevice, pose);
+		}
+		catch (const std::exception& ex) {
+			PoseHookContainmentFault(unWhichDevice, ex.what());
+			TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);
+			return;
+		}
+		catch (...) {
+			PoseHookContainmentFault(unWhichDevice, nullptr);
+			TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);
+			return;
+		}
+		if (forward) {
 			TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, pose, unPoseStructSize);
 		}
 	}
@@ -101,7 +136,21 @@ static void DetourTrackedDevicePoseUpdated006(vr::IVRServerDriverHost* _this, ui
 	// same cleanup applied here.
 	if (unPoseStructSize == sizeof(vr::DriverPose_t)) {
 		auto pose = newPose;
-		if (Driver->HandleDevicePoseUpdated(unWhichDevice, pose)) {
+		bool forward = true;
+		try {
+			forward = Driver->HandleDevicePoseUpdated(unWhichDevice, pose);
+		}
+		catch (const std::exception& ex) {
+			PoseHookContainmentFault(unWhichDevice, ex.what());
+			TrackedDevicePoseUpdatedHook006.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);
+			return;
+		}
+		catch (...) {
+			PoseHookContainmentFault(unWhichDevice, nullptr);
+			TrackedDevicePoseUpdatedHook006.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);
+			return;
+		}
+		if (forward) {
 			TrackedDevicePoseUpdatedHook006.originalFunc(_this, unWhichDevice, pose, unPoseStructSize);
 		}
 	}
@@ -117,26 +166,40 @@ static void* DetourGetGenericInterface(vr::IVRDriverContext* _this, const char* 
 	TRACE("ServerTrackedDeviceProvider::DetourGetGenericInterface(%s)", pchInterfaceVersion);
 	auto originalInterface = GetGenericInterfaceHook.originalFunc(_this, pchInterfaceVersion, peError);
 
-	// strcmp avoids a std::string allocation per interface query. This is
-	// called for every interface version SteamVR queries during driver
-	// init -- not a tight loop, but cumulative startup latency.
-	if ((s_featureFlags & pairdriver::kFeatureCalibration) &&
-	    std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_005") == 0) {
-		if (!IHook::Exists(TrackedDevicePoseUpdatedHook005.name)) {
-			TrackedDevicePoseUpdatedHook005.CreateHookInObjectVTable(originalInterface, 1,
-			                                                         &DetourTrackedDevicePoseUpdated005);
-			IHook::Register(&TrackedDevicePoseUpdatedHook005);
+	// Installing the inner hooks and notifying modules can touch module code;
+	// a throw here must not propagate out of the detour and kill vrserver. On
+	// failure we still return the genuine interface SteamVR asked for so the
+	// runtime keeps working -- we just skip our own hook wiring for this query.
+	try {
+		// strcmp avoids a std::string allocation per interface query. This is
+		// called for every interface version SteamVR queries during driver
+		// init -- not a tight loop, but cumulative startup latency.
+		if ((s_featureFlags & pairdriver::kFeatureCalibration) &&
+		    std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_005") == 0) {
+			if (!IHook::Exists(TrackedDevicePoseUpdatedHook005.name)) {
+				TrackedDevicePoseUpdatedHook005.CreateHookInObjectVTable(originalInterface, 1,
+				                                                         &DetourTrackedDevicePoseUpdated005);
+				IHook::Register(&TrackedDevicePoseUpdatedHook005);
+			}
 		}
-	}
-	else if ((s_featureFlags & pairdriver::kFeatureCalibration) &&
-	         std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_006") == 0) {
-		if (!IHook::Exists(TrackedDevicePoseUpdatedHook006.name)) {
-			TrackedDevicePoseUpdatedHook006.CreateHookInObjectVTable(originalInterface, 1,
-			                                                         &DetourTrackedDevicePoseUpdated006);
-			IHook::Register(&TrackedDevicePoseUpdatedHook006);
+		else if ((s_featureFlags & pairdriver::kFeatureCalibration) &&
+		         std::strcmp(pchInterfaceVersion, "IVRServerDriverHost_006") == 0) {
+			if (!IHook::Exists(TrackedDevicePoseUpdatedHook006.name)) {
+				TrackedDevicePoseUpdatedHook006.CreateHookInObjectVTable(originalInterface, 1,
+				                                                         &DetourTrackedDevicePoseUpdated006);
+				IHook::Register(&TrackedDevicePoseUpdatedHook006);
+			}
 		}
+		Driver->OnGetGenericInterface(pchInterfaceVersion, originalInterface);
 	}
-	Driver->OnGetGenericInterface(pchInterfaceVersion, originalInterface);
+	catch (const std::exception& ex) {
+		LOG("GetGenericInterface detour caught exception for '%s': %s",
+		    pchInterfaceVersion ? pchInterfaceVersion : "(null)", ex.what());
+	}
+	catch (...) {
+		LOG("GetGenericInterface detour caught an unknown exception for '%s'",
+		    pchInterfaceVersion ? pchInterfaceVersion : "(null)");
+	}
 
 	return originalInterface;
 }

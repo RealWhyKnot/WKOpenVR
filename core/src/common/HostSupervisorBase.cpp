@@ -14,6 +14,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <utility>
 
 namespace {
@@ -96,7 +97,22 @@ bool HostSupervisorBase::Start()
 	if (!initial_spawned) {
 		Log("[host-supervisor] initial spawn failed; monitor will retry");
 	}
-	monitor_thread_ = std::thread([this] { MonitorLoop(); });
+	// MonitorLoop runs as the thread body; an exception escaping a std::thread
+	// entry calls std::terminate and would take vrserver down with it. Contain
+	// it at the boundary -- the supervisor stops respawning on an unexpected
+	// throw, but the host process (driven by the kill-on-close job object) and
+	// vrserver stay alive.
+	monitor_thread_ = std::thread([this] {
+		try {
+			MonitorLoop();
+		}
+		catch (const std::exception& ex) {
+			Log("[host-supervisor] monitor thread terminated by exception: %s", ex.what());
+		}
+		catch (...) {
+			Log("[host-supervisor] monitor thread terminated by an unknown exception");
+		}
+	});
 	return initial_spawned;
 }
 

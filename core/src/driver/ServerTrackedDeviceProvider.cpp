@@ -384,19 +384,30 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 
 void ServerTrackedDeviceProvider::RunFrame()
 {
-	static openvr_pair::common::ProcessPerfSampler s_perfSampler;
-	if (!openvr_pair::common::IsDebugLoggingEnabled()) {
-		s_perfSampler.Reset();
-		return;
+	// SteamVR main-loop callback (driver process). Perf sampling + the health-
+	// summary JSON write touch the filesystem and can throw; an unhandled throw
+	// here would terminate vrserver, so contain it.
+	try {
+		static openvr_pair::common::ProcessPerfSampler s_perfSampler;
+		if (!openvr_pair::common::IsDebugLoggingEnabled()) {
+			s_perfSampler.Reset();
+			return;
+		}
+
+		openvr_pair::common::ProcessPerfSample perfSample{};
+		if (!s_perfSampler.MaybeSample(perfSample)) return;
+
+		const std::string line = openvr_pair::common::FormatProcessPerfSample("driver-host", perfSample);
+		LOG("[perf] %s", line.c_str());
+		openvr_pair::common::RecordRuntimeProcessSample("driver-host", perfSample);
+		openvr_pair::common::MaybeWriteRuntimeHealthSummary(10000, L"runtime_health_driver_host.json");
 	}
-
-	openvr_pair::common::ProcessPerfSample perfSample{};
-	if (!s_perfSampler.MaybeSample(perfSample)) return;
-
-	const std::string line = openvr_pair::common::FormatProcessPerfSample("driver-host", perfSample);
-	LOG("[perf] %s", line.c_str());
-	openvr_pair::common::RecordRuntimeProcessSample("driver-host", perfSample);
-	openvr_pair::common::MaybeWriteRuntimeHealthSummary(10000, L"runtime_health_driver_host.json");
+	catch (const std::exception& ex) {
+		LOG("RunFrame caught exception: %s", ex.what());
+	}
+	catch (...) {
+		LOG("RunFrame caught an unknown exception");
+	}
 }
 
 void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry, const char* reason)
@@ -1080,7 +1091,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			smoothness = slot->tf.predictionSmoothness;
 		}
 	}
-	if (smoothness > 0) {
+	if (smoothness > 0 && !m_smoothingPoseFaulted.load(std::memory_order_relaxed)) {
 		// Clamp defensively -- a buggy overlay (or a stale-protocol mismatch)
 		// shouldn't be able to push a value above 100 here.
 		if (smoothness > 100) smoothness = 100;
@@ -1091,11 +1102,39 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		// factor so extrapolation is suppressed at rest but still available
 		// during motion. Replaces the old freeze-prone position EWM +
 		// motion-ramp gate.
-		ApplySmartSmoothing(openVRID, tf, rawSmoothingInput, pose, smoothness);
+		//
+		// Guarded like the phantom pipeline below: a throw here must not escape
+		// to SteamVR's pose thread (that terminated vrserver and triggered safe
+		// mode). On fault we latch smoothing off, forward the untouched raw
+		// pose, and disable + fault-mark the smoothing module for attribution.
+		try {
+			ApplySmartSmoothing(openVRID, tf, rawSmoothingInput, pose, smoothness);
+		}
+		catch (const std::exception& ex) {
+			LOG("Smoothing pose pipeline threw: %s", ex.what());
+			m_smoothingPoseFaulted.store(true, std::memory_order_relaxed);
+			tf.smartFilter.initialized = false;
+			tf.smartFilterLastSample.QuadPart = 0;
+			pose = rawSmoothingInput;
+			lock.unlock();
+			DisableActiveModuleByMask(pairdriver::kFeatureSmoothing, "pose_exception");
+			return true;
+		}
+		catch (...) {
+			LOG("Smoothing pose pipeline threw an unknown exception");
+			m_smoothingPoseFaulted.store(true, std::memory_order_relaxed);
+			tf.smartFilter.initialized = false;
+			tf.smartFilterLastSample.QuadPart = 0;
+			pose = rawSmoothingInput;
+			lock.unlock();
+			DisableActiveModuleByMask(pairdriver::kFeatureSmoothing, "pose_exception");
+			return true;
+		}
 	}
 	else {
-		// Smoothness dropped to 0: reset filter state so a future re-enable
-		// seeds from the current raw pose rather than a stale snapshot.
+		// Smoothness dropped to 0 (or smoothing latched off after a fault):
+		// reset filter state so a future re-enable seeds from the current raw
+		// pose rather than a stale snapshot.
 		tf.smartFilter.initialized = false;
 		tf.smartFilterLastSample.QuadPart = 0;
 	}

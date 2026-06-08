@@ -42,6 +42,8 @@ add_library(openvr_pair_common STATIC
 	ProcessPerfLog.h
 	RuntimeHealthSummary.cpp
 	RuntimeHealthSummary.h
+	SteamVrControl.cpp
+	SteamVrControl.h
 	Win32Errors.cpp
 	Win32Errors.h
 	Win32Paths.cpp

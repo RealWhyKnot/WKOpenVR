@@ -388,6 +388,14 @@ private:
 	driver_synth::SourceBlendState m_driverSynthBlendState;
 	std::atomic<bool> m_driverSynthBlendReset{false};
 
+	// Latched when ApplySmartSmoothing throws in the pose hook. Once set, the
+	// pose path skips smoothing (forwards the raw pose) so a faulting math path
+	// cannot re-throw on every subsequent frame; the smoothing module is also
+	// disabled + fault-marked via DisableActiveModuleByMask so the overlay-side
+	// recovery can attribute the fault. Cleared only by a driver reload (fresh
+	// object). Mirrors the phantom pose-pipeline guard below.
+	std::atomic<bool> m_smoothingPoseFaulted{false};
+
 	// Optional speed-adaptive low-pass for the synthesized (locked) HMD pose.
 	// Dedicated filter state so it is independent of any per-device smoothing.
 	prediction::smart_shadow::FilterState m_driverSynthHmdFilter;
