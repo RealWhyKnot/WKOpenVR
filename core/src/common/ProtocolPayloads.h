@@ -521,8 +521,8 @@ struct CaptionsConfig
 	// configured OSC chatbox target. 0 keeps captions local to WKOpenVR.
 	uint8_t chatbox_enabled;
 
-	// Padding to align the port field on a natural boundary.
-	uint8_t _pad[1];
+	// Captions realtime tuning flags. See CaptionsRealtimeFlags.h.
+	uint8_t realtime_flags;
 
 	// Target chatbox OSC port (default 9000).
 	uint16_t chatbox_port;

@@ -7,14 +7,14 @@
 
 namespace captions {
 
-inline int AlwaysOnPrerollFrames()
+inline int AlwaysOnPrerollFrames(bool extendedTiming = true)
 {
-	return 32; // ~1024 ms at 512 samples / 16 kHz
+	return extendedTiming ? 32 : 20; // ~1024 ms or ~640 ms at 512 samples / 16 kHz
 }
 
-inline int AlwaysOnSilenceFrames()
+inline int AlwaysOnSilenceFrames(bool extendedTiming = true)
 {
-	return 32; // ~1024 ms at 512 samples / 16 kHz
+	return extendedTiming ? 32 : 30; // ~1024 ms or ~960 ms at 512 samples / 16 kHz
 }
 
 inline int AlwaysOnActivationWindowFrames()
@@ -42,14 +42,14 @@ inline size_t AlwaysOnShortSpeechSamples()
 	return 1600; // 100 ms of confident gated speech
 }
 
-inline size_t AlwaysOnMaxSpeechSamples()
+inline size_t AlwaysOnMaxSpeechSamples(bool extendedTiming = true)
 {
-	return 80000; // 5 s max before flushing a continuous segment
+	return extendedTiming ? 80000 : 128000; // 5 s or 8 s max before flushing a continuous segment
 }
 
-inline size_t AlwaysOnContinuationOverlapSamples()
+inline size_t AlwaysOnContinuationOverlapSamples(bool extendedTiming = true)
 {
-	return 9600; // 600 ms repeated into the next continuous segment
+	return extendedTiming ? 9600 : 6400; // 600 ms or 400 ms repeated into the next continuous segment
 }
 
 inline size_t PushToTalkMinSpeechSamples()

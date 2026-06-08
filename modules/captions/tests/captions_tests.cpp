@@ -21,7 +21,9 @@
 #include "ChatboxPacer.h"
 #include "ChatboxText.h"
 #include "CaptionPreviewHistory.h"
+#include "CaptionsConfig.h"
 #include "CaptionsOutputPolicy.h"
+#include "CaptionsRealtimeFlags.h"
 #include "Protocol.h"
 
 // Header-only host + overlay logic under test (no ImGui / COM / device access).
@@ -78,6 +80,35 @@ TEST(CaptionsProtocolTest, ZeroedConfigDoesNotPublishToChatbox)
 {
 	protocol::CaptionsConfig cfg{};
 	EXPECT_EQ(cfg.chatbox_enabled, 0);
+	EXPECT_EQ(cfg.realtime_flags, 0);
+}
+
+TEST(CaptionsRealtimeFlagsTest, DefaultsEnableRealtimeOptions)
+{
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeExtendedTiming));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeSpeechEvidenceGate));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeConfidenceFilter));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeOverlapCleanup));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(captions::kCaptionsRealtimeDefaultFlags,
+	                                                  captions::kCaptionsRealtimeChatboxSplitting));
+
+	CaptionsConfig cfg;
+	EXPECT_EQ(cfg.realtime_flags, captions::kCaptionsRealtimeDefaultFlags);
+}
+
+TEST(CaptionsRealtimeFlagsTest, SetClearsIndividualOptions)
+{
+	uint8_t flags = captions::kCaptionsRealtimeDefaultFlags;
+	flags = captions::SetCaptionsRealtimeFlag(flags, captions::kCaptionsRealtimeConfidenceFilter, false);
+	EXPECT_FALSE(captions::CaptionsRealtimeFlagEnabled(flags, captions::kCaptionsRealtimeConfidenceFilter));
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(flags, captions::kCaptionsRealtimeExtendedTiming));
+
+	flags = captions::SetCaptionsRealtimeFlag(flags, captions::kCaptionsRealtimeConfidenceFilter, true);
+	EXPECT_TRUE(captions::CaptionsRealtimeFlagEnabled(flags, captions::kCaptionsRealtimeConfidenceFilter));
 }
 
 TEST(CaptionPreviewHistoryTest, AddsEachCompletedCaptionOnce)
@@ -401,6 +432,14 @@ TEST(EnergySpeechGateTest, AlwaysOnKeepsShortPrerollAndModerateSilenceTail)
 	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 32);
 	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(), 80000u);
 	EXPECT_EQ(captions::AlwaysOnContinuationOverlapSamples(), 9600u);
+}
+
+TEST(EnergySpeechGateTest, AlwaysOnCanUseLegacyTiming)
+{
+	EXPECT_EQ(captions::AlwaysOnPrerollFrames(false), 20);
+	EXPECT_EQ(captions::AlwaysOnSilenceFrames(false), 30);
+	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(false), 128000u);
+	EXPECT_EQ(captions::AlwaysOnContinuationOverlapSamples(false), 6400u);
 }
 
 TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)

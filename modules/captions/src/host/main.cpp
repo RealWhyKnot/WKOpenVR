@@ -10,6 +10,7 @@
 #include "Captions.h"
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsOutputPolicy.h"
+#include "CaptionsRealtimeFlags.h"
 #include "ChatboxText.h"
 #include "ChatboxPacer.h"
 #include "AudioLevel.h"
@@ -260,10 +261,13 @@ struct HostConfig
 	bool notify_sound = false;
 	bool transcript_logging = false;
 	int mode = 0; // 0=PTT, 1=always-on
+	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
 
 	// Paths: resolved once at startup. Overrideable via command-line.
 	std::string whisper_model_path;
 	std::string silero_model_path;
+
+	bool RealtimeEnabled(uint8_t flag) const { return captions::CaptionsRealtimeFlagEnabled(realtime_flags, flag); }
 };
 
 static std::mutex g_config_mutex;
@@ -336,6 +340,14 @@ static void DispatchControlMessage(char* buf, DWORD got)
 			g_config.chatbox_enabled = (val != "0");
 		else if (key == "log")
 			g_config.transcript_logging = (val != "0");
+		else if (key == "flags") {
+			int parsed = 0;
+			if (TryParseInt(val, parsed)) {
+				if (parsed < 0) parsed = 0;
+				if (parsed > 255) parsed = 255;
+				g_config.realtime_flags = static_cast<uint8_t>(parsed);
+			}
+		}
 
 		if (comma == std::string::npos) break;
 		pos = comma + 1;
@@ -950,6 +962,7 @@ try {
 		}
 
 		const bool always_on = (cfg.mode == 1);
+		const bool extended_timing = cfg.RealtimeEnabled(captions::kCaptionsRealtimeExtendedTiming);
 		if (typing_indicator_active && !cfg.chatbox_enabled) {
 			set_typing_indicator(false, cfg);
 		}
@@ -1015,7 +1028,7 @@ try {
 				}
 				else if (in_speech && speech_gate.IsSilence(prob, peak)) {
 					++silence_count;
-					if (silence_count >= captions::AlwaysOnSilenceFrames()) {
+					if (silence_count >= captions::AlwaysOnSilenceFrames(extended_timing)) {
 						in_speech = false;
 						speech_activation.Reset();
 						set_typing_indicator(false, cfg);
@@ -1034,7 +1047,7 @@ try {
 					}
 					speech_max_vad_probability = std::max(speech_max_vad_probability, prob);
 					speech_max_frame_peak = std::max(speech_max_frame_peak, peak);
-					if (speech_samples_since_open >= captions::AlwaysOnMaxSpeechSamples()) {
+					if (speech_samples_since_open >= captions::AlwaysOnMaxSpeechSamples(extended_timing)) {
 						continue_after_transcribe = true;
 						status.SetState(HostStatus::State::Transcribing);
 						goto transcribe;
@@ -1045,7 +1058,8 @@ try {
 						speech_gate.ObserveAmbient(peak);
 					}
 					preroll_frames.push_back(frame);
-					while (preroll_frames.size() > static_cast<size_t>(captions::AlwaysOnPrerollFrames())) {
+					while (preroll_frames.size() >
+					       static_cast<size_t>(captions::AlwaysOnPrerollFrames(extended_timing))) {
 						preroll_frames.pop_front();
 					}
 				}
@@ -1080,9 +1094,11 @@ try {
 			continue;
 
 		transcribe:
-			if (!captions::SpeechSegmentShouldTranscribe(speech_evidence_samples_since_open, always_on,
-			                                             speech_max_vad_probability, speech_max_frame_peak,
-			                                             speech_gate.SpeechPeakThreshold())) {
+			const size_t segment_gate_samples = cfg.RealtimeEnabled(captions::kCaptionsRealtimeSpeechEvidenceGate)
+			                                        ? speech_evidence_samples_since_open
+			                                        : speech_samples_since_open;
+			if (!captions::SpeechSegmentShouldTranscribe(segment_gate_samples, always_on, speech_max_vad_probability,
+			                                             speech_max_frame_peak, speech_gate.SpeechPeakThreshold())) {
 				in_speech = false;
 				speech_buf.clear();
 				speech_buf_has_continuation_overlap = false;
@@ -1106,8 +1122,8 @@ try {
 				std::vector<float> segment_pcm = speech_buf;
 				std::vector<float> continuation_overlap;
 				if (resume_after_transcribe) {
-					continuation_overlap =
-					    captions::CopyTrailingSamples(segment_pcm, captions::AlwaysOnContinuationOverlapSamples());
+					continuation_overlap = captions::CopyTrailingSamples(
+					    segment_pcm, captions::AlwaysOnContinuationOverlapSamples(extended_timing));
 				}
 
 				std::string detected_lang;
@@ -1123,7 +1139,8 @@ try {
 					status.SetLastError("Whisper model failed to load.");
 				}
 
-				if (segment_had_continuation_overlap && !transcript.empty() && !last_transcript_for_overlap.empty()) {
+				if (cfg.RealtimeEnabled(captions::kCaptionsRealtimeOverlapCleanup) &&
+				    segment_had_continuation_overlap && !transcript.empty() && !last_transcript_for_overlap.empty()) {
 					std::string trimmed =
 					    captions::RemoveOverlappingTranscriptPrefix(last_transcript_for_overlap, transcript);
 					if (trimmed.size() != transcript.size()) {
@@ -1157,10 +1174,12 @@ try {
 
 				std::string publish_transcript = captions::CleanTranscriptForPublish(transcript);
 				const bool skip_non_speech = !transcript.empty() && publish_transcript.empty();
-				const bool skip_confidence = captions::TranscriptShouldSuppressByConfidence(
-				    publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
-				    segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
-				    whisper_result.average_token_log_probability, whisper_result.token_count);
+				const bool skip_confidence =
+				    cfg.RealtimeEnabled(captions::kCaptionsRealtimeConfidenceFilter) &&
+				    captions::TranscriptShouldSuppressByConfidence(
+				        publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
+				        segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
+				        whisper_result.average_token_log_probability, whisper_result.token_count);
 				if (skip_non_speech || skip_confidence) {
 					TH_LOG("[main] suppressed transcript as %s: raw='%s' vad=%.3f peak=%.3f nospeech=%.3f avglog=%.3f",
 					       skip_non_speech ? "non-speech" : "low-confidence", transcript.c_str(),
@@ -1203,12 +1222,17 @@ try {
 					status.IncrementCaptionsCompleted();
 				}
 				if (captions::ShouldPublishChatbox(cfg.chatbox_enabled, output)) {
-					const std::vector<std::string> chunks = captions::SplitTextForChatbox(output);
-					if (chunks.size() > 1) {
-						TH_LOG("[main] split chatbox output into %zu chunks", chunks.size());
+					if (cfg.RealtimeEnabled(captions::kCaptionsRealtimeChatboxSplitting)) {
+						const std::vector<std::string> chunks = captions::SplitTextForChatbox(output);
+						if (chunks.size() > 1) {
+							TH_LOG("[main] split chatbox output into %zu chunks", chunks.size());
+						}
+						for (const auto& chunk : chunks) {
+							pacer.Enqueue(chunk, true, cfg.notify_sound);
+						}
 					}
-					for (const auto& chunk : chunks) {
-						pacer.Enqueue(chunk, true, cfg.notify_sound);
+					else {
+						pacer.Enqueue(output, true, cfg.notify_sound);
 					}
 				}
 				status.SetState(resume_after_transcribe ? HostStatus::State::Listening : HostStatus::State::Idle);

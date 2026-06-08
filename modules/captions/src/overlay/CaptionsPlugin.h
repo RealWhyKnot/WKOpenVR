@@ -2,6 +2,7 @@
 
 #include "FeaturePlugin.h"
 #include "CaptionPreviewHistory.h"
+#include "CaptionsRealtimeFlags.h"
 #include "HostStatusPoller.h"
 #include "Protocol.h"
 #include "CaptionsIpcClient.h"
@@ -68,12 +69,15 @@ public:
 	const std::string& GetChatboxAddress() const { return chatbox_address_; }
 	bool GetNotifySound() const { return notify_sound_; }
 	const std::string& GetInputDevice() const { return input_device_; }
+	bool GetRealtimeOption(uint8_t flag) const { return captions::CaptionsRealtimeFlagEnabled(realtime_flags_, flag); }
+	uint8_t GetRealtimeFlags() const { return realtime_flags_; }
 
 	void SetSourceLang(const std::string& s);
 	void SetTargetLang(const std::string& s);
 	void SetChatboxEnabled(bool v);
 	void SetChatboxAddress(const std::string& s);
 	void SetNotifySound(bool v);
+	void SetRealtimeOption(uint8_t flag, bool enabled);
 	// Select the capture endpoint (IMMDevice id; empty = system default).
 	// Persists to captions.txt and writes the host-readable audio_input.txt.
 	void SetInputDevice(const std::string& endpointId);
@@ -93,6 +97,7 @@ private:
 	bool chatbox_enabled_ = false;
 	std::string chatbox_address_ = "/chatbox/input";
 	bool notify_sound_ = false;
+	uint8_t realtime_flags_ = captions::kCaptionsRealtimeDefaultFlags;
 	std::string input_device_ = ""; // capture endpoint id; empty = system default
 
 	std::string last_error_;

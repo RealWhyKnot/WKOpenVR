@@ -284,11 +284,11 @@ static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot
 		SetColumn(3);
 		DrawPackActionButton("Uninstall", "translation_uninstall",
 		                     !TranslationUninstallEnabled(snap, busy, translation_pack),
-		                     translation_pack.empty()  ? "No translation pack is selected."
-		                     : !translationInstalled   ? "This translation pack is not installed."
-		                     : busy                    ? kBusyReason
-		                                               : "Remove this language-pair model. Shared runtime files stay "
-		                                                 "until no installed translation pack needs them.",
+		                     translation_pack.empty() ? "No translation pack is selected."
+		                     : !translationInstalled  ? "This translation pack is not installed."
+		                     : busy                   ? kBusyReason
+		                                              : "Remove this language-pair model. Shared runtime files stay "
+		                                                "until no installed translation pack needs them.",
 		                     [&]() { plugin.UninstallTranslationPack(); });
 	}
 
@@ -341,6 +341,35 @@ static void DrawMicPicker(CaptionsPlugin& plugin)
 	}
 	TooltipForLastItem("Which microphone the captions host listens to.\n"
 	                   "\"System default\" follows your Windows default input device.");
+}
+
+static void DrawRealtimeOption(CaptionsPlugin& plugin, const char* label, uint8_t flag, const char* tooltip)
+{
+	bool enabled = plugin.GetRealtimeOption(flag);
+	if (openvr_pair::overlay::ui::CheckboxWithTooltip(label, &enabled, tooltip)) {
+		plugin.SetRealtimeOption(flag, enabled);
+		plugin.PushConfigToDriver();
+	}
+}
+
+static void DrawRealtimeTuning(CaptionsPlugin& plugin)
+{
+	using namespace openvr_pair::overlay::ui;
+	DrawSectionHeading("Realtime tuning");
+
+	DrawRealtimeOption(plugin, "Extended speech timing", captions::kCaptionsRealtimeExtendedTiming,
+	                   "Uses a longer pre-roll, a slightly longer silence tail, faster continuous-speech flushes, "
+	                   "and a larger overlap between continuous chunks.");
+	DrawRealtimeOption(plugin, "Require speech evidence", captions::kCaptionsRealtimeSpeechEvidenceGate,
+	                   "Ignores very short always-on opens unless VAD or input level actually indicated speech.");
+	DrawRealtimeOption(
+	    plugin, "Confidence filter", captions::kCaptionsRealtimeConfidenceFilter,
+	    "Suppresses likely silence hallucinations, low-confidence output, and repeated decode artifacts.");
+	DrawRealtimeOption(plugin, "Trim overlap duplicates", captions::kCaptionsRealtimeOverlapCleanup,
+	                   "Removes repeated words created by overlapping continuous speech chunks.");
+	DrawRealtimeOption(
+	    plugin, "Split long chatbox messages", captions::kCaptionsRealtimeChatboxSplitting,
+	    "Sends long captions as multiple paced messages instead of allowing VRChat output to be cut off.");
 }
 
 static void DrawPrivatePreview(CaptionsPlugin& plugin)
@@ -521,8 +550,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	DrawSectionHeading("Mode");
 	{
 		int mode = plugin.GetMode();
-		if (RadioButtonWithTooltip("Push-to-Talk", mode == 0,
-		                           "Capture only while the bound SteamVR button is held.")) {
+		if (RadioButtonWithTooltip("Push-to-Talk", mode == 0, "Capture only while the bound SteamVR button is held.")) {
 			plugin.SetMode(0);
 			plugin.PushConfigToDriver();
 		}
@@ -539,6 +567,12 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 			}
 		}
 	}
+
+	// -----------------------------------------------------------------------
+	// Realtime tuning
+	// -----------------------------------------------------------------------
+	ImGui::Separator();
+	DrawRealtimeTuning(plugin);
 
 	// -----------------------------------------------------------------------
 	// Input (microphone) + language

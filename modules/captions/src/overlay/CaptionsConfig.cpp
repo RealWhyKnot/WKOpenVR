@@ -71,6 +71,12 @@ CaptionsConfig LoadCaptionsConfig()
 		else if (strcmp(key, "notify_sound") == 0) {
 			cfg.notify_sound = (atoi(val) != 0);
 		}
+		else if (strcmp(key, "realtime_flags") == 0) {
+			int n = atoi(val);
+			if (n < 0) n = 0;
+			if (n > 255) n = 255;
+			cfg.realtime_flags = static_cast<uint8_t>(n);
+		}
 		else if (strcmp(key, "input_device") == 0) {
 			cfg.input_device = val;
 		}
@@ -98,6 +104,7 @@ void SaveCaptionsConfig(const CaptionsConfig& cfg)
 	appendf("chatbox_enabled=%d\n", cfg.chatbox_enabled ? 1 : 0);
 	appendf("chatbox_address=%s\n", cfg.chatbox_address.c_str());
 	appendf("notify_sound=%d\n", cfg.notify_sound ? 1 : 0);
+	appendf("realtime_flags=%u\n", static_cast<unsigned>(cfg.realtime_flags));
 	appendf("input_device=%s\n", cfg.input_device.c_str());
 
 	std::wstring tmpPath = path + L".tmp";

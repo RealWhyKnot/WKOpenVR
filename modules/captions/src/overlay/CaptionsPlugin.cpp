@@ -107,6 +107,7 @@ CaptionsPlugin::CaptionsPlugin()
 	chatbox_enabled_ = loaded.chatbox_enabled;
 	chatbox_address_ = loaded.chatbox_address;
 	notify_sound_ = loaded.notify_sound;
+	realtime_flags_ = loaded.realtime_flags;
 	input_device_ = loaded.input_device;
 	// Mirror the saved selection to the host-readable file in case it drifted
 	// from captions.txt (e.g. a manual edit or an interrupted earlier write).
@@ -123,6 +124,7 @@ void CaptionsPlugin::Persist()
 	cfg.chatbox_enabled = chatbox_enabled_;
 	cfg.chatbox_address = chatbox_address_;
 	cfg.notify_sound = notify_sound_;
+	cfg.realtime_flags = realtime_flags_;
 	cfg.input_device = input_device_;
 	SaveCaptionsConfig(cfg);
 }
@@ -162,10 +164,15 @@ void CaptionsPlugin::SetNotifySound(bool v)
 	notify_sound_ = v;
 	Persist();
 }
+void CaptionsPlugin::SetRealtimeOption(uint8_t flag, bool enabled)
+{
+	realtime_flags_ = captions::SetCaptionsRealtimeFlag(realtime_flags_, flag, enabled);
+	Persist();
+}
 void CaptionsPlugin::SetInputDevice(const std::string& endpointId)
 {
 	input_device_ = endpointId;
-	Persist();                       // captions.txt (UI state across restarts)
+	Persist();                          // captions.txt (UI state across restarts)
 	WriteAudioInputFile(input_device_); // host-readable file the capture loop polls
 }
 
@@ -232,6 +239,7 @@ void CaptionsPlugin::PushConfigToDriver()
 		cfg.mode = static_cast<uint8_t>(mode_);
 		cfg.notify_sound = notify_sound_ ? 1 : 0;
 		cfg.chatbox_enabled = chatbox_enabled_ ? 1 : 0;
+		cfg.realtime_flags = realtime_flags_;
 		cfg.chatbox_port = 9000;
 
 		std::snprintf(cfg.source_lang, sizeof(cfg.source_lang), "%s", source_lang_.c_str());

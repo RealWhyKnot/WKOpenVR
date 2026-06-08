@@ -1,5 +1,8 @@
 #pragma once
 
+#include "CaptionsRealtimeFlags.h"
+
+#include <cstdint>
 #include <string>
 
 // On-disk persistence for the captions overlay plugin's runtime-mutable
@@ -7,8 +10,8 @@
 // minimal key=value file (same pattern as smoothing's Config.cpp).
 //
 // Persists: mode (PTT vs always-on), source / target language, OSC chatbox
-// path, audible notify-sound flag, and the "I have read the always-on
-// consent" sentinel so the user doesn't have to re-confirm every restart.
+// path, audible notify-sound flag, realtime tuning flags, and the always-on
+// consent sentinel so the user doesn't have to re-confirm every restart.
 struct CaptionsConfig
 {
 	int mode = 0; // 0 = PTT, 1 = always-on
@@ -18,6 +21,7 @@ struct CaptionsConfig
 	bool chatbox_enabled = false;
 	std::string chatbox_address = "/chatbox/input";
 	bool notify_sound = false;
+	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
 
 	// Selected capture endpoint id (IMMDevice::GetId). Empty = system default.
 	std::string input_device = "";

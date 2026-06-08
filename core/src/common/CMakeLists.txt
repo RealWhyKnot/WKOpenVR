@@ -20,6 +20,7 @@ add_library(openvr_pair_common STATIC
 	BugReport.cpp
 	BugReport.h
 	BuildChannel.h
+	CaptionsRealtimeFlags.h
 	DebugLogging.cpp
 	DebugLogging.h
 	DiagnosticsLog.cpp
