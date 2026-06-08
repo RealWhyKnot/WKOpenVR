@@ -80,3 +80,41 @@ TEST(PhantomUiLogic, NonPresetDropoutTimingClassifiesAsCustom)
 	++values.synth_hold_ms;
 	EXPECT_EQ(phantom::ui::ClassifyDropoutTiming(values), phantom::ui::DropoutTimingPreset::Custom);
 }
+
+TEST(PhantomUiLogic, TrackerStateToneWalksTheDropoutLadder)
+{
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::REAL), phantom::ui::PhantomTone::Ok);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::BLEND_OUT), phantom::ui::PhantomTone::Pending);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::BLEND_IN), phantom::ui::PhantomTone::Pending);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::SYNTH_RECKON), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::SYNTH_IK), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::SYNTH_ML), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::OUT_OF_RANGE), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::TrackerStateTone(phantom::TrackerState::LOST), phantom::ui::PhantomTone::Error);
+}
+
+TEST(PhantomUiLogic, EveryTrackerStateHasAConcreteTone)
+{
+	// No live tracker state should fall through to the Idle/default tone -- a
+	// row always shows a meaningful green/amber/orange/red badge.
+	const phantom::TrackerState states[] = {
+	    phantom::TrackerState::REAL,         phantom::TrackerState::BLEND_OUT,
+	    phantom::TrackerState::SYNTH_RECKON, phantom::TrackerState::SYNTH_IK,
+	    phantom::TrackerState::SYNTH_ML,     phantom::TrackerState::BLEND_IN,
+	    phantom::TrackerState::OUT_OF_RANGE, phantom::TrackerState::LOST,
+	};
+	for (const auto s : states) {
+		EXPECT_NE(phantom::ui::TrackerStateTone(s), phantom::ui::PhantomTone::Idle);
+	}
+}
+
+TEST(PhantomUiLogic, SolverModeToneSeparatesMeasuredFromInferred)
+{
+	EXPECT_EQ(phantom::ui::SolverModeTone(0), phantom::ui::PhantomTone::Idle);
+	EXPECT_EQ(phantom::ui::SolverModeTone(1), phantom::ui::PhantomTone::Ok);
+	EXPECT_EQ(phantom::ui::SolverModeTone(2), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::SolverModeTone(3), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::SolverModeTone(4), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::SolverModeTone(5), phantom::ui::PhantomTone::Warn);
+	EXPECT_EQ(phantom::ui::SolverModeTone(6), phantom::ui::PhantomTone::Error);
+}

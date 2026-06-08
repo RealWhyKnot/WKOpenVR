@@ -15,6 +15,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -22,10 +23,44 @@
 #include <cmath>
 #include <string>
 
+namespace ui = openvr_pair::overlay::ui;
+
 namespace {
 
 const char* SolverModeLabel(uint8_t mode);
 std::string SourceMaskLabel(uint16_t mask);
+
+// Map the test-covered, ImGui-free PhantomTone onto the shared overlay
+// StatusTone so diagnostics cells use the same semantic palette as the rest of
+// the shell. The mapping itself lives in PhantomUiLogic.h (unit-tested); this is
+// just the overlay-only glue.
+ui::StatusTone ToStatusTone(phantom::ui::PhantomTone t)
+{
+	switch (t) {
+		case phantom::ui::PhantomTone::Ok:
+			return ui::StatusTone::Ok;
+		case phantom::ui::PhantomTone::Pending:
+			return ui::StatusTone::Pending;
+		case phantom::ui::PhantomTone::Warn:
+			return ui::StatusTone::Warn;
+		case phantom::ui::PhantomTone::Error:
+			return ui::StatusTone::Error;
+		case phantom::ui::PhantomTone::Info:
+			return ui::StatusTone::Info;
+		case phantom::ui::PhantomTone::Idle:
+			return ui::StatusTone::Idle;
+	}
+	return ui::StatusTone::Idle;
+}
+
+// Dimmed cell-background fill for a diagnostics row, derived from the active
+// theme's status color so it tracks theme switches. Idle returns 0 (no fill).
+ImU32 ToneCellBg(phantom::ui::PhantomTone t)
+{
+	if (t == phantom::ui::PhantomTone::Idle) return 0;
+	const ImVec4 c = ui::StatusColor(ToStatusTone(t));
+	return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.35f));
+}
 
 } // namespace
 
@@ -164,169 +199,243 @@ void PhantomPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 		ImGui::Spacing();
 	}
 
-	openvr_pair::overlay::ui::TabBarScope tabs("PhantomTabs");
+	// The shell already hosts this whole tab inside a scrolling child
+	// (ShellUi.cpp), so the sub-tabs are plain tab items -- a nested scroll
+	// child would fight the outer one.
+	ui::TabBarScope tabs("PhantomTabs");
 	if (tabs) {
-		openvr_pair::overlay::ui::DrawTabItem("Dropouts", [&] { DrawDropoutsTab(); });
-		openvr_pair::overlay::ui::DrawTabItem("Calibration", [&] { DrawCalibrationTab(); });
-		openvr_pair::overlay::ui::DrawTabItem("Absent", [&] { DrawAbsentTab(); });
-		openvr_pair::overlay::ui::DrawTabItem("Diagnostics", [&] { DrawDiagnosticsTab(); });
-		openvr_pair::overlay::ui::DrawTabItem("Advanced", [&] { DrawAdvancedTab(); });
+		ui::DrawTabItem("Dropouts", [&] { DrawDropoutsTab(); });
+		ui::DrawTabItem("Calibration", [&] { DrawCalibrationTab(); });
+		ui::DrawTabItem("Absent", [&] { DrawAbsentTab(); });
+		ui::DrawTabItem("Diagnostics", [&] { DrawDiagnosticsTab(); });
+		ui::DrawTabItem("Advanced", [&] { DrawAdvancedTab(); });
 	}
 
 	if (phantom::ui::ShouldShowDriverError(context.vrConnected, !connectError_.empty()) && !ipc_.IsConnected()) {
 		ImGui::Spacing();
-		ImGui::TextColored(openvr_pair::overlay::ui::GetPalette().statusError, "IPC: %s", connectError_.c_str());
+		ImGui::TextColored(ui::GetPalette().statusError, "IPC: %s", connectError_.c_str());
 	}
 }
 
 void PhantomPlugin::DrawDropoutsTab()
 {
 	ImGui::Spacing();
-	if (ImGui::Checkbox("Bridge dropped trackers", &cfg_.master_enabled)) {
-		SendConfig();
-		SavePhantomConfig(cfg_);
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Master switch. With this on, the driver fills in plausible poses\n"
-		                  "for any tracker you opted in below when its real pose goes silent.\n"
-		                  "Past the synth-hold window the tracker is marked OutOfRange so\n"
-		                  "VRChat / Resonite drop it from the IK chain cleanly.");
-	}
 
-	ImGui::Spacing();
-	ImGui::SeparatorText("Per-tracker opt-in");
-	ImGui::Spacing();
-
-	auto* vrSystem = vr::VRSystem();
-	if (!vrSystem) {
-		ImGui::TextDisabled("(VR system not available)");
-		return;
-	}
-
-	char buffer[vr::k_unMaxPropertyStringSize];
-	bool anyShown = false;
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
-		const auto deviceClass = vrSystem->GetTrackedDeviceClass(id);
-		if (deviceClass == vr::TrackedDeviceClass_Invalid) continue;
-
-		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, sizeof(buffer), &err);
-		if (err != vr::TrackedProp_Success || buffer[0] == 0) continue;
-		const std::string serial = buffer;
-
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, sizeof(buffer), &err);
-		const std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
-
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer), &err);
-		const std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
-
-		if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(deviceClass, serial, model, trackingSystem)) {
-			continue;
-		}
-
-		anyShown = true;
-		bool enabled = cfg_.dropout_enabled.count(serial) ? cfg_.dropout_enabled[serial] : false;
-		ImGui::PushID(("trk_" + serial).c_str());
-		if (ImGui::Checkbox("##en", &enabled)) {
-			cfg_.dropout_enabled[serial] = enabled;
-			SendDeviceOptIn(serial, enabled);
+	ui::DrawPanel("Dropout bridging", [&] {
+		if (ui::CheckboxWithTooltip("Bridge dropped trackers", &cfg_.master_enabled,
+		                            "Master switch. With this on, the driver fills in plausible poses\n"
+		                            "for any tracker you opted in below when its real pose goes silent.\n"
+		                            "Past the synth-hold window the tracker is marked OutOfRange so\n"
+		                            "VRChat / Resonite drop it from the IK chain cleanly.")) {
+			SendConfig();
 			SavePhantomConfig(cfg_);
 		}
-		ImGui::SameLine();
-		ImGui::TextWrapped("%s  [%s]", model.empty() ? "(unknown model)" : model.c_str(), serial.c_str());
-		ImGui::PopID();
-	}
-	if (!anyShown) {
-		ImGui::TextDisabled("No bridgeable trackers detected. HMD, controllers, and "
-		                    "generic body trackers will appear here once SteamVR is "
-		                    "running and the devices are on.");
-	}
+	});
+
+	ui::DrawPanel("Per-tracker opt-in", [&] {
+		auto* vrSystem = vr::VRSystem();
+		if (!vrSystem) {
+			ui::DrawEmptyState("VR system not available.");
+			return;
+		}
+
+		ui::TableScope table("PhantomDropoutOptIn", 2,
+		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
+		if (!table) return;
+		ui::SetupFixedColumn("Bridge", 64.0f);
+		ui::SetupStretchColumn("Tracker", 1.0f);
+		ImGui::TableHeadersRow();
+
+		char buffer[vr::k_unMaxPropertyStringSize];
+		bool anyShown = false;
+		for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
+			const auto deviceClass = vrSystem->GetTrackedDeviceClass(id);
+			if (deviceClass == vr::TrackedDeviceClass_Invalid) continue;
+
+			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, sizeof(buffer), &err);
+			if (err != vr::TrackedProp_Success || buffer[0] == 0) continue;
+			const std::string serial = buffer;
+
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, sizeof(buffer), &err);
+			const std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
+
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer), &err);
+			const std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
+
+			if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(deviceClass, serial, model, trackingSystem)) {
+				continue;
+			}
+
+			anyShown = true;
+			bool enabled = cfg_.dropout_enabled.count(serial) ? cfg_.dropout_enabled[serial] : false;
+			ImGui::PushID(("trk_" + serial).c_str());
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			if (ImGui::Checkbox("##en", &enabled)) {
+				cfg_.dropout_enabled[serial] = enabled;
+				SendDeviceOptIn(serial, enabled);
+				SavePhantomConfig(cfg_);
+			}
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(model.empty() ? "(unknown model)" : model.c_str());
+			ImGui::SameLine();
+			ImGui::TextDisabled("[%s]", serial.c_str());
+			ImGui::PopID();
+		}
+		if (!anyShown) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ui::DrawEmptyState("No bridgeable trackers detected. HMD, controllers, and generic body "
+			                   "trackers appear here once SteamVR is running and the devices are on.");
+		}
+	});
 }
 
 void PhantomPlugin::DrawDiagnosticsTab()
 {
 	ImGui::Spacing();
 	if (!stateShmemReady_ || !stateShmem_.layout()) {
-		ImGui::TextDisabled("Driver state not yet available. The driver must be loaded "
-		                    "and the phantom feature flag enabled.");
+		ui::DrawEmptyState("Driver state not yet available. Load the driver with the Phantom "
+		                   "feature flag enabled to see live tracker status.");
 		return;
 	}
 	const auto* layout = stateShmem_.layout();
 	if (layout->magic != phantom::kPhantomStateShmemMagic) {
-		ImGui::TextDisabled("Driver state shmem has unexpected magic; mismatched install?");
+		ui::DrawErrorBanner("Driver mismatch", "Driver state has unexpected magic; reinstall so the driver and overlay match.");
 		return;
 	}
 	if (layout->version != phantom::kPhantomStateShmemVersion) {
-		ImGui::TextDisabled("Driver state shmem has unexpected version; mismatched install?");
+		ui::DrawErrorBanner("Driver mismatch", "Driver state has unexpected version; reinstall so the driver and overlay match.");
 		return;
 	}
 
-	openvr_pair::overlay::ui::TableScope table("PhantomDiag", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH);
-	if (table) {
-		ImGui::TableSetupColumn("Serial");
-		ImGui::TableSetupColumn("State");
-		ImGui::TableSetupColumn("Drops");
-		ImGui::TableSetupColumn("Now (ms)");
-		ImGui::TableSetupColumn("Longest (ms)");
+	const ImGuiTableFlags diagFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter |
+	                                  ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
+
+	// Numeric cells sit right of their header in normal text color (the
+	// muted-text path of RightAlignText is for placeholders, not live counts).
+	auto rightCell = [](const char* text) {
+		ui::RightAlignText(text, ImGui::GetStyleColorVec4(ImGuiCol_Text), true);
+	};
+
+	ui::DrawPanel("Live trackers", [&] {
+		ui::TableScope table("PhantomDiag", 5, diagFlags);
+		if (!table) return;
+		ui::SetupStretchColumn("Serial", 2.0f);
+		ui::SetupStretchColumn("State", 1.4f);
+		ui::SetupFixedColumn("Drops", 60.0f);
+		ui::SetupFixedColumn("Now (ms)", 80.0f);
+		ui::SetupFixedColumn("Longest (ms)", 96.0f);
 		ImGui::TableHeadersRow();
+
+		int shown = 0;
+		char buf[32];
 		for (uint32_t i = 0; i < layout->device_count; ++i) {
 			const auto& d = layout->devices[i];
 			if (d.serial_len == 0) continue;
-			ImGui::TableNextRow();
-			ImGui::TableNextColumn();
-			ImGui::Text("%.*s", (int)d.serial_len, d.serial);
-			ImGui::TableNextColumn();
-			ImGui::Text("%s", phantom::TrackerStateLabel(static_cast<phantom::TrackerState>(d.state)));
-			ImGui::TableNextColumn();
-			ImGui::Text("%u", d.dropout_count);
-			ImGui::TableNextColumn();
-			ImGui::Text("%u", d.dropout_age_ms);
-			ImGui::TableNextColumn();
-			ImGui::Text("%u", d.longest_dropout_ms);
-		}
-	}
+			++shown;
+			const auto state = static_cast<phantom::TrackerState>(d.state);
 
-	if (layout->version >= phantom::kPhantomStateShmemVersion) {
-		ImGui::Spacing();
-		ImGui::SeparatorText("Role completion");
-		openvr_pair::overlay::ui::TableScope roleTable("PhantomRoleDiag", 6,
-		                                               ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH);
-		if (roleTable) {
-			ImGui::TableSetupColumn("Role");
-			ImGui::TableSetupColumn("Confidence");
-			ImGui::TableSetupColumn("Mode");
-			ImGui::TableSetupColumn("Source");
-			ImGui::TableSetupColumn("Age");
-			ImGui::TableSetupColumn("Position");
-			ImGui::TableHeadersRow();
-			for (uint8_t i = 0; i < phantom::kBodyRoleCount; ++i) {
-				const auto& r = layout->roles[i];
-				if (!r.valid) continue;
-				ImGui::TableNextRow();
-				ImGui::TableNextColumn();
-				ImGui::Text("%s", phantom::BodyRoleLabel(static_cast<phantom::BodyRole>(r.role)));
-				ImGui::TableNextColumn();
-				ImGui::Text("%.2f", r.confidence);
-				ImGui::TableNextColumn();
-				ImGui::Text("%s", SolverModeLabel(r.solver_mode));
-				ImGui::TableNextColumn();
-				const std::string sources = SourceMaskLabel(r.source_mask);
-				ImGui::TextWrapped("%s", sources.c_str());
-				ImGui::TableNextColumn();
-				ImGui::Text("%u ms", r.age_ms);
-				ImGui::TableNextColumn();
-				ImGui::Text("%.2f %.2f %.2f", r.position[0], r.position[1], r.position[2]);
-			}
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("%.*s", (int)d.serial_len, d.serial);
+
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ToneCellBg(phantom::ui::TrackerStateTone(state)));
+			ImGui::TextUnformatted(phantom::TrackerStateLabel(state));
+
+			ImGui::TableSetColumnIndex(2);
+			std::snprintf(buf, sizeof(buf), "%u", d.dropout_count);
+			rightCell(buf);
+
+			ImGui::TableSetColumnIndex(3);
+			std::snprintf(buf, sizeof(buf), "%u", d.dropout_age_ms);
+			rightCell(buf);
+
+			ImGui::TableSetColumnIndex(4);
+			std::snprintf(buf, sizeof(buf), "%u", d.longest_dropout_ms);
+			rightCell(buf);
 		}
-	}
+		if (shown == 0) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ui::DrawEmptyState("No trackers observed yet.");
+		}
+	});
+
+	ui::DrawPanel("Role completion", [&] {
+		ui::TableScope roleTable("PhantomRoleDiag", 6, diagFlags);
+		if (!roleTable) return;
+		ui::SetupStretchColumn("Role", 1.5f);
+		ui::SetupFixedColumn("Confidence", 84.0f);
+		ui::SetupStretchColumn("Mode", 1.4f);
+		ui::SetupStretchColumn("Source", 2.0f);
+		ui::SetupFixedColumn("Age", 72.0f);
+		ui::SetupFixedColumn("Position", 140.0f);
+		ImGui::TableHeadersRow();
+
+		int shown = 0;
+		char buf[64];
+		for (uint8_t i = 0; i < phantom::kBodyRoleCount; ++i) {
+			const auto& r = layout->roles[i];
+			if (!r.valid) continue;
+			++shown;
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(phantom::BodyRoleLabel(static_cast<phantom::BodyRole>(r.role)));
+
+			ImGui::TableSetColumnIndex(1);
+			std::snprintf(buf, sizeof(buf), "%.2f", r.confidence);
+			rightCell(buf);
+
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ToneCellBg(phantom::ui::SolverModeTone(r.solver_mode)));
+			ImGui::TextUnformatted(SolverModeLabel(r.solver_mode));
+
+			ImGui::TableSetColumnIndex(3);
+			const std::string sources = SourceMaskLabel(r.source_mask);
+			ImGui::TextUnformatted(sources.c_str());
+			ui::TooltipOnHover(sources.c_str());
+
+			ImGui::TableSetColumnIndex(4);
+			std::snprintf(buf, sizeof(buf), "%u ms", r.age_ms);
+			rightCell(buf);
+
+			ImGui::TableSetColumnIndex(5);
+			ImGui::Text("%.2f %.2f %.2f", r.position[0], r.position[1], r.position[2]);
+		}
+		if (shown == 0) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ui::DrawEmptyState("No completed body roles yet.");
+		}
+	});
+
+	// State color key -- built from the same tone->color path the cells use, so
+	// it can never drift from the row tints above.
+	ImGui::Spacing();
+	auto legendItem = [](const char* label, phantom::ui::PhantomTone tone) {
+		ImGui::TextColored(ui::StatusColor(ToStatusTone(tone)), "%s", label);
+	};
+	ImGui::TextDisabled("State");
+	ImGui::SameLine();
+	legendItem("Real", phantom::ui::PhantomTone::Ok);
+	ImGui::SameLine();
+	legendItem("Blending", phantom::ui::PhantomTone::Pending);
+	ImGui::SameLine();
+	legendItem("Synthesizing", phantom::ui::PhantomTone::Warn);
+	ImGui::SameLine();
+	legendItem("Lost", phantom::ui::PhantomTone::Error);
 }
 
 void PhantomPlugin::DrawAdvancedTab()
 {
 	ImGui::Spacing();
-	ImGui::TextWrapped("Timing ladder. Lower the synth-hold to recover trackers faster after "
-	                   "a stuck pose; raise it to bridge longer outages. Out-of-range happens "
-	                   "at synth-hold; the device stops publishing at lost-hold.");
+	ui::DrawTextWrapped("Timing ladder. Lower the synth-hold to recover trackers faster after "
+	                    "a stuck pose; raise it to bridge longer outages. Out-of-range happens "
+	                    "at synth-hold; the device stops publishing at lost-hold.");
 	ImGui::Spacing();
 
 	auto currentTiming = [&] {
@@ -344,61 +453,60 @@ void PhantomPlugin::DrawAdvancedTab()
 		SavePhantomConfig(cfg_);
 	};
 
-	const auto preset = phantom::ui::ClassifyDropoutTiming(currentTiming());
-	if (ImGui::BeginCombo("Timing preset", phantom::ui::DropoutTimingPresetLabel(preset))) {
-		const phantom::ui::DropoutTimingPreset presets[] = {
-		    phantom::ui::DropoutTimingPreset::Conservative,
-		    phantom::ui::DropoutTimingPreset::Balanced,
-		    phantom::ui::DropoutTimingPreset::Extended,
-		};
-		for (const auto candidate : presets) {
-			const bool selected = preset == candidate;
-			if (ImGui::Selectable(phantom::ui::DropoutTimingPresetLabel(candidate), selected)) {
-				applyTiming(phantom::ui::ValuesForDropoutTimingPreset(candidate));
+	ui::DrawPanel("Timing ladder", [&] {
+		const auto preset = phantom::ui::ClassifyDropoutTiming(currentTiming());
+		if (ImGui::BeginCombo("Timing preset", phantom::ui::DropoutTimingPresetLabel(preset))) {
+			const phantom::ui::DropoutTimingPreset presets[] = {
+			    phantom::ui::DropoutTimingPreset::Conservative,
+			    phantom::ui::DropoutTimingPreset::Balanced,
+			    phantom::ui::DropoutTimingPreset::Extended,
+			};
+			for (const auto candidate : presets) {
+				const bool selected = preset == candidate;
+				if (ImGui::Selectable(phantom::ui::DropoutTimingPresetLabel(candidate), selected)) {
+					applyTiming(phantom::ui::ValuesForDropoutTimingPreset(candidate));
+				}
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("%s", phantom::ui::DropoutTimingPresetHelp(candidate));
+				}
+				if (selected) ImGui::SetItemDefaultFocus();
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("%s", phantom::ui::DropoutTimingPresetHelp(candidate));
-			}
-			if (selected) ImGui::SetItemDefaultFocus();
+			ImGui::EndCombo();
 		}
-		ImGui::EndCombo();
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("%s", phantom::ui::DropoutTimingPresetHelp(preset));
-	}
+		ui::TooltipForLastItem(phantom::ui::DropoutTimingPresetHelp(preset));
 
-	ImGui::Spacing();
+		ImGui::Spacing();
 
-	auto sliderMs = [&](const char* label, uint32_t& v, uint32_t lo, uint32_t hi, const char* tip) {
-		int tmp = static_cast<int>(v);
-		if (ImGui::SliderInt(label, &tmp, (int)lo, (int)hi, "%d ms")) {
-			v = static_cast<uint32_t>(std::clamp(tmp, (int)lo, (int)hi));
+		auto sliderMs = [&](const char* label, uint32_t& v, uint32_t lo, uint32_t hi, const char* tip) {
+			int tmp = static_cast<int>(v);
+			if (ui::SliderIntWithTooltip(label, &tmp, (int)lo, (int)hi, "%d ms", tip)) {
+				v = static_cast<uint32_t>(std::clamp(tmp, (int)lo, (int)hi));
+				SendConfig();
+				SavePhantomConfig(cfg_);
+			}
+		};
+
+		sliderMs("Blend out", cfg_.blend_out_ms, 0, 500, "Real to synth fade duration on dropout start.");
+		sliderMs("Blend in", cfg_.blend_in_ms, 0, 1000, "Synth to real fade duration when the real signal returns.");
+		sliderMs("Reckon hold", cfg_.reckon_hold_ms, 0, 1000,
+		         "How long dead reckoning is the primary synthesis source before the "
+		         "ladder escalates (to IK / ML in later phases).");
+		sliderMs("Synth hold", cfg_.synth_hold_ms, 100, 10000,
+		         "Total time after dropout before ETrackingResult flips to OutOfRange.");
+		sliderMs("Lost hold", cfg_.lost_hold_ms, 500, 60000,
+		         "Total time after dropout before the device stops publishing entirely.");
+
+		ImGui::Spacing();
+		if (ImGui::Button("Reset to defaults")) {
+			cfg_.blend_out_ms = phantom::DefaultTimings::kBlendOutMs;
+			cfg_.blend_in_ms = phantom::DefaultTimings::kBlendInMs;
+			cfg_.reckon_hold_ms = phantom::DefaultTimings::kReckonHoldMs;
+			cfg_.synth_hold_ms = phantom::DefaultTimings::kSynthHoldMs;
+			cfg_.lost_hold_ms = phantom::DefaultTimings::kLostHoldMs;
 			SendConfig();
 			SavePhantomConfig(cfg_);
 		}
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-	};
-
-	sliderMs("Blend out", cfg_.blend_out_ms, 0, 500, "Real to synth fade duration on dropout start.");
-	sliderMs("Blend in", cfg_.blend_in_ms, 0, 1000, "Synth to real fade duration when the real signal returns.");
-	sliderMs("Reckon hold", cfg_.reckon_hold_ms, 0, 1000,
-	         "How long dead reckoning is the primary synthesis source before the "
-	         "ladder escalates (to IK / ML in later phases).");
-	sliderMs("Synth hold", cfg_.synth_hold_ms, 100, 10000,
-	         "Total time after dropout before ETrackingResult flips to OutOfRange.");
-	sliderMs("Lost hold", cfg_.lost_hold_ms, 500, 60000,
-	         "Total time after dropout before the device stops publishing entirely.");
-
-	ImGui::Spacing();
-	if (ImGui::Button("Reset to defaults")) {
-		cfg_.blend_out_ms = phantom::DefaultTimings::kBlendOutMs;
-		cfg_.blend_in_ms = phantom::DefaultTimings::kBlendInMs;
-		cfg_.reckon_hold_ms = phantom::DefaultTimings::kReckonHoldMs;
-		cfg_.synth_hold_ms = phantom::DefaultTimings::kSynthHoldMs;
-		cfg_.lost_hold_ms = phantom::DefaultTimings::kLostHoldMs;
-		SendConfig();
-		SavePhantomConfig(cfg_);
-	}
+	});
 }
 
 namespace {
@@ -760,144 +868,183 @@ void PhantomPlugin::CaptureTPose()
 void PhantomPlugin::DrawCalibrationTab()
 {
 	ImGui::Spacing();
-	ImGui::TextWrapped("Capture neutral standing first for headset/controller body completion. "
-	                   "Assign physical trackers below only when a real tracker should anchor "
-	                   "or disambiguate a body role.");
+	ui::DrawTextWrapped("Capture neutral standing first for headset/controller body completion. "
+	                    "Assign physical trackers below only when a real tracker should anchor "
+	                    "or disambiguate a body role.");
 	ImGui::Spacing();
 
-	ImGui::SeparatorText("Neutral standing");
-	if (ImGui::Button("Capture neutral standing")) {
-		CaptureNeutralStanding();
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Stand upright, face forward, and click. Uses the current HMD pose "
-		                  "to set height, floor, forward direction, and starting proportions.");
-	}
-	if (!lastSolverCalibrationSummary_.empty()) {
-		ImGui::Spacing();
-		ImGui::TextWrapped("%s", lastSolverCalibrationSummary_.c_str());
-	}
+	ui::DrawPanel("Neutral standing", [&] {
+		if (ImGui::Button("Capture neutral standing")) {
+			CaptureNeutralStanding();
+		}
+		ui::TooltipForLastItem("Stand upright, face forward, and click. Uses the current HMD pose "
+		                       "to set height, floor, forward direction, and starting proportions.");
+		if (!lastSolverCalibrationSummary_.empty()) {
+			ImGui::Spacing();
+			ui::DrawStatusText(lastSolverCalibrationSummary_.c_str(), ui::StatusTone::Ok);
+		}
+	});
 
-	auto solverSlider = [&](const char* label, double& v, float lo, float hi, const char* fmt) {
-		float tmp = static_cast<float>(v);
-		if (ImGui::SliderFloat(label, &tmp, lo, hi, fmt)) {
-			v = static_cast<double>(std::clamp(tmp, lo, hi));
+	ui::DrawPanel("Body proportions", [&] {
+		ui::DrawSettingTable("PhantomBody", 150.0f, [&](ui::SettingTableScope& tbl) {
+			auto solverRow = [&](const char* label, const char* id, double& v, float lo, float hi, const char* fmt) {
+				ui::SettingRow(tbl, label, [&] {
+					float tmp = static_cast<float>(v);
+					ImGui::SetNextItemWidth(-FLT_MIN);
+					if (ImGui::SliderFloat(id, &tmp, lo, hi, fmt)) {
+						v = static_cast<double>(std::clamp(tmp, lo, hi));
+						cfg_.solver.calibrated = true;
+						SendSolverConfig();
+						SavePhantomConfig(cfg_);
+					}
+				});
+			};
+			solverRow("Height", "##height", cfg_.solver.height_m, 1.0f, 2.4f, "%.2f m");
+			solverRow("Floor Y", "##floory", cfg_.solver.floor_y_m, -1.0f, 1.0f, "%.2f m");
+			solverRow("Stance width", "##stance", cfg_.solver.stance_width_m, 0.10f, 0.70f, "%.2f m");
+			solverRow("Shoulder width", "##shoulder", cfg_.solver.shoulder_width_m, 0.20f, 0.70f, "%.2f m");
+			solverRow("Pelvis width", "##pelvis", cfg_.solver.pelvis_width_m, 0.15f, 0.60f, "%.2f m");
+			solverRow("Upper arm", "##uparm", cfg_.solver.upper_arm_m, 0.15f, 0.55f, "%.2f m");
+			solverRow("Lower arm", "##loarm", cfg_.solver.lower_arm_m, 0.15f, 0.55f, "%.2f m");
+			solverRow("Upper leg", "##upleg", cfg_.solver.upper_leg_m, 0.20f, 0.70f, "%.2f m");
+			solverRow("Lower leg", "##loleg", cfg_.solver.lower_leg_m, 0.20f, 0.70f, "%.2f m");
+		});
+	});
+
+	ui::DrawPanel("Estimation gate", [&] {
+		float tmp = static_cast<float>(cfg_.solver.virtual_min_confidence);
+		if (ImGui::SliderFloat("Minimum confidence", &tmp, 0.0f, 1.0f, "%.2f")) {
+			cfg_.solver.virtual_min_confidence = static_cast<double>(std::clamp(tmp, 0.0f, 1.0f));
 			cfg_.solver.calibrated = true;
 			SendSolverConfig();
 			SavePhantomConfig(cfg_);
 		}
-	};
+		ui::TooltipForLastItem("Estimated trackers stop publishing below this confidence instead of guessing.");
+	});
 
-	ImGui::Spacing();
-	solverSlider("Height", cfg_.solver.height_m, 1.0f, 2.4f, "%.2f m");
-	solverSlider("Floor Y", cfg_.solver.floor_y_m, -1.0f, 1.0f, "%.2f m");
-	solverSlider("Stance width", cfg_.solver.stance_width_m, 0.10f, 0.70f, "%.2f m");
-	solverSlider("Shoulder width", cfg_.solver.shoulder_width_m, 0.20f, 0.70f, "%.2f m");
-	solverSlider("Pelvis width", cfg_.solver.pelvis_width_m, 0.15f, 0.60f, "%.2f m");
-	solverSlider("Upper arm", cfg_.solver.upper_arm_m, 0.15f, 0.55f, "%.2f m");
-	solverSlider("Lower arm", cfg_.solver.lower_arm_m, 0.15f, 0.55f, "%.2f m");
-	solverSlider("Upper leg", cfg_.solver.upper_leg_m, 0.20f, 0.70f, "%.2f m");
-	solverSlider("Lower leg", cfg_.solver.lower_leg_m, 0.20f, 0.70f, "%.2f m");
-	solverSlider("Minimum virtual confidence", cfg_.solver.virtual_min_confidence, 0.0f, 1.0f, "%.2f");
-
-	ImGui::Spacing();
 	auto* vrSystem = vr::VRSystem();
 	if (!vrSystem) {
-		ImGui::TextDisabled("(VR system not available)");
+		ui::DrawPanel("Physical tracker roles", [&] { ui::DrawEmptyState("VR system not available."); });
 		return;
 	}
 
-	ImGui::SeparatorText("Physical tracker roles");
-	char buffer[vr::k_unMaxPropertyStringSize];
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
-		const auto cls = vrSystem->GetTrackedDeviceClass(id);
-		if (cls == vr::TrackedDeviceClass_Invalid) continue;
+	ui::DrawPanel("Physical tracker roles", [&] {
+		ui::TableScope table("PhantomRoles", 2,
+		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
+		if (!table) return;
+		ui::SetupStretchColumn("Tracker", 1.6f);
+		ui::SetupStretchColumn("Role", 1.0f);
+		ImGui::TableHeadersRow();
 
-		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, sizeof(buffer), &err);
-		if (err != vr::TrackedProp_Success || buffer[0] == 0) continue;
-		const std::string serial = buffer;
+		bool anyShown = false;
+		char buffer[vr::k_unMaxPropertyStringSize];
+		for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
+			const auto cls = vrSystem->GetTrackedDeviceClass(id);
+			if (cls == vr::TrackedDeviceClass_Invalid) continue;
 
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, sizeof(buffer), &err);
-		const std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
+			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, sizeof(buffer), &err);
+			if (err != vr::TrackedProp_Success || buffer[0] == 0) continue;
+			const std::string serial = buffer;
 
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer), &err);
-		const std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, sizeof(buffer), &err);
+			const std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
 
-		if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(cls, serial, model, trackingSystem)) {
-			continue;
-		}
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer), &err);
+			const std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
 
-		const auto roleIt = cfg_.device_role.find(serial);
-		phantom::BodyRole cur = (roleIt != cfg_.device_role.end()) ? roleIt->second : phantom::BodyRole::None;
-
-		ImGui::PushID(("cal_" + serial).c_str());
-		ImGui::TextWrapped("%s  [%s]", model.empty() ? "(unknown model)" : model.c_str(), serial.c_str());
-
-		const char* curLabel = phantom::BodyRoleLabel(cur);
-		if (ImGui::BeginCombo("Role", curLabel)) {
-			for (uint8_t i = 0; i < phantom::kBodyRoleCount; ++i) {
-				const auto r = static_cast<phantom::BodyRole>(i);
-				// HMD / hand roles are not assignable on a body tracker;
-				// skip them in the dropdown to avoid invalid combinations.
-				if (r == phantom::BodyRole::Hmd || r == phantom::BodyRole::LeftHand ||
-				    r == phantom::BodyRole::RightHand)
-					continue;
-				const bool selected = (r == cur);
-				if (ImGui::Selectable(phantom::BodyRoleLabel(r), selected)) {
-					if (r == phantom::BodyRole::None) {
-						cfg_.device_role.erase(serial);
-					}
-					else {
-						cfg_.device_role[serial] = r;
-					}
-					SendDeviceRole(serial, r);
-					SavePhantomConfig(cfg_);
-				}
-				if (selected) ImGui::SetItemDefaultFocus();
+			if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(cls, serial, model, trackingSystem)) {
+				continue;
 			}
-			ImGui::EndCombo();
+
+			anyShown = true;
+			const auto roleIt = cfg_.device_role.find(serial);
+			phantom::BodyRole cur = (roleIt != cfg_.device_role.end()) ? roleIt->second : phantom::BodyRole::None;
+
+			ImGui::PushID(("cal_" + serial).c_str());
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(model.empty() ? "(unknown model)" : model.c_str());
+			ImGui::SameLine();
+			ImGui::TextDisabled("[%s]", serial.c_str());
+
+			ImGui::TableSetColumnIndex(1);
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			if (ImGui::BeginCombo("##role", phantom::BodyRoleLabel(cur))) {
+				for (uint8_t i = 0; i < phantom::kBodyRoleCount; ++i) {
+					const auto r = static_cast<phantom::BodyRole>(i);
+					// HMD / hand roles are not assignable on a body tracker;
+					// skip them in the dropdown to avoid invalid combinations.
+					if (r == phantom::BodyRole::Hmd || r == phantom::BodyRole::LeftHand ||
+					    r == phantom::BodyRole::RightHand)
+						continue;
+					const bool selected = (r == cur);
+					if (ImGui::Selectable(phantom::BodyRoleLabel(r), selected)) {
+						if (r == phantom::BodyRole::None) {
+							cfg_.device_role.erase(serial);
+						}
+						else {
+							cfg_.device_role[serial] = r;
+						}
+						SendDeviceRole(serial, r);
+						SavePhantomConfig(cfg_);
+					}
+					if (selected) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::PopID();
 		}
-		ImGui::PopID();
-	}
+		if (!anyShown) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ui::DrawEmptyState("No assignable trackers detected.");
+		}
+	});
 
-	ImGui::Spacing();
-	ImGui::SeparatorText("Tracker mounting offsets");
-	if (ImGui::Button("Capture T-pose now")) {
-		CaptureTPose();
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Stand in a T-pose (arms out, body upright, head level) and click.\n"
-		                  "Captures the rigid mounting offset of every assigned physical\n"
-		                  "tracker. Reassigning a role or moving a tracker means re-capturing.");
-	}
-	if (!lastCalibrationSummary_.empty()) {
-		ImGui::Spacing();
-		ImGui::TextWrapped("%s", lastCalibrationSummary_.c_str());
-	}
+	ui::DrawPanel("Tracker mounting offsets", [&] {
+		if (ImGui::Button("Capture T-pose now")) {
+			CaptureTPose();
+		}
+		ui::TooltipForLastItem("Stand in a T-pose (arms out, body upright, head level) and click.\n"
+		                       "Captures the rigid mounting offset of every assigned physical\n"
+		                       "tracker. Reassigning a role or moving a tracker means re-capturing.");
+		if (!lastCalibrationSummary_.empty()) {
+			ImGui::Spacing();
+			ui::DrawStatusText(lastCalibrationSummary_.c_str(), ui::StatusTone::Ok);
+		}
+	});
 
-	ImGui::Spacing();
-	ImGui::SeparatorText("Calibration status");
-	if (cfg_.role_offset.empty()) {
-		ImGui::TextDisabled("No roles calibrated yet.");
-	}
-	else {
+	ui::DrawPanel("Calibration status", [&] {
+		if (cfg_.role_offset.empty()) {
+			ui::DrawEmptyState("No roles calibrated yet.");
+			return;
+		}
+		ui::TableScope table("PhantomCalStatus", 2,
+		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
+		if (!table) return;
+		ui::SetupStretchColumn("Role", 1.0f);
+		ui::SetupStretchColumn("Status", 1.0f);
+		ImGui::TableHeadersRow();
 		for (const auto& kv : cfg_.role_offset) {
-			ImGui::Text("%-18s %s", phantom::BodyRoleLabel(kv.first),
-			            kv.second.calibrated ? "calibrated" : "not captured");
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(phantom::BodyRoleLabel(kv.first));
+			ImGui::TableSetColumnIndex(1);
+			ui::DrawStatusCell(kv.second.calibrated ? "Calibrated" : "Not captured",
+			                   kv.second.calibrated ? ui::StatusTone::Ok : ui::StatusTone::Idle);
 		}
-	}
+	});
 }
 
 void PhantomPlugin::DrawAbsentTab()
 {
 	ImGui::Spacing();
-	openvr_pair::overlay::ui::DrawInfoBanner(
+	ui::DrawInfoBanner(
 	    "Estimated trackers",
 	    "Enable only the roles you need. When confidence is low, Phantom stops publishing instead of guessing.");
 	ImGui::Spacing();
 
-	ImGui::SeparatorText("Per-role virtual trackers");
 	const phantom::BodyRole roles[] = {
 	    phantom::BodyRole::Waist,     phantom::BodyRole::Chest,      phantom::BodyRole::LeftFoot,
 	    phantom::BodyRole::RightFoot, phantom::BodyRole::LeftKnee,   phantom::BodyRole::RightKnee,
@@ -911,12 +1058,14 @@ void PhantomPlugin::DrawAbsentTab()
 		return false;
 	};
 
-	if (ImGui::BeginTable("phantom_absent_roles", 4,
-	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Enable", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-		ImGui::TableSetupColumn("Role", ImGuiTableColumnFlags_WidthStretch, 1.5f);
-		ImGui::TableSetupColumn("Risk", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-		ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+	ui::DrawPanel("Per-role virtual trackers", [&] {
+		ui::TableScope table("phantom_absent_roles", 4,
+		                     ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
+		if (!table) return;
+		ui::SetupFixedColumn("Enable", 70.0f);
+		ui::SetupStretchColumn("Role", 1.5f);
+		ui::SetupStretchColumn("Risk", 1.0f);
+		ui::SetupStretchColumn("Status", 2.0f);
 		ImGui::TableHeadersRow();
 
 		for (auto role : roles) {
@@ -930,7 +1079,7 @@ void PhantomPlugin::DrawAbsentTab()
 			ImGui::TableSetColumnIndex(0);
 			ImGui::PushID(static_cast<int>(role));
 			{
-				openvr_pair::overlay::ui::DisabledSection gate(disableToggle, readiness.reason);
+				ui::DisabledSection gate(disableToggle, readiness.reason);
 				if (ImGui::Checkbox("##en", &enabled)) {
 					cfg_.virtual_enabled[role] = enabled;
 					SendVirtualEnabled(role, enabled);
@@ -944,23 +1093,21 @@ void PhantomPlugin::DrawAbsentTab()
 
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(phantom::ui::VirtualRoleTierLabel(tier));
-			openvr_pair::overlay::ui::TooltipOnHover(phantom::ui::VirtualRoleTierHelp(tier));
+			ui::TooltipOnHover(phantom::ui::VirtualRoleTierHelp(tier));
 
 			ImGui::TableSetColumnIndex(3);
 			if (!readiness.canEnable) {
 				ImGui::TextDisabled("%s", readiness.reason);
 			}
 			else if (enabled) {
-				openvr_pair::overlay::ui::DrawStatusText("Publishing when confident",
-				                                         openvr_pair::overlay::ui::StatusTone::Ok);
+				ui::DrawStatusText("Publishing when confident", ui::StatusTone::Ok);
 			}
 			else {
 				ImGui::TextDisabled("Ready");
 			}
 			ImGui::PopID();
 		}
-		ImGui::EndTable();
-	}
+	});
 
 	ImGui::Spacing();
 	ImGui::TextDisabled(

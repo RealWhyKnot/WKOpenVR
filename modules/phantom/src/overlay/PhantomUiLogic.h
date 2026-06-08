@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BlendCurves.h"
+#include "PhantomTypes.h"
 #include "RoleCatalog.h"
 
 #include <cstdint>
@@ -15,6 +16,67 @@ inline bool ShouldAttemptDriverConnection(bool vrConnected)
 inline bool ShouldShowDriverError(bool vrConnected, bool hasDriverError)
 {
 	return vrConnected && hasDriverError;
+}
+
+// Display tone for diagnostics cells. Kept ImGui-free (no StatusTone / Theme
+// dependency) so this header stays usable from the unit-test target, which puts
+// modules/phantom/src/overlay on the include path but not core/src/overlay. The
+// overlay draw code maps PhantomTone onto the shared ui::StatusTone + palette.
+enum class PhantomTone
+{
+	Ok,
+	Pending,
+	Warn,
+	Error,
+	Info,
+	Idle,
+};
+
+// Per-tracker dropout-ladder state -> display tone. The progression walks green
+// (real) -> amber (a blend in flight) -> orange (sustained synthetic or flagged
+// out-of-range) -> red (no longer publishing), so a row's color tracks how
+// degraded its pose source is.
+inline PhantomTone TrackerStateTone(phantom::TrackerState s)
+{
+	switch (s) {
+		case phantom::TrackerState::REAL:
+			return PhantomTone::Ok;
+		case phantom::TrackerState::BLEND_OUT:
+		case phantom::TrackerState::BLEND_IN:
+			return PhantomTone::Pending;
+		case phantom::TrackerState::SYNTH_RECKON:
+		case phantom::TrackerState::SYNTH_IK:
+		case phantom::TrackerState::SYNTH_ML:
+		case phantom::TrackerState::OUT_OF_RANGE:
+			return PhantomTone::Warn;
+		case phantom::TrackerState::LOST:
+			return PhantomTone::Error;
+	}
+	return PhantomTone::Idle;
+}
+
+// Body-completion solver mode -> display tone. Mode values mirror the raw
+// uint8_t the driver publishes (see SolverModeLabel in PhantomPlugin.cpp); the
+// BodyCompletionMode enum itself lives in a driver header off this include path,
+// so we switch the raw code: 0 none -> Idle, 1 measured -> Ok, 2..5
+// inferred/contact -> Warn, 6 low_confidence -> Error.
+inline PhantomTone SolverModeTone(uint8_t mode)
+{
+	switch (mode) {
+		case 0:
+			return PhantomTone::Idle;
+		case 1:
+			return PhantomTone::Ok;
+		case 2:
+		case 3:
+		case 4:
+		case 5:
+			return PhantomTone::Warn;
+		case 6:
+			return PhantomTone::Error;
+		default:
+			return PhantomTone::Idle;
+	}
 }
 
 enum class VirtualRoleTier
