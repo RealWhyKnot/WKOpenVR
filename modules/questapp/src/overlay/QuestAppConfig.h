@@ -13,9 +13,17 @@ struct QuestAppConfig
 	bool companionInstalled = false;
 };
 
+struct OperationResult
+{
+	bool ok = false;
+	std::string message;
+};
+
 struct QuestCompanionSettings
 {
 	bool autoLaunchEnabled = false;
+	int remoteProgramVersion = 0;
+	bool remoteReportsSettings = false;
 	std::string selectedPackage;
 	std::string selectedActivity;
 };

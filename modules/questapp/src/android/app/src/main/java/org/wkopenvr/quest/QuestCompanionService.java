@@ -43,6 +43,7 @@ public final class QuestCompanionService extends Service {
     private static final String CHANNEL_ID = "wkopenvr_quest_companion";
     private static final int NOTIFICATION_ID = 4159;
     private static final int HTTP_PORT = 39789;
+    private static final int REMOTE_PROGRAM_VERSION = 1;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
@@ -318,6 +319,8 @@ public final class QuestCompanionService extends Service {
     private String currentSettingsJson() {
         return "{" +
                 "\"paired\":true," +
+                "\"remoteProgramVersion\":" + REMOTE_PROGRAM_VERSION + "," +
+                "\"remoteFeatures\":[\"settingsReport\"]," +
                 "\"autoLaunchEnabled\":" + (prefs.getBoolean(PREF_AUTO_LAUNCH, false) ? "true" : "false") + "," +
                 "\"selectedPackage\":\"" + jsonEscape(prefs.getString(PREF_PACKAGE, "")) + "\"," +
                 "\"selectedActivity\":\"" + jsonEscape(prefs.getString(PREF_ACTIVITY, "")) + "\"," +

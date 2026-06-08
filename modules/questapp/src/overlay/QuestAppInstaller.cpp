@@ -1,6 +1,7 @@
 #include "QuestAppInstaller.h"
 
 #include "AdbSetupWizard.h"
+#include "QuestCompanionProtocol.h"
 #include "QuestAppCatalog.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
@@ -10,8 +11,6 @@
 #endif
 #include <windows.h>
 #include <winhttp.h>
-
-#include <picojson.h>
 
 #include <algorithm>
 #include <chrono>
@@ -481,25 +480,10 @@ SettingsQueryResult QueryCompanionSettings(AdbController& adb, const QuestAppCon
 	}
 	if (!out.result.ok) return out;
 
-	picojson::value parsed;
-	const std::string err = picojson::parse(parsed, body);
-	if (!err.empty() || !parsed.is<picojson::object>()) {
+	if (!ParseCompanionSettingsJson(body, out.settings)) {
 		out.result.ok = false;
 		out.result.message = "Companion settings response was not valid JSON.";
 		return out;
-	}
-	const auto& obj = parsed.get<picojson::object>();
-	auto autoIt = obj.find("autoLaunchEnabled");
-	if (autoIt != obj.end() && autoIt->second.is<bool>()) {
-		out.settings.autoLaunchEnabled = autoIt->second.get<bool>();
-	}
-	auto pkgIt = obj.find("selectedPackage");
-	if (pkgIt != obj.end() && pkgIt->second.is<std::string>()) {
-		out.settings.selectedPackage = pkgIt->second.get<std::string>();
-	}
-	auto activityIt = obj.find("selectedActivity");
-	if (activityIt != obj.end() && activityIt->second.is<std::string>()) {
-		out.settings.selectedActivity = activityIt->second.get<std::string>();
 	}
 	return out;
 }

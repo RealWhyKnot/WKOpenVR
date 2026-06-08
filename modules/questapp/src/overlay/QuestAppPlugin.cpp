@@ -1,6 +1,7 @@
 #include "QuestAppPlugin.h"
 
 #include "QuestAppInstaller.h"
+#include "QuestAppMicRecovery.h"
 #include "ShellContext.h"
 #include "UiHelpers.h"
 
@@ -9,11 +10,28 @@
 #include <chrono>
 #include <memory>
 #include <regex>
+#include <string>
 #include <utility>
 
 using wkopenvr::questapp::CuratedLaunchTargets;
 using wkopenvr::questapp::LaunchTargetDisplayName;
 using wkopenvr::questapp::QuestLaunchTarget;
+
+namespace {
+
+std::string CompanionLoadStatusText(const wkopenvr::questapp::QuestCompanionSettings& settings, bool loaded)
+{
+	if (!loaded) return "Not loaded";
+	if (settings.remoteProgramVersion <= 0) return "Loaded from companion; remote version unknown";
+
+	std::string text = "Loaded from companion; remote v" + std::to_string(settings.remoteProgramVersion);
+	if (settings.remoteReportsSettings) {
+		text += "; settings report supported";
+	}
+	return text;
+}
+
+} // namespace
 
 #if WKOPENVR_BUILD_IS_DEV
 namespace {
@@ -203,7 +221,8 @@ void QuestAppPlugin::DrawLaunchTargetPicker()
 		SetStatus(query.result.message, !query.result.ok);
 	}
 	ImGui::SameLine();
-	ImGui::TextDisabled(companionSettingsLoaded_ ? "Loaded from companion" : "Not loaded");
+	const std::string companionLoadStatus = CompanionLoadStatusText(companionSettings_, companionSettingsLoaded_);
+	ImGui::TextDisabled("%s", companionLoadStatus.c_str());
 
 	ImGui::Spacing();
 	bool autoLaunch = companionSettings_.autoLaunchEnabled;
@@ -265,6 +284,25 @@ void QuestAppPlugin::DrawLaunchTargetPicker()
 	}
 	else {
 		ImGui::TextDisabled("Install the headset companion before settings can be sent.");
+	}
+
+	ImGui::Spacing();
+	openvr_pair::overlay::ui::DrawSectionHeading("Microphone recovery");
+	openvr_pair::overlay::ui::DrawTextWrapped(
+	    "Briefly denies and re-allows the selected app's Quest microphone permission. Use it when headset mic audio "
+	    "becomes delayed after auto-launch.");
+	const bool adbInstalled = wkopenvr::questapp::PlatformToolsInstalled();
+	const bool hasSelectedPackage = !companionSettings_.selectedPackage.empty();
+	const char* resetReason = !adbInstalled         ? "Install ADB platform-tools from the Setup tab first."
+	                          : !hasSelectedPackage ? "Select an app before resetting its microphone permission."
+	                                                : "";
+	{
+		openvr_pair::overlay::ui::DisabledSection disabled(!adbInstalled || !hasSelectedPackage, resetReason);
+		if (ImGui::Button("Reset selected app microphone")) {
+			const auto result = wkopenvr::questapp::ResetSelectedAppMicrophonePermission(adb_, companionSettings_);
+			SetStatus(result.message, !result.ok);
+		}
+		disabled.AttachReasonTooltip();
 	}
 }
 

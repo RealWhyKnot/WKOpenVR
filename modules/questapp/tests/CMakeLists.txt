@@ -17,12 +17,16 @@ set(QUESTAPP_OVERLAY_SRC "${CMAKE_SOURCE_DIR}/modules/questapp/src/overlay")
 add_executable(questapp_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_adb_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_adb_setup_wizard.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_quest_companion_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_questapp_catalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_questapp_config.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_questapp_mic_recovery.cpp
     ${QUESTAPP_OVERLAY_SRC}/AdbController.cpp
     ${QUESTAPP_OVERLAY_SRC}/AdbSetupWizard.cpp
     ${QUESTAPP_OVERLAY_SRC}/QuestAppCatalog.cpp
-    ${QUESTAPP_OVERLAY_SRC}/QuestAppConfig.cpp)
+    ${QUESTAPP_OVERLAY_SRC}/QuestCompanionProtocol.cpp
+    ${QUESTAPP_OVERLAY_SRC}/QuestAppConfig.cpp
+    ${QUESTAPP_OVERLAY_SRC}/QuestAppMicRecovery.cpp)
 
 target_include_directories(questapp_tests
     PRIVATE ${QUESTAPP_OVERLAY_SRC}

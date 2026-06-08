@@ -10,12 +10,6 @@
 
 namespace wkopenvr::questapp {
 
-struct OperationResult
-{
-	bool ok = false;
-	std::string message;
-};
-
 struct SettingsQueryResult
 {
 	OperationResult result;
