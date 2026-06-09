@@ -195,63 +195,62 @@ void DrawAvatarProfiles(FacetrackingPlugin& plugin)
 	const float tableHeight = rowHeight * static_cast<float>(std::clamp<size_t>(visibleKeys.size() + 1, 4, 8));
 	ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
 	                        ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
-	if (!ImGui::BeginTable("ft_avatar_tuning_profiles", 5, flags, ImVec2(0.0f, tableHeight))) {
-		return;
+	{
+		TableScope profilesTable("ft_avatar_tuning_profiles", 5, flags, ImVec2(0.0f, tableHeight));
+		if (!profilesTable) return;
+
+		SetupFixedColumn("Now", 44.0f);
+		SetupStretchColumn("Avatar");
+		SetupFixedColumn("Source", 72.0f);
+		SetupFixedColumn("Last used", 150.0f);
+		SetupFixedColumn("Overrides", 80.0f);
+		DrawTableHeader();
+
+		for (const std::string& key : visibleKeys) {
+			const bool isActive = (key == activeKey);
+			const bool isSelected = (key == selectedKey);
+			const std::string label = plugin.AvatarDisplayLabel(key);
+			const AvatarShapeTuningMetadata* metadata = FindMetadataForAvatar(plugin.Profile().current, key);
+			const std::string source = AvatarDisplaySourceLabel(key, metadata);
+			const std::string lastUsed = plugin.AvatarLastUsedLabel(key);
+			const uint32_t overrides = plugin.AvatarOverrideCount(key);
+
+			ImGui::TableNextRow();
+			ImGui::PushID(key.c_str());
+
+			ImGui::TableSetColumnIndex(0);
+			if (isActive) {
+				DrawStatusText("On", StatusTone::Ok);
+			}
+			else {
+				ImGui::TextDisabled("-");
+			}
+
+			ImGui::TableSetColumnIndex(1);
+			if (ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+				plugin.SelectAvatarTuningKey(key);
+				selectedKey = key;
+				SyncRenameBuffer(plugin, key);
+			}
+			TooltipForLastItem(key.c_str());
+
+			ImGui::TableSetColumnIndex(2);
+			DrawStatusText(source.c_str(), AvatarSourceTone(source));
+			TooltipForLastItem(source == "Alias"     ? "This row uses a saved alias."
+			                   : source == "OSC"     ? "This row uses the name from the VRChat OSC config."
+			                   : source == "ID"      ? "No alias or OSC name is available yet."
+			                   : source == "Default" ? "Fallback profile used before an avatar is detected."
+			                                         : nullptr);
+
+			ImGui::TableSetColumnIndex(3);
+			ImGui::TextDisabled("%s", lastUsed.c_str());
+
+			ImGui::TableSetColumnIndex(4);
+			ImGui::Text("%u", (unsigned)overrides);
+
+			ImGui::PopID();
+		}
 	}
-
-	ImGui::TableSetupColumn("Now", ImGuiTableColumnFlags_WidthFixed, 44.0f);
-	ImGui::TableSetupColumn("Avatar");
-	ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-	ImGui::TableSetupColumn("Last used", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-	ImGui::TableSetupColumn("Overrides", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-	ImGui::TableHeadersRow();
-
-	for (const std::string& key : visibleKeys) {
-		const bool isActive = (key == activeKey);
-		const bool isSelected = (key == selectedKey);
-		const std::string label = plugin.AvatarDisplayLabel(key);
-		const AvatarShapeTuningMetadata* metadata = FindMetadataForAvatar(plugin.Profile().current, key);
-		const std::string source = AvatarDisplaySourceLabel(key, metadata);
-		const std::string lastUsed = plugin.AvatarLastUsedLabel(key);
-		const uint32_t overrides = plugin.AvatarOverrideCount(key);
-
-		ImGui::TableNextRow();
-		ImGui::PushID(key.c_str());
-
-		ImGui::TableSetColumnIndex(0);
-		if (isActive) {
-			DrawStatusText("On", StatusTone::Ok);
-		}
-		else {
-			ImGui::TextDisabled("-");
-		}
-
-		ImGui::TableSetColumnIndex(1);
-		if (ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-			plugin.SelectAvatarTuningKey(key);
-			selectedKey = key;
-			SyncRenameBuffer(plugin, key);
-		}
-		TooltipForLastItem(key.c_str());
-
-		ImGui::TableSetColumnIndex(2);
-		DrawStatusText(source.c_str(), AvatarSourceTone(source));
-		TooltipForLastItem(source == "Alias"     ? "This row uses a saved alias."
-		                   : source == "OSC"     ? "This row uses the name from the VRChat OSC config."
-		                   : source == "ID"      ? "No alias or OSC name is available yet."
-		                   : source == "Default" ? "Fallback profile used before an avatar is detected."
-		                                         : nullptr);
-
-		ImGui::TableSetColumnIndex(3);
-		ImGui::TextDisabled("%s", lastUsed.c_str());
-
-		ImGui::TableSetColumnIndex(4);
-		ImGui::Text("%u", (unsigned)overrides);
-
-		ImGui::PopID();
-	}
-
-	ImGui::EndTable();
 
 	if (visibleKeys.empty()) {
 		DrawEmptyState("No avatar profiles match the filter.");
@@ -332,10 +331,11 @@ void DrawSelectedAvatarDetails(FacetrackingPlugin& plugin, const std::string& se
 	ImGui::EndDisabled();
 	TooltipForLastItem("Clear the alias and show the OSC config name.");
 
-	if (ImGui::BeginTable("ft_avatar_profile_details", 3, ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 86.0f);
-		ImGui::TableSetupColumn("Value");
-		ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+	TableScope detailsTable("ft_avatar_profile_details", 3, ImGuiTableFlags_SizingStretchProp);
+	if (detailsTable) {
+		SetupFixedColumn("Label", 86.0f);
+		SetupStretchColumn("Value");
+		SetupFixedColumn("Action", 48.0f);
 
 		auto detailRow = [](const char* label, const std::string& value, const char* copyId) {
 			ImGui::TableNextRow();
@@ -368,7 +368,6 @@ void DrawSelectedAvatarDetails(FacetrackingPlugin& plugin, const std::string& se
 		if (metadata && !metadata->config_path.empty()) {
 			detailRow("OSC config", metadata->config_path, "ft_copy_avatar_config");
 		}
-		ImGui::EndTable();
 	}
 }
 
@@ -457,52 +456,53 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 
 	ImGuiTableFlags flags =
 	    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
-	if (!ImGui::BeginTable("ft_shape_tuning_table", 4, flags)) return;
-	ImGui::TableSetupColumn("Expression");
-	ImGui::TableSetupColumn("Scale", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-	ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 78.0f);
-	ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-	ImGui::TableHeadersRow();
+	{
+		TableScope shapeTable("ft_shape_tuning_table", 4, flags);
+		if (!shapeTable) return;
+		SetupStretchColumn("Expression");
+		SetupStretchColumn("Scale", 1.4f);
+		SetupFixedColumn("State", 78.0f);
+		SetupFixedColumn("Action", 72.0f);
+		DrawTableHeader();
 
-	for (uint32_t i : visibleIndices) {
-		const char* name = facetracking::ExpressionName(i);
+		for (uint32_t i : visibleIndices) {
+			const char* name = facetracking::ExpressionName(i);
 
-		ImGui::TableNextRow();
-		ImGui::PushID(static_cast<int>(i));
+			ImGui::TableNextRow();
+			ImGui::PushID(static_cast<int>(i));
 
-		ImGui::TableSetColumnIndex(0);
-		ImGui::TextUnformatted(name);
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(name);
 
-		ImGui::TableSetColumnIndex(1);
-		int value = std::clamp(values[i], 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
-		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::SliderInt("##scale", &value, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT, "%d%%")) {
-			values[i] = value;
-			plugin.SetAvatarShapeScale(selectedKey, i, value);
-		}
-		if (ImGui::IsItemDeactivatedAfterEdit()) {
-			plugin.Profile().Save();
-		}
-
-		ImGui::TableSetColumnIndex(2);
-		DrawStatusText(ShapeScaleStateLabel(values[i]), ShapeScaleStateTone(values[i]));
-
-		ImGui::TableSetColumnIndex(3);
-		if (values[i] != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) {
-			if (ImGui::SmallButton("Reset")) {
-				values[i] = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
-				plugin.SetAvatarShapeScale(selectedKey, i, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+			ImGui::TableSetColumnIndex(1);
+			int value = std::clamp(values[i], 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::SliderInt("##scale", &value, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT, "%d%%")) {
+				values[i] = value;
+				plugin.SetAvatarShapeScale(selectedKey, i, value);
+			}
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
 				plugin.Profile().Save();
 			}
-		}
-		else {
-			ImGui::TextDisabled("-");
-		}
 
-		ImGui::PopID();
+			ImGui::TableSetColumnIndex(2);
+			DrawStatusText(ShapeScaleStateLabel(values[i]), ShapeScaleStateTone(values[i]));
+
+			ImGui::TableSetColumnIndex(3);
+			if (values[i] != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) {
+				if (ImGui::SmallButton("Reset")) {
+					values[i] = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
+					plugin.SetAvatarShapeScale(selectedKey, i, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+					plugin.Profile().Save();
+				}
+			}
+			else {
+				ImGui::TextDisabled("-");
+			}
+
+			ImGui::PopID();
+		}
 	}
-
-	ImGui::EndTable();
 
 	if (visibleIndices.empty()) {
 		DrawEmptyState("No expressions match the current filters.");

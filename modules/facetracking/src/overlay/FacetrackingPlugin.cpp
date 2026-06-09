@@ -661,25 +661,13 @@ void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext& ctx)
 {
 	DrawStatusBanner();
 
-	if (ImGui::BeginTabBar("ft_tabs")) {
-		if (ImGui::BeginTabItem("Settings")) {
-			facetracking::ui::DrawSettingsTab(*this);
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("Tuning")) {
-			facetracking::ui::DrawTuningTab(*this);
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("Modules")) {
-			facetracking::ui::DrawModulesTab(*this);
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("Advanced")) {
-			facetracking::ui::DrawAdvancedTab(*this);
-			ImGui::EndTabItem();
-		}
+	openvr_pair::overlay::ui::TabBarScope tabs("ft_tabs");
+	if (tabs) {
+		openvr_pair::overlay::ui::DrawTabItem("Settings", [&] { facetracking::ui::DrawSettingsTab(*this); });
+		openvr_pair::overlay::ui::DrawTabItem("Tuning", [&] { facetracking::ui::DrawTuningTab(*this); });
+		openvr_pair::overlay::ui::DrawTabItem("Modules", [&] { facetracking::ui::DrawModulesTab(*this); });
+		openvr_pair::overlay::ui::DrawTabItem("Advanced", [&] { facetracking::ui::DrawAdvancedTab(*this); });
 		// Logs appear in the umbrella's global Logs tab via DrawLogsSection.
-		ImGui::EndTabBar();
 	}
 
 	openvr_pair::overlay::ShellFooterStatus footer;

@@ -215,14 +215,6 @@ static void DrawInstalledModulesSection(FacetrackingPlugin& plugin)
 	ImGuiTableFlags tf =
 	    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
 
-	if (!ImGui::BeginTable("ft_installed_v3", 5, tf)) return;
-	ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, 36.0f);
-	ImGui::TableSetupColumn("Name");
-	ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-	ImGui::TableSetupColumn("Vendor", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-	ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-	ImGui::TableHeadersRow();
-
 	// Collect the new enabled set, applied once at the end of the table so
 	// we don't fire one SendEnabledModules per row when the user clicks a
 	// single box. Order: start from the profile so the user's current order
@@ -230,76 +222,86 @@ static void DrawInstalledModulesSection(FacetrackingPlugin& plugin)
 	std::vector<std::string> nextEnabled = plugin.Profile().current.enabled_module_uuids;
 	bool changed = false;
 
-	for (size_t i = 0; i < g_state.installed.size(); ++i) {
-		const auto& m = g_state.installed[i];
-		bool enabled = IsModuleEnabled(plugin, m.uuid);
+	{
+		TableScope installedTable("ft_installed_v3", 5, tf);
+		if (!installedTable) return;
+		SetupFixedColumn("On", 36.0f);
+		SetupStretchColumn("Name");
+		SetupFixedColumn("Version", 80.0f);
+		SetupFixedColumn("Vendor", 140.0f);
+		SetupFixedColumn("Source", 180.0f);
+		DrawTableHeader();
 
-		ImGui::TableNextRow();
+		for (size_t i = 0; i < g_state.installed.size(); ++i) {
+			const auto& m = g_state.installed[i];
+			bool enabled = IsModuleEnabled(plugin, m.uuid);
 
-		// Column 0: Enabled checkbox.
-		ImGui::TableSetColumnIndex(0);
-		const std::string boxId = "##ft_en_" + m.uuid;
-		if (ImGui::Checkbox(boxId.c_str(), &enabled)) {
-			if (enabled) {
-				// Append to the end -- preserves the priority order the
-				// user has already established.
-				bool present = false;
-				for (const auto& id : nextEnabled)
-					if (id == m.uuid) {
-						present = true;
-						break;
-					}
-				if (!present) nextEnabled.push_back(m.uuid);
+			ImGui::TableNextRow();
+
+			// Column 0: Enabled checkbox.
+			ImGui::TableSetColumnIndex(0);
+			const std::string boxId = "##ft_en_" + m.uuid;
+			if (ImGui::Checkbox(boxId.c_str(), &enabled)) {
+				if (enabled) {
+					// Append to the end -- preserves the priority order the
+					// user has already established.
+					bool present = false;
+					for (const auto& id : nextEnabled)
+						if (id == m.uuid) {
+							present = true;
+							break;
+						}
+					if (!present) nextEnabled.push_back(m.uuid);
+				}
+				else {
+					nextEnabled.erase(std::remove(nextEnabled.begin(), nextEnabled.end(), m.uuid), nextEnabled.end());
+				}
+				changed = true;
+			}
+			TooltipForLastItem("Toggle whether this module is enabled for the host.\n"
+			                   "Multiple can be on at once; the host currently runs the\n"
+			                   "first enabled entry (multi-run support is on the roadmap).");
+
+			// Column 1: Name. Tint green when the host confirms this row is the
+			// currently running module.
+			ImGui::TableSetColumnIndex(1);
+			const auto& pal = GetPalette();
+			const bool isHostActive = hostActiveUuid && *hostActiveUuid == m.uuid;
+			if (isHostActive)
+				ImGui::TextColored(pal.statusOk, "%s", m.name.c_str());
+			else
+				ImGui::TextUnformatted(m.name.c_str());
+			if (isHostActive) TooltipForLastItem("The host is currently running this module.");
+
+			// Column 2: Version.
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(m.version.c_str());
+
+			// Column 3: Vendor.
+			ImGui::TableSetColumnIndex(3);
+			ImGui::TextUnformatted(m.vendor.c_str());
+
+			// Column 4: Source. Resolves through the catalogue, falls back to
+			// the kind tag, and lights up red for GitHub modules whose SHA-256
+			// wasn't verified at install time + amber for local folders.
+			ImGui::TableSetColumnIndex(4);
+			const std::string srcLabel = ResolveSourceLabel(m, g_state.catalogue);
+			if (m.source_kind_str == "github" && !m.sha_verified) {
+				ImGui::TextColored(pal.statusError, "%s (unverified)", srcLabel.c_str());
+				TooltipForLastItem("This module was installed without SHA-256 verification.\n"
+				                   "The release notes did not contain a recognisable SHA-256 hash.\n"
+				                   "Confirm the developer publishes verifiable hashes before trusting this source.");
+			}
+			else if (m.source_kind_str == "folder") {
+				ImGui::TextColored(pal.statusWarn, "%s", srcLabel.c_str());
+				TooltipForLastItem("This module was installed from a local folder.\n"
+				                   "Local modules are not signature-verified.");
 			}
 			else {
-				nextEnabled.erase(std::remove(nextEnabled.begin(), nextEnabled.end(), m.uuid), nextEnabled.end());
+				ImGui::TextDisabled("%s", srcLabel.c_str());
 			}
-			changed = true;
-		}
-		TooltipForLastItem("Toggle whether this module is enabled for the host.\n"
-		                   "Multiple can be on at once; the host currently runs the\n"
-		                   "first enabled entry (multi-run support is on the roadmap).");
-
-		// Column 1: Name. Tint green when the host confirms this row is the
-		// currently running module.
-		ImGui::TableSetColumnIndex(1);
-		const auto& pal = GetPalette();
-		const bool isHostActive = hostActiveUuid && *hostActiveUuid == m.uuid;
-		if (isHostActive)
-			ImGui::TextColored(pal.statusOk, "%s", m.name.c_str());
-		else
-			ImGui::TextUnformatted(m.name.c_str());
-		if (isHostActive) TooltipForLastItem("The host is currently running this module.");
-
-		// Column 2: Version.
-		ImGui::TableSetColumnIndex(2);
-		ImGui::TextUnformatted(m.version.c_str());
-
-		// Column 3: Vendor.
-		ImGui::TableSetColumnIndex(3);
-		ImGui::TextUnformatted(m.vendor.c_str());
-
-		// Column 4: Source. Resolves through the catalogue, falls back to
-		// the kind tag, and lights up red for GitHub modules whose SHA-256
-		// wasn't verified at install time + amber for local folders.
-		ImGui::TableSetColumnIndex(4);
-		const std::string srcLabel = ResolveSourceLabel(m, g_state.catalogue);
-		if (m.source_kind_str == "github" && !m.sha_verified) {
-			ImGui::TextColored(pal.statusError, "%s (unverified)", srcLabel.c_str());
-			TooltipForLastItem("This module was installed without SHA-256 verification.\n"
-			                   "The release notes did not contain a recognisable SHA-256 hash.\n"
-			                   "Confirm the developer publishes verifiable hashes before trusting this source.");
-		}
-		else if (m.source_kind_str == "folder") {
-			ImGui::TextColored(pal.statusWarn, "%s", srcLabel.c_str());
-			TooltipForLastItem("This module was installed from a local folder.\n"
-			                   "Local modules are not signature-verified.");
-		}
-		else {
-			ImGui::TextDisabled("%s", srcLabel.c_str());
 		}
 	}
-	ImGui::EndTable();
 
 	if (changed) {
 		FT_LOG_OVL("[modules] user changed enabled set: count=%zu", nextEnabled.size());
@@ -316,59 +318,61 @@ static void DrawAvailableModulesSection(FacetrackingPlugin& plugin)
 	ImGuiTableFlags tf =
 	    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
 
-	if (!ImGui::BeginTable("ft_available_modules", 5, tf)) return;
-	ImGui::TableSetupColumn("Name");
-	ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-	ImGui::TableSetupColumn("Vendor", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-	ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 160.0f);
-	ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-	ImGui::TableHeadersRow();
-
 	std::string installSourceId;
 	std::string installSourceData;
 
-	for (const auto& mod : g_state.available) {
-		const ModuleSource* source = FindSourceById(mod.source_id);
-		const InstalledModule* installed = FindInstalledByUuid(mod.uuid);
-		const bool sameVersionInstalled = installed && installed->version == mod.version;
-		const bool sourceMissing = source == nullptr;
+	{
+		TableScope availableTable("ft_available_modules", 5, tf);
+		if (!availableTable) return;
+		SetupStretchColumn("Name");
+		SetupFixedColumn("Version", 80.0f);
+		SetupFixedColumn("Vendor", 140.0f);
+		SetupFixedColumn("Source", 160.0f);
+		SetupFixedColumn("Action", 100.0f);
+		DrawTableHeader();
 
-		ImGui::TableNextRow();
+		for (const auto& mod : g_state.available) {
+			const ModuleSource* source = FindSourceById(mod.source_id);
+			const InstalledModule* installed = FindInstalledByUuid(mod.uuid);
+			const bool sameVersionInstalled = installed && installed->version == mod.version;
+			const bool sourceMissing = source == nullptr;
 
-		ImGui::TableSetColumnIndex(0);
-		ImGui::TextUnformatted(mod.name.c_str());
-		if (!mod.description.empty()) TooltipForLastItem(mod.description.c_str());
+			ImGui::TableNextRow();
 
-		ImGui::TableSetColumnIndex(1);
-		ImGui::TextUnformatted(mod.version.c_str());
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(mod.name.c_str());
+			if (!mod.description.empty()) TooltipForLastItem(mod.description.c_str());
 
-		ImGui::TableSetColumnIndex(2);
-		ImGui::TextUnformatted(mod.vendor.c_str());
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(mod.version.c_str());
 
-		ImGui::TableSetColumnIndex(3);
-		ImGui::TextDisabled("%s", mod.source_label.c_str());
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(mod.vendor.c_str());
 
-		ImGui::TableSetColumnIndex(4);
-		const bool busy = plugin.SyncRunner().IsRunning();
-		const bool disabled = busy || sameVersionInstalled || sourceMissing;
-		const char* label = sameVersionInstalled ? "Installed" : installed ? "Update" : "Install";
-		ImGui::BeginDisabled(disabled);
-		if (ImGui::SmallButton((std::string(label) + "##install_" + mod.uuid).c_str())) {
-			installSourceId = mod.source_id;
-			installSourceData = BuildRegistryInstallDataJson(*source, mod);
-		}
-		ImGui::EndDisabled();
-		if (sameVersionInstalled) {
-			TooltipForLastItem("This version is already installed.");
-		}
-		else if (sourceMissing) {
-			TooltipForLastItem("The source for this cached module is no longer configured.");
-		}
-		else {
-			TooltipForLastItem("Download and install this module.");
+			ImGui::TableSetColumnIndex(3);
+			ImGui::TextDisabled("%s", mod.source_label.c_str());
+
+			ImGui::TableSetColumnIndex(4);
+			const bool busy = plugin.SyncRunner().IsRunning();
+			const bool disabled = busy || sameVersionInstalled || sourceMissing;
+			const char* label = sameVersionInstalled ? "Installed" : installed ? "Update" : "Install";
+			ImGui::BeginDisabled(disabled);
+			if (ImGui::SmallButton((std::string(label) + "##install_" + mod.uuid).c_str())) {
+				installSourceId = mod.source_id;
+				installSourceData = BuildRegistryInstallDataJson(*source, mod);
+			}
+			ImGui::EndDisabled();
+			if (sameVersionInstalled) {
+				TooltipForLastItem("This version is already installed.");
+			}
+			else if (sourceMissing) {
+				TooltipForLastItem("The source for this cached module is no longer configured.");
+			}
+			else {
+				TooltipForLastItem("Download and install this module.");
+			}
 		}
 	}
-	ImGui::EndTable();
 
 	if (!installSourceId.empty() && !plugin.SyncRunner().IsRunning())
 		plugin.SyncRunner().StartInstall(installSourceId, installSourceData);
@@ -400,74 +404,75 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 	// ---- sources table ----
 	ImGuiTableFlags tf = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
 
-	if (ImGui::BeginTable("ft_sources", 4, tf)) {
-		ImGui::TableSetupColumn("Label");
-		ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-		ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-		ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-		ImGui::TableHeadersRow();
+	{
+		TableScope sourcesTable("ft_sources", 4, tf);
+		if (sourcesTable) {
+			SetupStretchColumn("Label");
+			SetupFixedColumn("Kind", 70.0f);
+			SetupFixedColumn("Status", 140.0f);
+			SetupFixedColumn("Actions", 180.0f);
+			DrawTableHeader();
 
-		int removeIdx = -1;
-		std::string syncSourceId;
-		std::string syncSourceData;
+			int removeIdx = -1;
+			std::string syncSourceId;
+			std::string syncSourceData;
 
-		for (int si = 0; si < static_cast<int>(g_state.catalogue.sources.size()); ++si) {
-			auto& src = g_state.catalogue.sources[static_cast<size_t>(si)];
-			bool isRegistry = src.kind == SourceKind::Registry;
+			for (int si = 0; si < static_cast<int>(g_state.catalogue.sources.size()); ++si) {
+				auto& src = g_state.catalogue.sources[static_cast<size_t>(si)];
+				bool isRegistry = src.kind == SourceKind::Registry;
 
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(src.label.c_str());
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::TextUnformatted(src.label.c_str());
 
-			ImGui::TableSetColumnIndex(1);
-			const char* kindStr = src.kind == SourceKind::Folder   ? "Folder"
-			                      : src.kind == SourceKind::GitHub ? "GitHub"
-			                                                       : "Registry";
-			ImGui::TextDisabled("%s", kindStr);
+				ImGui::TableSetColumnIndex(1);
+				const char* kindStr = src.kind == SourceKind::Folder   ? "Folder"
+				                      : src.kind == SourceKind::GitHub ? "GitHub"
+				                                                       : "Registry";
+				ImGui::TextDisabled("%s", kindStr);
 
-			ImGui::TableSetColumnIndex(2);
-			if (!src.last_sync_error.empty())
-				ImGui::TextColored(GetPalette().statusError, "%s", src.last_sync_error.c_str());
-			else if (!src.last_checked_at.empty())
-				ImGui::TextDisabled("%s", src.last_checked_at.c_str());
-			else
-				ImGui::TextDisabled("Never synced");
+				ImGui::TableSetColumnIndex(2);
+				if (!src.last_sync_error.empty())
+					ImGui::TextColored(GetPalette().statusError, "%s", src.last_sync_error.c_str());
+				else if (!src.last_checked_at.empty())
+					ImGui::TextDisabled("%s", src.last_checked_at.c_str());
+				else
+					ImGui::TextDisabled("Never synced");
 
-			ImGui::TableSetColumnIndex(3);
-			bool syncing = plugin.SyncRunner().IsRunning();
+				ImGui::TableSetColumnIndex(3);
+				bool syncing = plugin.SyncRunner().IsRunning();
 
-			ImGui::BeginDisabled(syncing);
-			const char* buttonText = isRegistry ? "Sync" : "Install";
-			if (ImGui::SmallButton((std::string(buttonText) + "##" + src.id).c_str())) {
-				syncSourceId = src.id;
-				syncSourceData = BuildSourceDataJson(src);
+				ImGui::BeginDisabled(syncing);
+				const char* buttonText = isRegistry ? "Sync" : "Install";
+				if (ImGui::SmallButton((std::string(buttonText) + "##" + src.id).c_str())) {
+					syncSourceId = src.id;
+					syncSourceData = BuildSourceDataJson(src);
+				}
+				TooltipForLastItem(
+				    isRegistry ? "Refresh the available module list. Downloads start only from a module row below."
+				               : "Install or re-install this source.");
+
+				if (!isRegistry) {
+					ImGui::SameLine();
+					if (ImGui::SmallButton(("Remove##" + src.id).c_str())) removeIdx = si;
+					TooltipForLastItem("Remove this source and delete its installed modules.");
+				}
+				ImGui::EndDisabled();
 			}
-			TooltipForLastItem(isRegistry
-			                       ? "Refresh the available module list. Downloads start only from a module row below."
-			                       : "Install or re-install this source.");
 
-			if (!isRegistry) {
-				ImGui::SameLine();
-				if (ImGui::SmallButton(("Remove##" + src.id).c_str())) removeIdx = si;
-				TooltipForLastItem("Remove this source and delete its installed modules.");
+			// Trigger sync outside the table loop to avoid iterator invalidation.
+			if (!syncSourceId.empty() && !plugin.SyncRunner().IsRunning())
+				plugin.SyncRunner().StartUpdate(syncSourceId, syncSourceData);
+
+			if (removeIdx >= 0) {
+				const auto& src = g_state.catalogue.sources[static_cast<size_t>(removeIdx)];
+				std::string id = src.id;
+				DisableModulesFromSource(plugin, id);
+				plugin.SyncRunner().StartRemove(id);
+				g_state.catalogue.sources.erase(g_state.catalogue.sources.begin() + removeIdx);
+				SaveSourcesCatalogue(g_state.catalogue);
 			}
-			ImGui::EndDisabled();
 		}
-
-		// Trigger sync outside the table loop to avoid iterator invalidation.
-		if (!syncSourceId.empty() && !plugin.SyncRunner().IsRunning())
-			plugin.SyncRunner().StartUpdate(syncSourceId, syncSourceData);
-
-		if (removeIdx >= 0) {
-			const auto& src = g_state.catalogue.sources[static_cast<size_t>(removeIdx)];
-			std::string id = src.id;
-			DisableModulesFromSource(plugin, id);
-			plugin.SyncRunner().StartRemove(id);
-			g_state.catalogue.sources.erase(g_state.catalogue.sources.begin() + removeIdx);
-			SaveSourcesCatalogue(g_state.catalogue);
-		}
-
-		ImGui::EndTable();
 	}
 
 	DrawAvailableModulesSection(plugin);
