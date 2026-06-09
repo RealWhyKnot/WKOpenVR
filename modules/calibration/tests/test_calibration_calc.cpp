@@ -257,6 +257,13 @@ TEST(CalibrationCalcTest, QualityReportRejectsStaleTrackingInShadowVerdict)
 	EXPECT_FALSE(report.shadowDynamicPass);
 	EXPECT_EQ(report.trackingStaleSampleCount, kSampleCount);
 	EXPECT_GT(report.maxPoseAgeMs, 120.0);
+
+	const CalibrationQualityVerdict verdict = EvaluateCalibrationQualityVerdict(report);
+	EXPECT_FALSE(verdict.wouldAccept);
+	EXPECT_STREQ(verdict.reason, "tracking_health");
+	const CalibrationQualityShadowSignals signals = EvaluateCalibrationQualityShadowSignals(report);
+	EXPECT_TRUE(signals.trackingContaminated);
+	EXPECT_TRUE(signals.legacyAcceptedButShadowRejected);
 }
 
 TEST(CalibrationCalcTest, QualityReportRejectsLowGeometryEvenWhenRmsIsSmall)
@@ -278,6 +285,11 @@ TEST(CalibrationCalcTest, QualityReportRejectsLowGeometryEvenWhenRmsIsSmall)
 	EXPECT_STREQ(verdict.reason, "geometry");
 	EXPECT_EQ(report.validRotationPairCount, 0);
 	EXPECT_LT(report.residuals.rmsM, 1e-6);
+
+	const CalibrationQualityShadowSignals signals = EvaluateCalibrationQualityShadowSignals(report);
+	EXPECT_TRUE(signals.lowResidualGeometryReject);
+	EXPECT_TRUE(signals.novaWouldRejectForDeltaPairs);
+	EXPECT_FALSE(signals.novaDeltaPairsPass);
 }
 
 TEST(CalibrationCalcTest, QualityVerdictReportsFirstFailedGate)
@@ -313,6 +325,12 @@ TEST(CalibrationCalcTest, QualityVerdictReportsFirstFailedGate)
 	EXPECT_STREQ(verdict.reason, "holdout");
 
 	report.holdoutPass = true;
+	report.trackingHealthPass = false;
+	verdict = EvaluateCalibrationQualityVerdict(report);
+	EXPECT_FALSE(verdict.wouldAccept);
+	EXPECT_STREQ(verdict.reason, "tracking_health");
+
+	report.trackingHealthPass = true;
 	verdict = EvaluateCalibrationQualityVerdict(report);
 	EXPECT_TRUE(verdict.wouldAccept);
 	EXPECT_STREQ(verdict.reason, "pass");

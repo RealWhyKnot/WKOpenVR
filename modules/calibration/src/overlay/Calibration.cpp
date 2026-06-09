@@ -522,8 +522,8 @@ static void LogShadowOffsetBlockedThrottled(CalibrationContext& ctx, const char*
 	              (unsigned)ctx.headMountOffsetVersion, (int)ctx.relativePosCalibrated,
 	              (int)ctx.headMountNeedsFreshRelativePose, (int)ctx.validProfile, ctx.calibratedTranslation.norm(),
 	              profileFitRmsMm, hmdAgeMs, trackerAgeMs, (unsigned long long)ctx.driverSynthFallbackTotal,
-	              (int)ctx.headMount.autoCorrectOffset, (int)wkopenvr::headmount::HeadMountMatchesContinuousTarget(ctx),
-	              ctx.headMount.deviceID);
+	              (int)ctx.headMount.experimentalAutoCorrectOffset,
+	              (int)wkopenvr::headmount::HeadMountMatchesContinuousTarget(ctx), ctx.headMount.deviceID);
 	Metrics::WriteLogAnnotation(buf);
 }
 
@@ -549,7 +549,7 @@ static void ApplyHeadMountShadowOffset(CalibrationContext& ctx, const Eigen::Aff
 	              " hmd_stream=driver_shmem_raw",
 	              HeadMountSampleSourceName(CurrentHeadMountSampleSource(ctx)), (unsigned)ctx.headMountOffsetVersion,
 	              residualMm, savedDelta.translationM * 100.0, savedDelta.rotationDeg, ctx.calibratedTranslation.norm(),
-	              (int)(ctx.state == CalibrationState::Continuous), (int)ctx.headMount.autoCorrectOffset,
+	              (int)(ctx.state == CalibrationState::Continuous), (int)ctx.headMount.experimentalAutoCorrectOffset,
 	              (unsigned long long)ctx.driverSynthFallbackTotal);
 	Metrics::WriteLogAnnotation(buf);
 
@@ -652,7 +652,7 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 		    " toggle=%d fallback_delta=%llu",
 		    HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion, readiness.samplesUsed,
 		    readiness.residualMm, readiness.axisRangeDeg[0], readiness.axisRangeDeg[1], readiness.axisRangeDeg[2],
-		    ctx.calibratedTranslation.norm(), (int)ctx.headMount.autoCorrectOffset,
+		    ctx.calibratedTranslation.norm(), (int)ctx.headMount.experimentalAutoCorrectOffset,
 		    (unsigned long long)(ctx.driverSynthFallbackTotal - g_headMountShadowOffset.windowStartFallbackTotal));
 		Metrics::WriteLogAnnotation(sbuf);
 		LogShadowOffsetBlockedThrottled(ctx, "insufficient_motion", time, profileFitRmsMm, hmdAgeMs, trackerAgeMs);
@@ -671,7 +671,8 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 		    " profile_mag_cm=%.2f toggle=%d fallback_delta=%llu",
 		    result.failReason.c_str(), HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
 		    result.samplesUsed, result.residualMm, readiness.axisRangeDeg[0], readiness.axisRangeDeg[1],
-		    readiness.axisRangeDeg[2], ctx.calibratedTranslation.norm(), (int)ctx.headMount.autoCorrectOffset,
+		    readiness.axisRangeDeg[2], ctx.calibratedTranslation.norm(),
+		    (int)ctx.headMount.experimentalAutoCorrectOffset,
 		    (unsigned long long)(ctx.driverSynthFallbackTotal - g_headMountShadowOffset.windowStartFallbackTotal));
 		Metrics::WriteLogAnnotation(sbuf);
 		ResetHeadMountShadowOffsetRuntime(/*clearStableWindows=*/false);
@@ -701,13 +702,7 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 	g_headMountShadowOffset.hasLastCandidate = true;
 
 	ShadowGateInput gateInput{};
-	// Demoted to shadow-log-only: the head-mount offset auto-correct never
-	// applies. The gate still computes wouldApply (logged below as
-	// shadow_offset_would_apply) so we can watch what it *would* do, but
-	// readyToApply is forced off, so headFromTracker is only ever set via the
-	// manual offset modal. To re-enable auto-apply for testing, restore this to
-	// ctx.headMount.autoCorrectOffset.
-	gateInput.toggleEnabled = false;
+	gateInput.toggleEnabled = ctx.headMount.experimentalAutoCorrectOffset;
 	gateInput.windowSolved = true;
 	gateInput.posesFresh = hmdFresh && trackerFresh;
 	gateInput.targetMatches = targetMatches;
@@ -737,7 +732,7 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 	              hasPrevious ? previousDelta.translationM * 100.0 : -1.0,
 	              hasPrevious ? previousDelta.rotationDeg : -1.0, readiness.axisRangeDeg[0], readiness.axisRangeDeg[1],
 	              readiness.axisRangeDeg[2], ctx.calibratedTranslation.norm(), profileFitRmsMm,
-	              (unsigned long long)fallbackDelta, (int)ctx.headMount.autoCorrectOffset,
+	              (unsigned long long)fallbackDelta, (int)ctx.headMount.experimentalAutoCorrectOffset,
 	              g_headMountShadowOffset.stableWindowCount, gate.reason, (int)gate.readyToApply, (int)gate.wouldApply);
 	Metrics::WriteLogAnnotation(wbuf);
 
@@ -750,7 +745,7 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 			              " stable_windows=%d toggle=%d profile_mag_cm=%.2f",
 			              HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion, result.residualMm,
 			              savedDelta.translationM * 100.0, savedDelta.rotationDeg,
-			              g_headMountShadowOffset.stableWindowCount, (int)ctx.headMount.autoCorrectOffset,
+			              g_headMountShadowOffset.stableWindowCount, (int)ctx.headMount.experimentalAutoCorrectOffset,
 			              ctx.calibratedTranslation.norm());
 			Metrics::WriteLogAnnotation(vbuf);
 		}
@@ -764,7 +759,7 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 			              gate.reason, HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
 			              result.residualMm, savedDelta.translationM * 100.0, savedDelta.rotationDeg,
 			              g_headMountShadowOffset.stableWindowCount, ctx.calibratedTranslation.norm(),
-			              (unsigned long long)fallbackDelta, (int)ctx.headMount.autoCorrectOffset);
+			              (unsigned long long)fallbackDelta, (int)ctx.headMount.experimentalAutoCorrectOffset);
 			Metrics::WriteLogAnnotation(bbuf);
 			if (!residualOk || !mismatchPlausible || !candidateStable) {
 				char sbuf[640];

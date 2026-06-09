@@ -125,7 +125,19 @@ struct CalibrationQualityVerdict
 	const char* reason = "unknown";
 };
 
+struct CalibrationQualityShadowSignals
+{
+	bool wouldAccept = false;
+	const char* firstRejectReason = "unknown";
+	bool legacyAcceptedButShadowRejected = false;
+	bool lowResidualGeometryReject = false;
+	bool trackingContaminated = false;
+	bool novaDeltaPairsPass = false;
+	bool novaWouldRejectForDeltaPairs = false;
+};
+
 CalibrationQualityVerdict EvaluateCalibrationQualityVerdict(const CalibrationQualityReport& report);
+CalibrationQualityShadowSignals EvaluateCalibrationQualityShadowSignals(const CalibrationQualityReport& report);
 
 class CalibrationCalc
 {

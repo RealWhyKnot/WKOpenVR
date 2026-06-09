@@ -437,6 +437,25 @@ void CCal_DrawSettings()
 			DrawVectorElement("cc_playspace_scale", "Playspace Scale", &CalCtx.calibratedScale, 1, " 1 ");
 			ImGui::EndGroupPanel();
 		}
+
+		{
+			ImGui::BeginGroupPanel("Experimental", panel_size);
+			openvr_pair::overlay::ui::DrawSettingTable(
+			    "##advanced_experimental_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+				    openvr_pair::overlay::ui::SettingRow(table, "Headset offset auto-correct", [&] {
+					    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+					            "##head_mount_experimental_auto_correct_offset",
+					            &CalCtx.headMount.experimentalAutoCorrectOffset,
+					            "Automatically adjust the calibrated offset between the headset and its head-mounted "
+					            "tracker when continuous calibration sees the same stable correction across multiple "
+					            "windows.\n\n"
+					            "Experimental. Leave off unless you are testing head-mounted tracker offset drift.")) {
+						    SaveProfile(CalCtx);
+					    }
+				    });
+			    });
+			ImGui::EndGroupPanel();
+		}
 	}
 
 	// Maintenance buttons grouped in their own panel so they don't read as

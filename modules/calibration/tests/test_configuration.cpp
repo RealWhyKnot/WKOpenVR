@@ -604,6 +604,8 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_TRUE(ctx.headMount.trackerSerial.empty()) << "v3 profile must default head_mount.trackerSerial to empty";
 	EXPECT_FALSE(ctx.headMount.offsetCalibrated) << "v3 profile must default head_mount.offsetCalibrated to false";
 	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
+	EXPECT_FALSE(ctx.headMount.experimentalAutoCorrectOffset)
+	    << "v3 profile must default experimental head-mount auto-correct to false";
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback) << "v3 profile must default raw HMD fallback to true";
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
@@ -627,6 +629,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.trackerTrackingSystem = "lighthouse";
 	src.headMount.offsetCalibrated = true;
 	src.headMount.autoCorrectOffset = false;
+	src.headMount.experimentalAutoCorrectOffset = true;
 	src.headMount.lockedHeadsetSmoothing = 65;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
 	src.headMount.driverSynthTiming.graceHoldMs = 1400;
@@ -662,6 +665,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.hideTracker);
 	EXPECT_TRUE(dst.headMount.offsetCalibrated);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
+	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.staleLimitMs, 120);
@@ -734,4 +738,29 @@ TEST(ConfigurationTest, HeadMountAutoCorrectDisabledPersistsWhenOtherwiseDefault
 	EXPECT_EQ(dst.headMount.mode, HeadMountMode::Off);
 	EXPECT_TRUE(dst.headMount.trackerSerial.empty());
 	EXPECT_FALSE(dst.headMount.offsetCalibrated);
+}
+
+TEST(ConfigurationTest, HeadMountExperimentalAutoCorrectDefaultsOffAndPersistsWhenEnabled)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
+
+	std::stringstream defaultOut;
+	WriteProfile(src, defaultOut);
+	EXPECT_EQ(defaultOut.str().find("experimental_auto_correct_offset"), std::string::npos);
+
+	src.headMount.experimentalAutoCorrectOffset = true;
+	std::stringstream enabledOut;
+	WriteProfile(src, enabledOut);
+	const std::string json = enabledOut.str();
+	EXPECT_NE(json.find("\"head_mount\""), std::string::npos);
+	EXPECT_NE(json.find("\"experimental_auto_correct_offset\""), std::string::npos);
+
+	CalibrationContext dst;
+	std::stringstream in(json);
+	ParseProfile(dst, in);
+	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
+	EXPECT_TRUE(dst.headMount.autoCorrectOffset);
 }

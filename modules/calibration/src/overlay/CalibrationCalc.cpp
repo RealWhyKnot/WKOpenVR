@@ -158,12 +158,161 @@ const char* Bool01(bool value)
 	return value ? "1" : "0";
 }
 
+constexpr int kNovaMinDeltaPairCount = 200;
+constexpr double kLowResidualGeometryRejectM = 0.005;
+constexpr double kShadowRollupWindowSec = 30.0;
+constexpr int kShadowRollupMaxCandidates = 80;
+
 double SafeRatio(double numerator, double denominator)
 {
 	if (!std::isfinite(numerator) || !std::isfinite(denominator) || denominator <= 1e-12) {
 		return 0.0;
 	}
 	return std::max(0.0, std::min(1.0, numerator / denominator));
+}
+
+struct CalibrationShadowRollup
+{
+	double windowStartSec = -1.0;
+	int candidates = 0;
+	int oneshotCandidates = 0;
+	int continuousCandidates = 0;
+	int relposeCandidates = 0;
+	int fullSolveCandidates = 0;
+	int pass = 0;
+	int rejectNoValid = 0;
+	int rejectLegacy = 0;
+	int rejectGeometry = 0;
+	int rejectRobust = 0;
+	int rejectHoldout = 0;
+	int rejectTracking = 0;
+	int legacyAcceptedButShadowRejected = 0;
+	int lowResidualGeometryReject = 0;
+	int novaWouldRejectForDeltaPairs = 0;
+	int trackingContaminated = 0;
+	int staleSamples = 0;
+	int jumpSamples = 0;
+	double residualRmsMmSum = 0.0;
+	double residualP95MmSum = 0.0;
+	double holdoutRmsMmSum = 0.0;
+	double targetSpanCmSum = 0.0;
+	double rotationSpanDegSum = 0.0;
+	int residualRmsCount = 0;
+	int residualP95Count = 0;
+	int holdoutRmsCount = 0;
+	int targetSpanCount = 0;
+	int rotationSpanCount = 0;
+};
+
+void ResetCalibrationShadowRollup(CalibrationShadowRollup& rollup, double now)
+{
+	rollup = CalibrationShadowRollup{};
+	rollup.windowStartSec = now;
+}
+
+bool LabelHas(const char* label, const char* needle)
+{
+	return label && needle && std::string(label).find(needle) != std::string::npos;
+}
+
+void AddFinite(double value, double scale, double& sum, int& count)
+{
+	if (!std::isfinite(value)) return;
+	sum += value * scale;
+	++count;
+}
+
+double AverageOrMinusOne(double sum, int count)
+{
+	return count > 0 ? sum / static_cast<double>(count) : -1.0;
+}
+
+void RecordCalibrationShadowDiagnostics(const char* label, const CalibrationQualityReport& q)
+{
+	const CalibrationQualityShadowSignals signals = EvaluateCalibrationQualityShadowSignals(q);
+	const char* safeLabel = label ? label : "candidate";
+
+	char shadowBuf[900];
+	snprintf(shadowBuf, sizeof shadowBuf,
+	         "[cal-shadow][%s] would_accept=%s first_reject=%s"
+	         " legacy_accept_shadow_reject=%d low_residual_geometry_reject=%d"
+	         " nova_delta_pairs=%d nova_delta_pairs_pass=%d nova_delta_pair_reject=%d"
+	         " tracking_contaminated=%d stale_samples=%d jump_samples=%d"
+	         " residual_rms_mm=%.3f residual_p95_mm=%.3f holdout_rms_mm=%.3f"
+	         " target_span_cm=%.2f rot_span_deg=%.2f",
+	         safeLabel, Bool01(signals.wouldAccept), signals.firstRejectReason,
+	         (int)signals.legacyAcceptedButShadowRejected, (int)signals.lowResidualGeometryReject,
+	         q.validRotationPairCount, (int)signals.novaDeltaPairsPass, (int)signals.novaWouldRejectForDeltaPairs,
+	         (int)signals.trackingContaminated, q.trackingStaleSampleCount, q.trackingJumpSampleCount,
+	         q.residuals.rmsM * 1000.0, q.residuals.p95M * 1000.0, q.holdoutResiduals.rmsM * 1000.0,
+	         q.targetSpanM * 100.0, q.rotationSpanDeg);
+	Metrics::WriteLogAnnotation(shadowBuf);
+
+	static CalibrationShadowRollup rollup;
+	const double now = std::isfinite(Metrics::CurrentTime) ? Metrics::CurrentTime : 0.0;
+	if (rollup.windowStartSec < 0.0 || now < rollup.windowStartSec) {
+		ResetCalibrationShadowRollup(rollup, now);
+	}
+
+	++rollup.candidates;
+	if (LabelHas(safeLabel, "oneshot")) ++rollup.oneshotCandidates;
+	if (LabelHas(safeLabel, "legacy_") || LabelHas(safeLabel, "relpose_")) ++rollup.continuousCandidates;
+	if (LabelHas(safeLabel, "relpose")) ++rollup.relposeCandidates;
+	if (LabelHas(safeLabel, "full")) ++rollup.fullSolveCandidates;
+	if (signals.wouldAccept) ++rollup.pass;
+	if (!signals.wouldAccept) {
+		const std::string reason(signals.firstRejectReason);
+		if (reason == "no_valid_samples")
+			++rollup.rejectNoValid;
+		else if (reason == "legacy_rms")
+			++rollup.rejectLegacy;
+		else if (reason == "geometry")
+			++rollup.rejectGeometry;
+		else if (reason == "robust_residual")
+			++rollup.rejectRobust;
+		else if (reason == "holdout")
+			++rollup.rejectHoldout;
+		else if (reason == "tracking_health")
+			++rollup.rejectTracking;
+	}
+	if (signals.legacyAcceptedButShadowRejected) ++rollup.legacyAcceptedButShadowRejected;
+	if (signals.lowResidualGeometryReject) ++rollup.lowResidualGeometryReject;
+	if (signals.novaWouldRejectForDeltaPairs) ++rollup.novaWouldRejectForDeltaPairs;
+	if (signals.trackingContaminated) ++rollup.trackingContaminated;
+	rollup.staleSamples += q.trackingStaleSampleCount;
+	rollup.jumpSamples += q.trackingJumpSampleCount;
+	AddFinite(q.residuals.rmsM, 1000.0, rollup.residualRmsMmSum, rollup.residualRmsCount);
+	AddFinite(q.residuals.p95M, 1000.0, rollup.residualP95MmSum, rollup.residualP95Count);
+	AddFinite(q.holdoutResiduals.rmsM, 1000.0, rollup.holdoutRmsMmSum, rollup.holdoutRmsCount);
+	AddFinite(q.targetSpanM, 100.0, rollup.targetSpanCmSum, rollup.targetSpanCount);
+	AddFinite(q.rotationSpanDeg, 1.0, rollup.rotationSpanDegSum, rollup.rotationSpanCount);
+
+	const double elapsed = now - rollup.windowStartSec;
+	if (elapsed < kShadowRollupWindowSec && rollup.candidates < kShadowRollupMaxCandidates) {
+		return;
+	}
+
+	char rollupBuf[1050];
+	snprintf(rollupBuf, sizeof rollupBuf,
+	         "[cal-shadow-rollup] window_sec=%.1f candidates=%d oneshot=%d continuous=%d relpose=%d full=%d"
+	         " pass=%d reject_no_valid=%d reject_legacy=%d reject_geometry=%d reject_robust=%d"
+	         " reject_holdout=%d reject_tracking=%d legacy_accept_shadow_reject=%d"
+	         " low_residual_geometry_reject=%d nova_delta_pair_reject=%d"
+	         " tracking_contaminated=%d stale_samples=%d jump_samples=%d"
+	         " avg_residual_rms_mm=%.3f avg_residual_p95_mm=%.3f avg_holdout_rms_mm=%.3f"
+	         " avg_target_span_cm=%.2f avg_rot_span_deg=%.2f",
+	         elapsed, rollup.candidates, rollup.oneshotCandidates, rollup.continuousCandidates,
+	         rollup.relposeCandidates, rollup.fullSolveCandidates, rollup.pass, rollup.rejectNoValid,
+	         rollup.rejectLegacy, rollup.rejectGeometry, rollup.rejectRobust, rollup.rejectHoldout,
+	         rollup.rejectTracking, rollup.legacyAcceptedButShadowRejected, rollup.lowResidualGeometryReject,
+	         rollup.novaWouldRejectForDeltaPairs, rollup.trackingContaminated, rollup.staleSamples, rollup.jumpSamples,
+	         AverageOrMinusOne(rollup.residualRmsMmSum, rollup.residualRmsCount),
+	         AverageOrMinusOne(rollup.residualP95MmSum, rollup.residualP95Count),
+	         AverageOrMinusOne(rollup.holdoutRmsMmSum, rollup.holdoutRmsCount),
+	         AverageOrMinusOne(rollup.targetSpanCmSum, rollup.targetSpanCount),
+	         AverageOrMinusOne(rollup.rotationSpanDegSum, rollup.rotationSpanCount));
+	Metrics::WriteLogAnnotation(rollupBuf);
+	ResetCalibrationShadowRollup(rollup, now);
 }
 
 template <typename PositionSelector>
@@ -720,7 +869,26 @@ CalibrationQualityVerdict EvaluateCalibrationQualityVerdict(const CalibrationQua
 	if (!report.holdoutPass) {
 		return {false, "holdout"};
 	}
+	if (!report.trackingHealthPass) {
+		return {false, "tracking_health"};
+	}
 	return {true, "pass"};
+}
+
+CalibrationQualityShadowSignals EvaluateCalibrationQualityShadowSignals(const CalibrationQualityReport& report)
+{
+	const CalibrationQualityVerdict verdict = EvaluateCalibrationQualityVerdict(report);
+	CalibrationQualityShadowSignals signals;
+	signals.wouldAccept = verdict.wouldAccept;
+	signals.firstRejectReason = verdict.reason;
+	signals.legacyAcceptedButShadowRejected = report.legacyRmsPass && !report.shadowDynamicPass;
+	signals.lowResidualGeometryReject = report.legacyRmsPass && !report.geometryPass && report.residuals.count > 0 &&
+	                                    report.residuals.rmsM <= kLowResidualGeometryRejectM;
+	signals.trackingContaminated = !report.trackingHealthPass;
+	signals.novaDeltaPairsPass = report.validRotationPairCount >= kNovaMinDeltaPairCount;
+	signals.novaWouldRejectForDeltaPairs =
+	    report.validSampleCount > 0 && report.legacyRmsPass && !signals.novaDeltaPairsPass;
+	return signals;
 }
 
 CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen::AffineCompact3d& calibration,
@@ -955,10 +1123,12 @@ void CalibrationCalc::LogCalibrationQualitySnapshot(const char* label, const Eig
 	char line3[360];
 	snprintf(line3, sizeof line3,
 	         "[cal-quality-verdict][%s] would_accept=%s reason=%s"
-	         " legacy_pass=%s geometry_pass=%s robust_pass=%s holdout_pass=%s",
+	         " legacy_pass=%s geometry_pass=%s robust_pass=%s holdout_pass=%s tracking_pass=%s",
 	         label ? label : "candidate", Bool01(verdict.wouldAccept), verdict.reason, Bool01(q.legacyRmsPass),
-	         Bool01(q.geometryPass), Bool01(q.robustResidualPass), Bool01(q.holdoutPass));
+	         Bool01(q.geometryPass), Bool01(q.robustResidualPass), Bool01(q.holdoutPass), Bool01(q.trackingHealthPass));
 	Metrics::WriteLogAnnotation(line3);
+
+	RecordCalibrationShadowDiagnostics(label, q);
 
 	openvr_pair::common::RuntimeCalibrationHealthSample runtimeHealth{};
 	runtimeHealth.valid = true;

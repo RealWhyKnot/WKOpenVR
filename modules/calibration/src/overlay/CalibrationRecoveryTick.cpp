@@ -844,12 +844,23 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// instead of guessing. Throttled to once per fire (the fire itself
 	// is throttled to 5s by the existing code), so this won't flood.
 	if (fired && (!magnitudeOK || !recoveryEligible || !startupOK || !throttleOK || postStallGrace)) {
-		char skipbuf[448];
+		const auto& hmDbg = CalCtx.headMount;
+		int poseValid = -1, connected = -1, result = -1;
+		if (hmDbg.deviceID >= 0 && (uint32_t)hmDbg.deviceID < vr::k_unMaxTrackedDeviceCount) {
+			const auto& tpDbg = CalCtx.devicePoses[hmDbg.deviceID];
+			poseValid = (int)tpDbg.poseIsValid;
+			connected = (int)tpDbg.deviceIsConnected;
+			result = (int)tpDbg.result;
+		}
+		char skipbuf[760];
 		snprintf(skipbuf, sizeof skipbuf,
 		         "auto_recover_skipped: hmdDelta=%.3f magnitudeOK=%d stateOK=%d styleOK=%d startupOK=%d "
-		         "throttleOK=%d postStallGrace=%d (secSinceStall=%.2f) state=%d style=%d",
+		         "throttleOK=%d postStallGrace=%d (secSinceStall=%.2f) state=%d style=%d"
+		         " hmMode=%d deviceID=%d poseIsValid=%d connected=%d result=%d"
+		         " havePrevTracker=%d headTrackerDelta=%.4f",
 		         currentHmdDelta, (int)magnitudeOK, (int)stateOK, (int)styleOK, (int)startupOK, (int)throttleOK,
-		         (int)postStallGrace, secSinceStall, (int)CalCtx.state, (int)CalCtx.trackingStyle);
+		         (int)postStallGrace, secSinceStall, (int)CalCtx.state, (int)CalCtx.trackingStyle, (int)hmDbg.mode,
+		         hmDbg.deviceID, poseValid, connected, result, (int)s.havePrevHeadTracker, headTrackerDelta);
 		Metrics::WriteLogAnnotation(skipbuf);
 	}
 

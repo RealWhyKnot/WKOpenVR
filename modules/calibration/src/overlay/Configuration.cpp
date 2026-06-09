@@ -59,12 +59,14 @@
 //       to AUTO. The legacy key remains readable for migration only.
 //   6 - Adds tracking_style and head_mount.allow_raw_hmd_fallback. Legacy
 //       AUTO relative lock values migrate to explicit OFF.
+//   7 - Adds head_mount.experimental_auto_correct_offset as a default-off
+//       experimental opt-in for headset offset auto-correction.
 //
 // When you change the schema:
 //   1. Bump kProfileSchemaVersion below.
 //   2. Add a step inside MigrateProfile() for the new bump.
 //   3. Keep the load path tolerant of missing keys for any new field.
-static const int kProfileSchemaVersion = 6;
+static const int kProfileSchemaVersion = 7;
 
 static const char* HeadMountSampleSourceName(HeadMountSampleSource source)
 {
@@ -205,6 +207,9 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 			hmObj["allow_raw_hmd_fallback"].set<bool>(allowFallback);
 		}
 	}
+
+	// 6 -> 7: experimental head-mount offset auto-correct is a new
+	// default-off opt-in. Missing key already loads as false.
 }
 
 static picojson::array FloatArray(const float* buf, size_t numFloats)
@@ -351,6 +356,8 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 	if (obj["hide_tracker"].is<bool>()) hm.hideTracker = obj["hide_tracker"].get<bool>();
 	if (obj["offset_calibrated"].is<bool>()) hm.offsetCalibrated = obj["offset_calibrated"].get<bool>();
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
+	if (obj["experimental_auto_correct_offset"].is<bool>())
+		hm.experimentalAutoCorrectOffset = obj["experimental_auto_correct_offset"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
 	if (obj["locked_headset_smoothing"].is<double>()) {
 		double v = obj["locked_headset_smoothing"].get<double>();
@@ -411,10 +418,12 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool hide = hm.hideTracker;
 	bool offcal = hm.offsetCalibrated;
 	bool autoCorrect = hm.autoCorrectOffset;
+	bool experimentalAutoCorrect = hm.experimentalAutoCorrectOffset;
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
+	obj["experimental_auto_correct_offset"].set<bool>(experimentalAutoCorrect);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
 	obj["locked_headset_smoothing"].set<double>(lockedSmoothing);
@@ -1048,7 +1057,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
 	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
-	    ctx.headMount.lockedHeadsetSmoothing != 0 ||
+	    ctx.headMount.experimentalAutoCorrectOffset || ctx.headMount.lockedHeadsetSmoothing != 0 ||
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}

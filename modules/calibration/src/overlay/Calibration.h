@@ -177,6 +177,7 @@ struct HeadMountConfig
 	bool hideTracker = true;
 	bool offsetCalibrated = false;
 	bool autoCorrectOffset = true;
+	bool experimentalAutoCorrectOffset = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
 	// head-mounted tracker (0..100, 0 = off). Tames lighthouse jitter.
