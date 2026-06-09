@@ -182,7 +182,27 @@ try {
 	Write-CasePass "captions-idempotent-rerun"
 
 	# --------------------------------------------------------------------
-	# Case 3: captions transient HTTP failure retries and succeeds
+	# Case 3: captions rerun skips an already-current extracted DLL even
+	# when the live host has it loaded.
+	# --------------------------------------------------------------------
+	Write-CaseStart "captions-locked-current-extract-rerun"
+	$ortPath = Join-Path $captionsRoot 'runtime\onnxruntime.dll'
+	$lockedStream = [System.IO.File]::Open($ortPath,
+		[System.IO.FileMode]::Open,
+		[System.IO.FileAccess]::Read,
+		[System.IO.FileShare]::Read)
+	try {
+		$lockedOutput = & pwsh.exe -NoProfile -File $CaptionsPs1 -PackId $Summary.captions_pack_id -Manifest $captionsManifestDst 2>&1
+		if ($LASTEXITCODE -ne 0) { throw "captions locked rerun exited $LASTEXITCODE; output: $($lockedOutput -join ' | ')" }
+		Assert-Sha256Matches $ortPath $Summary.captions_ort_sha
+	}
+	finally {
+		$lockedStream.Dispose()
+	}
+	Write-CasePass "captions-locked-current-extract-rerun"
+
+	# --------------------------------------------------------------------
+	# Case 4: captions transient HTTP failure retries and succeeds
 	# --------------------------------------------------------------------
 	Write-CaseStart "captions-transient-retry"
 	$retryManifest = Get-Content -LiteralPath $captionsManifestDst -Raw
@@ -196,7 +216,7 @@ try {
 	Write-CasePass "captions-transient-retry"
 
 	# --------------------------------------------------------------------
-	# Case 4: captions bad-sha (manifest declares wrong SHA, installer rejects)
+	# Case 5: captions bad-sha (manifest declares wrong SHA, installer rejects)
 	# --------------------------------------------------------------------
 	Write-CaseStart "captions-bad-sha"
 	$badManifest = Get-Content -LiteralPath $captionsManifestDst -Raw
@@ -224,7 +244,7 @@ try {
 	Write-CasePass "captions-bad-sha"
 
 	# --------------------------------------------------------------------
-	# Case 5: captions manifest path traversal is rejected
+	# Case 6: captions manifest path traversal is rejected
 	# --------------------------------------------------------------------
 	Write-CaseStart "captions-path-traversal"
 	$escapeManifest = Get-Content -LiteralPath $captionsManifestDst -Raw | ConvertFrom-Json
@@ -248,7 +268,7 @@ try {
 	Write-CasePass "captions-path-traversal"
 
 	# --------------------------------------------------------------------
-	# Case 6: facetracking folder install (no HTTP needed; tests local-path branch)
+	# Case 7: facetracking folder install (no HTTP needed; tests local-path branch)
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-install"
 	$faceResultPath = Join-Path $WorkingRoot 'face-folder-result.json'
@@ -266,7 +286,7 @@ try {
 	Write-CasePass "facetracking-folder-install"
 
 	# --------------------------------------------------------------------
-	# Case 7: facetracking registry sync is list-only
+	# Case 8: facetracking registry sync is list-only
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-registry-sync-list-only"
 	Remove-Item -LiteralPath (Join-Path $LocalAppDataLow 'WKOpenVR\facetracking\modules') -Recurse -Force -ErrorAction SilentlyContinue
@@ -295,7 +315,7 @@ try {
 	Write-CasePass "facetracking-registry-sync-list-only"
 
 	# --------------------------------------------------------------------
-	# Case 8: facetracking registry installs only the selected module
+	# Case 9: facetracking registry installs only the selected module
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-registry-install-selected"
 	$availableModule = $available.modules[0]
@@ -323,7 +343,7 @@ try {
 	Write-CasePass "facetracking-registry-install-selected"
 
 	# --------------------------------------------------------------------
-	# Case 9: facetracking native registry prefers canonical payload route.
+	# Case 10: facetracking native registry prefers canonical payload route.
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-native-registry-canonical-payload"
 	$nativeRegistrySourceId = 'harness-native-registry-1'
@@ -370,7 +390,7 @@ try {
 	Write-CasePass "facetracking-native-registry-canonical-payload"
 
 	# --------------------------------------------------------------------
-	# Case 10: facetracking missing folder reports a structured failure.
+	# Case 11: facetracking missing folder reports a structured failure.
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-missing-source"
 	$bogusFolder = Join-Path $WorkingRoot ('no-such-folder-' + ([Guid]::NewGuid().ToString('N')))

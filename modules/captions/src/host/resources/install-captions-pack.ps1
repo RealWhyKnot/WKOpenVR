@@ -143,6 +143,42 @@ function Download-VerifiedFile {
     }
 }
 
+function Copy-IfDifferent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [string]$DisplayPath = ""
+    )
+
+    if (-not $DisplayPath) {
+        $DisplayPath = $Destination
+    }
+
+    if (Test-Path -LiteralPath $Destination) {
+        $sourceHash = Get-Sha256 -Path $Source
+        $destHash = Get-Sha256 -Path $Destination
+        if ($sourceHash -eq $destHash) {
+            Write-Log "Already current $DisplayPath"
+            return $false
+        }
+    }
+
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Destination -Force
+        return $true
+    } catch {
+        if (Test-Path -LiteralPath $Destination) {
+            $sourceHash = Get-Sha256 -Path $Source
+            $destHash = Get-Sha256 -Path $Destination
+            if ($sourceHash -eq $destHash) {
+                Write-Log "Already current $DisplayPath"
+                return $false
+            }
+        }
+        throw
+    }
+}
+
 function Extract-ZipEntries {
     param(
         [Parameter(Mandatory = $true)][string]$ZipPath,
@@ -165,8 +201,10 @@ function Extract-ZipEntries {
                 throw "Zip entry missing: $($entry.from)"
             }
             Ensure-Parent -Path $to
-            Copy-Item -LiteralPath $from -Destination $to -Force
-            Write-Log "Extracted $($entry.from) -> $($entry.to)"
+            $copied = Copy-IfDifferent -Source $from -Destination $to -DisplayPath ([string]$entry.to)
+            if ($copied) {
+                Write-Log "Extracted $($entry.from) -> $($entry.to)"
+            }
         }
     } finally {
         Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -413,19 +451,24 @@ $verb = "Installing"
 if ($Uninstall) { $verb = "Uninstalling" }
 Write-Log "$verb captions pack '$PackId'"
 
-if (-not (Test-Path -LiteralPath $Manifest)) {
-    throw "Pack manifest not found: $Manifest"
+try {
+    if (-not (Test-Path -LiteralPath $Manifest)) {
+        throw "Pack manifest not found: $Manifest"
+    }
+
+    $script:ManifestObject = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
+    $pack = Get-Pack -Id $PackId
+
+    if ($Uninstall) {
+        Uninstall-Pack -Id $PackId
+        Write-Log "Uninstalled captions pack '$PackId'"
+        exit 0
+    }
+
+    Install-Pack -Id $PackId -Visiting @{}
+
+    Write-Log "Installed captions pack '$PackId'"
+} catch {
+    Write-Log "ERROR: $($_.Exception.Message)"
+    throw
 }
-
-$script:ManifestObject = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
-$pack = Get-Pack -Id $PackId
-
-if ($Uninstall) {
-    Uninstall-Pack -Id $PackId
-    Write-Log "Uninstalled captions pack '$PackId'"
-    exit 0
-}
-
-Install-Pack -Id $PackId -Visiting @{}
-
-Write-Log "Installed captions pack '$PackId'"

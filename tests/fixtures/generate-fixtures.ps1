@@ -60,6 +60,16 @@ $ggmlSha    = Get-Sha (Join-Path $captionsDir 'ggml-stub.bin')
 $sileroSha  = Get-Sha (Join-Path $captionsDir 'silero-stub.onnx')
 $ortDllSha  = Get-Sha (Join-Path $captionsDir 'onnxruntime-stub.dll')
 
+$ortZipRoot = Join-Path $captionsDir 'onnxruntime-win-x64-1.26.0'
+$ortZipLib = Join-Path $ortZipRoot 'lib'
+New-Item -ItemType Directory -Force -Path $ortZipLib | Out-Null
+Copy-Item -LiteralPath (Join-Path $captionsDir 'onnxruntime-stub.dll') `
+	-Destination (Join-Path $ortZipLib 'onnxruntime.dll') -Force
+$ortZipPath = Join-Path $captionsDir 'onnxruntime-stub.zip'
+if (Test-Path -LiteralPath $ortZipPath) { Remove-Item -LiteralPath $ortZipPath -Force }
+Compress-Archive -Path $ortZipRoot -DestinationPath $ortZipPath -CompressionLevel Fastest
+$ortZipSha = Get-Sha $ortZipPath
+
 # 2. Captions test manifest. Points each file at a placeholder URL that the
 # fixture HTTP server replaces with a 127.0.0.1 route at startup. The runner
 # rewrites %FIXTURE_BASE% to http://127.0.0.1:<port>/ before invoking
@@ -85,10 +95,16 @@ $captionsPacks = @{
 					destination = 'models\silero_vad.onnx'
 				},
 				[ordered]@{
-					name        = 'runtime/onnxruntime.dll'
-					url         = '%FIXTURE_BASE%captions/onnxruntime-stub.dll'
-					sha256      = $ortDllSha
-					destination = 'runtime\onnxruntime.dll'
+					name        = 'cache/onnxruntime-stub.zip'
+					url         = '%FIXTURE_BASE%captions/onnxruntime-stub.zip'
+					sha256      = $ortZipSha
+					destination = 'cache\onnxruntime-stub.zip'
+					extract     = @(
+						[ordered]@{
+							from = 'onnxruntime-win-x64-1.26.0/lib/onnxruntime.dll'
+							to   = 'runtime\onnxruntime.dll'
+						}
+					)
 				}
 			)
 		}
@@ -254,6 +270,7 @@ $summary = [ordered]@{
 	captions_ggml_sha       = $ggmlSha
 	captions_silero_sha     = $sileroSha
 	captions_ort_sha        = $ortDllSha
+	captions_ort_zip_sha    = $ortZipSha
 	vrcft_module_dir        = $vrcftDir
 	vrcft_module_uuid       = $moduleUuid
 	vrcft_module_version    = $moduleVersion
