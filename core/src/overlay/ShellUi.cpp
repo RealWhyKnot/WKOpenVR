@@ -8,10 +8,20 @@
 #include "ShellUiLogic.h"
 #include "Theme.h"
 #include "UiCore.h"
+#include "UpdateNotice.h"
 
 #include <imgui.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -42,6 +52,99 @@ FeaturePlugin* FindDefaultLogsPanelPlugin(std::vector<std::unique_ptr<FeaturePlu
 		}
 	}
 	return nullptr;
+}
+
+std::string FormatUpdateDownloadProgress(const UpdateInstallState& install)
+{
+	if (install.totalBytes <= 0) return {};
+	const double pct =
+	    install.bytesDownloaded <= 0
+	        ? 0.0
+	        : (100.0 * static_cast<double>(install.bytesDownloaded) / static_cast<double>(install.totalBytes));
+	char buf[160] = {};
+	snprintf(buf, sizeof(buf), "%s of %s (%.0f%%)", ui::FormatByteCount(install.bytesDownloaded).c_str(),
+	         ui::FormatByteCount(install.totalBytes).c_str(), pct);
+	return buf;
+}
+
+void DrawUpdatePrompt(ShellContext& context, const std::vector<std::string_view>& installedFlags)
+{
+	const UpdateNoticeState notice = GetUpdateNoticeState();
+	const UpdateInstallState& install = notice.install;
+	const bool showPrompt =
+	    notice.available || install.queuedForSteamVrExit || install.phase == UpdateInstallPhase::Failed;
+	if (!showPrompt) return;
+
+	ui::StatusTone tone = ui::StatusTone::Info;
+	if (install.phase == UpdateInstallPhase::Failed) tone = ui::StatusTone::Error;
+	if (install.phase == UpdateInstallPhase::Downloading) tone = ui::StatusTone::Warn;
+	if (install.phase == UpdateInstallPhase::Ready || install.phase == UpdateInstallPhase::Launching) {
+		tone = ui::StatusTone::Ok;
+	}
+
+	ui::DrawCard("Update pending", tone, [&] {
+		const std::string version = !notice.latestVersion.empty() ? notice.latestVersion : install.targetVersion;
+		if (!version.empty()) {
+			ImGui::TextUnformatted(("Version v" + version).c_str());
+		}
+
+		if (install.phase == UpdateInstallPhase::Downloading) {
+			std::string progress = FormatUpdateDownloadProgress(install);
+			ui::DrawTextWrapped(progress.empty() ? "Downloading and checking installer..."
+			                                     : ("Downloading and checking installer: " + progress).c_str());
+		}
+		else if (install.phase == UpdateInstallPhase::Ready) {
+			ui::DrawTextWrapped("Installer verified. It will start after SteamVR closes.");
+		}
+		else if (install.phase == UpdateInstallPhase::Launching) {
+			ui::DrawTextWrapped("Installer will open after WKOpenVR exits.");
+		}
+		else if (install.phase == UpdateInstallPhase::Failed) {
+			ui::DrawTextWrapped(install.errorMessage.empty() ? "Update download failed."
+			                                                 : install.errorMessage.c_str());
+		}
+		else {
+			ui::DrawTextWrapped("Queue the installer now. It will run after SteamVR closes.");
+		}
+
+		ImGui::Spacing();
+		if (install.phase == UpdateInstallPhase::Idle || install.phase == UpdateInstallPhase::Failed) {
+			if (ImGui::Button("Queue update")) {
+				std::string error;
+				if (!QueueUpdateForSteamVrClose(installedFlags, &error)) {
+					context.SetStatus(error.empty() ? "Update was not queued." : error);
+				}
+				else {
+					context.SetStatus("Update queued for the next SteamVR close.");
+				}
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Download, verify, and queue the installer.");
+			}
+		}
+		else {
+			if (ImGui::Button("Cancel update")) {
+				CancelQueuedUpdate();
+				context.SetStatus("Update queue cancelled.");
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Cancel the queued installer.");
+			}
+		}
+
+		if (!notice.releaseUrl.empty()) {
+			ImGui::SameLine();
+			if (ImGui::Button("Release notes")) {
+#ifdef _WIN32
+				ShellExecuteA(nullptr, "open", notice.releaseUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", notice.releaseUrl.c_str());
+			}
+		}
+	});
+	ImGui::Spacing();
 }
 
 FeaturePlugin* FindFeatureByFlag(const std::vector<FeaturePlugin*>& plugins, std::string_view flag)
@@ -387,6 +490,7 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 		const std::vector<ShellTabEntry> entries = BuildShellTabEntries(installedPlugins);
 		ResolveShellTabSelection(context, entries, installedFlags, selectedShellTabKey, desktopDefaultTabAppliedFor,
 		                         pendingTabJumpKey);
+		DrawUpdatePrompt(context, installedFlags);
 		DrawShellTabStrip(entries, selectedShellTabKey, pendingTabJumpKey);
 
 		ImGui::Spacing();

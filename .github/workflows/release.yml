@@ -642,6 +642,28 @@ jobs:
             Write-Host "Publishing $($file.Name) to $($item.Repo) ($($file.Length) bytes) sha256=$hash"
             gh release create $tag --repo $item.Repo --target main --title $tag --notes-file $notesPath @extra $installerPath
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed for $($item.Repo)" }
+
+            $expectedDigest = "sha256:$($hash.ToLowerInvariant())"
+            $assetDigest = $null
+            for ($attempt = 1; $attempt -le 6; $attempt++) {
+              $releaseJson = gh api "repos/$($item.Repo)/releases/tags/$tag" 2>$null
+              if ($LASTEXITCODE -eq 0 -and $releaseJson) {
+                $release = $releaseJson | ConvertFrom-Json
+                $asset = $release.assets | Where-Object { $_.name -eq $file.Name } | Select-Object -First 1
+                if ($asset -and $asset.digest) {
+                  $assetDigest = [string]$asset.digest
+                  break
+                }
+              }
+              Start-Sleep -Seconds 2
+            }
+            if ([string]::IsNullOrWhiteSpace($assetDigest)) {
+              throw "GitHub did not report a digest for $($file.Name) on $($item.Repo)."
+            }
+            if ($assetDigest.ToLowerInvariant() -ne $expectedDigest) {
+              throw "Uploaded asset digest mismatch for $($file.Name): expected $expectedDigest got $assetDigest"
+            }
+            Write-Host "Verified uploaded asset digest: $assetDigest"
             $published++
           }
 

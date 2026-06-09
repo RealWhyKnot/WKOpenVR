@@ -113,6 +113,7 @@ add_executable(OpenVRPairOverlay WIN32
 	UiHelpers.h
 	UpdateNotice.cpp
 	UpdateNotice.h
+	UpdateNoticeLogic.h
 	VrOverlayHost.cpp
 	VrOverlayHost.h
 	main.cpp
@@ -140,6 +141,7 @@ target_link_libraries(OpenVRPairOverlay PRIVATE
 	opengl32
 	shell32
 	ole32
+	bcrypt
 	advapi32
 	${OPENVR_PAIR_OVERLAY_FEATURE_LIBS})
 
