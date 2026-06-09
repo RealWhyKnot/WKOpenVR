@@ -179,6 +179,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Recover always-on speech detection (11f391f)
 - **overlay:** Stop module nav snapping back and fix end-arrow visibility (c31f965)
 - **overlay:** Hide auto-disabled module tabs (ca58931)
+- **dashboardinput:** Gate experimental runtime path (b21c061)
 
 ---
 
