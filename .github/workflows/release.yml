@@ -56,7 +56,10 @@ jobs:
         # (missing hyphen) no longer matches by accident.
         run: |
           $tag = '${{ github.ref_name }}'
-          $isBeta = $tag -match '^v[\d.]+-beta'
+          $isBeta = $tag -match '^v\d{4}\.\d+\.\d+\.\d+-beta$'
+          if ($tag -match '-beta' -and -not $isBeta) {
+            throw "Beta tags must match vYYYY.M.D.N-beta."
+          }
           "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
       - name: Validate workflow / script PowerShell syntax
@@ -70,10 +73,24 @@ jobs:
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-NightlyBetaPlan.ps1
 
       - name: Test release notes generator
         shell: pwsh
         run: ./.github/scripts/Test-GenerateReleaseNotes.ps1
+
+      - name: Plan beta module releases
+        id: beta_plan
+        if: ${{ steps.beta.outputs.is_beta == 'true' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "MODULE_RELEASE_TOKEN secret is required to plan beta module releases."
+          }
+          git fetch --tags --force
+          ./.github/scripts/Get-NightlyBetaPlan.ps1 -Tag '${{ github.ref_name }}'
 
       - name: Promote Unreleased -> tagged section
         shell: pwsh
@@ -512,11 +529,25 @@ jobs:
         shell: pwsh
         env:
           TAG_NAME: ${{ github.ref_name }}
+          IS_BETA: ${{ steps.beta.outputs.is_beta }}
+          BETA_FEATURES: ${{ steps.beta_plan.outputs.features_csv }}
         run: |
           $version = $env:TAG_NAME -replace '^v', ''
           $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
           if (-not (Test-Path $makensis)) { $makensis = "C:\Program Files\NSIS\makensis.exe" }
           if (-not (Test-Path $makensis)) { throw "makensis.exe not found." }
+          $selectedFeatures = New-Object System.Collections.Generic.List[string]
+          if ($env:IS_BETA -eq 'true') {
+            if ([string]::IsNullOrWhiteSpace($env:BETA_FEATURES)) {
+              throw "Beta tag did not select any module installers."
+            }
+            foreach ($entry in $env:BETA_FEATURES.Split(',')) {
+              $name = $entry.Trim()
+              if (-not [string]::IsNullOrWhiteSpace($name)) {
+                [void] $selectedFeatures.Add($name)
+              }
+            }
+          }
           # Same disabled-in-release filter the zip step uses, so a feature
           # marked unstable doesn't get a per-feature installer either.
           $allFeatures = @(
@@ -532,6 +563,10 @@ jobs:
             $marker = "modules/$($_.Slug)/disabled-in-release.flag"
             if (Test-Path -LiteralPath $marker) {
               Write-Host "Skipping per-feature installer for $($_.Name) ($marker present)"
+              return $false
+            }
+            if ($selectedFeatures.Count -gt 0 -and -not $selectedFeatures.Contains($_.Name)) {
+              Write-Host "Skipping per-feature installer for $($_.Name) (unchanged for beta tag)"
               return $false
             }
             return $true
