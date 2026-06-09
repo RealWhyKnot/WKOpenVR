@@ -6,6 +6,7 @@
 #include "HeadFromTrackerSolve.h"
 #include "HeadMountPreview.h"
 #include "HeadMountOffsetPreflight.h"
+#include "UiHelpers.h"
 
 #include <imgui/imgui.h>
 #include <Eigen/Geometry>
@@ -378,7 +379,8 @@ bool DrawOffsetModal()
 				char buf[128];
 				std::snprintf(buf, sizeof buf, "Solved: residual %.2f mm  (%d samples)", s.lastResult.residualMm,
 				              s.lastResult.samplesUsed);
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_Text,
+				                      openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Ok));
 				ImGui::TextUnformatted(buf);
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
@@ -415,7 +417,8 @@ bool DrawOffsetModal()
 			else {
 				char buf[256];
 				std::snprintf(buf, sizeof buf, "Solve failed: %s", s.lastResult.failReason.c_str());
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+				ImGui::PushStyleColor(
+				    ImGuiCol_Text, openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Error));
 				ImGui::TextUnformatted(buf);
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
@@ -500,7 +503,8 @@ void DrawOffsetInlinePanel()
 		ImGui::TextUnformatted(buf);
 	}
 	else {
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.3f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text,
+		                      openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Warn));
 		ImGui::TextUnformatted("Offset not calibrated -- use the Calibrate button above.");
 		ImGui::PopStyleColor();
 	}

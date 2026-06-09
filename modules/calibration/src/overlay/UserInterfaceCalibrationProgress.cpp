@@ -3,6 +3,7 @@
 #include "Calibration.h"
 #include "CalibrationMetrics.h"
 #include "CalibrationProgress.h"
+#include "UiHelpers.h"
 #include "imgui_extensions.h"
 
 #include <Eigen/Core>
@@ -48,7 +49,8 @@ void DrawPairedMotionWarning()
 	const int pairedMotionWarn = (int)Metrics::pairedMotionWarningCount.last();
 	if (pairedMotionWarn < 5) return;
 
-	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.30f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_Text,
+	                      openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Warn));
 	ImGui::TextWrapped("Reference and target aren't moving together. If you're in passthrough or a desktop overlay, "
 	                   "your headset pose may be frozen -- exit to VR view so the headset reports real motion.");
 	ImGui::PopStyleColor();

@@ -98,11 +98,11 @@ void CCal_BasicInfo()
 			                CalCtx.referenceStandby.serial.c_str());
 			    const char* status;
 			    if (CalCtx.referenceID < 0) {
-				    ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFF000080);
+				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Error);
 				    status = "NOT FOUND";
 			    }
 			    else if (!CalCtx.ReferencePoseIsValidSimple()) {
-				    ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFFFF0080);
+				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Warn);
 				    status = "NOT TRACKING";
 			    }
 			    else {
@@ -116,11 +116,11 @@ void CCal_BasicInfo()
 			    ImGui::Text("%s / %s / %s", targetTrackingSystem, CalCtx.targetStandby.model.c_str(),
 			                CalCtx.targetStandby.serial.c_str());
 			    if (CalCtx.targetID < 0) {
-				    ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFF000080);
+				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Error);
 				    status = "NOT FOUND";
 			    }
 			    else if (!CalCtx.TargetPoseIsValidSimple()) {
-				    ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFFFF0080);
+				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Warn);
 				    status = "NOT TRACKING";
 			    }
 			    else {

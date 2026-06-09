@@ -200,7 +200,8 @@ static void BuildMainWindowContents(bool runningInOverlay_)
 	{
 		double recoveryAge = 0.0, recoveryDelta = 0.0;
 		if (LastAutoRecoveryActive(recoveryAge, recoveryDelta)) {
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.4f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text,
+			                      openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Warn));
 			ImGui::TextWrapped(
 			    "Auto-recovery cleared calibration %.0fs ago (~%.0f cm HMD jump). Recalibrating from scratch.",
 			    recoveryAge, recoveryDelta * 100.0);
@@ -843,7 +844,8 @@ void BuildMenu(bool runningInOverlay)
 				}
 			}
 			ImGui::Spacing();
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.45f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text,
+			                      openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Warn));
 			if (!actualSystem.empty()) {
 				ImGui::TextWrapped("Profile expects %s HMD but current HMD is on %s. Calibration not applied.",
 				                   refSystem, actualSystem.c_str());
