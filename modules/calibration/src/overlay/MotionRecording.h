@@ -1,15 +1,17 @@
 #pragma once
 
-// Loads a captured "spacecal_log_v2" CSV (the same file format the debug logger
+// Loads a captured "spacecal_log_v2/v3" CSV (the same file format the debug logger
 // emits to %LocalAppDataLow%\SpaceCalibrator\Logs\) into memory and replays it
 // through a fresh CalibrationCalc. The intent: a user records a problematic
 // motion sequence, we ship a fix, the user replays the same recording against
 // the new build to see whether the fix changed behavior.
 //
 // Parsing is column-name based, so adding new columns to the live log is
-// backward compatible — only the raw-pose columns are required. The header line
-// must begin with `# spacecal_log_v2`; older v1 captures lacked the raw poses
-// and can't be replayed.
+// backward compatible; only the raw-pose columns are required. The header line
+// must begin with `# spacecal_log_v2` or `# spacecal_log_v3`; older v1 captures
+// lacked the raw poses and can't be replayed. v3 adds per-row sample-health
+// columns so replay can evaluate tracking contamination instead of assuming
+// every restored sample was healthy.
 
 #include "CalibrationCalc.h"
 
@@ -30,6 +32,10 @@ struct ReplayRow
 	double timestamp = 0.0;
 	Pose ref;
 	Pose target;
+	Sample sample;
+	bool hasSampleDiagnostics = false;
+	bool sampleObserved = true;
+	bool sampleAccepted = true;
 	std::string tickPhase; // "Continuous", "Begin", etc — informational only.
 };
 
@@ -55,6 +61,7 @@ struct RecordingMeta
 struct LoadedRecording
 {
 	RecordingMeta meta;
+	int formatVersion = 0;
 	std::vector<ReplayRow> rows;
 	std::string sourcePath; // path passed to LoadRecording, for display
 	std::string error;      // populated on failure; rows will be empty.
@@ -78,6 +85,42 @@ struct ReplayTickResult
 	std::string rejectReason; // empty on accept
 };
 
+struct ReplayQualitySnapshot
+{
+	bool available = false;
+	bool shadowWouldAccept = false;
+	std::string shadowRejectReason;
+	int sampleCount = 0;
+	int validSampleCount = 0;
+	int strictHealthySampleCount = 0;
+	int staleSampleCount = 0;
+	int jumpSampleCount = 0;
+	int zeroPoseSampleCount = 0;
+	int unchangedPoseSampleCount = 0;
+	int highMotionSampleCount = 0;
+	int deltaPair23Count = 0;
+	double rmsMm = 0.0;
+	double p95Mm = 0.0;
+	double holdoutRmsMm = 0.0;
+	double targetSpanM = 0.0;
+	double rotationSpanDeg = 0.0;
+	double maxPoseAgeMs = 0.0;
+	double maxPoseGapMs = 0.0;
+	double maxLinearSpeedMps = 0.0;
+	double maxAngularSpeedDegps = 0.0;
+	bool strictSamplesPass = false;
+	bool geometryPass = false;
+	bool robustResidualPass = false;
+	bool holdoutPass = false;
+	bool novaDeltaPairsPass = false;
+};
+
+struct ReplayReasonCount
+{
+	std::string reason;
+	int count = 0;
+};
+
 // Replay parameters. Mirror the user-facing knobs in the live CalCtx so
 // the user can A/B compare "what would my recording look like with a tighter
 // recalibration threshold".
@@ -88,6 +131,8 @@ struct ReplayOptions
 	double maxRelError = 0.005;
 	bool ignoreOutliers = true;
 	std::size_t maxContinuousSamples = 200; // 0 keeps every sample; live continuous mode uses a bounded window.
+	std::size_t qualityReportInterval = 50; // 0 disables periodic shadow-quality snapshots.
+	bool includeHoldoutQuality = false;
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
@@ -100,10 +145,26 @@ struct ReplayResult
 	int rejects = 0;
 	int watchdogResets = 0;
 	int maxSamplesInWindow = 0;
+	int sampleRowsObserved = 0;
+	int sampleRowsAccepted = 0;
+	int sampleRowsRejected = 0;
+	int sampleRowsStrictUnhealthy = 0;
+	int sampleRowsStale = 0;
+	int sampleRowsJump = 0;
+	int sampleRowsPairedMotionInvalid = 0;
+	int sampleRowsZeroPose = 0;
+	int sampleRowsUnchanged = 0;
+	int sampleRowsHighMotion = 0;
+	int qualityReports = 0;
+	int shadowWouldAccept = 0;
+	int shadowWouldReject = 0;
 	double finalErrorMm = 0.0; // NaN if calc never produced a valid result
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();
 	bool finalTransformValid = false;
+	ReplayQualitySnapshot finalQuality;
+	std::vector<ReplayReasonCount> shadowRejectReasons;
 	std::vector<ReplayTickResult> trace;
+	std::vector<ReplayQualitySnapshot> qualityTrace;
 	std::string error; // populated on failure
 };
 

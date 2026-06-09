@@ -207,12 +207,40 @@ enum class TickPhase
 	ContinuousStandby,
 };
 
+struct ReplaySampleDiagnostics
+{
+	bool observed = false;
+	bool accepted = false;
+	bool pairedMotionValid = true;
+	bool refDeviceConnected = true;
+	bool targetDeviceConnected = true;
+	bool refPoseValid = true;
+	bool targetPoseValid = true;
+	int refTrackingResult = 200;
+	int targetTrackingResult = 200;
+	double refPoseAgeMs = 0.0;
+	double targetPoseAgeMs = 0.0;
+	double refPoseGapMs = 0.0;
+	double targetPoseGapMs = 0.0;
+	double refLinearSpeedMps = 0.0;
+	double targetLinearSpeedMps = 0.0;
+	double refAngularSpeedRadps = 0.0;
+	double targetAngularSpeedRadps = 0.0;
+	bool refZeroPose = false;
+	bool targetZeroPose = false;
+	bool refPoseUnchanged = false;
+	bool targetPoseUnchanged = false;
+	bool trackingPoseStale = false;
+	bool trackingPoseJump = false;
+};
+
 // Set the raw reference and target pose (translation + quaternion) and the tick
 // phase that will be written by the next WriteLogEntry() call. Caller is expected
 // to invoke this once per tick, just before WriteLogEntry(), so the v2 columns
 // stay consistent with the metrics already snapshotted into the TimeSeries above.
 void SetTickRawPoses(const Eigen::Vector3d& refTrans, const Eigen::Quaterniond& refRot,
                      const Eigen::Vector3d& targetTrans, const Eigen::Quaterniond& targetRot, TickPhase phase);
+void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics);
 
 void WriteLogAnnotation(const char* s);
 void WriteLogEntry();

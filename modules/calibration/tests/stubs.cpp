@@ -97,6 +97,11 @@ void SetTickRawPoses(const Eigen::Vector3d& /*refTrans*/, const Eigen::Quaternio
 	// No-op: tests don't need per-tick pose logging.
 }
 
+void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& /*diagnostics*/)
+{
+	// No-op: tests don't write replay CSV rows.
+}
+
 void WriteLogEntry()
 {
 	// No-op.

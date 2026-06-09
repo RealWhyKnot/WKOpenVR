@@ -4,11 +4,13 @@
 #include <shlobj_core.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 
 namespace spacecal::replay {
 
@@ -52,10 +54,59 @@ bool ReadDouble(const std::string& s, double& out)
 	return true;
 }
 
+bool ReadInt(const std::string& s, int& out)
+{
+	if (s.empty()) return false;
+	char* end = nullptr;
+	const long v = std::strtol(s.c_str(), &end, 10);
+	if (end == s.c_str()) return false;
+	out = static_cast<int>(v);
+	return true;
+}
+
+bool ReadBoolToken(const std::string& s, bool& out)
+{
+	int iv = 0;
+	if (ReadInt(s, iv)) {
+		out = iv != 0;
+		return true;
+	}
+	if (s == "true" || s == "TRUE" || s == "True") {
+		out = true;
+		return true;
+	}
+	if (s == "false" || s == "FALSE" || s == "False") {
+		out = false;
+		return true;
+	}
+	return false;
+}
+
 int ColIndex(const std::unordered_map<std::string, int>& cols, const char* name)
 {
 	const auto it = cols.find(name);
 	return (it == cols.end()) ? -1 : it->second;
+}
+
+bool ReadOptionalBool(const std::vector<std::string>& fields, int idx, bool fallback)
+{
+	if (idx < 0 || idx >= static_cast<int>(fields.size())) return fallback;
+	bool value = fallback;
+	return ReadBoolToken(fields[static_cast<size_t>(idx)], value) ? value : fallback;
+}
+
+int ReadOptionalInt(const std::vector<std::string>& fields, int idx, int fallback)
+{
+	if (idx < 0 || idx >= static_cast<int>(fields.size())) return fallback;
+	int value = fallback;
+	return ReadInt(fields[static_cast<size_t>(idx)], value) ? value : fallback;
+}
+
+double ReadOptionalDouble(const std::vector<std::string>& fields, int idx, double fallback)
+{
+	if (idx < 0 || idx >= static_cast<int>(fields.size())) return fallback;
+	double value = fallback;
+	return ReadDouble(fields[static_cast<size_t>(idx)], value) ? value : fallback;
 }
 
 // Strip a leading "# key=" prefix from an annotation line. Returns the value
@@ -83,6 +134,53 @@ std::wstring GetLogsDir()
 	return p;
 }
 
+ReplayQualitySnapshot SnapshotFromReport(const CalibrationQualityReport& report)
+{
+	const CalibrationQualityShadowSignals signals = EvaluateCalibrationQualityShadowSignals(report);
+	ReplayQualitySnapshot out;
+	out.available = true;
+	out.shadowWouldAccept = signals.wouldAccept;
+	out.shadowRejectReason = signals.firstRejectReason ? signals.firstRejectReason : "unknown";
+	out.sampleCount = static_cast<int>(report.sampleCount);
+	out.validSampleCount = report.validSampleCount;
+	out.strictHealthySampleCount = report.strictHealthySampleCount;
+	out.staleSampleCount = report.trackingStaleSampleCount;
+	out.jumpSampleCount = report.trackingJumpSampleCount;
+	out.zeroPoseSampleCount = report.zeroPoseSampleCount;
+	out.unchangedPoseSampleCount = report.unchangedPoseSampleCount;
+	out.highMotionSampleCount = report.highMotionSampleCount;
+	out.deltaPair23Count = report.deltaPair23DegCount;
+	out.rmsMm = report.residuals.rmsM * 1000.0;
+	out.p95Mm = report.residuals.p95M * 1000.0;
+	out.holdoutRmsMm = report.holdoutResiduals.rmsM * 1000.0;
+	out.targetSpanM = report.targetSpanM;
+	out.rotationSpanDeg = report.rotationSpanDeg;
+	out.maxPoseAgeMs = report.maxPoseAgeMs;
+	out.maxPoseGapMs = report.maxPoseGapMs;
+	out.maxLinearSpeedMps = report.maxLinearSpeedMps;
+	out.maxAngularSpeedDegps = report.maxAngularSpeedDegps;
+	out.strictSamplesPass = report.strictSamplesPass;
+	out.geometryPass = report.geometryPass;
+	out.robustResidualPass = report.robustResidualPass;
+	out.holdoutPass = report.holdoutPass;
+	out.novaDeltaPairsPass = report.novaDeltaPairsPass;
+	return out;
+}
+
+void AddReasonCount(std::vector<ReplayReasonCount>& counts, const std::string& reason)
+{
+	for (auto& entry : counts) {
+		if (entry.reason == reason) {
+			++entry.count;
+			return;
+		}
+	}
+	ReplayReasonCount entry;
+	entry.reason = reason;
+	entry.count = 1;
+	counts.push_back(std::move(entry));
+}
+
 } // namespace
 
 LoadedRecording LoadRecording(const std::string& path)
@@ -97,19 +195,23 @@ LoadedRecording LoadRecording(const std::string& path)
 	}
 
 	std::string line;
-	bool sawVersionBanner = false;
+	int formatVersion = 0;
 	std::vector<std::string> header;
 
 	while (std::getline(in, line)) {
 		RTrim(line);
 		if (line.empty()) continue;
 		if (line.rfind('#', 0) == 0) {
+			if (line.find("spacecal_log_v3") != std::string::npos) {
+				formatVersion = 3;
+				continue;
+			}
 			if (line.find("spacecal_log_v2") != std::string::npos) {
-				sawVersionBanner = true;
+				formatVersion = 2;
 				continue;
 			}
 			if (line.find("spacecal_log_v") != std::string::npos) {
-				rec.error = "Recording is not v2 (saw '" + line + "'). Replay needs v2.";
+				rec.error = "Recording is not v2/v3 (saw '" + line + "'). Replay needs v2 or newer.";
 				return rec;
 			}
 			// Pull metadata KVs out of the header annotations the live logger emits.
@@ -141,10 +243,11 @@ LoadedRecording LoadRecording(const std::string& path)
 		rec.error = "Recording has no column header row";
 		return rec;
 	}
-	if (!sawVersionBanner) {
-		rec.error = "Recording missing '# spacecal_log_v2' banner — refusing to replay (v1 logs lack raw poses).";
+	if (formatVersion < 2) {
+		rec.error = "Recording missing '# spacecal_log_v2' or '# spacecal_log_v3' banner; v1 logs lack raw poses.";
 		return rec;
 	}
+	rec.formatVersion = formatVersion;
 
 	std::unordered_map<std::string, int> cols;
 	for (size_t i = 0; i < header.size(); ++i)
@@ -166,6 +269,30 @@ LoadedRecording LoadRecording(const std::string& path)
 	const int idxTgtQy = ColIndex(cols, "tgt_qy");
 	const int idxTgtQz = ColIndex(cols, "tgt_qz");
 	const int idxTickPhase = ColIndex(cols, "tick_phase");
+	const int idxSampleObserved = ColIndex(cols, "sample_observed");
+	const int idxSampleAccepted = ColIndex(cols, "sample_accepted");
+	const int idxSamplePairedMotionValid = ColIndex(cols, "sample_paired_motion_valid");
+	const int idxSampleRefConnected = ColIndex(cols, "sample_ref_connected");
+	const int idxSampleTgtConnected = ColIndex(cols, "sample_tgt_connected");
+	const int idxSampleRefPoseValid = ColIndex(cols, "sample_ref_pose_valid");
+	const int idxSampleTgtPoseValid = ColIndex(cols, "sample_tgt_pose_valid");
+	const int idxSampleRefTrackingResult = ColIndex(cols, "sample_ref_tracking_result");
+	const int idxSampleTgtTrackingResult = ColIndex(cols, "sample_tgt_tracking_result");
+	const int idxSampleRefAgeMs = ColIndex(cols, "sample_ref_age_ms");
+	const int idxSampleTgtAgeMs = ColIndex(cols, "sample_tgt_age_ms");
+	const int idxSampleRefGapMs = ColIndex(cols, "sample_ref_gap_ms");
+	const int idxSampleTgtGapMs = ColIndex(cols, "sample_tgt_gap_ms");
+	const int idxSampleRefSpeedMps = ColIndex(cols, "sample_ref_speed_mps");
+	const int idxSampleTgtSpeedMps = ColIndex(cols, "sample_tgt_speed_mps");
+	const int idxSampleRefAngSpeedRadps = ColIndex(cols, "sample_ref_ang_speed_radps");
+	const int idxSampleTgtAngSpeedRadps = ColIndex(cols, "sample_tgt_ang_speed_radps");
+	const int idxSampleRefZeroPose = ColIndex(cols, "sample_ref_zero_pose");
+	const int idxSampleTgtZeroPose = ColIndex(cols, "sample_tgt_zero_pose");
+	const int idxSampleRefUnchanged = ColIndex(cols, "sample_ref_unchanged");
+	const int idxSampleTgtUnchanged = ColIndex(cols, "sample_tgt_unchanged");
+	const int idxSampleStale = ColIndex(cols, "sample_stale");
+	const int idxSampleJump = ColIndex(cols, "sample_jump");
+	const bool hasSampleDiagnostics = idxSampleObserved >= 0 || idxSampleAccepted >= 0;
 
 	const int required[] = {
 	    idxRefTx, idxRefTy, idxRefTz, idxRefQw, idxRefQx, idxRefQy, idxRefQz,
@@ -211,17 +338,60 @@ LoadedRecording LoadRecording(const std::string& path)
 
 		Eigen::Quaterniond rqQ(rq[0], rq[1], rq[2], rq[3]);
 		Eigen::Quaterniond tqQ(tq[0], tq[1], tq[2], tq[3]);
-		// Zero-quaternion sentinel = "device wasn't tracking this tick" — ignore.
-		if (rqQ.norm() < 1e-9 || tqQ.norm() < 1e-9) continue;
-		rqQ.normalize();
-		tqQ.normalize();
+		const bool refQuatValid = rqQ.norm() >= 1e-9;
+		const bool targetQuatValid = tqQ.norm() >= 1e-9;
+		// Zero-quaternion sentinel = "device wasn't tracking this tick". v2
+		// had no separate sample-health columns, so those rows are unreplayable.
+		// v3 keeps them as rejected sample evidence when diagnostics are present.
+		if (!refQuatValid || !targetQuatValid) {
+			if (!hasSampleDiagnostics) continue;
+			rqQ = Eigen::Quaterniond::Identity();
+			tqQ = Eigen::Quaterniond::Identity();
+		}
+		else {
+			rqQ.normalize();
+			tqQ.normalize();
+		}
 
 		row.ref.rot = rqQ.toRotationMatrix();
 		row.ref.trans = Eigen::Vector3d(rt[0], rt[1], rt[2]);
 		row.target.rot = tqQ.toRotationMatrix();
 		row.target.trans = Eigen::Vector3d(tt[0], tt[1], tt[2]);
+		row.sample = Sample(row.ref, row.target, row.timestamp);
 
 		if (idxTickPhase >= 0) row.tickPhase = fields[idxTickPhase];
+		row.hasSampleDiagnostics = hasSampleDiagnostics;
+		if (hasSampleDiagnostics) {
+			row.sampleObserved = ReadOptionalBool(fields, idxSampleObserved, true);
+			row.sampleAccepted = ReadOptionalBool(fields, idxSampleAccepted, row.sampleObserved);
+			row.sample.valid = row.sampleObserved && row.sampleAccepted && refQuatValid && targetQuatValid;
+			row.sample.pairedMotionValid = ReadOptionalBool(fields, idxSamplePairedMotionValid, true);
+			row.sample.refDeviceConnected = ReadOptionalBool(fields, idxSampleRefConnected, true);
+			row.sample.targetDeviceConnected = ReadOptionalBool(fields, idxSampleTgtConnected, true);
+			row.sample.refPoseValid = ReadOptionalBool(fields, idxSampleRefPoseValid, true);
+			row.sample.targetPoseValid = ReadOptionalBool(fields, idxSampleTgtPoseValid, true);
+			row.sample.refTrackingResult = ReadOptionalInt(fields, idxSampleRefTrackingResult, 200);
+			row.sample.targetTrackingResult = ReadOptionalInt(fields, idxSampleTgtTrackingResult, 200);
+			row.sample.refPoseAgeMs = ReadOptionalDouble(fields, idxSampleRefAgeMs, 0.0);
+			row.sample.targetPoseAgeMs = ReadOptionalDouble(fields, idxSampleTgtAgeMs, 0.0);
+			row.sample.refPoseGapMs = ReadOptionalDouble(fields, idxSampleRefGapMs, 0.0);
+			row.sample.targetPoseGapMs = ReadOptionalDouble(fields, idxSampleTgtGapMs, 0.0);
+			row.sample.refLinearSpeedMps = ReadOptionalDouble(fields, idxSampleRefSpeedMps, 0.0);
+			row.sample.targetLinearSpeedMps = ReadOptionalDouble(fields, idxSampleTgtSpeedMps, 0.0);
+			row.sample.refAngularSpeedRadps = ReadOptionalDouble(fields, idxSampleRefAngSpeedRadps, 0.0);
+			row.sample.targetAngularSpeedRadps = ReadOptionalDouble(fields, idxSampleTgtAngSpeedRadps, 0.0);
+			row.sample.refZeroPose = ReadOptionalBool(fields, idxSampleRefZeroPose, false);
+			row.sample.targetZeroPose = ReadOptionalBool(fields, idxSampleTgtZeroPose, false);
+			row.sample.refPoseUnchanged = ReadOptionalBool(fields, idxSampleRefUnchanged, false);
+			row.sample.targetPoseUnchanged = ReadOptionalBool(fields, idxSampleTgtUnchanged, false);
+			row.sample.trackingPoseStale = ReadOptionalBool(fields, idxSampleStale, false);
+			row.sample.trackingPoseJump = ReadOptionalBool(fields, idxSampleJump, false);
+		}
+		else {
+			row.sampleObserved = true;
+			row.sampleAccepted = true;
+			row.sample.valid = true;
+		}
 
 		rec.rows.push_back(std::move(row));
 	}
@@ -249,9 +419,73 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	const std::size_t continuousDrop = boundedContinuous ? std::max<std::size_t>(1, continuousWindow / 10) : 0;
 
 	res.trace.reserve(rec.rows.size());
+	res.qualityTrace.reserve(opts.qualityReportInterval > 0 ? (rec.rows.size() / opts.qualityReportInterval) + 2 : 1);
 
-	for (const auto& row : rec.rows) {
-		Sample s(row.ref, row.target, row.timestamp);
+	auto captureQuality = [&](ReplayTickResult* tick) {
+		if (calc.SampleCount() < 3) return;
+		Eigen::AffineCompact3d qualityTransform =
+		    calc.isValid() ? calc.Transformation() : Eigen::AffineCompact3d::Identity();
+		if (!calc.isValid()) {
+			CalibrationCalc probe = calc;
+			if (probe.ComputeOneshot(opts.ignoreOutliers)) {
+				qualityTransform = probe.Transformation();
+			}
+		}
+		ReplayQualitySnapshot snapshot = SnapshotFromReport(
+		    calc.EvaluateCalibrationQuality(qualityTransform, opts.includeHoldoutQuality, opts.ignoreOutliers));
+		if (!snapshot.available) return;
+		++res.qualityReports;
+		if (snapshot.shadowWouldAccept) {
+			++res.shadowWouldAccept;
+		}
+		else {
+			++res.shadowWouldReject;
+			AddReasonCount(res.shadowRejectReasons, snapshot.shadowRejectReason);
+		}
+		res.finalQuality = snapshot;
+		res.qualityTrace.push_back(snapshot);
+		if (tick) {
+			tick->rawErrMm = snapshot.rmsMm;
+		}
+	};
+
+	for (std::size_t rowIndex = 0; rowIndex < rec.rows.size(); ++rowIndex) {
+		const auto& row = rec.rows[rowIndex];
+		Sample s = row.hasSampleDiagnostics ? row.sample : Sample(row.ref, row.target, row.timestamp);
+		if (row.sampleObserved) ++res.sampleRowsObserved;
+		if (row.hasSampleDiagnostics) {
+			if (row.sampleAccepted && s.valid)
+				++res.sampleRowsAccepted;
+			else if (row.sampleObserved)
+				++res.sampleRowsRejected;
+			const bool strictHealthy =
+			    s.refDeviceConnected && s.targetDeviceConnected && s.refPoseValid && s.targetPoseValid &&
+			    s.refTrackingResult == static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK) &&
+			    s.targetTrackingResult == static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK);
+			if (row.sampleObserved && !strictHealthy) ++res.sampleRowsStrictUnhealthy;
+			if (s.trackingPoseStale) ++res.sampleRowsStale;
+			if (s.trackingPoseJump) ++res.sampleRowsJump;
+			if (row.sampleObserved && !s.pairedMotionValid) ++res.sampleRowsPairedMotionInvalid;
+			if (row.sampleObserved && (s.refZeroPose || s.targetZeroPose)) ++res.sampleRowsZeroPose;
+			if (row.sampleObserved && (s.refPoseUnchanged || s.targetPoseUnchanged)) ++res.sampleRowsUnchanged;
+			if (row.sampleObserved && (std::max(s.refLinearSpeedMps, s.targetLinearSpeedMps) > 1.5 ||
+			                           std::max(s.refAngularSpeedRadps, s.targetAngularSpeedRadps) > EIGEN_PI)) {
+				++res.sampleRowsHighMotion;
+			}
+		}
+		else {
+			++res.sampleRowsAccepted;
+		}
+
+		ReplayTickResult tick;
+		tick.timestamp = row.timestamp;
+
+		if (row.hasSampleDiagnostics && (!row.sampleObserved || !row.sampleAccepted || !s.valid)) {
+			tick.rejectReason = row.sampleObserved ? "sample_rejected" : "no_sample";
+			res.trace.push_back(std::move(tick));
+			continue;
+		}
+
 		calc.PushSample(s);
 		if (boundedContinuous) {
 			while (calc.SampleCount() > continuousWindow) {
@@ -260,12 +494,12 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		}
 		res.maxSamplesInWindow = std::max(res.maxSamplesInWindow, static_cast<int>(calc.SampleCount()));
 
-		ReplayTickResult tick;
-		tick.timestamp = row.timestamp;
-
 		if (opts.continuous) {
 			if (boundedContinuous && calc.SampleCount() < continuousWindow) {
 				tick.rejectReason = "waiting_for_samples";
+				if (opts.qualityReportInterval > 0 && ((rowIndex + 1) % opts.qualityReportInterval) == 0) {
+					captureQuality(&tick);
+				}
 				res.trace.push_back(std::move(tick));
 				continue;
 			}
@@ -289,6 +523,9 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 				}
 			}
 			if (!ok) tick.rejectReason = "rejected";
+			if (opts.qualityReportInterval > 0 && (ok || ((rowIndex + 1) % opts.qualityReportInterval) == 0)) {
+				captureQuality(&tick);
+			}
 
 			if (boundedContinuous) {
 				for (std::size_t i = 0; i < continuousDrop; ++i) {
@@ -299,6 +536,9 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		else {
 			// Oneshot mode just keeps appending samples. The single Compute below
 			// runs after the loop. Per-tick trace stays as samples-only.
+			if (opts.qualityReportInterval > 0 && ((rowIndex + 1) % opts.qualityReportInterval) == 0) {
+				captureQuality(&tick);
+			}
 		}
 
 		res.trace.push_back(std::move(tick));
@@ -311,6 +551,8 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		else
 			++res.rejects;
 	}
+
+	captureQuality(nullptr);
 
 	res.rowsReplayed = (int)rec.rows.size();
 	res.finalTransformValid = calc.isValid();

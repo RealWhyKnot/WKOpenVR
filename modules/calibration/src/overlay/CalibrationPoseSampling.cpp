@@ -160,6 +160,7 @@ struct PoseHealthProbe
 {
 	double ageMs = 0.0;
 	double gapMs = 0.0;
+	bool unchanged = false;
 	bool stale = false;
 	bool jump = false;
 };
@@ -191,6 +192,56 @@ bool PoseLooksZero(const vr::DriverPose_t& pose)
 	return posNorm < 1e-9 && quatVecNorm < 1e-9 && std::fabs(pose.qRotation.w - 1.0) < 1e-9;
 }
 
+void RecordReplaySampleDiagnostics(const Sample& sample, bool accepted)
+{
+	Metrics::ReplaySampleDiagnostics diag;
+	diag.observed = true;
+	diag.accepted = accepted;
+	diag.pairedMotionValid = sample.pairedMotionValid;
+	diag.refDeviceConnected = sample.refDeviceConnected;
+	diag.targetDeviceConnected = sample.targetDeviceConnected;
+	diag.refPoseValid = sample.refPoseValid;
+	diag.targetPoseValid = sample.targetPoseValid;
+	diag.refTrackingResult = sample.refTrackingResult;
+	diag.targetTrackingResult = sample.targetTrackingResult;
+	diag.refPoseAgeMs = sample.refPoseAgeMs;
+	diag.targetPoseAgeMs = sample.targetPoseAgeMs;
+	diag.refPoseGapMs = sample.refPoseGapMs;
+	diag.targetPoseGapMs = sample.targetPoseGapMs;
+	diag.refLinearSpeedMps = sample.refLinearSpeedMps;
+	diag.targetLinearSpeedMps = sample.targetLinearSpeedMps;
+	diag.refAngularSpeedRadps = sample.refAngularSpeedRadps;
+	diag.targetAngularSpeedRadps = sample.targetAngularSpeedRadps;
+	diag.refZeroPose = sample.refZeroPose;
+	diag.targetZeroPose = sample.targetZeroPose;
+	diag.refPoseUnchanged = sample.refPoseUnchanged;
+	diag.targetPoseUnchanged = sample.targetPoseUnchanged;
+	diag.trackingPoseStale = sample.trackingPoseStale;
+	diag.trackingPoseJump = sample.trackingPoseJump;
+	Metrics::SetTickReplaySampleDiagnostics(diag);
+}
+
+void RecordRejectedReplaySampleDiagnostics(const vr::DriverPose_t& reference, const vr::DriverPose_t& target)
+{
+	Metrics::ReplaySampleDiagnostics diag;
+	diag.observed = true;
+	diag.accepted = false;
+	diag.pairedMotionValid = false;
+	diag.refDeviceConnected = reference.deviceIsConnected;
+	diag.targetDeviceConnected = target.deviceIsConnected;
+	diag.refPoseValid = reference.poseIsValid;
+	diag.targetPoseValid = target.poseIsValid;
+	diag.refTrackingResult = static_cast<int>(reference.result);
+	diag.targetTrackingResult = static_cast<int>(target.result);
+	diag.refLinearSpeedMps = Vector3Norm(reference.vecVelocity);
+	diag.targetLinearSpeedMps = Vector3Norm(target.vecVelocity);
+	diag.refAngularSpeedRadps = Vector3Norm(reference.vecAngularVelocity);
+	diag.targetAngularSpeedRadps = Vector3Norm(target.vecAngularVelocity);
+	diag.refZeroPose = PoseLooksZero(reference);
+	diag.targetZeroPose = PoseLooksZero(target);
+	Metrics::SetTickReplaySampleDiagnostics(diag);
+}
+
 PoseHealthProbe ProbePoseHealth(int deviceId, const Pose& pose, const LARGE_INTEGER& sampleTime,
                                 const LARGE_INTEGER& now, const LARGE_INTEGER& frequency)
 {
@@ -214,6 +265,11 @@ PoseHealthProbe ProbePoseHealth(int deviceId, const Pose& pose, const LARGE_INTE
 
 	PoseHealthState& state = s_state[static_cast<size_t>(deviceId)];
 	const Eigen::Quaterniond currentRot(pose.rot);
+	if (state.seeded) {
+		const double translationDeltaM = (pose.trans - state.pos).norm();
+		const double angleDeg = currentRot.angularDistance(state.rot) * (180.0 / EIGEN_PI);
+		out.unchanged = translationDeltaM < 1e-9 && angleDeg < 1e-6;
+	}
 	if (state.seeded && sampleTime.QuadPart > state.sampleTime.QuadPart) {
 		out.gapMs = QpcDeltaMs(sampleTime.QuadPart, state.sampleTime.QuadPart, frequency.QuadPart);
 		if (out.gapMs > kStalePoseGapMs) {
@@ -460,6 +516,7 @@ bool CollectSample(const CalibrationContext& ctx)
 		                                                                 : "silent_invalid_pose_rejected: tgt");
 	}
 	if (!ok) {
+		RecordRejectedReplaySampleDiagnostics(reference, target);
 		openvr_pair::common::RuntimePoseHealthSample runtimeHealth{};
 		runtimeHealth.invalid = true;
 		runtimeHealth.refTrackingResult = static_cast<int>(reference.result);
@@ -575,8 +632,11 @@ bool CollectSample(const CalibrationContext& ctx)
 	collectedSample.targetAngularSpeedRadps = Vector3Norm(target.vecAngularVelocity);
 	collectedSample.refZeroPose = PoseLooksZero(reference);
 	collectedSample.targetZeroPose = PoseLooksZero(target);
+	collectedSample.refPoseUnchanged = refHealth.unchanged;
+	collectedSample.targetPoseUnchanged = targetHealth.unchanged;
 	collectedSample.trackingPoseStale = refHealth.stale || targetHealth.stale;
 	collectedSample.trackingPoseJump = refHealth.jump || targetHealth.jump;
+	RecordReplaySampleDiagnostics(collectedSample, true);
 	calibration.PushSample(collectedSample);
 	openvr_pair::common::RuntimePoseHealthSample runtimeHealth{};
 	runtimeHealth.refPoseAgeMs = refHealth.ageMs;

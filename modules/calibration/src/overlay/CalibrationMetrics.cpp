@@ -149,7 +149,8 @@ static std::string lastLogStatus = "not opened";
 // phase. Filled by SetTickRawPoses() each tick and consumed by the field writers
 // below. Defaults are an identity pose with phase=None so that any unexpected
 // WriteLogEntry call (i.e. one not preceded by SetTickRawPoses) emits a syntactically
-// valid row rather than uninitialized memory.
+// valid row rather than uninitialized memory. v3 adds sample-health diagnostics
+// so offline replays can evaluate the same shadow-quality gates as live sessions.
 struct TickRawPoses
 {
 	Eigen::Vector3d refTrans = Eigen::Vector3d::Zero();
@@ -159,6 +160,7 @@ struct TickRawPoses
 	TickPhase phase = TickPhase::None;
 };
 static TickRawPoses g_tickRaw;
+static ReplaySampleDiagnostics g_tickSample;
 
 static const char* TickPhaseName(TickPhase p)
 {
@@ -189,6 +191,11 @@ void SetTickRawPoses(const Eigen::Vector3d& refTrans, const Eigen::Quaterniond& 
 	g_tickRaw.targetTrans = targetTrans;
 	g_tickRaw.targetRot = targetRot;
 	g_tickRaw.phase = phase;
+}
+
+void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics)
+{
+	g_tickSample = diagnostics;
 }
 
 struct CsvField
@@ -347,6 +354,63 @@ static const CsvField fields[] = {
 	     s << g_tickRaw.targetRot.z();
      }},
     {"tick_phase", [](auto& s) { s << TickPhaseName(g_tickRaw.phase); }},
+
+    // --- v3 columns: accepted/rejected sample health -------------------------
+    {"sample_observed", [](auto& s) { s << (g_tickSample.observed ? 1 : 0); }},
+    {"sample_accepted", [](auto& s) { s << (g_tickSample.accepted ? 1 : 0); }},
+    {"sample_paired_motion_valid", [](auto& s) { s << (g_tickSample.pairedMotionValid ? 1 : 0); }},
+    {"sample_ref_connected", [](auto& s) { s << (g_tickSample.refDeviceConnected ? 1 : 0); }},
+    {"sample_tgt_connected", [](auto& s) { s << (g_tickSample.targetDeviceConnected ? 1 : 0); }},
+    {"sample_ref_pose_valid", [](auto& s) { s << (g_tickSample.refPoseValid ? 1 : 0); }},
+    {"sample_tgt_pose_valid", [](auto& s) { s << (g_tickSample.targetPoseValid ? 1 : 0); }},
+    {"sample_ref_tracking_result", [](auto& s) { s << g_tickSample.refTrackingResult; }},
+    {"sample_tgt_tracking_result", [](auto& s) { s << g_tickSample.targetTrackingResult; }},
+    {"sample_ref_age_ms",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.refPoseAgeMs;
+     }},
+    {"sample_tgt_age_ms",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.targetPoseAgeMs;
+     }},
+    {"sample_ref_gap_ms",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.refPoseGapMs;
+     }},
+    {"sample_tgt_gap_ms",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.targetPoseGapMs;
+     }},
+    {"sample_ref_speed_mps",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.refLinearSpeedMps;
+     }},
+    {"sample_tgt_speed_mps",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.targetLinearSpeedMps;
+     }},
+    {"sample_ref_ang_speed_radps",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.refAngularSpeedRadps;
+     }},
+    {"sample_tgt_ang_speed_radps",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickSample.targetAngularSpeedRadps;
+     }},
+    {"sample_ref_zero_pose", [](auto& s) { s << (g_tickSample.refZeroPose ? 1 : 0); }},
+    {"sample_tgt_zero_pose", [](auto& s) { s << (g_tickSample.targetZeroPose ? 1 : 0); }},
+    {"sample_ref_unchanged", [](auto& s) { s << (g_tickSample.refPoseUnchanged ? 1 : 0); }},
+    {"sample_tgt_unchanged", [](auto& s) { s << (g_tickSample.targetPoseUnchanged ? 1 : 0); }},
+    {"sample_stale", [](auto& s) { s << (g_tickSample.trackingPoseStale ? 1 : 0); }},
+    {"sample_jump", [](auto& s) { s << (g_tickSample.trackingPoseJump ? 1 : 0); }},
 };
 #endif
 
@@ -526,7 +590,7 @@ static bool OpenLogFile()
 		// poses (ref_t{x,y,z}, ref_q{w,x,y,z}, tgt_*) and tick_phase. The replay
 		// harness rejects logs that don't begin with this banner so older captures
 		// fail loud rather than being interpreted with the wrong column layout.
-		header << "# spacecal_log_v2\n";
+		header << "# spacecal_log_v3\n";
 	}
 	else
 #endif
@@ -544,7 +608,7 @@ static bool OpenLogFile()
 	header << "# debug_logging_effective=1\n";
 	header << "# replay_recording="
 #if WKOPENVR_BUILD_IS_DEV
-	       << (enableReplayCsv ? "enabled format=spacecal_log_v2" : "disabled")
+	       << (enableReplayCsv ? "enabled format=spacecal_log_v3" : "disabled")
 #else
 	       << "not_compiled"
 #endif
@@ -753,6 +817,7 @@ void WriteLogEntry()
 			++logRowsWritten;
 		}
 	}
+	g_tickSample = ReplaySampleDiagnostics{};
 #endif
 }
 
