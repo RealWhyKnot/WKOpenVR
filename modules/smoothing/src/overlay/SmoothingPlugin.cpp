@@ -24,7 +24,6 @@
 #include <windows.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <exception>
 #include <memory>
 #include <sstream>
@@ -43,7 +42,6 @@ void SmoothingPlugin::OnStart(openvr_pair::overlay::ShellContext& context)
 		SM_LOG("[ipc] initial connect failed: %s", connectError_.c_str());
 	}
 	SendConfig();
-	SendDashboardHandTrackingState(context, true);
 	SM_LOG("[config] pushed: smoothness=%d finger_mask=0x%04x", cfg_.smoothness, (unsigned)cfg_.finger_mask);
 	ReplayDevicePredictions("startup");
 }
@@ -54,9 +52,7 @@ void SmoothingPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 		SM_LOG("[ipc] connected; replaying smoothing state");
 		SendConfig();
 		ReplayDevicePredictions("ipc-reconnect");
-		dashboardStateDirty_ = true;
 	}
-	TickDashboardHandTracking(context);
 	TickPredictionRestore();
 	TickExternalToolDetection();
 	TickCalibrationLockClear();
@@ -141,92 +137,6 @@ void SmoothingPlugin::SendDevicePrediction(uint32_t openVRID, int smoothness)
 	}
 	catch (const std::exception& e) {
 		connectError_ = e.what();
-	}
-}
-
-namespace {
-
-uint8_t NormalizeDashboardHand(int hand)
-{
-	if (hand == protocol::DashboardHandTrackingHandLeft || hand == protocol::DashboardHandTrackingHandRight) {
-		return static_cast<uint8_t>(hand);
-	}
-	return protocol::DashboardHandTrackingHandUnknown;
-}
-
-const char* DashboardHandLabel(uint8_t hand)
-{
-	switch (hand) {
-		case protocol::DashboardHandTrackingHandLeft:
-			return "left";
-		case protocol::DashboardHandTrackingHandRight:
-			return "right";
-		default:
-			return "unknown";
-	}
-}
-
-uint64_t MonotonicMilliseconds()
-{
-	return static_cast<uint64_t>(::GetTickCount64());
-}
-
-} // namespace
-
-void SmoothingPlugin::SendDashboardHandTrackingState(openvr_pair::overlay::ShellContext& context, bool force)
-{
-	if (!ipc_.IsConnected()) {
-		dashboardStateDirty_ = true;
-		return;
-	}
-
-	const bool enabled = cfg_.dashboard_finger_passthrough;
-	const bool visible = context.anyDashboardVisible;
-	const uint8_t primaryHand = NormalizeDashboardHand(context.primaryDashboardHand);
-
-	protocol::Request req(protocol::RequestSetDashboardHandTrackingState);
-	req.setDashboardHandTrackingState.enabled = enabled ? 1 : 0;
-	req.setDashboardHandTrackingState.dashboard_visible = visible ? 1 : 0;
-	req.setDashboardHandTrackingState.primary_hand = primaryHand;
-	req.setDashboardHandTrackingState._reserved = 0;
-	req.setDashboardHandTrackingState.update_mono_ms = MonotonicMilliseconds();
-
-	try {
-		ipc_.SendBlocking(req);
-		connectError_.clear();
-		dashboardStateDirty_ = false;
-		haveLastDashboardStateSent_ = true;
-		lastDashboardStateEnabled_ = enabled;
-		lastDashboardStateVisible_ = visible;
-		lastDashboardStateHand_ = primaryHand;
-		lastDashboardStateSend_ = std::chrono::steady_clock::now();
-		if (force) {
-			SM_LOG("[dashboard] pushed hand-tracking state: enabled=%d any_dashboard_visible=%d active_tab=%d "
-			       "primary_device=%u primary_hand=%s",
-			       enabled ? 1 : 0, visible ? 1 : 0, context.activeDashboardOverlay ? 1 : 0,
-			       context.primaryDashboardDevice, DashboardHandLabel(primaryHand));
-		}
-	}
-	catch (const std::exception& e) {
-		connectError_ = e.what();
-		dashboardStateDirty_ = true;
-	}
-}
-
-void SmoothingPlugin::TickDashboardHandTracking(openvr_pair::overlay::ShellContext& context)
-{
-	const bool enabled = cfg_.dashboard_finger_passthrough;
-	const bool visible = context.anyDashboardVisible;
-	const uint8_t primaryHand = NormalizeDashboardHand(context.primaryDashboardHand);
-	const bool changed = !haveLastDashboardStateSent_ || enabled != lastDashboardStateEnabled_ ||
-	                     visible != lastDashboardStateVisible_ || primaryHand != lastDashboardStateHand_;
-
-	const auto now = std::chrono::steady_clock::now();
-	const bool needsRefresh = enabled && visible &&
-	                          (lastDashboardStateSend_.time_since_epoch().count() == 0 ||
-	                           now - lastDashboardStateSend_ >= std::chrono::milliseconds(250));
-	if (dashboardStateDirty_ || changed || needsRefresh) {
-		SendDashboardHandTrackingState(context, dashboardStateDirty_ || changed);
 	}
 }
 

@@ -19,8 +19,6 @@ struct SmoothingConfig
 	// config behaves like a v12 build with a single global strength.
 	int per_finger_smoothness[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-	bool dashboard_finger_passthrough = true;
-
 	// Per-tracker pose-prediction suppression, keyed by serial number so
 	// values survive a device reconnecting under a fresh OpenVR ID. 0..100;
 	// serials absent from the map are treated as 0 (off). Driver applies

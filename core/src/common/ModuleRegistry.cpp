@@ -37,6 +37,20 @@ constexpr ModuleInfo kModules[] = {
         true,
     },
     {
+        ModuleId::DashboardInput,
+        "dashboardinput",
+        "enable_dashboardinput.flag",
+        L"enable_dashboardinput.flag",
+        nullptr,
+        nullptr,
+        "Dashboard Input",
+        L"Dashboard Input",
+        L"--launch=dashboardinput",
+        OPENVR_PAIRDRIVER_DASHBOARDINPUT_PIPE_NAME,
+        false,
+        true,
+    },
+    {
         ModuleId::InputHealth,
         "inputhealth",
         "enable_inputhealth.flag",
@@ -121,7 +135,7 @@ constexpr ModuleInfo kModules[] = {
         false,
     },
 };
-constexpr size_t kDriverSafetyModuleCount = 7;
+constexpr size_t kDriverSafetyModuleCount = 8;
 static_assert(kModules[0].participates_in_driver_safety);
 static_assert(kModules[1].participates_in_driver_safety);
 static_assert(kModules[2].participates_in_driver_safety);
@@ -129,7 +143,8 @@ static_assert(kModules[3].participates_in_driver_safety);
 static_assert(kModules[4].participates_in_driver_safety);
 static_assert(kModules[5].participates_in_driver_safety);
 static_assert(kModules[6].participates_in_driver_safety);
-static_assert(!kModules[7].participates_in_driver_safety);
+static_assert(kModules[7].participates_in_driver_safety);
+static_assert(!kModules[8].participates_in_driver_safety);
 
 bool EqualAscii(std::string_view a, std::string_view b)
 {

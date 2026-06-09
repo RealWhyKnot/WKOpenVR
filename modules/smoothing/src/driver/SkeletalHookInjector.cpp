@@ -1,6 +1,7 @@
 #include "SkeletalHookInjector.h"
 #include "SkeletalDiagnostics.h"
 #include "SkeletalSmoothingMath.h"
+#include "FeatureFlags.h"
 #include "Hooking.h"
 #include "DriverMemoryProbe.h"
 #include "InterfaceHookInjector.h" // InterfaceHooks::DetourScope -- bracket
@@ -32,6 +33,7 @@
 // only after IHook::DestroyAll has removed our hooks, so no in-flight detour
 // can race the clear.
 static ServerTrackedDeviceProvider* g_driver = nullptr;
+static std::atomic<uint32_t> g_skeletalOwners{0};
 
 // Latched when the finger-smoothing detour body throws. Once set, the detour
 // passes the incoming bone transforms straight through so a faulting math path
@@ -51,9 +53,18 @@ static void SkeletalContainmentFault(const char* what)
 	LOG("[skeletal] finger-smoothing detour threw: %s -- passing fingers through unsmoothed and disabling smoothing on "
 	    "next driver load",
 	    (what && what[0]) ? what : "(unknown exception)");
-	if (const auto* spec =
-	        openvr_pair::common::module_safety::FindById(openvr_pair::common::modules::ModuleId::Smoothing)) {
-		openvr_pair::common::module_safety::MarkFault(*spec, "skeletal_exception");
+	auto markOwner = [](uint32_t owners, uint32_t mask, openvr_pair::common::modules::ModuleId id) {
+		if ((owners & mask) == 0) return;
+		if (const auto* spec = openvr_pair::common::module_safety::FindById(id)) {
+			openvr_pair::common::module_safety::MarkFault(*spec, "skeletal_exception");
+		}
+	};
+	const uint32_t owners = g_skeletalOwners.load(std::memory_order_relaxed);
+	markOwner(owners, pairdriver::kFeatureSmoothing, openvr_pair::common::modules::ModuleId::Smoothing);
+	markOwner(owners, pairdriver::kFeatureDashboardInput, openvr_pair::common::modules::ModuleId::DashboardInput);
+	if (owners == 0) {
+		markOwner(pairdriver::kFeatureSmoothing, pairdriver::kFeatureSmoothing,
+		          openvr_pair::common::modules::ModuleId::Smoothing);
 	}
 }
 
@@ -779,9 +790,15 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(vr::IVRDriverInput*
 
 namespace skeletal {
 
-void Init(ServerTrackedDeviceProvider* driver)
+void Init(ServerTrackedDeviceProvider* driver, uint32_t ownerFeatureMask)
 {
+	const uint32_t previousOwners = g_skeletalOwners.fetch_or(ownerFeatureMask, std::memory_order_acq_rel);
 	g_driver = driver;
+	if (previousOwners != 0) {
+		LOG("[skeletal] Init: owner attached mask=0x%08x owners=0x%08x", (unsigned)ownerFeatureMask,
+		    (unsigned)(previousOwners | ownerFeatureMask));
+		return;
+	}
 	QueryPerformanceFrequency(&g_qpcFreq);
 	g_lastStatsLogQpc.store(0);
 	g_lastDeepStateLogQpc.store(0);
@@ -820,11 +837,23 @@ void Init(ServerTrackedDeviceProvider* driver)
 			g_lastAnySmoothing[h].store(false, std::memory_order_relaxed);
 		}
 	}
-	LOG("[skeletal] Init: subsystem armed (driver=%p), awaiting IVRDriverInput interface queries", (void*)driver);
+	LOG("[skeletal] Init: subsystem armed (driver=%p owner=0x%08x), awaiting IVRDriverInput interface queries",
+	    (void*)driver, (unsigned)ownerFeatureMask);
 }
 
-void Shutdown()
+void Shutdown(uint32_t ownerFeatureMask)
 {
+	const uint32_t previousOwners = g_skeletalOwners.fetch_and(~ownerFeatureMask, std::memory_order_acq_rel);
+	const uint32_t remainingOwners = previousOwners & ~ownerFeatureMask;
+	if (remainingOwners != 0) {
+		LOG("[skeletal] Shutdown: owner detached mask=0x%08x remaining=0x%08x", (unsigned)ownerFeatureMask,
+		    (unsigned)remainingOwners);
+		return;
+	}
+	if (previousOwners == 0) {
+		LOG("[skeletal] Shutdown: no active owners for mask=0x%08x", (unsigned)ownerFeatureMask);
+		return;
+	}
 	// Called after IHook::DestroyAll + InterfaceHooks::DrainInFlightDetours
 	// from the existing DisableHooks(). Our detours are guaranteed to have
 	// exited before we get here (drain is the previous step), so no in-flight

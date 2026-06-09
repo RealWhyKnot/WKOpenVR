@@ -60,6 +60,7 @@ $KnownTestSpecs = @(
 	@{ Suite = "oscrouter"; Binary = "oscrouter_tests.exe"; Target = "oscrouter_tests" },
 	@{ Suite = "phantom"; Binary = "phantom_tests.exe"; Target = "phantom_tests" },
 	@{ Suite = "questapp"; Binary = "questapp_tests.exe"; Target = "questapp_tests" },
+	@{ Suite = "smoothing"; Binary = "smoothing_tests.exe"; Target = "smoothing_tests" },
 	@{ Suite = "ui"; Binary = "ui_core_tests.exe"; Target = "ui_core_tests" }
 )
 

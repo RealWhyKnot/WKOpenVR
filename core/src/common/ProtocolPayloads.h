@@ -211,7 +211,7 @@ enum DashboardHandTrackingPrimaryHand : uint8_t
 	DashboardHandTrackingHandRight = 2,
 };
 
-// v32: SteamVR dashboard hand-tracking state sent by the Smoothing overlay.
+// v32: SteamVR dashboard hand-tracking state sent by the Dashboard Input overlay.
 // update_mono_ms uses a monotonic Windows tick count so the driver can reject
 // stale overlay state without trusting wall-clock time.
 struct DashboardHandTrackingState

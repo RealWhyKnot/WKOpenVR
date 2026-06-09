@@ -23,15 +23,6 @@ void SmoothingPlugin::DrawFingersTab()
 	    "what reaches VRChat (and any other consumer of /input/skeleton) is the smoothed "
 	    "signal.");
 
-	bool dashboardPassthrough = cfg_.dashboard_finger_passthrough;
-	if (ImGui::Checkbox("Dashboard finger passthrough", &dashboardPassthrough)) {
-		cfg_.dashboard_finger_passthrough = dashboardPassthrough;
-		dashboardStateDirty_ = true;
-		dirty = true;
-	}
-	openvr_pair::overlay::ui::TooltipForLastItem(
-	    "Keeps dashboard windows on the live incoming skeleton stream when SteamVR is showing the dashboard.");
-
 	openvr_pair::overlay::ui::DrawSectionHeading("Strength");
 	int smoothness = cfg_.smoothness;
 	ImGui::SetNextItemWidth(260.0f);

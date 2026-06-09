@@ -39,6 +39,10 @@ namespace smoothing {
 std::unique_ptr<DriverModule> CreateDriverModule();
 }
 
+namespace dashboardinput {
+std::unique_ptr<DriverModule> CreateDriverModule();
+}
+
 namespace inputhealth {
 std::unique_ptr<DriverModule> CreateDriverModule();
 }

@@ -72,9 +72,6 @@ SmoothingConfig LoadConfig()
 			if (n > 100) n = 100;
 			if (n > 0) cfg.trackerSmoothness[std::string(key + 19)] = n;
 		}
-		else if (strcmp(key, "dashboard_finger_passthrough") == 0) {
-			cfg.dashboard_finger_passthrough = (atoi(val) != 0);
-		}
 		else if (strcmp(key, "smart_smoothing") == 0) {
 			cfg.smart_smoothing = (atoi(val) != 0);
 		}
@@ -100,7 +97,6 @@ void SaveConfig(const SmoothingConfig& cfg)
 	};
 	appendf("smoothness=%d\n", cfg.smoothness);
 	appendf("finger_mask=%u\n", (unsigned)cfg.finger_mask);
-	appendf("dashboard_finger_passthrough=%d\n", cfg.dashboard_finger_passthrough ? 1 : 0);
 	appendf("smart_smoothing=%d\n", cfg.smart_smoothing ? 1 : 0);
 	for (int i = 0; i < 10; ++i) {
 		// Only write non-zero entries so the on-disk file stays small and a

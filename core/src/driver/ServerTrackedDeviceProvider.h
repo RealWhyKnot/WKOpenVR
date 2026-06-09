@@ -114,6 +114,7 @@ private:
 	// pose-update path doesn't touch them.
 	std::unique_ptr<IPCServer> calibrationServer;
 	std::unique_ptr<IPCServer> smoothingServer;
+	std::unique_ptr<IPCServer> dashboardInputServer;
 	std::unique_ptr<IPCServer> inputHealthServer;
 	std::unique_ptr<IPCServer> faceTrackingServer;
 	std::unique_ptr<IPCServer> oscRouterServer;

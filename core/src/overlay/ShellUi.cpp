@@ -44,6 +44,14 @@ FeaturePlugin* FindDefaultLogsPanelPlugin(std::vector<std::unique_ptr<FeaturePlu
 	return nullptr;
 }
 
+FeaturePlugin* FindFeatureByFlag(const std::vector<FeaturePlugin*>& plugins, std::string_view flag)
+{
+	for (FeaturePlugin* plugin : plugins) {
+		if (plugin && flag == plugin->FlagFileName()) return plugin;
+	}
+	return nullptr;
+}
+
 void DrawFallbackLogsPanel(ShellContext& context)
 {
 	ui::DrawSectionHeading("Debug logging");
@@ -74,6 +82,43 @@ void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>>& plug
 			plugin->OnDebugLoggingChanged(effectiveDebugLogging);
 		}
 	}
+}
+
+void DrawFeaturePicker(ShellContext& context, const std::vector<FeaturePlugin*>& installedPlugins,
+                       std::string& selectedFeatureFlag)
+{
+	if (installedPlugins.empty()) {
+		ui::DrawSectionHeading("Feature");
+		ui::DrawTextWrapped("Enable a module from Modules.");
+		return;
+	}
+
+	FeaturePlugin* selected = FindFeatureByFlag(installedPlugins, selectedFeatureFlag);
+	if (!selected) {
+		selected = installedPlugins.front();
+		selectedFeatureFlag = selected->FlagFileName();
+	}
+
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Module");
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(300.0f);
+	if (ImGui::BeginCombo("##feature_module_picker", selected->Name())) {
+		for (FeaturePlugin* plugin : installedPlugins) {
+			const bool isSelected = (plugin == selected);
+			if (ImGui::Selectable(plugin->Name(), isSelected)) {
+				selected = plugin;
+				selectedFeatureFlag = plugin->FlagFileName();
+			}
+			if (isSelected) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+	selected->DrawTab(context);
 }
 
 } // namespace
@@ -140,6 +185,7 @@ void DrawThemesTab(ShellContext&)
 void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
 	static std::string desktopDefaultTabAppliedFor;
+	static std::string selectedFeatureFlag;
 	context.TickStatus();
 
 	const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -159,17 +205,29 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 	                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 		ui::TabBarScope tabs("tabs");
 		if (tabs) {
-			const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
+			std::vector<FeaturePlugin*> installedPlugins;
+			std::vector<std::string_view> installedFlags;
 			for (auto& plugin : plugins) {
-				if (!plugin->IsInstalled(context)) continue;
-				ImGuiTabItemFlags tabFlags = ImGuiTabItemFlags_None;
-				if (ShouldSelectDesktopDefaultTab(context.vrConnected, plugin->FlagFileName(), desktopDefaultFlag,
-				                                  desktopDefaultTabAppliedFor)) {
-					tabFlags |= ImGuiTabItemFlags_SetSelected;
+				if (!plugin || !plugin->IsInstalled(context)) continue;
+				installedPlugins.push_back(plugin.get());
+				installedFlags.push_back(plugin->FlagFileName());
+			}
+
+			const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
+			const FeaturePickerSelection selection =
+			    ResolveFeaturePickerSelection(context.vrConnected, selectedFeatureFlag, desktopDefaultFlag,
+			                                  desktopDefaultTabAppliedFor, installedFlags);
+			ImGuiTabItemFlags featureTabFlags = ImGuiTabItemFlags_None;
+			if (!selection.flag.empty()) {
+				selectedFeatureFlag.assign(selection.flag.data(), selection.flag.size());
+				if (selection.applyDesktopDefault) {
+					featureTabFlags |= ImGuiTabItemFlags_SetSelected;
 					desktopDefaultTabAppliedFor = desktopDefaultFlag;
 				}
-				DrawFeatureTab(context, *plugin, tabFlags);
 			}
+
+			ui::DrawScrollableTabItem(
+			    "Feature", [&] { DrawFeaturePicker(context, installedPlugins, selectedFeatureFlag); }, featureTabFlags);
 			ui::DrawScrollableTabItem("Logs", [&] { DrawLogsTab(context, plugins); });
 			ui::DrawScrollableTabItem("Modules", [&] { DrawModulesTab(context, plugins); });
 			ui::DrawScrollableTabItem("Themes", [&] { DrawThemesTab(context); });

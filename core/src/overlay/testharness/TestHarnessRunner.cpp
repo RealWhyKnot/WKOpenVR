@@ -147,7 +147,8 @@ int Run(int argc, char** argv)
 	SandboxLayout layout;
 	try {
 		StageOptions so;
-		so.features = {"calibration", "smoothing", "inputhealth", "facetracking", "oscrouter", "captions", "phantom"};
+		so.features = {"calibration",  "smoothing", "dashboardinput", "inputhealth",
+		               "facetracking", "oscrouter", "captions",       "phantom"};
 		so.include_facetracking_host = true;
 		so.include_captions_host = true;
 		so.include_phantom_sidecar = true;
@@ -184,9 +185,13 @@ int Run(int argc, char** argv)
 		ScenarioFn run;
 	};
 	const Entry kScenarios[] = {
-	    {"calibration", &RunScenario_calibration}, {"smoothing", &RunScenario_smoothing},
-	    {"inputhealth", &RunScenario_inputhealth}, {"facetracking", &RunScenario_facetracking},
-	    {"oscrouter", &RunScenario_oscrouter},     {"captions", &RunScenario_captions},
+	    {"calibration", &RunScenario_calibration},
+	    {"smoothing", &RunScenario_smoothing},
+	    {"dashboardinput", &RunScenario_dashboardinput},
+	    {"inputhealth", &RunScenario_inputhealth},
+	    {"facetracking", &RunScenario_facetracking},
+	    {"oscrouter", &RunScenario_oscrouter},
+	    {"captions", &RunScenario_captions},
 	    {"phantom", &RunScenario_phantom},
 	};
 

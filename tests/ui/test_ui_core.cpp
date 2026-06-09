@@ -12,7 +12,9 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -81,6 +83,30 @@ TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
 	                                                                 "enable_questapp.flag", ""));
 	EXPECT_FALSE(openvr_pair::overlay::ShouldSelectDesktopDefaultTab(false, "enable_questapp.flag",
 	                                                                 "enable_questapp.flag", "enable_questapp.flag"));
+}
+
+TEST(ShellUiLogic, FeaturePickerSelectionKeepsTopNavStable)
+{
+	const std::vector<std::string_view> installed = {"enable_smoothing.flag", "enable_dashboardinput.flag"};
+
+	auto selection = openvr_pair::overlay::ResolveFeaturePickerSelection(false, "enable_smoothing.flag",
+	                                                                     "enable_dashboardinput.flag", "", installed);
+	EXPECT_EQ("enable_dashboardinput.flag", std::string(selection.flag));
+	EXPECT_TRUE(selection.applyDesktopDefault);
+
+	selection = openvr_pair::overlay::ResolveFeaturePickerSelection(
+	    false, "enable_smoothing.flag", "enable_dashboardinput.flag", "enable_dashboardinput.flag", installed);
+	EXPECT_EQ("enable_smoothing.flag", std::string(selection.flag));
+	EXPECT_FALSE(selection.applyDesktopDefault);
+
+	selection = openvr_pair::overlay::ResolveFeaturePickerSelection(false, "missing.flag", "", "", installed);
+	EXPECT_EQ("enable_smoothing.flag", std::string(selection.flag));
+	EXPECT_FALSE(selection.applyDesktopDefault);
+
+	const std::vector<std::string_view> none;
+	selection = openvr_pair::overlay::ResolveFeaturePickerSelection(false, "missing.flag", "", "", none);
+	EXPECT_TRUE(selection.flag.empty());
+	EXPECT_FALSE(selection.applyDesktopDefault);
 }
 
 TEST(ShellUiLogic, CalibrationPluginOwnsUnifiedLogsPanel)

@@ -17,6 +17,7 @@ set(OPENVR_PAIR_OVERLAY_DEFINES "")
 
 wkopenvr_add_overlay_module(inputhealth)
 wkopenvr_add_overlay_module(smoothing)
+wkopenvr_add_overlay_module(dashboardinput)
 wkopenvr_add_overlay_module(calibration)
 wkopenvr_add_overlay_module(questapp)
 wkopenvr_add_overlay_module(facetracking)

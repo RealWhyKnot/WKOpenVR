@@ -6,43 +6,40 @@
 #include "SkeletalHookInjector.h"
 
 #include <cstring>
-#include <string>
+#include <memory>
 
-namespace smoothing {
+namespace dashboardinput {
 namespace {
 
-class SmoothingDriverModule final : public DriverModule
+class DashboardInputDriverModule final : public DriverModule
 {
 public:
-	const char* Name() const override { return "Smoothing"; }
-	uint32_t FeatureMask() const override { return pairdriver::kFeatureSmoothing; }
+	const char* Name() const override { return "Dashboard Input"; }
+	uint32_t FeatureMask() const override { return pairdriver::kFeatureDashboardInput; }
 	const char* PipeName() const override
 	{
-		return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::Smoothing);
+		return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::DashboardInput);
 	}
 
 	bool Init(DriverModuleContext& context) override
 	{
 		provider_ = context.provider;
-		skeletal::Init(provider_, pairdriver::kFeatureSmoothing);
+		skeletal::Init(provider_, pairdriver::kFeatureDashboardInput);
 		return true;
 	}
 
 	void Shutdown() override
 	{
-		skeletal::Shutdown(pairdriver::kFeatureSmoothing);
+		skeletal::Shutdown(pairdriver::kFeatureDashboardInput);
 		provider_ = nullptr;
 	}
 
 	void OnGetGenericInterface(const char* pchInterface, void* iface) override
 	{
 		if (!pchInterface || !iface) return;
-		// strstr on the raw C string avoids a std::string allocation per
-		// interface query (this fires for every interface SteamVR asks for
-		// during driver init, a few dozen times per boot).
 		if (std::strstr(pchInterface, "IVRDriverInput_") != nullptr &&
 		    std::strstr(pchInterface, "Internal") == nullptr) {
-			LOG("[skeletal] %s queried via context: iface=%p", pchInterface, iface);
+			LOG("[dashboardinput] %s queried via context: iface=%p", pchInterface, iface);
 			skeletal::TryInstallPublicHooks(iface);
 		}
 	}
@@ -51,12 +48,8 @@ public:
 	{
 		if (!provider_) return false;
 		switch (request.type) {
-			case protocol::RequestSetFingerSmoothing:
-				provider_->SetFingerSmoothingConfig(request.setFingerSmoothing);
-				response.type = protocol::ResponseSuccess;
-				return true;
-			case protocol::RequestSetDevicePrediction:
-				provider_->SetDevicePrediction(request.setDevicePrediction);
+			case protocol::RequestSetDashboardHandTrackingState:
+				provider_->SetDashboardHandTrackingState(request.setDashboardHandTrackingState);
 				response.type = protocol::ResponseSuccess;
 				return true;
 			default:
@@ -72,7 +65,7 @@ private:
 
 std::unique_ptr<DriverModule> CreateDriverModule()
 {
-	return std::make_unique<SmoothingDriverModule>();
+	return std::make_unique<DashboardInputDriverModule>();
 }
 
-} // namespace smoothing
+} // namespace dashboardinput

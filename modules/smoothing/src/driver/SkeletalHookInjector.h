@@ -4,6 +4,8 @@
 
 #include "Protocol.h"
 
+#include <cstdint>
+
 class ServerTrackedDeviceProvider;
 
 // Public entry points for the IVRDriverInput hook subsystem.
@@ -34,13 +36,13 @@ namespace skeletal {
 // Cache the driver pointer for SetFingerSmoothingConfig / GetFingerSmoothingConfig
 // access from inside the detour. Called once from InjectHooks() in the existing
 // InterfaceHookInjector.cpp during driver Init.
-void Init(ServerTrackedDeviceProvider* driver);
+void Init(ServerTrackedDeviceProvider* driver, uint32_t ownerFeatureMask);
 
 // Tear down our skeletal hooks. Called from DisableHooks(). The IHook registry
 // drops our entries on its own; this is a hook to reset cached driver-pointer
 // state and clear per-hand smoothing memory so a driver-reload cycle starts
 // from a clean state.
-void Shutdown();
+void Shutdown(uint32_t ownerFeatureMask);
 
 // Called from DetourGetGenericInterface in InterfaceHookInjector.cpp when the
 // returned interface name matches "IVRDriverInput_*" (substring; excludes

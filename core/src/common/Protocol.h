@@ -262,7 +262,7 @@ namespace protocol {
 // sync can target either the most closed eye or the most open eye instead of
 // always averaging both eyelid openness values.
 //
-// v32 (2026-06-09): adds RequestSetDashboardHandTrackingState. The Smoothing
+// v32 (2026-06-09): adds RequestSetDashboardHandTrackingState. The Dashboard Input
 // overlay reports whether the SteamVR dashboard is visible, independent of
 // whether WKOpenVR's own dashboard tab is active, so the skeletal hook can keep
 // dashboard-window live-frame diagnostics and avoid dashboard-specific static
@@ -374,7 +374,7 @@ enum RequestType
 	// confidence threshold for Phantom virtual roles.
 	RequestSetPhantomSolverConfig,
 	// v32 (2026-06-09): SteamVR dashboard hand-tracking state from the
-	// Smoothing overlay. Appended to preserve prior request ordinals.
+	// Dashboard Input overlay. Appended to preserve prior request ordinals.
 	RequestSetDashboardHandTrackingState,
 };
 

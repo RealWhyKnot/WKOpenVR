@@ -154,6 +154,7 @@ struct ScenarioEntry
 // into the kAllScenarios table via this declaration block.
 ScenarioResult RunScenario_calibration(ScenarioContext&);
 ScenarioResult RunScenario_smoothing(ScenarioContext&);
+ScenarioResult RunScenario_dashboardinput(ScenarioContext&);
 ScenarioResult RunScenario_inputhealth(ScenarioContext&);
 ScenarioResult RunScenario_facetracking(ScenarioContext&);
 ScenarioResult RunScenario_oscrouter(ScenarioContext&);
