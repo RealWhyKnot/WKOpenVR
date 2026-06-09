@@ -19,7 +19,7 @@ concurrency:
 jobs:
   tidy:
     name: clang-tidy (full)
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 60
 
     steps:
