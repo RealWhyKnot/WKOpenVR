@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <array>
 #include <cstdint>
 
 namespace {
@@ -110,6 +111,59 @@ TEST(FaceSignalProcessor, MappedInternalValuesOverwriteRawUpstreamSlots)
 
 	EXPECT_NEAR(frame.upstream_expressions[kUpstreamJawOpen], 0.25f, 1e-6f);
 	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.40f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningUnderextendsInternalAndUpstreamSlots)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	std::array<uint16_t, protocol::FACETRACKING_EXPRESSION_COUNT> tuning{};
+	tuning.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	tuning[kOursMouthSmileLeft] = 60;
+
+	frame.expressions[kOursMouthSmileLeft] = 1.0f;
+	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 1.0f;
+
+	processor.Apply(frame, cfg, tuning.data());
+
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 0.60f, 1e-6f);
+	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.60f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningOverextendsInternalAndUpstreamSlots)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	std::array<uint16_t, protocol::FACETRACKING_EXPRESSION_COUNT> tuning{};
+	tuning.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	tuning[kOursMouthSmileLeft] = 150;
+
+	frame.expressions[kOursMouthSmileLeft] = 0.80f;
+	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 0.80f;
+
+	processor.Apply(frame, cfg, tuning.data());
+
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.20f, 1e-6f);
+	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 1.20f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningClampsOutputAtProtocolMaximum)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	std::array<uint16_t, protocol::FACETRACKING_EXPRESSION_COUNT> tuning{};
+	tuning.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	tuning[kOursMouthSmileLeft] = 500;
+
+	frame.expressions[kOursMouthSmileLeft] = 1.0f;
+
+	processor.Apply(frame, cfg, tuning.data());
+
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 2.0f, 1e-6f);
+	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 2.0f, 1e-6f);
 }
 
 TEST(FaceSignalProcessor, MouthCloseCompensationIsDisabledByDefault)

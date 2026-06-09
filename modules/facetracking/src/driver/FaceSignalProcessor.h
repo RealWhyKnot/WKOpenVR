@@ -14,7 +14,8 @@ namespace facetracking {
 class FaceSignalProcessor
 {
 public:
-	void Apply(protocol::FaceTrackingFrameBody& frame, const protocol::FaceTrackingConfig& config);
+	void Apply(protocol::FaceTrackingFrameBody& frame, const protocol::FaceTrackingConfig& config,
+	           const uint16_t* shape_tuning_percent = nullptr);
 	void Reset();
 
 private:

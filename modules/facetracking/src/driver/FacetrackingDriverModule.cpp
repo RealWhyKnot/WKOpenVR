@@ -21,6 +21,7 @@
 #include <openvr_driver.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -35,6 +36,8 @@
 
 namespace facetracking {
 namespace {
+
+using FaceShapeTuningArray = std::array<uint16_t, protocol::FACETRACKING_EXPRESSION_COUNT>;
 
 // -----------------------------------------------------------------------
 // Telemetry sidecar helpers
@@ -334,6 +337,32 @@ public:
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
+			case protocol::RequestSetFaceShapeTuning: {
+				const auto& tune = req.setFaceShapeTuning;
+				std::lock_guard<std::mutex> lk(config_mutex_);
+				if (tune.index == protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX) {
+					shape_tuning_percent_.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+					FT_LOG_DRV("[module] face shape tuning reset", 0);
+					resp.type = protocol::ResponseSuccess;
+					return true;
+				}
+				if (tune.index >= protocol::FACETRACKING_EXPRESSION_COUNT) {
+					FT_LOG_DRV("[module] face shape tuning rejected: index=%u scale=%u", (unsigned)tune.index,
+					           (unsigned)tune.scale_percent);
+					resp.type = protocol::ResponseInvalid;
+					return true;
+				}
+				const uint16_t percent =
+				    std::min<uint16_t>(tune.scale_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+				const uint16_t old = shape_tuning_percent_[tune.index];
+				shape_tuning_percent_[tune.index] = percent;
+				if (old != percent) {
+					FT_LOG_DRV("[module] face shape tuning update: index=%u %u%%->%u%%", (unsigned)tune.index,
+					           (unsigned)old, (unsigned)percent);
+				}
+				resp.type = protocol::ResponseSuccess;
+				return true;
+			}
 			case protocol::RequestFaceHostRestart: {
 				FT_LOG_DRV("[module] host restart requested by overlay", 0);
 				if (supervisor_) {
@@ -365,6 +394,11 @@ private:
 
 	// Config cache -- written by HandleRequest, read by WorkerLoop.
 	protocol::FaceTrackingConfig config_{};
+	FaceShapeTuningArray shape_tuning_percent_ = [] {
+		FaceShapeTuningArray values{};
+		values.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+		return values;
+	}();
 	mutable std::mutex config_mutex_;
 
 	std::atomic<bool> worker_stop_{false};
@@ -655,9 +689,11 @@ private:
 
 			// Snapshot config under lock.
 			protocol::FaceTrackingConfig cfg;
+			FaceShapeTuningArray shapeTuning;
 			{
 				std::lock_guard<std::mutex> lk(config_mutex_);
 				cfg = config_;
+				shapeTuning = shape_tuning_percent_;
 			}
 
 			// Pre-correction (module-remapped) values for the shapes whose
@@ -683,7 +719,7 @@ private:
 				              cfg.eyelid_sync_mode);
 			}
 
-			signal_processor_.Apply(frame, cfg);
+			signal_processor_.Apply(frame, cfg, shapeTuning.data());
 
 			const bool eye_valid = (frame.flags & 0x1u) != 0;
 			const bool expr_valid = (frame.flags & 0x2u) != 0;

@@ -119,3 +119,67 @@ TEST(FacetrackingProfiles, SaveAlwaysEmitsContinuousCalibrationOff)
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
 }
+
+TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	FaceShapeScaleArray values = DefaultFaceShapeScales();
+	values[26] = 80;  // JawOpen
+	values[45] = 60;  // MouthSmileLeft
+	values[46] = 150; // MouthSmileRight
+	store.current.avatar_shape_tuning["avtr_test"] = values;
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	const picojson::value* tuning = openvr_pair::common::json::ValueAt(saved, "avatar_shape_tuning");
+	ASSERT_NE(tuning, nullptr);
+	ASSERT_TRUE(tuning->is<picojson::object>());
+	const auto& tuningObj = tuning->get<picojson::object>();
+	auto avatarIt = tuningObj.find("avtr_test");
+	ASSERT_NE(avatarIt, tuningObj.end());
+	ASSERT_TRUE(avatarIt->second.is<picojson::object>());
+	const auto& shapeObj = avatarIt->second.get<picojson::object>();
+	EXPECT_EQ(shapeObj.at("JawOpen").get<double>(), 80.0);
+	EXPECT_EQ(shapeObj.at("MouthSmileLeft").get<double>(), 60.0);
+	EXPECT_EQ(shapeObj.at("MouthSmileRight").get<double>(), 150.0);
+	EXPECT_EQ(shapeObj.find("MouthSadLeft"), shapeObj.end());
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	const FaceShapeScaleArray* loadedValues = FindShapeTuningForAvatar(loaded.current, "avtr_test");
+	ASSERT_NE(loadedValues, nullptr);
+	EXPECT_EQ((*loadedValues)[26], 80);
+	EXPECT_EQ((*loadedValues)[45], 60);
+	EXPECT_EQ((*loadedValues)[46], 150);
+	EXPECT_EQ((*loadedValues)[47], protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, AvatarShapeTuningOmitsAllDefaultEntries)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.avatar_shape_tuning["avtr_default"] = DefaultFaceShapeScales();
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	EXPECT_EQ(openvr_pair::common::json::ValueAt(saved, "avatar_shape_tuning"), nullptr);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, NormalizeAvatarShapeTuningKeyFallsBackToDefault)
+{
+	EXPECT_EQ(NormalizeAvatarShapeTuningKey(" \t\r\n"), kDefaultAvatarShapeTuningKey);
+	EXPECT_EQ(NormalizeAvatarShapeTuningKey(" avtr_123 "), "avtr_123");
+}

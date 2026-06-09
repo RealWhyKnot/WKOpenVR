@@ -416,6 +416,21 @@ struct FaceModuleSelection
 	uint8_t _reserved[8];
 };
 
+static const uint16_t FACETRACKING_SHAPE_TUNING_RESET_INDEX = 0xFFFFu;
+static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT = 100u;
+static const uint16_t FACETRACKING_SHAPE_TUNING_MAX_PERCENT = 200u;
+
+// POD payload for RequestSetFaceShapeTuning. index addresses one
+// FACETRACKING_EXPRESSION_COUNT slot. index == RESET_INDEX clears the driver's
+// cached table back to DEFAULT_PERCENT; overlays send that first before the
+// non-default entries for a newly active avatar.
+struct FaceShapeTuning
+{
+	uint16_t index;
+	uint16_t scale_percent; // 0..200; 100 = pass through
+	uint8_t _reserved[4];
+};
+
 // =========================================================================
 // v16: OSC Router protocol additions
 // =========================================================================
@@ -738,12 +753,13 @@ struct Request
 		// install semantics.
 		DashboardHandTrackingState setDashboardHandTrackingState;
 		// v15: face-tracking master config + compatibility calibration
-		// command + module selection. All three are smaller than
+		// command + module selection + shape tuning. All are smaller than
 		// SetDeviceTransform so the union does not grow; the static_asserts
 		// below enforce that.
 		FaceTrackingConfig setFaceTrackingConfig;
 		FaceCalibrationCommand setFaceCalibrationCommand;
 		FaceModuleSelection setFaceActiveModule;
+		FaceShapeTuning setFaceShapeTuning;
 		// v16: OSC router control. All three are smaller than
 		// SetDeviceTransform so the union does not grow.
 		OscRouteSubscribe oscRouteSubscribe;
@@ -791,6 +807,7 @@ static_assert(sizeof(FaceTrackingConfig) <= sizeof(SetDeviceTransform), "FaceTra
 static_assert(sizeof(FaceCalibrationCommand) <= sizeof(SetDeviceTransform),
               "FaceCalibrationCommand must not grow Request");
 static_assert(sizeof(FaceModuleSelection) <= sizeof(SetDeviceTransform), "FaceModuleSelection must not grow Request");
+static_assert(sizeof(FaceShapeTuning) <= sizeof(SetDeviceTransform), "FaceShapeTuning must not grow Request");
 static_assert(sizeof(OscRouteSubscribe) <= sizeof(SetDeviceTransform), "OscRouteSubscribe must not grow Request");
 static_assert(sizeof(OscRouteUnsubscribe) <= sizeof(SetDeviceTransform), "OscRouteUnsubscribe must not grow Request");
 static_assert(sizeof(OscPublish) <= sizeof(SetDeviceTransform), "OscPublish must not grow Request");

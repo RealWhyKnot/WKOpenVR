@@ -2,6 +2,7 @@
 #include "FaceOscPublisher.h"
 
 #include "RouterPublishApi.h"
+#include "facetracking/ExpressionNames.h"
 #include "facetracking/UpstreamShapeMap.h"
 
 #include <algorithm>
@@ -78,75 +79,6 @@ static inline void OscPublishFloat(OscCounts& counts, const char* address, float
 		++counts.dropped;
 	}
 }
-
-static const char* const kExprParamNames[protocol::FACETRACKING_EXPRESSION_COUNT] = {
-    "EyeLookOutLeft",
-    "EyeLookInLeft",
-    "EyeLookUpLeft",
-    "EyeLookDownLeft",
-    "EyeLookOutRight",
-    "EyeLookInRight",
-    "EyeLookUpRight",
-    "EyeLookDownRight",
-    "EyeWideLeft",
-    "EyeWideRight",
-    "EyeSquintLeft",
-    "EyeSquintRight",
-    "BrowLowererLeft",
-    "BrowLowererRight",
-    "BrowInnerUpLeft",
-    "BrowInnerUpRight",
-    "BrowOuterUpLeft",
-    "BrowOuterUpRight",
-    "BrowPinchLeft",
-    "BrowPinchRight",
-    "CheekPuffLeft",
-    "CheekPuffRight",
-    "CheekSuckLeft",
-    "CheekSuckRight",
-    "NoseSneerLeft",
-    "NoseSneerRight",
-    "JawOpen",
-    "JawForward",
-    "JawLeft",
-    "JawRight",
-    "LipSuckUpperLeft",
-    "LipSuckUpperRight",
-    "LipSuckLowerLeft",
-    "LipSuckLowerRight",
-    "LipFunnelUpperLeft",
-    "LipFunnelUpperRight",
-    "LipFunnelLowerLeft",
-    "LipFunnelLowerRight",
-    "LipPuckerUpperLeft",
-    "LipPuckerUpperRight",
-    "MouthClose",
-    "MouthUpperLeft",
-    "MouthUpperRight",
-    "MouthLowerLeft",
-    "MouthLowerRight",
-    "MouthSmileLeft",
-    "MouthSmileRight",
-    "MouthSadLeft",
-    "MouthSadRight",
-    "MouthStretchLeft",
-    "MouthStretchRight",
-    "MouthDimpleLeft",
-    "MouthDimpleRight",
-    "MouthRaiserUpper",
-    "MouthRaiserLower",
-    "MouthPressLeft",
-    "MouthPressRight",
-    "MouthTightenerLeft",
-    "MouthTightenerRight",
-    "TongueOut",
-    "TongueUp",
-    "TongueDown",
-    "TongueLeft",
-};
-
-static_assert(sizeof(kExprParamNames) / sizeof(kExprParamNames[0]) == protocol::FACETRACKING_EXPRESSION_COUNT,
-              "kExprParamNames length must match FACETRACKING_EXPRESSION_COUNT");
 
 // Upstream VRCFaceTracking-v5 alias names for slots where our enum kept
 // the pre-rename label (MouthSmile, MouthSad, MouthClose). Emitting the
@@ -422,7 +354,7 @@ static inline float FiniteOrZero(float v)
 static inline float Upstream(const protocol::FaceTrackingFrameBody& frame, uint32_t index)
 {
 	if (index >= protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT) return 0.0f;
-	return facetracking::ClampUpstreamUnitSignal(frame.upstream_expressions[index]);
+	return facetracking::ClampExpressionOutputSignal(frame.upstream_expressions[index]);
 }
 
 static inline float Avg2(float a, float b)
@@ -534,7 +466,7 @@ static OscCounts PublishExpressions(const protocol::FaceTrackingFrameBody& frame
 
 	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
 		const float value = FiniteOrZero(frame.expressions[i]);
-		emitBoth(kExprParamNames[i], value);
+		emitBoth(facetracking::ExpressionName(i), value);
 		// Modern VRCFaceTracking-v5 avatars bind to the renamed parameter
 		// names (MouthClosed, MouthCornerPull*, MouthFrown*) instead of
 		// the pre-rename ones we keep in our internal enum. Publish the
@@ -751,8 +683,7 @@ FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& 
 
 const char* FaceExpressionOscName(uint32_t index)
 {
-	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return "";
-	return kExprParamNames[index];
+	return facetracking::ExpressionName(index);
 }
 
 } // namespace facetracking

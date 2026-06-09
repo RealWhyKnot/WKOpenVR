@@ -5,7 +5,9 @@
 #include "Logging.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
+#include "facetracking/ExpressionNames.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -18,6 +20,50 @@ std::wstring ProfilePath()
 {
 	std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
 	return dir.empty() ? std::wstring() : dir + L"\\facetracking.json";
+}
+
+bool IsAsciiSpace(char c)
+{
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+int ClampShapeScale(int value)
+{
+	return std::clamp(value, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+}
+
+int ExpressionIndexForName(const std::string& name)
+{
+	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+		if (name == facetracking::ExpressionName(i)) return static_cast<int>(i);
+	}
+	return -1;
+}
+
+void DecodeAvatarShapeTuning(const picojson::object& obj, FacetrackingProfile& p)
+{
+	auto rootIt = obj.find("avatar_shape_tuning");
+	if (rootIt == obj.end() || !rootIt->second.is<picojson::object>()) return;
+
+	const auto& avatarObj = rootIt->second.get<picojson::object>();
+	for (const auto& avatarEntry : avatarObj) {
+		if (!avatarEntry.second.is<picojson::object>()) continue;
+
+		FaceShapeScaleArray values = DefaultFaceShapeScales();
+		bool sawScale = false;
+		const auto& shapeObj = avatarEntry.second.get<picojson::object>();
+		for (const auto& shapeEntry : shapeObj) {
+			if (!shapeEntry.second.is<double>()) continue;
+			const int index = ExpressionIndexForName(shapeEntry.first);
+			if (index < 0) continue;
+			values[static_cast<size_t>(index)] = ClampShapeScale(static_cast<int>(shapeEntry.second.get<double>()));
+			sawScale = true;
+		}
+
+		if (sawScale && !IsDefaultFaceShapeScales(values)) {
+			p.avatar_shape_tuning[NormalizeAvatarShapeTuningKey(avatarEntry.first)] = values;
+		}
+	}
 }
 
 FacetrackingProfile Decode(const picojson::value& v)
@@ -59,6 +105,7 @@ FacetrackingProfile Decode(const picojson::value& v)
 	getBool("idle_mouth_auto_close_enabled", p.idle_mouth_auto_close_enabled);
 	getBool("eyelid_brow_sync_enabled", p.eyelid_brow_sync_enabled);
 	getInt("eyelid_brow_sync_strength", p.eyelid_brow_sync_strength);
+	DecodeAvatarShapeTuning(obj, p);
 	// enabled_module_uuids -- the multi-select list the Modules tab edits.
 	// Read the array form first; if missing, fall back to the deprecated
 	// single-uuid string field so users upgrading across this change keep
@@ -117,12 +164,79 @@ std::string Encode(const FacetrackingProfile& p)
 			arr.push_back(picojson::value(u));
 		obj["enabled_module_uuids"] = picojson::value(arr);
 	}
+	{
+		picojson::object tuningRoot;
+		for (const auto& entry : p.avatar_shape_tuning) {
+			if (IsDefaultFaceShapeScales(entry.second)) continue;
+
+			picojson::object shapeObj;
+			for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+				const int value = ClampShapeScale(entry.second[i]);
+				if (value == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) continue;
+				shapeObj[facetracking::ExpressionName(i)] = picojson::value(static_cast<double>(value));
+			}
+			if (!shapeObj.empty()) {
+				tuningRoot[NormalizeAvatarShapeTuningKey(entry.first)] = picojson::value(shapeObj);
+			}
+		}
+		if (!tuningRoot.empty()) obj["avatar_shape_tuning"] = picojson::value(tuningRoot);
+	}
 	obj["show_raw_values"] = picojson::value(p.show_raw_values);
 	obj["last_tab_index"] = picojson::value((double)p.last_tab_index);
 	return picojson::value(obj).serialize(true);
 }
 
 } // namespace
+
+FaceShapeScaleArray DefaultFaceShapeScales()
+{
+	FaceShapeScaleArray values{};
+	values.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	return values;
+}
+
+std::string NormalizeAvatarShapeTuningKey(std::string key)
+{
+	size_t first = 0;
+	while (first < key.size() && IsAsciiSpace(key[first]))
+		++first;
+	size_t last = key.size();
+	while (last > first && IsAsciiSpace(key[last - 1]))
+		--last;
+	if (first > 0 || last < key.size()) key = key.substr(first, last - first);
+	return key.empty() ? std::string(kDefaultAvatarShapeTuningKey) : key;
+}
+
+bool IsDefaultFaceShapeScales(const FaceShapeScaleArray& values)
+{
+	return std::all_of(values.begin(), values.end(),
+	                   [](int value) { return value == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT; });
+}
+
+FaceShapeScaleArray& ShapeTuningForAvatar(FacetrackingProfile& profile, const std::string& avatarKey)
+{
+	const std::string key = NormalizeAvatarShapeTuningKey(avatarKey);
+	auto it = profile.avatar_shape_tuning.find(key);
+	if (it != profile.avatar_shape_tuning.end()) return it->second;
+	auto inserted = profile.avatar_shape_tuning.emplace(key, DefaultFaceShapeScales());
+	return inserted.first->second;
+}
+
+const FaceShapeScaleArray* FindShapeTuningForAvatar(const FacetrackingProfile& profile, const std::string& avatarKey)
+{
+	const std::string key = NormalizeAvatarShapeTuningKey(avatarKey);
+	auto it = profile.avatar_shape_tuning.find(key);
+	return it == profile.avatar_shape_tuning.end() ? nullptr : &it->second;
+}
+
+void PruneAvatarShapeTuning(FacetrackingProfile& profile, const std::string& avatarKey)
+{
+	const std::string key = NormalizeAvatarShapeTuningKey(avatarKey);
+	auto it = profile.avatar_shape_tuning.find(key);
+	if (it != profile.avatar_shape_tuning.end() && IsDefaultFaceShapeScales(it->second)) {
+		profile.avatar_shape_tuning.erase(it);
+	}
+}
 
 bool FacetrackingProfileStore::Load()
 {

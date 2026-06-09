@@ -11,6 +11,7 @@
 #include "SettingsTab.h"
 #include "ShellContext.h"
 #include "ShellFooter.h"
+#include "TuningTab.h"
 #include "UiHelpers.h"
 #include "BuildStamp.h"
 
@@ -57,6 +58,8 @@ void FacetrackingPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 	           FACETRACKING_BUILD_CHANNEL);
 
 	profile_.Load();
+	avatar_state_.Tick();
+	active_avatar_tuning_key_ = CurrentAvatarTuningKey();
 
 	// Seed sources.json on first run; load the catalogue for Tick() to use.
 	sources_catalogue_ = facetracking::EnsureSourcesCatalogue();
@@ -97,6 +100,15 @@ void FacetrackingPlugin::Tick(openvr_pair::overlay::ShellContext&)
 	// to a stat() every 500 ms and only re-reads on mtime change, so calling
 	// this every frame is cheap.
 	host_status_.Tick();
+
+	avatar_state_.Tick();
+	const std::string avatarKey = CurrentAvatarTuningKey();
+	if (avatarKey != active_avatar_tuning_key_) {
+		FT_LOG_OVL("[tuning] active avatar changed: '%s' -> '%s'", active_avatar_tuning_key_.c_str(),
+		           avatarKey.c_str());
+		active_avatar_tuning_key_ = avatarKey;
+		PushShapeTuningToDriver();
+	}
 
 	// Pull the latest driver_telemetry.json snapshot (same cadence).
 	driver_telemetry_.Tick();
@@ -228,10 +240,112 @@ void FacetrackingPlugin::PushConfigToDriver()
 		           (int)cfg.vergence_lock_strength, (int)cfg.continuous_calib_mode,
 		           (int)cfg.expression_correction_flags, (int)cfg.expression_correction_strengths,
 		           (int)cfg.gaze_smoothing, (int)cfg.openness_smoothing);
+		PushShapeTuningToDriver();
 	}
 	catch (const std::exception& e) {
 		last_error_ = std::string("IPC error: ") + e.what();
 		FT_LOG_OVL("[ipc] PushConfigToDriver failed: %s", e.what());
+	}
+}
+
+std::string FacetrackingPlugin::CurrentAvatarTuningKey() const
+{
+	const auto& avatar = avatar_state_.Snapshot();
+	return NormalizeAvatarShapeTuningKey(avatar.valid ? avatar.avatar_id : std::string{});
+}
+
+std::string FacetrackingPlugin::CurrentAvatarLabel() const
+{
+	const auto& avatar = avatar_state_.Snapshot();
+	if (avatar.valid && !avatar.avatar_id.empty()) return avatar.avatar_id;
+	return "Default profile";
+}
+
+bool FacetrackingPlugin::SendShapeTuningRequest(uint16_t index, uint16_t percent)
+{
+	if (!ipc_.IsConnected()) return false;
+
+	protocol::Request req(protocol::RequestSetFaceShapeTuning);
+	auto& tune = req.setFaceShapeTuning;
+	tune.index = index;
+	tune.scale_percent = std::min<uint16_t>(percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+	std::memset(tune._reserved, 0, sizeof(tune._reserved));
+
+	auto resp = ipc_.SendBlocking(req);
+	if (resp.type != protocol::ResponseSuccess) {
+		last_error_ = "Driver rejected SetFaceShapeTuning (type=" + std::to_string(resp.type) + ")";
+		FT_LOG_OVL("[ipc] driver rejected face shape tuning: index=%u scale=%u type=%d", (unsigned)index,
+		           (unsigned)percent, (int)resp.type);
+		return false;
+	}
+	return true;
+}
+
+void FacetrackingPlugin::PushShapeTuningToDriver()
+{
+	if (!ipc_.IsConnected()) {
+		FT_LOG_OVL("[ipc] shape tuning push skipped: driver IPC not connected");
+		return;
+	}
+
+	const std::string avatarKey = CurrentAvatarTuningKey();
+	const FaceShapeScaleArray* values = FindShapeTuningForAvatar(profile_.current, avatarKey);
+	try {
+		if (!SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX,
+		                            protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT)) {
+			return;
+		}
+
+		uint32_t overrides = 0;
+		if (values) {
+			for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+				const int value =
+				    std::clamp((*values)[i], 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+				if (value == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) continue;
+				if (!SendShapeTuningRequest(static_cast<uint16_t>(i), static_cast<uint16_t>(value))) return;
+				++overrides;
+			}
+		}
+		FT_LOG_OVL("[ipc] shape tuning pushed: avatar='%s' overrides=%u", avatarKey.c_str(), (unsigned)overrides);
+	}
+	catch (const std::exception& e) {
+		last_error_ = std::string("IPC error: ") + e.what();
+		FT_LOG_OVL("[ipc] PushShapeTuningToDriver failed: %s", e.what());
+	}
+}
+
+void FacetrackingPlugin::SetCurrentAvatarShapeScale(uint32_t index, int percent)
+{
+	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return;
+	const int value = std::clamp(percent, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+	const std::string avatarKey = CurrentAvatarTuningKey();
+	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, avatarKey);
+	if (values[index] == value) return;
+
+	values[index] = value;
+	PruneAvatarShapeTuning(profile_.current, avatarKey);
+
+	try {
+		SendShapeTuningRequest(static_cast<uint16_t>(index), static_cast<uint16_t>(value));
+	}
+	catch (const std::exception& e) {
+		last_error_ = std::string("IPC error: ") + e.what();
+		FT_LOG_OVL("[ipc] SetCurrentAvatarShapeScale failed: %s", e.what());
+	}
+}
+
+void FacetrackingPlugin::ResetCurrentAvatarShapeTuning()
+{
+	const std::string avatarKey = CurrentAvatarTuningKey();
+	profile_.current.avatar_shape_tuning.erase(NormalizeAvatarShapeTuningKey(avatarKey));
+
+	try {
+		SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX,
+		                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	}
+	catch (const std::exception& e) {
+		last_error_ = std::string("IPC error: ") + e.what();
+		FT_LOG_OVL("[ipc] ResetCurrentAvatarShapeTuning failed: %s", e.what());
 	}
 }
 
@@ -397,6 +511,10 @@ void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext& ctx)
 	if (ImGui::BeginTabBar("ft_tabs")) {
 		if (ImGui::BeginTabItem("Settings")) {
 			facetracking::ui::DrawSettingsTab(*this);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Tuning")) {
+			facetracking::ui::DrawTuningTab(*this);
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Modules")) {

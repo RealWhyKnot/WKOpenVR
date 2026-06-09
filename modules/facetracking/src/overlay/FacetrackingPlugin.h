@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AvatarStatePoller.h"
 #include "DriverTelemetryPoller.h"
 #include "FeaturePlugin.h"
 #include "HostStatusPoller.h"
@@ -18,6 +19,7 @@ class FacetrackingPlugin;
 
 namespace facetracking::ui {
 void DrawSettingsTab(FacetrackingPlugin& plugin);
+void DrawTuningTab(FacetrackingPlugin& plugin);
 void DrawModulesTab(FacetrackingPlugin& plugin);
 void DrawAdvancedTab(FacetrackingPlugin& plugin);
 void DrawLogsSection(FacetrackingPlugin& plugin);
@@ -70,12 +72,14 @@ public:
 
 private:
 	friend void facetracking::ui::DrawSettingsTab(FacetrackingPlugin& plugin);
+	friend void facetracking::ui::DrawTuningTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawModulesTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawAdvancedTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawLogsSection(FacetrackingPlugin& plugin);
 
 	FtIPCClient ipc_;
 	FacetrackingProfileStore profile_;
+	facetracking::AvatarStatePoller avatar_state_;
 	facetracking::HostStatusPoller host_status_;
 	facetracking::DriverTelemetryPoller driver_telemetry_;
 	facetracking::ModuleSyncRunner sync_runner_;
@@ -83,6 +87,7 @@ private:
 	std::vector<facetracking::SyncResult> completed_sync_results_;
 
 	std::string last_error_;
+	std::string active_avatar_tuning_key_;
 	uint64_t observed_ipc_generation_ = 0;
 
 	std::chrono::steady_clock::time_point last_connection_check_{};
@@ -90,4 +95,10 @@ private:
 
 	void DrawStatusBanner();
 	void HandleSyncResult(const facetracking::SyncResult& result);
+	std::string CurrentAvatarTuningKey() const;
+	std::string CurrentAvatarLabel() const;
+	void SetCurrentAvatarShapeScale(uint32_t index, int percent);
+	void ResetCurrentAvatarShapeTuning();
+	void PushShapeTuningToDriver();
+	bool SendShapeTuningRequest(uint16_t index, uint16_t percent);
 };

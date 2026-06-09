@@ -189,7 +189,19 @@ void CopyMappedInternalShapesToUpstream(protocol::FaceTrackingFrameBody& frame)
 		if (ours < 0 || ours >= static_cast<int>(protocol::FACETRACKING_EXPRESSION_COUNT)) {
 			continue;
 		}
-		frame.upstream_expressions[upstream] = Clamp01(frame.expressions[ours]);
+		frame.upstream_expressions[upstream] = ClampExpressionOutputSignal(frame.expressions[ours]);
+	}
+}
+
+void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const uint16_t* shape_tuning_percent)
+{
+	if (!shape_tuning_percent) return;
+
+	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+		const uint16_t percent =
+		    std::min<uint16_t>(shape_tuning_percent[i], protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		const float scale = static_cast<float>(percent) / 100.0f;
+		frame.expressions[i] = ClampExpressionOutputSignal(frame.expressions[i] * scale);
 	}
 }
 
@@ -268,7 +280,8 @@ void FaceSignalProcessor::SmoothVec3(float value[3], Vec3Filter& state, uint8_t 
 	std::memcpy(state.value, value, sizeof(state.value));
 }
 
-void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody& frame, const protocol::FaceTrackingConfig& config)
+void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody& frame, const protocol::FaceTrackingConfig& config,
+                                const uint16_t* shape_tuning_percent)
 {
 	const float dt_sec = FrameDeltaSeconds(frame);
 
@@ -310,6 +323,8 @@ void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody& frame, const pr
 		if (HasCorrection(config, protocol::FACETRACKING_EXPR_CORRECT_BROW_SYNC)) {
 			ApplyBrowSync(frame, BrowCorrectionStrength(config));
 		}
+
+		ApplyShapeTuning(frame, shape_tuning_percent);
 	}
 	else {
 		idle_mouth_open_since_qpc_ = 0;

@@ -27,6 +27,14 @@ inline float ClampUpstreamUnitSignal(float v)
 	return std::clamp(v, 0.0f, 1.0f);
 }
 
+inline constexpr float kExpressionOutputMax = 2.0f;
+
+inline float ClampExpressionOutputSignal(float v)
+{
+	if (IsInvalidUpstreamSignal(v)) return 0.0f;
+	return std::clamp(v, 0.0f, kExpressionOutputMax);
+}
+
 // Index into protocol::FACETRACKING_EXPRESSION_COUNT slots for each
 // upstream shape, or -1 if the upstream shape has no equivalent in our
 // enum (silently dropped).

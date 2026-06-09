@@ -7,7 +7,7 @@
 // shared driver over OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME. Same
 // Request / Response protocol as the other feature pipes; this client sends
 // RequestHandshake, RequestSetFaceTrackingConfig, and
-// RequestSetFaceActiveModule.
+// RequestSetFaceActiveModule / RequestSetFaceShapeTuning.
 
 class FtIPCClient : public openvr_pair::overlay::IpcClientBase
 {

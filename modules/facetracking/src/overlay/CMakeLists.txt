@@ -19,6 +19,8 @@ endif()
 add_library(openvr_pair_feature_facetracking_overlay STATIC
 	AdvancedTab.cpp
 	AdvancedTab.h
+	AvatarStatePoller.cpp
+	AvatarStatePoller.h
 	BuildStamp.h
 	DriverTelemetryPoller.cpp
 	DriverTelemetryPoller.h
@@ -39,7 +41,9 @@ add_library(openvr_pair_feature_facetracking_overlay STATIC
 	Profiles.cpp
 	Profiles.h
 	SettingsTab.cpp
-	SettingsTab.h)
+	SettingsTab.h
+	TuningTab.cpp
+	TuningTab.h)
 
 target_include_directories(openvr_pair_feature_facetracking_overlay PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}

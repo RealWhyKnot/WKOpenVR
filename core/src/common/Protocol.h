@@ -267,7 +267,11 @@ namespace protocol {
 // whether WKOpenVR's own dashboard tab is active, so the skeletal hook can keep
 // dashboard-window live-frame diagnostics and avoid dashboard-specific static
 // hand fallbacks when the source stream is still live.
-const uint32_t Version = 32;
+//
+// v33 (2026-06-09): adds RequestSetFaceShapeTuning. Face Tracking overlay sends
+// one compact per-expression scale at a time, plus a reset sentinel, so avatar-
+// specific under/overextension can update live without growing FaceTrackingConfig.
+const uint32_t Version = 33;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -275,6 +279,20 @@ const uint32_t Version = 32;
 static const size_t MaxTrackingSystemNameLen = 32;
 
 static const uint32_t INPUTHEALTH_PATH_LEN = 64;
+
+// Number of facial-expression shapes the FaceTracking driver and its consumers
+// (OSC publisher, native SteamVR sink, signal processor) work with. This is
+// our internal/consumer-facing layout; the wire-side carries upstream's
+// FACETRACKING_UPSTREAM_EXPRESSION_COUNT and the reader remaps before returning
+// a frame to consumers.
+static const uint32_t FACETRACKING_EXPRESSION_COUNT = 63;
+
+// Number of facial-expression shapes carried on the wire. Matches
+// VRCFaceTracking.Core.Params.Expressions.UnifiedExpressions excluding the Max
+// sentinel. The host writes this many floats dense; the driver remaps to
+// FACETRACKING_EXPRESSION_COUNT via core/src/common/facetracking/UpstreamShapeMap.h
+// before consumption.
+static const uint32_t FACETRACKING_UPSTREAM_EXPRESSION_COUNT = 88;
 
 enum RequestType
 {
@@ -376,6 +394,9 @@ enum RequestType
 	// v32 (2026-06-09): SteamVR dashboard hand-tracking state from the
 	// Dashboard Input overlay. Appended to preserve prior request ordinals.
 	RequestSetDashboardHandTrackingState,
+	// v33 (2026-06-09): per-expression face tracking output scale. Appended
+	// to preserve prior request ordinals.
+	RequestSetFaceShapeTuning,
 };
 
 enum ResponseType
@@ -1021,20 +1042,6 @@ public:
 // magic + version + ring size, atomic publish index, per-slot seqlock
 // generation so a reader can detect torn reads.
 // =========================================================================
-
-// Number of facial-expression shapes the driver and its consumers (OSC
-// publisher, native SteamVR sink, signal processor) work with. This is
-// our internal/consumer-facing layout; the wire-side carries upstream's
-// FACETRACKING_UPSTREAM_EXPRESSION_COUNT and the reader remaps before
-// returning a frame to consumers.
-static const uint32_t FACETRACKING_EXPRESSION_COUNT = 63;
-
-// Number of facial-expression shapes carried on the wire. Matches
-// VRCFaceTracking.Core.Params.Expressions.UnifiedExpressions excluding
-// the Max sentinel. The host writes this many floats dense; the driver
-// remaps to FACETRACKING_EXPRESSION_COUNT via
-// core/src/common/facetracking/UpstreamShapeMap.h before consumption.
-static const uint32_t FACETRACKING_UPSTREAM_EXPRESSION_COUNT = 88;
 
 struct FaceTrackingFrameBody
 {

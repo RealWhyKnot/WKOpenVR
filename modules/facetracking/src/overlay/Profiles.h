@@ -2,9 +2,19 @@
 
 #include "Protocol.h"
 
+#include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
+
+using FaceShapeScaleArray = std::array<int, protocol::FACETRACKING_EXPRESSION_COUNT>;
+
+inline constexpr const char* kDefaultAvatarShapeTuningKey = "__default__";
+
+FaceShapeScaleArray DefaultFaceShapeScales();
+std::string NormalizeAvatarShapeTuningKey(std::string key);
+bool IsDefaultFaceShapeScales(const FaceShapeScaleArray& values);
 
 // Overlay-side settings for the FaceTracking feature.
 // Serialised to %LocalAppDataLow%\WKOpenVR\profiles\facetracking.json.
@@ -51,10 +61,18 @@ struct FacetrackingProfile
 	// multi-run has a stable priority.
 	std::vector<std::string> enabled_module_uuids;
 
+	// Per-avatar expression output scales. Values are percentages in [0, 200],
+	// with 100 meaning pass-through. Stored sparse in JSON by expression name.
+	std::map<std::string, FaceShapeScaleArray> avatar_shape_tuning;
+
 	// --- overlay-only preferences ---
 	bool show_raw_values = false;
 	int last_tab_index = 0; // remembers which tab was active
 };
+
+FaceShapeScaleArray& ShapeTuningForAvatar(FacetrackingProfile& profile, const std::string& avatarKey);
+const FaceShapeScaleArray* FindShapeTuningForAvatar(const FacetrackingProfile& profile, const std::string& avatarKey);
+void PruneAvatarShapeTuning(FacetrackingProfile& profile, const std::string& avatarKey);
 
 class FacetrackingProfileStore
 {

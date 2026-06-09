@@ -3,7 +3,7 @@
 // Coverage:
 //   - OscPublishFloat encodes a float in OSC 1.0 big-endian wire format that
 //     matches the reference encoding in OscSender.BuildOscFloatPacket (C#).
-//   - kExprParamNames table has exactly FACETRACKING_EXPRESSION_COUNT entries
+//   - shared expression-name table has exactly FACETRACKING_EXPRESSION_COUNT entries
 //     and the first, middle, and last names match the canonical list from the
 //     protocol expression list.
 //
@@ -14,6 +14,7 @@
 
 #include "Protocol.h"
 #include "FaceOscPublisher.h"
+#include "facetracking/ExpressionNames.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -275,91 +276,22 @@ TEST(ExprParamNames, TableCount)
 	EXPECT_EQ(protocol::FACETRACKING_EXPRESSION_COUNT, 63u);
 }
 
-// Duplicate the names array locally (same source as kExprParamNames in
-// FacetrackingDriverModule.cpp) so the test can verify it without linking
-// the full driver object.
-static const char* const kTestExprNames[63] = {
-    "EyeLookOutLeft",
-    "EyeLookInLeft",
-    "EyeLookUpLeft",
-    "EyeLookDownLeft",
-    "EyeLookOutRight",
-    "EyeLookInRight",
-    "EyeLookUpRight",
-    "EyeLookDownRight",
-    "EyeWideLeft",
-    "EyeWideRight",
-    "EyeSquintLeft",
-    "EyeSquintRight",
-    "BrowLowererLeft",
-    "BrowLowererRight",
-    "BrowInnerUpLeft",
-    "BrowInnerUpRight",
-    "BrowOuterUpLeft",
-    "BrowOuterUpRight",
-    "BrowPinchLeft",
-    "BrowPinchRight",
-    "CheekPuffLeft",
-    "CheekPuffRight",
-    "CheekSuckLeft",
-    "CheekSuckRight",
-    "NoseSneerLeft",
-    "NoseSneerRight",
-    "JawOpen",
-    "JawForward",
-    "JawLeft",
-    "JawRight",
-    "LipSuckUpperLeft",
-    "LipSuckUpperRight",
-    "LipSuckLowerLeft",
-    "LipSuckLowerRight",
-    "LipFunnelUpperLeft",
-    "LipFunnelUpperRight",
-    "LipFunnelLowerLeft",
-    "LipFunnelLowerRight",
-    "LipPuckerUpperLeft",
-    "LipPuckerUpperRight",
-    "MouthClose",
-    "MouthUpperLeft",
-    "MouthUpperRight",
-    "MouthLowerLeft",
-    "MouthLowerRight",
-    "MouthSmileLeft",
-    "MouthSmileRight",
-    "MouthSadLeft",
-    "MouthSadRight",
-    "MouthStretchLeft",
-    "MouthStretchRight",
-    "MouthDimpleLeft",
-    "MouthDimpleRight",
-    "MouthRaiserUpper",
-    "MouthRaiserLower",
-    "MouthPressLeft",
-    "MouthPressRight",
-    "MouthTightenerLeft",
-    "MouthTightenerRight",
-    "TongueOut",
-    "TongueUp",
-    "TongueDown",
-    "TongueLeft",
-};
-
 TEST(ExprParamNames, FirstEntry)
 {
 	// Index 0 must be EyeLookOutLeft (first Unified Expression).
-	EXPECT_STREQ(kTestExprNames[0], "EyeLookOutLeft");
+	EXPECT_STREQ(facetracking::ExpressionName(0), "EyeLookOutLeft");
 }
 
 TEST(ExprParamNames, JawOpen)
 {
 	// JawOpen is index 26 in the canonical list (0-based, per PR comment).
-	EXPECT_STREQ(kTestExprNames[26], "JawOpen");
+	EXPECT_STREQ(facetracking::ExpressionName(26), "JawOpen");
 }
 
 TEST(ExprParamNames, LastEntry)
 {
 	// Index 62 (last) must be TongueLeft.
-	EXPECT_STREQ(kTestExprNames[62], "TongueLeft");
+	EXPECT_STREQ(facetracking::ExpressionName(62), "TongueLeft");
 }
 
 TEST(ExprParamNames, AddressBuilding)
@@ -369,8 +301,8 @@ TEST(ExprParamNames, AddressBuilding)
 	const size_t prefixLen = std::strlen(prefix);
 
 	size_t maxNameLen = 0;
-	for (int i = 0; i < 63; ++i) {
-		size_t l = std::strlen(kTestExprNames[i]);
+	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+		size_t l = std::strlen(facetracking::ExpressionName(i));
 		if (l > maxNameLen) maxNameLen = l;
 	}
 
