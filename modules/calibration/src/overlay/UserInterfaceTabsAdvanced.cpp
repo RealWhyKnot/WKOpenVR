@@ -372,67 +372,50 @@ void CCal_DrawSettings()
 			// are rarely touched and were padding the Basic surfaces). Sized
 			// label/control via a 2-col table so they line up cleanly with
 			// the other thresholds.
-			if (ImGui::BeginTable("##advanced_thresholds_grid", 2,
-			                      ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody)) {
-				ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 230.0f);
-				ImGui::TableSetupColumn("##control", ImGuiTableColumnFlags_WidthStretch);
+			openvr_pair::overlay::ui::DrawSettingTable(
+			    "##advanced_thresholds_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+				    openvr_pair::overlay::ui::SettingRow(table, "Jitter threshold", [&] {
+					    ImGui::PushID("adv_jitter_threshold");
+					    ImGui::SetNextItemWidth(-FLT_MIN);
+					    openvr_pair::overlay::ui::SliderFloatWithTooltip(
+					        "##adv_jitter_threshold_slider", &CalCtx.jitterThreshold, 0.1f, 10.0f, "%1.1f",
+					        "Controls how much jitter will be allowed for calibration.\n"
+					        "Higher values allow worse tracking to calibrate, but may result in poorer tracking.");
+					    AddResetContextMenu("adv_jitter_threshold_ctx", [] { CalCtx.jitterThreshold = 3.0f; });
+					    ImGui::PopID();
+				    });
 
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::AlignTextToFramePadding();
-				ImGui::TextUnformatted("Jitter threshold");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::PushID("adv_jitter_threshold");
-				ImGui::SetNextItemWidth(-FLT_MIN);
-				ImGui::SliderFloat("##adv_jitter_threshold_slider", &CalCtx.jitterThreshold, 0.1f, 10.0f, "%1.1f", 0);
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip(
-					    "Controls how much jitter will be allowed for calibration.\n"
-					    "Higher values allow worse tracking to calibrate, but may result in poorer tracking.");
-				}
-				AddResetContextMenu("adv_jitter_threshold_ctx", [] { CalCtx.jitterThreshold = 3.0f; });
-				ImGui::PopID();
+				    // Recalibration threshold + Max relative error threshold both
+				    // feed ComputeIncremental, the continuous-mode refiner.
+				    if (kInContinuous) {
+					    openvr_pair::overlay::ui::SettingRow(table, "Recalibration threshold", [&] {
+						    ImGui::PushID("adv_recalibration_threshold");
+						    ImGui::SetNextItemWidth(-FLT_MIN);
+						    openvr_pair::overlay::ui::SliderFloatWithTooltip(
+						        "##adv_recalibration_threshold_slider", &CalCtx.continuousCalibrationThreshold, 1.01f,
+						        10.0f, "%1.1f",
+						        "Controls how good the calibration must be before realigning the trackers.\n"
+						        "Higher values cause calibration to happen less often, and may be useful for "
+						        "systems with lots of tracking drift.");
+						    AddResetContextMenu("adv_recalibration_threshold_ctx",
+						                        [] { CalCtx.continuousCalibrationThreshold = 1.5f; });
+						    ImGui::PopID();
+					    });
 
-				// Recalibration threshold + Max relative error threshold both
-				// feed ComputeIncremental, the continuous-mode refiner.
-				if (kInContinuous) {
-					ImGui::TableNextRow();
-					ImGui::TableSetColumnIndex(0);
-					ImGui::AlignTextToFramePadding();
-					ImGui::TextUnformatted("Recalibration threshold");
-					ImGui::TableSetColumnIndex(1);
-					ImGui::PushID("adv_recalibration_threshold");
-					ImGui::SetNextItemWidth(-FLT_MIN);
-					ImGui::SliderFloat("##adv_recalibration_threshold_slider", &CalCtx.continuousCalibrationThreshold,
-					                   1.01f, 10.0f, "%1.1f", 0);
-					if (ImGui::IsItemHovered()) {
-						ImGui::SetTooltip("Controls how good the calibration must be before realigning the trackers.\n"
-						                  "Higher values cause calibration to happen less often, and may be useful for "
-						                  "systems with lots of tracking drift.");
-					}
-					AddResetContextMenu("adv_recalibration_threshold_ctx",
-					                    [] { CalCtx.continuousCalibrationThreshold = 1.5f; });
-					ImGui::PopID();
-
-					ImGui::TableNextRow();
-					ImGui::TableSetColumnIndex(0);
-					ImGui::AlignTextToFramePadding();
-					ImGui::TextUnformatted("Max relative error threshold");
-					ImGui::TableSetColumnIndex(1);
-					ImGui::PushID("adv_max_relative_error_threshold");
-					ImGui::SetNextItemWidth(-FLT_MIN);
-					ImGui::SliderFloat("##adv_max_relative_error_threshold_slider", &CalCtx.maxRelativeErrorThreshold,
-					                   0.01f, 1.0f, "%1.1f", 0);
-					if (ImGui::IsItemHovered()) {
-						ImGui::SetTooltip("Controls the maximum acceptable relative error. If the error from the "
-						                  "relative calibration is too poor, the calibration will be discarded.");
-					}
-					AddResetContextMenu("adv_max_rel_err_ctx", [] { CalCtx.maxRelativeErrorThreshold = 0.005f; });
-					ImGui::PopID();
-				}
-
-				ImGui::EndTable();
-			}
+					    openvr_pair::overlay::ui::SettingRow(table, "Max relative error threshold", [&] {
+						    ImGui::PushID("adv_max_relative_error_threshold");
+						    ImGui::SetNextItemWidth(-FLT_MIN);
+						    openvr_pair::overlay::ui::SliderFloatWithTooltip(
+						        "##adv_max_relative_error_threshold_slider", &CalCtx.maxRelativeErrorThreshold, 0.01f,
+						        1.0f, "%1.1f",
+						        "Controls the maximum acceptable relative error. If the error from the "
+						        "relative calibration is too poor, the calibration will be discarded.");
+						    AddResetContextMenu("adv_max_rel_err_ctx",
+						                        [] { CalCtx.maxRelativeErrorThreshold = 0.005f; });
+						    ImGui::PopID();
+					    });
+				    }
+			    });
 			ImGui::EndGroupPanel();
 		}
 

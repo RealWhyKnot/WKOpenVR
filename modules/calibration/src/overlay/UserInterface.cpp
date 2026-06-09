@@ -450,61 +450,39 @@ static void OneShot_DrawSettings()
 	ImVec2 panelSize{ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0};
 	ImGui::BeginGroupPanel("Settings", panelSize);
 
-	if (ImGui::BeginTable("##oneshot_settings_grid", 2,
-	                      ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody)) {
-		ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 230.0f);
-		ImGui::TableSetupColumn("##control", ImGuiTableColumnFlags_WidthStretch);
-
-		// (Jitter threshold moved to the Advanced tab -- it's a rarely-touched
-		// knob, surfaced there alongside the rest of the deeper math settings.)
-
-		// (Continuous calibration behavior is selected by the top-level tracking
-		// style. Expert-only repair/tuning controls live in Advanced.)
-
-		// (Hide tracker controls moved out of one-shot Settings. The
-		// calibration-target hide lives on the Advanced tab (continuous-only).
-		// The head-mount tracker hide lives on the Play Space tab.)
-
-		// --- Ignore outliers ---
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted("Ignore outliers");
-		ImGui::TableSetColumnIndex(1);
-		if (ImGui::Checkbox("##oneshot_ignore_outliers", &CalCtx.ignoreOutliers)) {
-			SaveProfile(CalCtx);
-		}
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Drop sample pairs whose rotation axis disagrees with the consensus before\n"
-			                  "the LS solve. Helps with intermittent USB glitches or brief tracking loss.");
-		}
-
-		// --- Base station drift correction (AUTO/OFF) ---
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted("Auto-correct universe shifts");
-		ImGui::TableSetColumnIndex(1);
-		if (ImGui::Checkbox("##oneshot_base_station_drift", &CalCtx.baseStationDriftCorrectionEnabled)) {
-			SaveProfile(CalCtx);
-		}
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("AUTO (on): when Lighthouse base stations are detected, watch for\n"
-			                  "uniform pose shifts across all of them between ticks -- a SteamVR\n"
-			                  "universe re-origin (chaperone reset, seated zero pose reset, etc.) --\n"
-			                  "and apply the inverse to the stored calibration so body trackers stay\n"
-			                  "aligned with your physical position. No-op if no base stations are\n"
-			                  "present (Quest-only setups, etc.). Math is honest: requires actual\n"
-			                  "evidence of a universe shift, not a heuristic guess.\n\n"
-			                  "OFF: never adjust the calibration based on base station poses.");
-		}
-
-		// (Enable debug logs toggle removed -- it lives in the Logs tab now,
-		// where the user can flip it on right where they're managing the
-		// log files.)
-
-		ImGui::EndTable();
-	}
+	// (Jitter threshold moved to the Advanced tab -- it's a rarely-touched
+	// knob, surfaced there alongside the rest of the deeper math settings.)
+	// (Continuous calibration behavior is selected by the top-level tracking
+	// style. Expert-only repair/tuning controls live in Advanced.)
+	// (Hide tracker controls moved out of one-shot Settings. The
+	// calibration-target hide lives on the Advanced tab (continuous-only).
+	// The head-mount tracker hide lives on the Play Space tab.)
+	// (Enable debug logs toggle removed -- it lives in the Logs tab now.)
+	openvr_pair::overlay::ui::DrawSettingTable(
+	    "##oneshot_settings_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+		    openvr_pair::overlay::ui::SettingRow(table, "Ignore outliers", [&] {
+			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+			            "##oneshot_ignore_outliers", &CalCtx.ignoreOutliers,
+			            "Drop sample pairs whose rotation axis disagrees with the consensus before\n"
+			            "the LS solve. Helps with intermittent USB glitches or brief tracking loss.")) {
+				    SaveProfile(CalCtx);
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Auto-correct universe shifts", [&] {
+			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+			            "##oneshot_base_station_drift", &CalCtx.baseStationDriftCorrectionEnabled,
+			            "AUTO (on): when Lighthouse base stations are detected, watch for\n"
+			            "uniform pose shifts across all of them between ticks -- a SteamVR\n"
+			            "universe re-origin (chaperone reset, seated zero pose reset, etc.) --\n"
+			            "and apply the inverse to the stored calibration so body trackers stay\n"
+			            "aligned with your physical position. No-op if no base stations are\n"
+			            "present (Quest-only setups, etc.). Math is honest: requires actual\n"
+			            "evidence of a universe shift, not a heuristic guess.\n\n"
+			            "OFF: never adjust the calibration based on base station poses.")) {
+				    SaveProfile(CalCtx);
+			    }
+		    });
+	    });
 
 	ImGui::EndGroupPanel(); // Settings
 

@@ -83,53 +83,61 @@ void CCal_BasicInfo()
 	openvr_pair::overlay::ui::DrawPanel(
 	    "Devices",
 	    [&] {
-		    if (ImGui::BeginTable("DeviceInfo", 2, 0)) {
-			    ImGui::TableSetupColumn("Reference device");
-			    ImGui::TableSetupColumn("Target device");
-			    ImGui::TableHeadersRow();
+		    namespace ui = openvr_pair::overlay::ui;
 
-			    const char* refTrackingSystem = GetPrettyTrackingSystemName(CalCtx.referenceStandby.trackingSystem);
-			    const char* targetTrackingSystem = GetPrettyTrackingSystemName(CalCtx.targetStandby.trackingSystem);
+		    const char* refTrackingSystem = GetPrettyTrackingSystemName(CalCtx.referenceStandby.trackingSystem);
+		    const char* targetTrackingSystem = GetPrettyTrackingSystemName(CalCtx.targetStandby.trackingSystem);
 
-			    ImGui::TableNextRow();
-			    ImGui::TableSetColumnIndex(0);
-			    ImGui::BeginGroup();
-			    ImGui::Text("%s / %s / %s", refTrackingSystem, CalCtx.referenceStandby.model.c_str(),
-			                CalCtx.referenceStandby.serial.c_str());
-			    const char* status;
-			    if (CalCtx.referenceID < 0) {
-				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Error);
-				    status = "NOT FOUND";
-			    }
-			    else if (!CalCtx.ReferencePoseIsValidSimple()) {
-				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Warn);
-				    status = "NOT TRACKING";
-			    }
-			    else {
-				    status = "OK";
-			    }
-			    ImGui::Text("Status: %s", status);
-			    ImGui::EndGroup();
+		    const char* refStatus;
+		    ui::StatusTone refTone;
+		    if (CalCtx.referenceID < 0) {
+			    refStatus = "NOT FOUND";
+			    refTone = ui::StatusTone::Error;
+		    }
+		    else if (!CalCtx.ReferencePoseIsValidSimple()) {
+			    refStatus = "NOT TRACKING";
+			    refTone = ui::StatusTone::Warn;
+		    }
+		    else {
+			    refStatus = "OK";
+			    refTone = ui::StatusTone::Ok;
+		    }
 
-			    ImGui::TableSetColumnIndex(1);
-			    ImGui::BeginGroup();
-			    ImGui::Text("%s / %s / %s", targetTrackingSystem, CalCtx.targetStandby.model.c_str(),
-			                CalCtx.targetStandby.serial.c_str());
-			    if (CalCtx.targetID < 0) {
-				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Error);
-				    status = "NOT FOUND";
-			    }
-			    else if (!CalCtx.TargetPoseIsValidSimple()) {
-				    openvr_pair::overlay::ui::SetCellToneBg(openvr_pair::overlay::ui::StatusTone::Warn);
-				    status = "NOT TRACKING";
-			    }
-			    else {
-				    status = "OK";
-			    }
-			    ImGui::Text("Status: %s", status);
-			    ImGui::EndGroup();
+		    const char* targetStatus;
+		    ui::StatusTone targetTone;
+		    if (CalCtx.targetID < 0) {
+			    targetStatus = "NOT FOUND";
+			    targetTone = ui::StatusTone::Error;
+		    }
+		    else if (!CalCtx.TargetPoseIsValidSimple()) {
+			    targetStatus = "NOT TRACKING";
+			    targetTone = ui::StatusTone::Warn;
+		    }
+		    else {
+			    targetStatus = "OK";
+			    targetTone = ui::StatusTone::Ok;
+		    }
 
-			    ImGui::EndTable();
+		    // One device per cell. Two columns side by side on a wide window,
+		    // collapsing to a single stacked column once the panel narrows so the
+		    // device strings stay readable.
+		    auto drawDevice = [](const char* role, const char* system, const std::string& model,
+		                         const std::string& serial, const char* status, ui::StatusTone tone) {
+			    ui::SetCellToneBg(tone);
+			    ImGui::TextDisabled("%s", role);
+			    ImGui::TextWrapped("%s / %s / %s", system, model.c_str(), serial.c_str());
+			    ImGui::TextUnformatted("Status:");
+			    ImGui::SameLine();
+			    ui::DrawStatusText(status, tone);
+		    };
+
+		    ui::ResponsiveColumnsScope devices("DeviceInfo", 2, 300.0f);
+		    if (devices) {
+			    drawDevice("Reference device", refTrackingSystem, CalCtx.referenceStandby.model,
+			               CalCtx.referenceStandby.serial, refStatus, refTone);
+			    devices.Next();
+			    drawDevice("Target device", targetTrackingSystem, CalCtx.targetStandby.model,
+			               CalCtx.targetStandby.serial, targetStatus, targetTone);
 		    }
 	    },
 	    panelSize);
