@@ -11,7 +11,7 @@
 
 #include <imgui.h>
 
-#include <cstring>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -52,6 +52,111 @@ FeaturePlugin* FindFeatureByFlag(const std::vector<FeaturePlugin*>& plugins, std
 	return nullptr;
 }
 
+enum class ShellBuiltInTab
+{
+	None,
+	Logs,
+	Modules,
+	Themes,
+};
+
+struct ShellTabEntry
+{
+	std::string key;
+	const char* label = nullptr;
+	FeaturePlugin* plugin = nullptr;
+	ShellBuiltInTab builtIn = ShellBuiltInTab::None;
+};
+
+constexpr std::string_view kModuleTabPrefix = "module:";
+constexpr const char* kLogsTabKey = "shell:logs";
+constexpr const char* kModulesTabKey = "shell:modules";
+constexpr const char* kThemesTabKey = "shell:themes";
+
+std::string ModuleTabKey(std::string_view flag)
+{
+	return std::string(kModuleTabPrefix) + std::string(flag);
+}
+
+std::string FeatureTabKey(const FeaturePlugin& plugin)
+{
+	const char* flag = plugin.FlagFileName();
+	if (flag && IsValidModuleFlagForShellOrder(flag)) return ModuleTabKey(flag);
+	return std::string("plugin:") + (plugin.Name() ? plugin.Name() : "");
+}
+
+std::vector<std::string_view> ModuleFlagsFromPlugins(const std::vector<FeaturePlugin*>& plugins)
+{
+	std::vector<std::string_view> flags;
+	for (FeaturePlugin* plugin : plugins) {
+		if (!plugin) continue;
+		const char* flag = plugin->FlagFileName();
+		if (flag && IsValidModuleFlagForShellOrder(flag)) {
+			flags.push_back(flag);
+		}
+	}
+	return flags;
+}
+
+std::vector<FeaturePlugin*> OrderPluginsByModuleTabOrder(const std::vector<FeaturePlugin*>& plugins,
+                                                         const std::vector<std::string>& preferredOrder)
+{
+	std::vector<FeaturePlugin*> ordered;
+	const std::vector<std::string> resolvedOrder =
+	    ResolveModuleTabOrder(preferredOrder, ModuleFlagsFromPlugins(plugins));
+	for (const std::string& flag : resolvedOrder) {
+		if (FeaturePlugin* plugin = FindFeatureByFlag(plugins, flag)) {
+			ordered.push_back(plugin);
+		}
+	}
+	for (FeaturePlugin* plugin : plugins) {
+		if (!plugin) continue;
+		const char* flag = plugin->FlagFileName();
+		if (flag && IsValidModuleFlagForShellOrder(flag)) continue;
+		ordered.push_back(plugin);
+	}
+	return ordered;
+}
+
+bool ContainsShellTabKey(const std::vector<ShellTabEntry>& entries, std::string_view key)
+{
+	for (const ShellTabEntry& entry : entries) {
+		if (entry.key == key) return true;
+	}
+	return false;
+}
+
+int ShellTabIndex(const std::vector<ShellTabEntry>& entries, std::string_view key)
+{
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (entries[i].key == key) return static_cast<int>(i);
+	}
+	return -1;
+}
+
+void MoveShellTabSelection(const std::vector<ShellTabEntry>& entries, std::string& selectedKey, int offset)
+{
+	if (entries.empty() || offset == 0) return;
+	int index = ShellTabIndex(entries, selectedKey);
+	if (index < 0) index = 0;
+	const int target = std::clamp(index + offset, 0, static_cast<int>(entries.size()) - 1);
+	selectedKey = entries[static_cast<size_t>(target)].key;
+}
+
+std::vector<ShellTabEntry> BuildShellTabEntries(const std::vector<FeaturePlugin*>& installedPlugins)
+{
+	std::vector<ShellTabEntry> entries;
+	entries.reserve(installedPlugins.size() + 3);
+	for (FeaturePlugin* plugin : installedPlugins) {
+		if (!plugin) continue;
+		entries.push_back({FeatureTabKey(*plugin), plugin->Name(), plugin, ShellBuiltInTab::None});
+	}
+	entries.push_back({kLogsTabKey, "Logs", nullptr, ShellBuiltInTab::Logs});
+	entries.push_back({kModulesTabKey, "Modules", nullptr, ShellBuiltInTab::Modules});
+	entries.push_back({kThemesTabKey, "Themes", nullptr, ShellBuiltInTab::Themes});
+	return entries;
+}
+
 void DrawFallbackLogsPanel(ShellContext& context)
 {
 	ui::DrawSectionHeading("Debug logging");
@@ -84,49 +189,88 @@ void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>>& plug
 	}
 }
 
-void DrawFeaturePicker(ShellContext& context, const std::vector<FeaturePlugin*>& installedPlugins,
-                       std::string& selectedFeatureFlag)
+void ResolveShellTabSelection(ShellContext& context, const std::vector<ShellTabEntry>& entries,
+                              const std::vector<std::string_view>& installedFlags, std::string& selectedShellTabKey,
+                              std::string& desktopDefaultTabAppliedFor)
 {
-	if (installedPlugins.empty()) {
-		ui::DrawSectionHeading("Feature");
-		ui::DrawTextWrapped("Enable a module from Modules.");
-		return;
+	const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
+	if (!context.vrConnected && !desktopDefaultFlag.empty() && desktopDefaultTabAppliedFor != desktopDefaultFlag &&
+	    ContainsFeatureFlag(installedFlags, desktopDefaultFlag)) {
+		selectedShellTabKey = ModuleTabKey(desktopDefaultFlag);
+		desktopDefaultTabAppliedFor = desktopDefaultFlag;
 	}
-
-	FeaturePlugin* selected = FindFeatureByFlag(installedPlugins, selectedFeatureFlag);
-	if (!selected) {
-		selected = installedPlugins.front();
-		selectedFeatureFlag = selected->FlagFileName();
+	if (!ContainsShellTabKey(entries, selectedShellTabKey)) {
+		selectedShellTabKey = installedFlags.empty() && ContainsShellTabKey(entries, kModulesTabKey)
+		                          ? std::string(kModulesTabKey)
+		                          : (entries.empty() ? std::string() : entries.front().key);
 	}
+}
 
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextUnformatted("Module");
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(300.0f);
-	if (ImGui::BeginCombo("##feature_module_picker", selected->Name())) {
-		for (FeaturePlugin* plugin : installedPlugins) {
-			const bool isSelected = (plugin == selected);
-			if (ImGui::Selectable(plugin->Name(), isSelected)) {
-				selected = plugin;
-				selectedFeatureFlag = plugin->FlagFileName();
-			}
-			if (isSelected) ImGui::SetItemDefaultFocus();
+const ShellTabEntry* FindShellTabEntry(const std::vector<ShellTabEntry>& entries, std::string_view key)
+{
+	for (const ShellTabEntry& entry : entries) {
+		if (entry.key == key) return &entry;
+	}
+	return nullptr;
+}
+
+void DrawShellTabStrip(const std::vector<ShellTabEntry>& entries, std::string& selectedShellTabKey)
+{
+	if (entries.empty()) return;
+
+	const int selectedIndex = ShellTabIndex(entries, selectedShellTabKey);
+	const bool canMoveLeft = selectedIndex > 0;
+	const ImGuiStyle& style = ImGui::GetStyle();
+	const float buttonSize = ImGui::GetFrameHeight();
+
+	{
+		ui::DisabledSection disabled(!canMoveLeft, canMoveLeft ? nullptr : "This is the first tab.");
+		if (ImGui::ArrowButton("##shell_tab_left", ImGuiDir_Left)) {
+			MoveShellTabSelection(entries, selectedShellTabKey, -1);
 		}
-		ImGui::EndCombo();
+		disabled.AttachReasonTooltip();
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Previous tab");
 	}
 
-	ImGui::Spacing();
-	ImGui::Separator();
-	ImGui::Spacing();
-	selected->DrawTab(context);
+	ImGui::SameLine();
+	const float stripWidth = std::max(120.0f, ImGui::GetContentRegionAvail().x - buttonSize - style.ItemSpacing.x);
+	ui::ChildScope strip("##shell_tab_strip",
+	                     ImVec2(stripWidth, ImGui::GetFrameHeightWithSpacing() + style.ItemSpacing.y),
+	                     ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+	if (strip) {
+		ui::TabBarScope tabs("tabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTabListScrollingButtons);
+		if (tabs) {
+			for (const ShellTabEntry& entry : entries) {
+				ImGuiTabItemFlags flags = ImGuiTabItemFlags_None;
+				if (entry.key == selectedShellTabKey) {
+					flags |= ImGuiTabItemFlags_SetSelected;
+				}
+				ui::TabItemScope tab(entry.label, nullptr, flags);
+				if (tab) {
+					selectedShellTabKey = entry.key;
+				}
+			}
+		}
+	}
+
+	ImGui::SameLine();
+	const int rightSelectedIndex = ShellTabIndex(entries, selectedShellTabKey);
+	const bool canMoveRight = rightSelectedIndex >= 0 && rightSelectedIndex + 1 < static_cast<int>(entries.size());
+	{
+		ui::DisabledSection disabled(!canMoveRight, canMoveRight ? nullptr : "This is the last tab.");
+		if (ImGui::ArrowButton("##shell_tab_right", ImGuiDir_Right)) {
+			MoveShellTabSelection(entries, selectedShellTabKey, 1);
+		}
+		disabled.AttachReasonTooltip();
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Next tab");
+	}
 }
 
 } // namespace
-
-void DrawFeatureTab(ShellContext& context, FeaturePlugin& plugin, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
-{
-	ui::DrawScrollableTabItem(plugin.Name(), [&] { plugin.DrawTab(context); }, flags);
-}
 
 void DrawLogsTab(ShellContext& context, std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
@@ -157,8 +301,10 @@ void DrawModulesTab(ShellContext& context, std::vector<std::unique_ptr<FeaturePl
 			modules.push_back(plugin.get());
 		}
 	}
+	modules = OrderPluginsByModuleTabOrder(modules, context.ModuleTabOrder());
 	ModuleToggleTableOptions options;
 	options.markDevelopmentModules = true;
+	options.allowTabReorder = true;
 	DrawModuleToggleTable(context, modules, "modules", "No modules were compiled into this build.", options);
 }
 
@@ -185,7 +331,7 @@ void DrawThemesTab(ShellContext&)
 void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeaturePlugin>>& plugins)
 {
 	static std::string desktopDefaultTabAppliedFor;
-	static std::string selectedFeatureFlag;
+	static std::string selectedShellTabKey;
 	context.TickStatus();
 
 	const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -203,34 +349,33 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 
 	if (ImGui::BeginChild("##shell_content", ImVec2(0.0f, hasStatus ? -statusReserve : 0.0f), false,
 	                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-		ui::TabBarScope tabs("tabs");
-		if (tabs) {
-			std::vector<FeaturePlugin*> installedPlugins;
-			std::vector<std::string_view> installedFlags;
-			for (auto& plugin : plugins) {
-				if (!plugin || !plugin->IsInstalled(context)) continue;
-				installedPlugins.push_back(plugin.get());
-				installedFlags.push_back(plugin->FlagFileName());
-			}
+		std::vector<FeaturePlugin*> installedPlugins;
+		for (auto& plugin : plugins) {
+			if (!plugin || !plugin->IsInstalled(context)) continue;
+			installedPlugins.push_back(plugin.get());
+		}
+		installedPlugins = OrderPluginsByModuleTabOrder(installedPlugins, context.ModuleTabOrder());
+		const std::vector<std::string_view> installedFlags = ModuleFlagsFromPlugins(installedPlugins);
+		const std::vector<ShellTabEntry> entries = BuildShellTabEntries(installedPlugins);
+		ResolveShellTabSelection(context, entries, installedFlags, selectedShellTabKey, desktopDefaultTabAppliedFor);
+		DrawShellTabStrip(entries, selectedShellTabKey);
 
-			const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
-			const FeaturePickerSelection selection =
-			    ResolveFeaturePickerSelection(context.vrConnected, selectedFeatureFlag, desktopDefaultFlag,
-			                                  desktopDefaultTabAppliedFor, installedFlags);
-			ImGuiTabItemFlags featureTabFlags = ImGuiTabItemFlags_None;
-			if (!selection.flag.empty()) {
-				selectedFeatureFlag.assign(selection.flag.data(), selection.flag.size());
-				if (selection.applyDesktopDefault) {
-					featureTabFlags |= ImGuiTabItemFlags_SetSelected;
-					desktopDefaultTabAppliedFor = desktopDefaultFlag;
-				}
+		ImGui::Spacing();
+		ui::ChildScope body("##shell_tab_body", ImVec2(0.0f, 0.0f));
+		if (body) {
+			const ShellTabEntry* active = FindShellTabEntry(entries, selectedShellTabKey);
+			if (active && active->plugin) {
+				active->plugin->DrawTab(context);
 			}
-
-			ui::DrawScrollableTabItem(
-			    "Feature", [&] { DrawFeaturePicker(context, installedPlugins, selectedFeatureFlag); }, featureTabFlags);
-			ui::DrawScrollableTabItem("Logs", [&] { DrawLogsTab(context, plugins); });
-			ui::DrawScrollableTabItem("Modules", [&] { DrawModulesTab(context, plugins); });
-			ui::DrawScrollableTabItem("Themes", [&] { DrawThemesTab(context); });
+			else if (active && active->builtIn == ShellBuiltInTab::Logs) {
+				DrawLogsTab(context, plugins);
+			}
+			else if (active && active->builtIn == ShellBuiltInTab::Modules) {
+				DrawModulesTab(context, plugins);
+			}
+			else if (active && active->builtIn == ShellBuiltInTab::Themes) {
+				DrawThemesTab(context);
+			}
 		}
 	}
 	ImGui::EndChild();

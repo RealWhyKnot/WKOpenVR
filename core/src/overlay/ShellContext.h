@@ -21,9 +21,12 @@ struct ShellContext
 	uint32_t primaryDashboardDevice = 0xFFFFFFFFu;
 	int primaryDashboardHand = 0;
 	bool dashboardVisible = false;
+	std::vector<std::string> moduleTabOrder;
 
 	std::string DesktopDefaultModuleFlagFileName() const;
 	bool SetDesktopDefaultModuleFlagFileName(const char* flagFileName);
+	std::vector<std::string> ModuleTabOrder() const;
+	bool SetModuleTabOrder(const std::vector<std::string>& order);
 	std::wstring FlagPath(const char* flagFileName) const;
 	bool IsFlagPresent(const char* flagFileName) const;
 	bool IsModuleAutoDisabled(const char* flagFileName) const;

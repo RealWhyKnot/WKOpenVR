@@ -1,12 +1,14 @@
 #include "ModuleToggleUi.h"
 
 #include "ModuleRegistry.h"
+#include "ShellUiLogic.h"
 #include "UiCore.h"
 
 #include <imgui.h>
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace openvr_pair::overlay {
 namespace {
@@ -20,6 +22,27 @@ bool IsEffectiveModuleEnabled(ShellContext& context, const module_registry::Modu
 	return context.IsFlagPresent(module.flag_file) && !context.IsModuleAutoDisabled(module.flag_file);
 }
 
+std::vector<std::string> ModuleTabOrderFromPlugins(const std::vector<FeaturePlugin*>& plugins)
+{
+	std::vector<std::string> order;
+	for (FeaturePlugin* plugin : plugins) {
+		if (!plugin) continue;
+		const char* flag = plugin->FlagFileName();
+		if (flag && IsValidModuleFlagForShellOrder(flag) && !ContainsString(order, flag)) {
+			order.emplace_back(flag);
+		}
+	}
+	return order;
+}
+
+int ModuleTabOrderIndex(const std::vector<std::string>& order, const std::string& flag)
+{
+	for (size_t i = 0; i < order.size(); ++i) {
+		if (order[i] == flag) return static_cast<int>(i);
+	}
+	return -1;
+}
+
 } // namespace
 
 void DrawModuleToggleTable(ShellContext& context, const std::vector<FeaturePlugin*>& plugins, const char* tableId,
@@ -30,12 +53,18 @@ void DrawModuleToggleTable(ShellContext& context, const std::vector<FeaturePlugi
 		return;
 	}
 
-	ui::TableScope table(tableId, 4,
+	const int columnCount = options.allowTabReorder ? 5 : 4;
+	std::vector<std::string> moduleTabOrder = ModuleTabOrderFromPlugins(plugins);
+
+	ui::TableScope table(tableId, columnCount,
 	                     ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
 	if (!table) return;
 
 	ui::SetupStretchColumn("Module", 1.0f);
 	ui::SetupFixedColumn("Status", 300.0f);
+	if (options.allowTabReorder) {
+		ui::SetupFixedColumn("Tab", 86.0f);
+	}
 	ui::SetupFixedColumn("Default", 90.0f);
 	ui::SetupFixedColumn("Enabled", 100.0f);
 	ui::DrawTableHeader();
@@ -60,6 +89,7 @@ void DrawModuleToggleTable(ShellContext& context, const std::vector<FeaturePlugi
 		const bool displayState = (it != g_wantedModuleStates.end()) ? it->second : effectiveInstalled;
 
 		ui::NextRow();
+		ImGui::PushID(key.c_str());
 
 		ui::NextColumn();
 		ImGui::AlignTextToFramePadding();
@@ -125,8 +155,42 @@ void DrawModuleToggleTable(ShellContext& context, const std::vector<FeaturePlugi
 		}
 		ui::DrawStatusCell(statusText, statusTone, true);
 
+		if (options.allowTabReorder) {
+			ui::NextColumn();
+			const int orderIndex = ModuleTabOrderIndex(moduleTabOrder, key);
+			const bool canMoveLeft = orderIndex > 0;
+			const bool canMoveRight = orderIndex >= 0 && orderIndex + 1 < static_cast<int>(moduleTabOrder.size());
+
+			{
+				ui::DisabledSection disabled(!canMoveLeft, canMoveLeft ? nullptr : "This tab is already first.");
+				if (ImGui::ArrowButton("##move_tab_left", ImGuiDir_Left)) {
+					std::vector<std::string> nextOrder = moduleTabOrder;
+					if (MoveModuleTabOrder(nextOrder, key, -1)) {
+						context.SetModuleTabOrder(nextOrder);
+					}
+				}
+				disabled.AttachReasonTooltip();
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Move this module tab left.");
+			}
+			ImGui::SameLine();
+			{
+				ui::DisabledSection disabled(!canMoveRight, canMoveRight ? nullptr : "This tab is already last.");
+				if (ImGui::ArrowButton("##move_tab_right", ImGuiDir_Right)) {
+					std::vector<std::string> nextOrder = moduleTabOrder;
+					if (MoveModuleTabOrder(nextOrder, key, 1)) {
+						context.SetModuleTabOrder(nextOrder);
+					}
+				}
+				disabled.AttachReasonTooltip();
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Move this module tab right.");
+			}
+		}
+
 		ui::NextColumn();
-		ImGui::PushID(key.c_str());
 		const std::string defaultTooltip = std::string("Use ") + plugin->Name() + " as the desktop startup tab.";
 		const bool defaultSelected = (context.DesktopDefaultModuleFlagFileName() == key);
 		const char* defaultBlockReason = nullptr;

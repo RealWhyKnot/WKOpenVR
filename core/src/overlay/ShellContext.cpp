@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -34,6 +35,7 @@ struct PendingToggle
 
 std::vector<PendingToggle> g_pendingToggles;
 constexpr const char* kDesktopDefaultModuleSetting = "desktop_default_module";
+constexpr const char* kModuleTabOrderSetting = "module_tab_order";
 const char* FallbackDesktopDefaultModule()
 {
 	return module_registry::FlagFileName(module_registry::ModuleId::QuestApp);
@@ -287,6 +289,7 @@ ShellContext CreateShellContext()
 	ctx.logRoot = openvr_pair::common::WkOpenVrLogsPath(true);
 	ctx.desktopDefaultModuleFlagFileName = NormalizeDesktopDefaultModuleFlag(
 	    ReadShellSetting(ctx.profileRoot, kDesktopDefaultModuleSetting, FallbackDesktopDefaultModule()));
+	ctx.moduleTabOrder = ParseModuleTabOrderSetting(ReadShellSetting(ctx.profileRoot, kModuleTabOrderSetting, ""));
 
 	// --- Driver resources dir: discover SteamVR via registry + libraryfolders.vdf.
 	// Fall back to the hard-coded path if any step fails so that known-good
@@ -327,6 +330,29 @@ bool ShellContext::SetDesktopDefaultModuleFlagFileName(const char* flagFileName)
 	}
 	desktopDefaultModuleFlagFileName = normalized;
 	SetStatus("Desktop default module saved.");
+	return true;
+}
+
+std::vector<std::string> ShellContext::ModuleTabOrder() const
+{
+	return moduleTabOrder;
+}
+
+bool ShellContext::SetModuleTabOrder(const std::vector<std::string>& order)
+{
+	std::vector<std::string_view> available;
+	available.reserve(order.size());
+	for (const std::string& flag : order) {
+		available.push_back(flag);
+	}
+	std::vector<std::string> normalized = ResolveModuleTabOrder(order, available);
+	const std::string serialized = SerializeModuleTabOrderSetting(normalized);
+	if (!WriteShellSetting(profileRoot, kModuleTabOrderSetting, serialized)) {
+		SetStatus("Module tab order was not saved.");
+		return false;
+	}
+	moduleTabOrder = std::move(normalized);
+	SetStatus("Module tab order saved.", 2.0);
 	return true;
 }
 

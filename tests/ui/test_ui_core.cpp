@@ -109,6 +109,51 @@ TEST(ShellUiLogic, FeaturePickerSelectionKeepsTopNavStable)
 	EXPECT_FALSE(selection.applyDesktopDefault);
 }
 
+TEST(ShellUiLogic, ModuleTabOrderParsesAndSerializesValidFlags)
+{
+	const std::vector<std::string> parsed = openvr_pair::overlay::ParseModuleTabOrderSetting(
+	    " enable_smoothing.flag ; invalid ; enable_dashboardinput.flag ; enable_smoothing.flag ; ../bad.flag ");
+
+	ASSERT_EQ(2u, parsed.size());
+	EXPECT_EQ("enable_smoothing.flag", parsed[0]);
+	EXPECT_EQ("enable_dashboardinput.flag", parsed[1]);
+	EXPECT_EQ("enable_smoothing.flag;enable_dashboardinput.flag",
+	          openvr_pair::overlay::SerializeModuleTabOrderSetting(parsed));
+}
+
+TEST(ShellUiLogic, ModuleTabOrderAppliesSavedOrderAndAppendsNewModules)
+{
+	const std::vector<std::string> saved = {"enable_captions.flag", "enable_missing.flag", "enable_smoothing.flag",
+	                                        "enable_smoothing.flag"};
+	const std::vector<std::string_view> available = {"enable_smoothing.flag", "enable_dashboardinput.flag",
+	                                                 "enable_captions.flag"};
+
+	const std::vector<std::string> resolved = openvr_pair::overlay::ResolveModuleTabOrder(saved, available);
+
+	ASSERT_EQ(3u, resolved.size());
+	EXPECT_EQ("enable_captions.flag", resolved[0]);
+	EXPECT_EQ("enable_smoothing.flag", resolved[1]);
+	EXPECT_EQ("enable_dashboardinput.flag", resolved[2]);
+}
+
+TEST(ShellUiLogic, ModuleTabOrderMovesWithinBounds)
+{
+	std::vector<std::string> order = {"enable_inputhealth.flag", "enable_smoothing.flag", "enable_dashboardinput.flag"};
+
+	EXPECT_TRUE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_smoothing.flag", -1));
+	EXPECT_EQ("enable_smoothing.flag", order[0]);
+	EXPECT_EQ("enable_inputhealth.flag", order[1]);
+	EXPECT_EQ("enable_dashboardinput.flag", order[2]);
+
+	EXPECT_FALSE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_smoothing.flag", -1));
+	EXPECT_FALSE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_missing.flag", 1));
+
+	EXPECT_TRUE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_inputhealth.flag", 1));
+	EXPECT_EQ("enable_smoothing.flag", order[0]);
+	EXPECT_EQ("enable_dashboardinput.flag", order[1]);
+	EXPECT_EQ("enable_inputhealth.flag", order[2]);
+}
+
 TEST(ShellUiLogic, CalibrationPluginOwnsUnifiedLogsPanel)
 {
 	EXPECT_TRUE(openvr_pair::overlay::IsDefaultLogsPanelPlugin("enable_calibration.flag"));
