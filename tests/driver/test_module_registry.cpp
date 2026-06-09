@@ -9,7 +9,7 @@
 namespace module_registry = openvr_pair::common::modules;
 namespace module_safety = openvr_pair::common::module_safety;
 
-TEST(ModuleRegistry, ContainsAllUserVisibleModules)
+TEST(ModuleRegistry, ContainsAllRegisteredModules)
 {
 	size_t count = 0;
 	const module_registry::ModuleInfo* modules = module_registry::All(&count);

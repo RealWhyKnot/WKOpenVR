@@ -111,7 +111,7 @@ _No notable changes since the last release._
 
     $Promoted = [System.IO.File]::ReadAllText((Join-Path $TempRoot 'CHANGELOG.md'), $Utf8NoBom)
     Assert-Contains -Text $Promoted -Expected '## Unreleased'
-    Assert-Contains -Text $Promoted -Expected '## [v2026.6.4.0](https://github.com/RealWhyKnot/WKOpenVR/releases/tag/v2026.6.4.0)'
+    Assert-Contains -Text $Promoted -Expected '## v2026.6.4.0 -- '
 
     $VersionNotes = (& $Updater -Mode Notes -ForVersion -Version 'v2026.6.4.0' -RepoRoot $TempRoot) -join "`n"
     Assert-Contains -Text $VersionNotes -Expected '**driver:** Test changelog append'

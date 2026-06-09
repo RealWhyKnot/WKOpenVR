@@ -7,7 +7,10 @@ To disable a single feature without uninstalling: from inside WKOpenVR, open the
 - `enable_calibration.flag` -- disables calibration
 - `enable_smoothing.flag` -- disables finger smoothing
 - `enable_inputhealth.flag` -- disables input health monitoring
+- `enable_oscrouter.flag` -- disables OSC routing
 - `enable_facetracking.flag` -- disables face / eye tracking
+- `enable_questapp.flag` -- disables Quest App tools
+- `enable_captions.flag` -- disables captions
 
 Restart SteamVR. With no flag files present the driver loads but stays inert (no hooks, no pipes).
 

@@ -1,21 +1,21 @@
-# Publishes the umbrella release with the umbrella zip, the umbrella
-# Setup.exe, and one Setup.exe per active feature (Calibration, Smoothing,
-# InputHealth at present). Modules carrying modules/<slug>/disabled-in-release.flag
-# are excluded from the per-feature installer loop and from the umbrella
-# zip staging so an unstable feature never lands in the published artifacts.
+# Builds the shared WKOpenVR release artifacts, then publishes one Setup.exe
+# per active public module to that module's repository. Modules carrying
+# modules/<slug>/disabled-in-release.flag are excluded from the per-feature
+# installer loop and from zip staging so an unstable feature never lands in
+# published artifacts.
 
 name: Release
 
-# Triggered by pushing a tag like v2026.5.12.0. Builds the umbrella binary
+# Triggered by pushing a tag like v2026.5.12.0. Builds the shared binary
 # (WKOpenVR.exe), driver (driver_wkopenvr.dll), and -- when their modules
 # are not flagged disabled-in-release -- the C# face-tracking host and the
-# native captions host. Runs the test suite, builds the umbrella zip + the
-# umbrella Setup.exe + one Setup.exe per active feature, and publishes a
-# single GitHub release here.
+# native captions host. Runs the test suite, builds the shared installer for
+# round-trip coverage, builds one Setup.exe per active feature, and publishes
+# those feature installers to their module repositories.
 #
 # Changelog promotion: before the build, Update-Changelog.ps1 renames the
-# "## Unreleased" heading to "## [vTAG] -- DATE". After the GitHub release
-# is created those promoted files are pushed back to main via the GraphQL
+# "## Unreleased" heading to "## vTAG -- DATE". After the module releases
+# are created those promoted files are pushed back to main via the GraphQL
 # createCommitOnBranch mutation (signed server-side).
 on:
   push:
@@ -143,7 +143,7 @@ jobs:
           $CommonBuildChannel = "core/src/common/BuildChannel.h"
           if (Test-Path (Split-Path -Parent $CommonBuildChannel)) {
             Set-Content -Path $CommonBuildChannel -Value @"
-          // Overwritten by release.yml with the umbrella binary's per-build stamp.
+          // Overwritten by release.yml with the shared binary's per-build stamp.
           #pragma once
 
           #define WKOPENVR_BUILD_STAMP "$version"
@@ -159,7 +159,7 @@ jobs:
             # before the runner sees the script, so PowerShell receives a
             # column-0 here-string that satisfies the "@ at column 0 rule.
             Set-Content -Path $ScBuildStamp -Value @"
-          // Overwritten by release.yml with the umbrella binary's per-build stamp.
+          // Overwritten by release.yml with the shared binary's per-build stamp.
           #pragma once
 
           #define SPACECAL_BUILD_STAMP "$version"
@@ -170,7 +170,7 @@ jobs:
           $FtBuildStamp = "modules/facetracking/src/overlay/BuildStamp.h"
           if (Test-Path (Split-Path -Parent $FtBuildStamp)) {
             Set-Content -Path $FtBuildStamp -Value @"
-          // Overwritten by release.yml with the umbrella binary's per-build stamp.
+          // Overwritten by release.yml with the shared binary's per-build stamp.
           #pragma once
 
           #define FACETRACKING_BUILD_STAMP "$version"
@@ -218,7 +218,7 @@ jobs:
               -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "Captions host self-test failed (exit $($p.ExitCode))" }
 
-      - name: Package umbrella zip
+      - name: Package shared zip
         id: zip
         shell: pwsh
         env:
@@ -234,7 +234,7 @@ jobs:
           # build/driver_wkopenvr/resources/<gated-slug>/host populated with
           # host exes that the current release build wouldn't produce. Wipe
           # those orphan directories before staging so they cannot leak into
-          # the umbrella zip.
+          # the shared zip.
           foreach ($slug in 'facetracking','captions','oscrouter','phantom') {
             if (Test-Path -LiteralPath "modules/$slug/disabled-in-release.flag") {
               $orphan = "$driverSrc/resources/$slug"
@@ -385,7 +385,7 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path "release" | Out-Null
 
-          # --- Umbrella zip ---------------------------------------------------
+          # --- Shared zip -----------------------------------------------------
           # One artifact for the published release. The installer drops the
           # appropriate enable_*.flag files at install time, so the zip itself
           # ships with none.
@@ -394,7 +394,7 @@ jobs:
           Compress-Archive -Path "$stage/*" -DestinationPath $umbrellaZipPath -CompressionLevel Optimal
           $umbrellaItem = Get-Item $umbrellaZipPath
           $umbrellaHash = (Get-FileHash $umbrellaZipPath -Algorithm SHA256).Hash
-          Write-Host "Umbrella zip: $($umbrellaItem.Name) ($($umbrellaItem.Length) bytes) sha256=$umbrellaHash"
+          Write-Host "Shared zip: $($umbrellaItem.Name) ($($umbrellaItem.Length) bytes) sha256=$umbrellaHash"
 
           Remove-Item -Recurse -Force $stage
 
@@ -471,7 +471,7 @@ jobs:
           choco install nsis -y --no-progress
           if ($LASTEXITCODE -ne 0) { throw "NSIS install failed (exit $LASTEXITCODE)" }
 
-      - name: Build NSIS installer
+      - name: Build shared NSIS installer
         id: installer
         shell: pwsh
         env:
@@ -525,8 +525,8 @@ jobs:
             [pscustomobject]@{ Name = 'InputHealth';  Slug = 'inputhealth' }
             [pscustomobject]@{ Name = 'FaceTracking'; Slug = 'facetracking' }
             [pscustomobject]@{ Name = 'OSCRouter';    Slug = 'oscrouter' }
+            [pscustomobject]@{ Name = 'QuestApp';     Slug = 'questapp' }
             [pscustomobject]@{ Name = 'Captions';     Slug = 'captions' }
-            [pscustomobject]@{ Name = 'Phantom';      Slug = 'phantom' }
           )
           $features = $allFeatures | Where-Object {
             $marker = "modules/$($_.Slug)/disabled-in-release.flag"
@@ -557,149 +557,95 @@ jobs:
           "installer_inputhealth=$($outputs['InputHealth'])"   >> $env:GITHUB_OUTPUT
           "installer_facetracking=$($outputs['FaceTracking'])" >> $env:GITHUB_OUTPUT
           "installer_oscrouter=$($outputs['OSCRouter'])"       >> $env:GITHUB_OUTPUT
+          "installer_questapp=$($outputs['QuestApp'])"         >> $env:GITHUB_OUTPUT
           "installer_captions=$($outputs['Captions'])"         >> $env:GITHUB_OUTPUT
-          "installer_phantom=$($outputs['Phantom'])"           >> $env:GITHUB_OUTPUT
 
-      - name: Generate release body
-        id: changelog
-        shell: pwsh
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $body = & ./.github/scripts/Generate-ReleaseNotes.ps1 `
-            -ZipPath     '${{ steps.zip.outputs.umbrella_path }}' `
-            -ZipName     '${{ steps.zip.outputs.umbrella_name }}' `
-            -ZipSize     '${{ steps.zip.outputs.umbrella_size }}' `
-            -ZipSha256   '${{ steps.zip.outputs.umbrella_sha256 }}' `
-            -SetupPath   '${{ steps.installer.outputs.path }}' `
-            -SetupName   '${{ steps.installer.outputs.name }}' `
-            -SetupSize   '${{ steps.installer.outputs.size }}' `
-            -SetupSha256 '${{ steps.installer.outputs.sha256 }}'
-          if (-not $body) {
-            throw "Generate-ReleaseNotes.ps1 returned empty output."
-          }
-          $delim = "EOF_" + [Guid]::NewGuid().ToString('N')
-          "body<<$delim" >> $env:GITHUB_OUTPUT
-          $body          >> $env:GITHUB_OUTPUT
-          $delim         >> $env:GITHUB_OUTPUT
-
-      - name: Create GitHub release
+      - name: Publish module releases
         id: publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Per-feature installer paths. A disabled-in-release module's
-          # output is empty here; the assembly loop below filters those out
-          # so gh release create never sees an empty positional arg.
+          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+          # Per-feature installer paths. A disabled-in-release module output
+          # is empty here; the loop filters those entries out so gh release
+          # create never sees an empty positional arg.
           INSTALLER_CALIBRATION:  ${{ steps.feature_installers.outputs.installer_calibration }}
           INSTALLER_SMOOTHING:    ${{ steps.feature_installers.outputs.installer_smoothing }}
           INSTALLER_INPUTHEALTH:  ${{ steps.feature_installers.outputs.installer_inputhealth }}
           INSTALLER_FACETRACKING: ${{ steps.feature_installers.outputs.installer_facetracking }}
           INSTALLER_OSCROUTER:    ${{ steps.feature_installers.outputs.installer_oscrouter }}
+          INSTALLER_QUESTAPP:     ${{ steps.feature_installers.outputs.installer_questapp }}
           INSTALLER_CAPTIONS:     ${{ steps.feature_installers.outputs.installer_captions }}
-          INSTALLER_PHANTOM:      ${{ steps.feature_installers.outputs.installer_phantom }}
         shell: pwsh
         run: |
-          $tag       = "${{ github.ref_name }}"
-          $zip       = "${{ steps.zip.outputs.umbrella_path }}"
-          $installer = "${{ steps.installer.outputs.path }}"
-          $notes     = @'
-          ${{ steps.changelog.outputs.body }}
-          '@
-          $notesPath = Join-Path $env:RUNNER_TEMP 'release-body-input.md'
-          $notes | Out-File -LiteralPath $notesPath -Encoding utf8 -NoNewline
-          "input_path=$notesPath" >> $env:GITHUB_OUTPUT
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "MODULE_RELEASE_TOKEN secret is required to publish module releases."
+          }
 
-          # Assemble the asset list. Umbrella zip + umbrella Setup.exe first,
-          # then any per-feature installers that were actually produced.
-          $assets = @($zip, $installer)
-          $featureInstallers = @(
-            $env:INSTALLER_CALIBRATION,
-            $env:INSTALLER_SMOOTHING,
-            $env:INSTALLER_INPUTHEALTH,
-            $env:INSTALLER_FACETRACKING,
-            $env:INSTALLER_OSCROUTER,
-            $env:INSTALLER_CAPTIONS,
-            $env:INSTALLER_PHANTOM
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $cleanupPath = Join-Path $env:RUNNER_TEMP 'module-release-cleanup.txt'
+          if (Test-Path -LiteralPath $cleanupPath) { Remove-Item -LiteralPath $cleanupPath -Force }
+          New-Item -ItemType File -Path $cleanupPath -Force | Out-Null
+          "cleanup_path=$cleanupPath" >> $env:GITHUB_OUTPUT
+
+          $moduleReleases = @(
+            [pscustomobject]@{ Feature = 'Calibration';  DisplayName = 'Space Calibrator'; Repo = 'RealWhyKnot/WKOpenVR-SpaceCalibrator'; Path = $env:INSTALLER_CALIBRATION }
+            [pscustomobject]@{ Feature = 'Smoothing';    DisplayName = 'Smoothing';        Repo = 'RealWhyKnot/WKOpenVR-Smoothing';        Path = $env:INSTALLER_SMOOTHING }
+            [pscustomobject]@{ Feature = 'InputHealth';  DisplayName = 'Input Health';     Repo = 'RealWhyKnot/WKOpenVR-InputHealth';      Path = $env:INSTALLER_INPUTHEALTH }
+            [pscustomobject]@{ Feature = 'FaceTracking'; DisplayName = 'Face Tracking';    Repo = 'RealWhyKnot/WKOpenVR-FaceTracking';     Path = $env:INSTALLER_FACETRACKING }
+            [pscustomobject]@{ Feature = 'OSCRouter';    DisplayName = 'OSC Router';       Repo = 'RealWhyKnot/WKOpenVR-OSCRouter';        Path = $env:INSTALLER_OSCROUTER }
+            [pscustomobject]@{ Feature = 'QuestApp';     DisplayName = 'Quest App';        Repo = 'RealWhyKnot/WKOpenVR-QuestApp';         Path = $env:INSTALLER_QUESTAPP }
+            [pscustomobject]@{ Feature = 'Captions';     DisplayName = 'Captions';         Repo = 'RealWhyKnot/WKOpenVR-Captions';         Path = $env:INSTALLER_CAPTIONS }
           )
-          foreach ($p in $featureInstallers) {
-            if ($p) { $assets += $p }
-          }
-          Write-Host "Release assets ($($assets.Count)):"
-          $assets | ForEach-Object { Write-Host "  $_" }
 
-          $extra = @()
-          if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
-          gh release create $tag --title $tag --notes-file $notesPath @extra @assets
-
-      - name: Verify published release body matches input
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          $tag       = "${{ github.ref_name }}"
-          $inputPath = "${{ steps.publish.outputs.input_path }}"
-          $expected  = (Get-Content -LiteralPath $inputPath -Raw -Encoding UTF8) -replace "`r`n","`n"
-          $expected  = $expected.TrimEnd("`n")
-
-          function Get-StringSha256 {
-            param([string]$Text)
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
-            $sha   = [System.Security.Cryptography.SHA256]::Create()
-            try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') }
-            finally { $sha.Dispose() }
-          }
-
-          function Test-PublishedBodyMatches {
-            param([string]$Tag, [string]$Expected, [int]$MaxAttempts = 6)
-            $expectedSha = Get-StringSha256 -Text $Expected
-            $delay = 2
-            $lastActual = ''
-            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-              $raw = & gh release view $Tag --json body --jq '.body'
-              if ($LASTEXITCODE -ne 0) { throw "gh release view $Tag failed: $raw" }
-              $actual    = ($raw -replace "`r`n","`n").TrimEnd("`n")
-              $lastActual = $actual
-              $actualSha = Get-StringSha256 -Text $actual
-              if ($actualSha -eq $expectedSha) {
-                Write-Host "Attempt $attempt/${MaxAttempts}: body matches (len=$($actual.Length) sha256=$($actualSha.Substring(0,12)))."
-                return @{ Match = $true; Actual = $actual; AttemptCount = $attempt }
-              }
-              Write-Host "Attempt $attempt/${MaxAttempts}: actual_len=$($actual.Length) expected_len=$($Expected.Length) actual_sha=$($actualSha.Substring(0,12)) expected_sha=$($expectedSha.Substring(0,12))"
-              if ($attempt -lt $MaxAttempts) {
-                Write-Host "Sleeping ${delay}s before retry..."
-                Start-Sleep -Seconds $delay
-                $delay = $delay * 2
-              }
+          $published = 0
+          foreach ($item in $moduleReleases) {
+            if ([string]::IsNullOrWhiteSpace($item.Path)) {
+              Write-Host "Skipping module release for $($item.Feature); installer was not produced."
+              continue
             }
-            return @{ Match = $false; Actual = $lastActual; AttemptCount = $MaxAttempts }
+
+            $installerPath = $item.Path
+            if (-not (Test-Path -LiteralPath $installerPath)) {
+              throw "Installer path missing for $($item.Feature): $installerPath"
+            }
+
+            gh repo view $item.Repo --json nameWithOwner | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Module repo unavailable: $($item.Repo)" }
+
+            $file = Get-Item -LiteralPath $installerPath
+            $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash
+            $notesPath = Join-Path $env:RUNNER_TEMP ("release-notes-" + $item.Feature + ".md")
+            $notesLines = @(
+              "# $($item.DisplayName) $tag",
+              "",
+              "$($item.DisplayName) installer for WKOpenVR $version.",
+              "",
+              "Run this Setup.exe to install WKOpenVR and enable $($item.DisplayName).",
+              "Other WKOpenVR modules can be enabled from the Modules tab or by running another module installer.",
+              "",
+              "SHA256: $hash"
+            )
+            $notes = [string]::Join([System.Environment]::NewLine, $notesLines) + [System.Environment]::NewLine
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($notesPath, $notes, $utf8NoBom)
+
+            $existing = & gh release view $tag --repo $item.Repo --json id 2>$null
+            if ($LASTEXITCODE -eq 0 -and $existing) {
+              Write-Host "Deleting existing module release $tag on $($item.Repo) before retry."
+              gh release delete $tag --repo $item.Repo --yes
+              if ($LASTEXITCODE -ne 0) { throw "Could not delete existing release $tag on $($item.Repo)" }
+            }
+
+            Add-Content -LiteralPath $cleanupPath -Value $item.Repo
+            $extra = @()
+            if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+            Write-Host "Publishing $($file.Name) to $($item.Repo) ($($file.Length) bytes) sha256=$hash"
+            gh release create $tag --repo $item.Repo --target main --title $tag --notes-file $notesPath @extra $installerPath
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed for $($item.Repo)" }
+            $published++
           }
 
-          $result = Test-PublishedBodyMatches -Tag $tag -Expected $expected
-          if ($result.Match) {
-            Write-Host "Published release body matches input on attempt $($result.AttemptCount) ($($expected.Length) chars)."
-            return
-          }
-
-          Write-Host "::warning::Body still differs after $($result.AttemptCount) attempts. Auto-correcting via gh release edit."
-          gh release edit $tag --notes-file $inputPath
-          if ($LASTEXITCODE -ne 0) { throw "gh release edit failed during auto-correct" }
-
-          $recheck = Test-PublishedBodyMatches -Tag $tag -Expected $expected
-          if ($recheck.Match) {
-            Write-Host "Auto-correct succeeded on attempt $($recheck.AttemptCount)."
-            return
-          }
-
-          # The `gh release edit --notes-file` call above already returned
-          # exit 0, which means GitHub accepted the corrected body. Any
-          # remaining mismatch from a follow-up `gh release view` is the
-          # API's eventual-consistency lag, not a real publish failure.
-          # See release_verify_indexing_lag_2026-05-07 -- the same
-          # behaviour bit the SC pipeline. Surface a warning instead of
-          # failing the workflow so the umbrella release stays published.
-          Write-Host "::warning::Release body verify could not confirm the auto-corrected body within $($recheck.AttemptCount) attempts. The edit request succeeded; treating as a transient API lag and continuing."
+          if ($published -eq 0) { throw "No module releases were published." }
 
       - name: Push promoted changelog back to main (verified)
         if: ${{ steps.beta.outputs.is_beta != 'true' }}
@@ -707,9 +653,9 @@ jobs:
         # commit is signed server-side with GitHub's bot key. Done last so a
         # build or release failure does not push a phantom-promoted CHANGELOG.
         # `continue-on-error` because this is post-publish housekeeping --
-        # the umbrella release is already up by this point, so a stale-OID
+        # the module releases are already up by this point, so a stale-OID
         # race against changelog-append landing on main mid-build must not
-        # cascade into the cleanup step deleting an otherwise-valid release.
+        # cascade into the cleanup step deleting otherwise-valid releases.
         continue-on-error: true
         shell: bash
         env:
@@ -805,26 +751,41 @@ jobs:
           echo "Verified promote commit: $new_oid"
 
       - name: Clean up partial release on failure
-        # When any step after "Create GitHub release" fails, the umbrella
-        # release is up and points at a commit that the next retry may
-        # rewrite. Delete it so the retry starts from a clean slate.
+        # Delete only module releases that this workflow attempted to create.
+        # Leave tags intact so the source repo tag and module repo tags remain
+        # available for inspection after a failed run.
         if: failure()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
         shell: pwsh
         run: |
-          $tag  = $env:TAG_NAME
-          $repo = "${{ github.repository }}"
-          $exists = gh release view $tag --repo $repo --json id 2>$null
-          if ($LASTEXITCODE -eq 0 -and $exists) {
-            Write-Host "Cleanup: deleting umbrella release $tag from $repo."
-            gh release delete $tag --repo $repo --yes --cleanup-tag
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::Could not auto-delete umbrella release $tag on $repo. Manual cleanup may be needed before retrying."
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            Write-Host "::warning::MODULE_RELEASE_TOKEN secret is unavailable; skipping module release cleanup."
+            $global:LASTEXITCODE = 0
+            return
+          }
+
+          $tag = $env:TAG_NAME
+          $cleanupPath = "${{ steps.publish.outputs.cleanup_path }}"
+          if ([string]::IsNullOrWhiteSpace($cleanupPath) -or -not (Test-Path -LiteralPath $cleanupPath)) {
+            Write-Host "Cleanup: no module release cleanup list was written."
+            $global:LASTEXITCODE = 0
+            return
+          }
+
+          $repos = Get-Content -LiteralPath $cleanupPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+          foreach ($repo in $repos) {
+            $exists = gh release view $tag --repo $repo --json id 2>$null
+            if ($LASTEXITCODE -eq 0 -and $exists) {
+              Write-Host "Cleanup: deleting module release $tag from $repo."
+              gh release delete $tag --repo $repo --yes
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "::warning::Could not auto-delete module release $tag on $repo. Manual cleanup may be needed before retrying."
+              }
+            } else {
+              Write-Host "Cleanup: no module release $tag on $repo -- nothing to remove."
             }
-          } else {
-            Write-Host "Cleanup: no umbrella release $tag on $repo -- nothing to remove."
           }
 
           # `gh release view` on a non-existent release returns 1; reset so

@@ -2,21 +2,19 @@
 
 #include <string>
 
-// Umbrella-wide "is there a newer release on GitHub" probe.
+// Shared "is there a newer release on GitHub" probe.
 //
 // StartUpdateCheck() spawns a one-shot worker that hits
-// api.github.com/repos/RealWhyKnot/WKOpenVR/releases/latest, parses
-// tag_name + html_url, and compares the remote stamp to the local
-// OPENVR_PAIR_VERSION_STRING. The UI polls GetUpdateNoticeState() each
-// frame; the shared ShellFooter renders an indicator when
-// state.available is true.
+// the canonical module release endpoint, parses tag_name + html_url, and
+// compares the remote stamp to the local OPENVR_PAIR_VERSION_STRING. The
+// UI polls GetUpdateNoticeState() each frame; the shared ShellFooter renders
+// an indicator when state.available is true.
 //
 // Replaces the calibration-tab UpdateChecker / Updater pair that pre-dated
 // the monorepo migration -- that one was scoped to one tab, pointed at
-// the old WKOpenVR-SpaceCalibrator repo, and shipped a heavy download /
-// install banner. The umbrella case is just a "you should grab a new
-// build" notice; the user clicks through to the release page and runs
-// the installer themselves.
+// the old calibration repo, and shipped a heavy download / install banner.
+// The shared case is just a "you should grab a new build" notice; the user
+// clicks through to a module release page and runs the installer themselves.
 
 namespace openvr_pair::overlay {
 

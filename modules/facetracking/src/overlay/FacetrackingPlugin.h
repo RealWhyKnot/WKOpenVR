@@ -33,10 +33,6 @@ public:
 	const char* Name() const override { return ModuleName(ModuleId::FaceTracking); }
 	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::FaceTracking); }
 	const char* PipeName() const override { return ModulePipeName(ModuleId::FaceTracking); }
-	openvr_pair::overlay::FeaturePluginChannel Channel() const override
-	{
-		return openvr_pair::overlay::FeaturePluginChannel::Development;
-	}
 
 	void OnStart(openvr_pair::overlay::ShellContext& ctx) override;
 	void OnShutdown(openvr_pair::overlay::ShellContext& ctx) override;

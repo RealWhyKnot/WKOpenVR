@@ -9,6 +9,8 @@
 ;   makensis /DFEATURE=Smoothing    installer.nsi
 ;   makensis /DFEATURE=InputHealth  installer.nsi
 ;   makensis /DFEATURE=FaceTracking installer.nsi
+;   makensis /DFEATURE=OSCRouter    installer.nsi
+;   makensis /DFEATURE=QuestApp     installer.nsi
 ;   makensis /DFEATURE=Captions     installer.nsi
 ;       -> WKOpenVR-<Feature>-Setup.exe  (single feature pre-enabled)
 
@@ -49,6 +51,14 @@
     !if "${FEATURE}" == "FaceTracking"
         Name "WKOpenVR (FaceTracking)"
         OutFile "..\build\artifacts\Release\WKOpenVR-FaceTracking-Setup.exe"
+    !endif
+    !if "${FEATURE}" == "OSCRouter"
+        Name "WKOpenVR (OSCRouter)"
+        OutFile "..\build\artifacts\Release\WKOpenVR-OSCRouter-Setup.exe"
+    !endif
+    !if "${FEATURE}" == "QuestApp"
+        Name "WKOpenVR (QuestApp)"
+        OutFile "..\build\artifacts\Release\WKOpenVR-QuestApp-Setup.exe"
     !endif
     !if "${FEATURE}" == "Captions"
         Name "WKOpenVR (Captions)"
@@ -219,6 +229,12 @@ Section "Install"
     !if "${FEATURE}" == "FaceTracking"
         CreateShortCut "$SMPROGRAMS\WKOpenVR\WKOpenVR - Face Tracking.lnk"    "$INSTDIR\WKOpenVR.exe" "--launch=facetracking" "$INSTDIR\WKOpenVR.exe" 0 SW_SHOWNORMAL "" "Face Tracking in WKOpenVR"
     !endif
+    !if "${FEATURE}" == "OSCRouter"
+        CreateShortCut "$SMPROGRAMS\WKOpenVR\WKOpenVR - OSC Router.lnk"       "$INSTDIR\WKOpenVR.exe" "--launch=oscrouter"    "$INSTDIR\WKOpenVR.exe" 0 SW_SHOWNORMAL "" "OSC Router in WKOpenVR"
+    !endif
+    !if "${FEATURE}" == "QuestApp"
+        CreateShortCut "$SMPROGRAMS\WKOpenVR\WKOpenVR - Quest App.lnk"        "$INSTDIR\WKOpenVR.exe" "--launch=questapp"     "$INSTDIR\WKOpenVR.exe" 0 SW_SHOWNORMAL "" "Quest App in WKOpenVR"
+    !endif
     !if "${FEATURE}" == "Captions"
         CreateShortCut "$SMPROGRAMS\WKOpenVR\WKOpenVR - Captions.lnk"         "$INSTDIR\WKOpenVR.exe" "--launch=captions"     "$INSTDIR\WKOpenVR.exe" 0 SW_SHOWNORMAL "" "Live Captions in WKOpenVR"
     !endif
@@ -261,32 +277,6 @@ Section "Install"
         DetailPrint "CaptionsHost not embedded in this installer (OPENVR_PAIR_BUILD_CAPTIONS_HOST=OFF or build missing); Captions feature will run inert until the host is staged manually."
     !endif
 
-    ; Phantom-tracker input-profile JSONs (one per vive_tracker_<role>).
-    ; VirtualTrackerDevice references each via Prop_InputProfilePath_String =
-    ; "{01wkopenvr}/input/vive_tracker_<role>_profile.json". Required for
-    ; SteamVR's tracker manager + VRChat / Resonite role auto-binding to
-    ; recognise absent-mode virtual trackers.
-    !if /FileExists "${DRIVER_BASEDIR}\resources\input\vive_tracker_waist_profile.json"
-        SetOutPath "$vrRuntimePath\drivers\01wkopenvr\resources\input"
-        File /r "${DRIVER_BASEDIR}\resources\input\vive_tracker_*_profile.json"
-    !else
-        DetailPrint "Phantom input profiles missing from build; absent-mode virtual trackers will not auto-bind."
-    !endif
-
-    ; Optional future Phantom backend (native Win64 exe). The deterministic
-    ; completion path runs in the driver and does not launch this process.
-    ; Keep the binary staged so later backend work can reuse this path.
-    ; Same /FileExists guard as the captions / facetracking hosts: omits
-    ; the File directive silently when the build host didn't produce the
-    ; sidecar (OPENVR_PAIR_BUILD_PHANTOM_SIDECAR=OFF), so makensis does
-    ; not abort with "no files found".
-    !if /FileExists "${DRIVER_BASEDIR}\resources\phantom\host\WKOpenVRPhantomSidecar.exe"
-        SetOutPath "$vrRuntimePath\drivers\01wkopenvr\resources\phantom\host"
-        File /r "${DRIVER_BASEDIR}\resources\phantom\host\*.*"
-    !else
-        DetailPrint "WKOpenVRPhantomSidecar.exe not embedded in this installer; Phantom deterministic completion still runs in the driver."
-    !endif
-
     ; Drop the feature enable flag when building a per-feature installer.
     ; Content matches what ShellContext::SetFlagPresent writes:
     ;   Set-Content -Value enabled -NoNewline
@@ -314,17 +304,23 @@ Section "Install"
         FileClose $0
         DetailPrint "Enabled feature: FaceTracking"
     !endif
+    !if "${FEATURE}" == "OSCRouter"
+        FileOpen $0 "$vrRuntimePath\drivers\01wkopenvr\resources\enable_oscrouter.flag" w
+        FileWrite $0 "enabled"
+        FileClose $0
+        DetailPrint "Enabled feature: OSCRouter"
+    !endif
+    !if "${FEATURE}" == "QuestApp"
+        FileOpen $0 "$vrRuntimePath\drivers\01wkopenvr\resources\enable_questapp.flag" w
+        FileWrite $0 "enabled"
+        FileClose $0
+        DetailPrint "Enabled feature: QuestApp"
+    !endif
     !if "${FEATURE}" == "Captions"
         FileOpen $0 "$vrRuntimePath\drivers\01wkopenvr\resources\enable_captions.flag" w
         FileWrite $0 "enabled"
         FileClose $0
         DetailPrint "Enabled feature: Captions"
-    !endif
-    !if "${FEATURE}" == "Phantom"
-        FileOpen $0 "$vrRuntimePath\drivers\01wkopenvr\resources\enable_phantom.flag" w
-        FileWrite $0 "enabled"
-        FileClose $0
-        DetailPrint "Enabled feature: Phantom"
     !endif
 
     WriteRegStr HKLM "Software\WKOpenVR\Main" "" "$INSTDIR"

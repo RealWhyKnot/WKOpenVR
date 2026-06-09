@@ -13,11 +13,10 @@
              types that aren't user-visible (docs/build/ci/chore/test) so the
              changelog stays focused on behavior changes.
 
-    Promote  Renames the "## Unreleased" heading to "## [vTAG](...) -- DATE",
-             links to the GitHub release page, and inserts a fresh empty
-             "## Unreleased" section above. Used by release.yml on tag push so
-             the embedded CHANGELOG.md inside the shipped exe carries the
-             versioned notes for that release.
+    Promote  Renames the "## Unreleased" heading to "## vTAG -- DATE" and
+             inserts a fresh empty "## Unreleased" section above. Used by
+             release.yml on tag push so the embedded CHANGELOG.md inside the
+             shipped exe carries the versioned notes for that release.
 
     Notes    Reads the current "## Unreleased" section content (or, with
              -ForVersion, reads the section for that version) and writes it to
@@ -42,7 +41,8 @@
   version instead of the live "## Unreleased" section.
 
 .PARAMETER Repo
-  owner/repo for release-link generation, defaults to $env:GITHUB_REPOSITORY.
+  Accepted for compatibility with older workflow calls; promoted headings no
+  longer link to the source repository release page.
 
 .PARAMETER RepoRoot
   Repo root, defaults to the script's parent's parent's parent (.github/scripts/.. -> .github/.. -> repo root).
@@ -371,11 +371,9 @@ if ($Mode -eq 'Append') {
 
 if ($Mode -eq 'Promote') {
     if (-not $Version) { throw "Promote mode requires -Version (e.g. v2026.4.27.3)." }
-    if (-not $Repo)    { throw "Promote mode requires -Repo or `$env:GITHUB_REPOSITORY (e.g. owner/repo)." }
 
     $today = (Get-Date -Format 'yyyy-MM-dd')
-    $emdash = [char]0x2014  # avoid embedding raw em-dash so the script parses identically on PS 5.1 (ANSI-default) and pwsh
-    $heading = "## [$Version](https://github.com/$Repo/releases/tag/$Version) $emdash $today"
+    $heading = "## $Version -- $today"
 
     $content = Read-TextUtf8 -Path $RootChangelog
     $section = Find-UnreleasedSection -Content $content
@@ -395,8 +393,7 @@ if ($Mode -eq 'Promote') {
     }
     if (-not $hasReal) {
         # Empty section: the released version still gets an entry, just
-        # with a stub note. This keeps the heading -> release-page link
-        # alive so users browsing the changelog can click through.
+        # with a stub note.
         $bodyLines = @('', '_Maintenance release; see commit log for details._', '')
     }
 
@@ -408,7 +405,7 @@ if ($Mode -eq 'Promote') {
     #
     #   ---
     #
-    #   ## [vX] - DATE
+    #   ## vX -- DATE
     #   <bodyLines>
     #   ---
     #   <rest>
@@ -441,9 +438,10 @@ if ($Mode -eq 'Notes') {
 
     if ($ForVersion) {
         if (-not $Version) { throw "Notes -ForVersion requires -Version." }
-        # Find "## [vTag](...) -- DATE" -- the heading pattern Promote writes.
+        # Find either the current plain heading pattern or the older linked
+        # heading pattern written before module repos became the release surface.
         $escaped = [regex]::Escape($Version)
-        $pattern = "(?ms)^##\s+\[" + $escaped + "\][^\n]*\n(.*?)(?=^---\s*$|^##\s+|\z)"
+        $pattern = "(?ms)^##\s+(?:\[" + $escaped + "\][^\n]*|" + $escaped + "[^\n]*)\n(.*?)(?=^---\s*$|^##\s+|\z)"
         $m = [regex]::Match($content, $pattern)
         if (-not $m.Success) {
             Write-Error "No section found for $Version in CHANGELOG.md."

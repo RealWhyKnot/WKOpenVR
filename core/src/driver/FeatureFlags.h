@@ -4,15 +4,18 @@
 
 // Runtime feature detection. The driver looks for marker files in its own
 // resources directory at Init() and only wires up the matching subsystems.
-// Each consumer overlay's installer drops the appropriate flag:
+// Public module installers drop the appropriate flag:
 //
 //   resources/enable_calibration.flag    -- WKOpenVR-SpaceCalibrator
 //   resources/enable_smoothing.flag      -- WKOpenVR-Smoothing
-//   resources/enable_dashboardinput.flag -- WKOpenVR-DashboardInput
 //   resources/enable_inputhealth.flag    -- WKOpenVR-InputHealth
-//   resources/enable_facetracking.flag   -- WKOpenVR-VRCFT
+//   resources/enable_facetracking.flag   -- WKOpenVR-FaceTracking
 //   resources/enable_oscrouter.flag      -- WKOpenVR-OSCRouter
 //   resources/enable_captions.flag       -- WKOpenVR-Captions
+//
+// Dev-only modules may also use:
+//
+//   resources/enable_dashboardinput.flag -- WKOpenVR-DashboardInput
 //   resources/enable_phantom.flag        -- WKOpenVR-Phantom
 //
 // Any subset (including the empty subset) may be present. With no flags the

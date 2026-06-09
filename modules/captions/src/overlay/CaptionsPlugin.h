@@ -25,10 +25,6 @@ public:
 	const char* Name() const override { return ModuleName(ModuleId::Captions); }
 	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::Captions); }
 	const char* PipeName() const override { return ModulePipeName(ModuleId::Captions); }
-	openvr_pair::overlay::FeaturePluginChannel Channel() const override
-	{
-		return openvr_pair::overlay::FeaturePluginChannel::Development;
-	}
 
 	void OnStart(openvr_pair::overlay::ShellContext& ctx) override;
 	void OnShutdown(openvr_pair::overlay::ShellContext& ctx) override;

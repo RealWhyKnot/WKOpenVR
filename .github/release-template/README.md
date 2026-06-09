@@ -1,6 +1,6 @@
 # Release-body templates
 
-`Generate-ReleaseNotes.ps1` reads each `.md` file in this directory and emits its content as a section of the GitHub release body. The order is fixed: title, auto-changelog slice, file integrity, then `links.md`, `install.md`, `uninstall.md`, `what-you-need-to-do.md`, then optional extras from `.github/release-extras/<tag>.md`.
+`Generate-ReleaseNotes.ps1` reads each `.md` file in this directory and emits its content as a section of a WKOpenVR release body. The tag workflow publishes end-user installers from the module repositories; this generator stays covered by tests so source-repo release notes can still be composed if needed. The order is fixed: title, auto-changelog slice, file integrity, then `links.md`, `install.md`, `uninstall.md`, `what-you-need-to-do.md`, then optional extras from `.github/release-extras/<tag>.md`.
 
 ## Tokens
 

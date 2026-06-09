@@ -17,10 +17,6 @@ public:
 	const char* Name() const override { return ModuleName(ModuleId::OscRouter); }
 	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::OscRouter); }
 	const char* PipeName() const override { return ModulePipeName(ModuleId::OscRouter); }
-	openvr_pair::overlay::FeaturePluginChannel Channel() const override
-	{
-		return openvr_pair::overlay::FeaturePluginChannel::Development;
-	}
 
 	bool IsInstalled(openvr_pair::overlay::ShellContext& ctx) const override;
 	void Tick(openvr_pair::overlay::ShellContext& ctx) override;

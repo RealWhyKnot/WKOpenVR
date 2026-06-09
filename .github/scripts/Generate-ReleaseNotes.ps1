@@ -5,7 +5,7 @@
   per-repo template sections plus a per-file integrity table.
 
 .DESCRIPTION
-  Composes a multi-section markdown body for the release page. Section order:
+  Composes a multi-section markdown body for a source-repo release note. Section order:
 
     1. Title (h1: "<repo> <tag>")
     2. What's Changed (auto-changelog from the commit slice between prev tag

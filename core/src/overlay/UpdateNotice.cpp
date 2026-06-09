@@ -32,7 +32,7 @@ namespace {
 // somewhere else by mutating a config file. Editing this line is a
 // deliberate recompile.
 constexpr wchar_t kHost[] = L"api.github.com";
-constexpr wchar_t kPath[] = L"/repos/RealWhyKnot/WKOpenVR/releases/latest";
+constexpr wchar_t kPath[] = L"/repos/RealWhyKnot/WKOpenVR-SpaceCalibrator/releases/latest";
 constexpr wchar_t kUserAgent[] = L"WKOpenVR-UpdateNotice/1.0";
 
 // Parse YYYY.M.D.N[-XXXX]? (with optional leading "v") into four numeric
