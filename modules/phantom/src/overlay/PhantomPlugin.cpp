@@ -53,15 +53,6 @@ ui::StatusTone ToStatusTone(phantom::ui::PhantomTone t)
 	return ui::StatusTone::Idle;
 }
 
-// Dimmed cell-background fill for a diagnostics row, derived from the active
-// theme's status color so it tracks theme switches. Idle returns 0 (no fill).
-ImU32 ToneCellBg(phantom::ui::PhantomTone t)
-{
-	if (t == phantom::ui::PhantomTone::Idle) return 0;
-	const ImVec4 c = ui::StatusColor(ToStatusTone(t));
-	return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.35f));
-}
-
 } // namespace
 
 void PhantomPlugin::OnStart(openvr_pair::overlay::ShellContext&)
@@ -260,10 +251,12 @@ void PhantomPlugin::DrawDropoutsTab()
 			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, sizeof(buffer), &err);
 			const std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
 
-			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer), &err);
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer),
+			                                         &err);
 			const std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
 
-			if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(deviceClass, serial, model, trackingSystem)) {
+			if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(deviceClass, serial, model,
+			                                                               trackingSystem)) {
 				continue;
 			}
 
@@ -302,11 +295,13 @@ void PhantomPlugin::DrawDiagnosticsTab()
 	}
 	const auto* layout = stateShmem_.layout();
 	if (layout->magic != phantom::kPhantomStateShmemMagic) {
-		ui::DrawErrorBanner("Driver mismatch", "Driver state has unexpected magic; reinstall so the driver and overlay match.");
+		ui::DrawErrorBanner("Driver mismatch",
+		                    "Driver state has unexpected magic; reinstall so the driver and overlay match.");
 		return;
 	}
 	if (layout->version != phantom::kPhantomStateShmemVersion) {
-		ui::DrawErrorBanner("Driver mismatch", "Driver state has unexpected version; reinstall so the driver and overlay match.");
+		ui::DrawErrorBanner("Driver mismatch",
+		                    "Driver state has unexpected version; reinstall so the driver and overlay match.");
 		return;
 	}
 
@@ -342,7 +337,7 @@ void PhantomPlugin::DrawDiagnosticsTab()
 			ImGui::Text("%.*s", (int)d.serial_len, d.serial);
 
 			ImGui::TableSetColumnIndex(1);
-			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ToneCellBg(phantom::ui::TrackerStateTone(state)));
+			ui::SetCellToneBg(ToStatusTone(phantom::ui::TrackerStateTone(state)));
 			ImGui::TextUnformatted(phantom::TrackerStateLabel(state));
 
 			ImGui::TableSetColumnIndex(2);
@@ -391,7 +386,7 @@ void PhantomPlugin::DrawDiagnosticsTab()
 			rightCell(buf);
 
 			ImGui::TableSetColumnIndex(2);
-			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ToneCellBg(phantom::ui::SolverModeTone(r.solver_mode)));
+			ui::SetCellToneBg(ToStatusTone(phantom::ui::SolverModeTone(r.solver_mode)));
 			ImGui::TextUnformatted(SolverModeLabel(r.solver_mode));
 
 			ImGui::TableSetColumnIndex(3);
@@ -950,7 +945,8 @@ void PhantomPlugin::DrawCalibrationTab()
 			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_RenderModelName_String, buffer, sizeof(buffer), &err);
 			const std::string model = (err == vr::TrackedProp_Success) ? buffer : "";
 
-			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer), &err);
+			vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, sizeof(buffer),
+			                                         &err);
 			const std::string trackingSystem = (err == vr::TrackedProp_Success) ? buffer : "";
 
 			if (!openvr_pair::overlay::ShouldShowInSmoothingPredictionList(cls, serial, model, trackingSystem)) {
