@@ -633,6 +633,7 @@ if ($srcKind -eq 'registry') {
         $expectedSha = (Get-Prop $src @('payload_sha256','sha256','SHA256') '').ToLower()
         $expectedMd5 = (Get-Prop $src @('file_hash','FileHash','md5') '').ToLower()
         $registryManifest = $null
+        $canonicalPayloadUrl = ''
 
         $registryManifest = Get-RegistryManifest $uuid $ver
         if ($null -ne $registryManifest) {
@@ -654,6 +655,7 @@ if ($srcKind -eq 'registry') {
         if ([string]::IsNullOrEmpty($downloadUrl)) {
             $downloadUrl = "$base/v1/modules/$uuid/versions/$ver/payload"
         }
+        $canonicalPayloadUrl = "$base/v1/modules/$uuid/versions/$ver/payload"
 
         $downloadLower = $downloadUrl.ToLowerInvariant()
         $isDllPayload = $downloadLower -match '\.dll($|\?)'
@@ -662,17 +664,47 @@ if ($srcKind -eq 'registry') {
                                              [System.IO.Path]::GetRandomFileName())
         $wrapperDir = ''
         try {
-            Invoke-WebRequest -Uri $downloadUrl -OutFile $tmpPayload -UseBasicParsing -Headers $headers
-
-            $actualSha = Get-Sha256 -filePath $tmpPayload
-            if (-not [string]::IsNullOrEmpty($expectedSha) -and $actualSha -ne $expectedSha) {
-                throw "SHA-256 mismatch for ${uuid} ${ver}: expected $expectedSha got $actualSha"
+            $downloadCandidates = @()
+            if ($null -ne $registryManifest -and -not [string]::IsNullOrEmpty($canonicalPayloadUrl)) {
+                $downloadCandidates += $canonicalPayloadUrl
             }
-            if (-not [string]::IsNullOrEmpty($expectedMd5)) {
-                $actualMd5 = Get-Md5 -filePath $tmpPayload
-                if ($actualMd5 -ne $expectedMd5) {
-                    throw "MD5 mismatch for ${uuid} ${ver}: expected $expectedMd5 got $actualMd5"
+            if (-not [string]::IsNullOrEmpty($downloadUrl) -and -not ($downloadCandidates -contains $downloadUrl)) {
+                $downloadCandidates += $downloadUrl
+            }
+            if ($downloadCandidates.Count -eq 0) {
+                throw "No download URL is available for $uuid $ver."
+            }
+
+            $actualSha = ''
+            $downloadErrors = @()
+            $downloaded = $false
+            foreach ($candidateUrl in $downloadCandidates) {
+                try {
+                    Remove-Item -Force -Path $tmpPayload -ErrorAction SilentlyContinue
+                    Invoke-WebRequest -Uri $candidateUrl -OutFile $tmpPayload -UseBasicParsing -Headers $headers
+
+                    $candidateSha = Get-Sha256 -filePath $tmpPayload
+                    if (-not [string]::IsNullOrEmpty($expectedSha) -and $candidateSha -ne $expectedSha) {
+                        throw "SHA-256 mismatch for ${uuid} ${ver}: expected $expectedSha got $candidateSha"
+                    }
+                    if (-not [string]::IsNullOrEmpty($expectedMd5)) {
+                        $actualMd5 = Get-Md5 -filePath $tmpPayload
+                        if ($actualMd5 -ne $expectedMd5) {
+                            throw "MD5 mismatch for ${uuid} ${ver}: expected $expectedMd5 got $actualMd5"
+                        }
+                    }
+
+                    $downloadUrl = $candidateUrl
+                    $actualSha = $candidateSha
+                    $downloaded = $true
+                    break
+                } catch {
+                    $downloadErrors += "${candidateUrl}: $_"
+                    Remove-Item -Force -Path $tmpPayload -ErrorAction SilentlyContinue
                 }
+            }
+            if (-not $downloaded) {
+                throw ("Download or verification failed for ${uuid} ${ver}: " + ($downloadErrors -join '; '))
             }
 
             New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null

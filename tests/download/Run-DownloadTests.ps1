@@ -148,6 +148,10 @@ try {
 	$content = $content -replace '%FIXTURE_BASE%', $FixtureBaseUrl
 	[System.IO.File]::WriteAllText($registryIndexDst, $content, (New-Object System.Text.UTF8Encoding($false)))
 	[System.IO.File]::WriteAllText($registryIndexSrc, $content, (New-Object System.Text.UTF8Encoding($false)))
+	$nativeRegistryIndexSrc = $Summary.native_registry_index
+	$content = Get-Content -LiteralPath $nativeRegistryIndexSrc -Raw
+	$content = $content -replace '%FIXTURE_BASE%', $FixtureBaseUrl
+	[System.IO.File]::WriteAllText($nativeRegistryIndexSrc, $content, (New-Object System.Text.UTF8Encoding($false)))
 
 	# Redirect captions + face-module-sync to write under our isolated tree.
 	$env:WKOPENVR_LOCALAPPDATA_OVERRIDE = $LocalAppDataLow
@@ -319,7 +323,54 @@ try {
 	Write-CasePass "facetracking-registry-install-selected"
 
 	# --------------------------------------------------------------------
-	# Case 9: facetracking missing folder reports a structured failure.
+	# Case 9: facetracking native registry prefers canonical payload route.
+	# --------------------------------------------------------------------
+	Write-CaseStart "facetracking-native-registry-canonical-payload"
+	$nativeRegistrySourceId = 'harness-native-registry-1'
+	$nativeRegistryUrl = ($FixtureBaseUrl.TrimEnd('/') + '/native-registry')
+	$nativeRegistryJson = [ordered]@{
+		id = $nativeRegistrySourceId
+		kind = 'registry'
+		url = $nativeRegistryUrl
+		label = 'Harness native registry'
+	} | ConvertTo-Json -Compress
+	$nativeListResultPath = Join-Path $WorkingRoot 'face-native-registry-list-result.json'
+	$nativeListExit = Invoke-FaceSync -Action 'update' -Kind 'registry' -SourceData $nativeRegistryJson -SourceId $nativeRegistrySourceId -ResultPath $nativeListResultPath
+	if ($nativeListExit -ne 0) { throw "face-module-sync native registry list exited $nativeListExit" }
+	$nativeAvailablePath = Join-Path $LocalAppDataLow "WKOpenVR\facetracking\available\$nativeRegistrySourceId.json"
+	Assert-FileExists $nativeAvailablePath 'native available modules cache'
+	$nativeAvailable = Get-Content -LiteralPath $nativeAvailablePath -Raw | ConvertFrom-Json
+	Assert-True (@($nativeAvailable.modules).Count -eq 1) "native available cache should contain one module"
+	$nativeModule = $nativeAvailable.modules[0]
+	Assert-True ($nativeModule.uuid -eq $Summary.native_module_uuid) "native available module uuid should match fixture"
+	Assert-True ($nativeModule.payload_url -match 'wrong-sha=1') "native fixture should advertise a bad external payload URL"
+	$nativeInstallJson = [ordered]@{
+		id = $nativeRegistrySourceId
+		kind = 'registry'
+		url = $nativeRegistryUrl
+		label = 'Harness native registry'
+		uuid = $nativeModule.uuid
+		version = $nativeModule.version
+		name = $nativeModule.name
+		vendor = $nativeModule.vendor
+		payload_url = $nativeModule.payload_url
+		payload_sha256 = $nativeModule.payload_sha256
+	} | ConvertTo-Json -Compress
+	$nativeInstallResultPath = Join-Path $WorkingRoot 'face-native-registry-install-result.json'
+	$nativeInstallExit = Invoke-FaceSync -Action 'install' -Kind 'registry' -SourceData $nativeInstallJson -SourceId $nativeRegistrySourceId -ResultPath $nativeInstallResultPath -ShadowGetFileHash $true
+	if ($nativeInstallExit -ne 0) { throw "face-module-sync native registry install exited $nativeInstallExit" }
+	$nativeInstallResult = Get-Content -LiteralPath $nativeInstallResultPath -Raw | ConvertFrom-Json
+	Assert-True $nativeInstallResult.ok "native registry install result must report ok=true (msg='$($nativeInstallResult.message)')"
+	$nativeInstallDir = Join-Path $LocalAppDataLow ("WKOpenVR\facetracking\modules\" + $Summary.native_module_uuid + "\" + $Summary.native_module_version)
+	Assert-FileExists (Join-Path $nativeInstallDir 'manifest.json') 'native registry installed manifest'
+	Assert-FileExists (Join-Path $nativeInstallDir $Summary.native_module_assembly) 'native registry installed module dll'
+	$nativeSource = Get-Content -LiteralPath (Join-Path $nativeInstallDir 'source.json') -Raw | ConvertFrom-Json
+	Assert-True ($nativeSource.download_url -match '/native-registry/v1/modules/.*/payload$') "native install should record canonical registry payload URL"
+	Assert-Sha256Matches (Join-Path $nativeInstallDir $Summary.native_module_assembly) ((Get-FileHash -LiteralPath (Join-Path $StagingDir "native-module\$($Summary.native_module_assembly)") -Algorithm SHA256).Hash)
+	Write-CasePass "facetracking-native-registry-canonical-payload"
+
+	# --------------------------------------------------------------------
+	# Case 10: facetracking missing folder reports a structured failure.
 	# --------------------------------------------------------------------
 	Write-CaseStart "facetracking-folder-missing-source"
 	$bogusFolder = Join-Path $WorkingRoot ('no-such-folder-' + ([Guid]::NewGuid().ToString('N')))

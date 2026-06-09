@@ -150,7 +150,101 @@ $registryIndex = [ordered]@{
 Write-UTF8NoBom -Path (Join-Path $registryDir 'index.json') `
 	-Content ($registryIndex | ConvertTo-Json -Depth 8)
 
-# 5. Emit a small summary the test runner can read to know the fixture paths
+# 5. Native registry fixture. The manifest advertises a bad external payload
+# URL, while /v1/modules/<uuid>/versions/<version>/payload serves the verified
+# registry payload. This catches installers that prefer the external URL over
+# the registry-owned payload endpoint.
+$nativeRegistryDir = Join-Path $OutputRoot 'native-registry'
+$nativeUuid = 'f1c7a000-0002-4f00-8000-fb7651000002'
+$nativeVersion = '2026.6.7.0-beta'
+$nativeModuleDir = Join-Path $OutputRoot 'native-module'
+$nativeAssemblyName = 'WKOpenVR.FaceTracking.NativeStub.dll'
+New-RandomBytes -Path (Join-Path $nativeModuleDir $nativeAssemblyName) -Length 8192 -Seed 14
+
+$nativePayloadDir = Join-Path $nativeRegistryDir "v1\modules\$nativeUuid\versions\$nativeVersion"
+New-Item -ItemType Directory -Force -Path $nativePayloadDir | Out-Null
+$nativeZipPath = Join-Path $nativePayloadDir 'payload.zip'
+if (Test-Path -LiteralPath $nativeZipPath) { Remove-Item -LiteralPath $nativeZipPath -Force }
+Compress-Archive -Path (Join-Path $nativeModuleDir '*') -DestinationPath $nativeZipPath -CompressionLevel Fastest
+$nativeZipSha = Get-Sha $nativeZipPath
+$nativeZipSize = (Get-Item -LiteralPath $nativeZipPath).Length
+
+$nativeManifest = [ordered]@{
+	schema          = 1
+	uuid            = $nativeUuid
+	name            = 'WKOpenVR Native Registry Stub'
+	vendor          = 'WhyKnot'
+	homepage        = 'https://example.invalid/native-fixture'
+	license         = 'GPL-3.0-only'
+	version         = $nativeVersion
+	sdk_version     = '2026.6.7.0-beta'
+	min_host_version = '1.0'
+	supported_hmds  = @('*')
+	capabilities    = @('expression', 'audio')
+	platforms       = @('windows-x64')
+	module_kind     = 'wkopenvr-native'
+	module_api      = 'WKOpenVR.FaceTracking.Sdk/2026.6.7.0-beta'
+	sdk_package     = 'WKOpenVR.FaceTracking.Sdk'
+	entry_assembly  = $nativeAssemblyName
+	entry_type      = 'WKOpenVR.FaceTracking.NativeStub.Module'
+	dependencies    = @()
+	release_tag     = 'v2026.6.7.0-beta'
+	release_url     = 'https://example.invalid/native-fixture/releases/v2026.6.7.0-beta'
+	release_channel = 'beta'
+	prerelease      = $true
+	payload_url     = '%FIXTURE_BASE%native-registry/bad-payload.zip?wrong-sha=1'
+	payload_sha256  = $nativeZipSha
+	payload_size    = $nativeZipSize
+}
+Write-UTF8NoBom -Path (Join-Path $nativePayloadDir 'manifest.json') `
+	-Content ($nativeManifest | ConvertTo-Json -Depth 8)
+New-Item -ItemType Directory -Force -Path (Join-Path $nativeRegistryDir "v1\modules\$nativeUuid") | Out-Null
+Copy-Item -LiteralPath (Join-Path $nativePayloadDir 'manifest.json') `
+	-Destination (Join-Path $nativeRegistryDir "v1\modules\$nativeUuid\manifest.json") -Force
+
+$nativeIndex = [ordered]@{
+	schema = 1
+	generated_at = '2026-06-07T00:00:00Z'
+	modules = @(
+		[ordered]@{
+			uuid            = $nativeUuid
+			name            = $nativeManifest.name
+			vendor          = $nativeManifest.vendor
+			homepage        = $nativeManifest.homepage
+			version         = $nativeVersion
+			sdk_version     = $nativeManifest.sdk_version
+			capabilities    = $nativeManifest.capabilities
+			platforms       = $nativeManifest.platforms
+			module_kind     = $nativeManifest.module_kind
+			payload_url     = $nativeManifest.payload_url
+			payload_sha256  = $nativeZipSha
+			payload_size    = $nativeZipSize
+			release_tag     = $nativeManifest.release_tag
+			release_url     = $nativeManifest.release_url
+			latest          = $nativeVersion
+			release_channel = 'beta'
+			prerelease      = $true
+			versions        = @(
+				[ordered]@{
+					version         = $nativeVersion
+					sdk_version     = $nativeManifest.sdk_version
+					module_api      = $nativeManifest.module_api
+					payload_url     = $nativeManifest.payload_url
+					payload_sha256  = $nativeZipSha
+					payload_size    = $nativeZipSize
+					release_tag     = $nativeManifest.release_tag
+					release_url     = $nativeManifest.release_url
+					release_channel = 'beta'
+					prerelease      = $true
+				}
+			)
+		}
+	)
+}
+Write-UTF8NoBom -Path (Join-Path $nativeRegistryDir 'index.json') `
+	-Content ($nativeIndex | ConvertTo-Json -Depth 8)
+
+# 6. Emit a small summary the test runner can read to know the fixture paths
 # without re-deriving them.
 $summary = [ordered]@{
 	output_root             = $OutputRoot
@@ -167,6 +261,12 @@ $summary = [ordered]@{
 	registry_index          = (Join-Path $registryDir 'index.json')
 	registry_zip            = $zipPath
 	registry_zip_sha        = $zipSha
+	native_registry_index   = (Join-Path $nativeRegistryDir 'index.json')
+	native_module_uuid      = $nativeUuid
+	native_module_version   = $nativeVersion
+	native_module_assembly  = $nativeAssemblyName
+	native_registry_zip     = $nativeZipPath
+	native_registry_zip_sha = $nativeZipSha
 }
 Write-UTF8NoBom -Path (Join-Path $OutputRoot 'fixtures.summary.json') `
 	-Content ($summary | ConvertTo-Json -Depth 4)

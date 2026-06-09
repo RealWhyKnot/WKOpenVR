@@ -42,6 +42,7 @@ function Send-Text {
 # Resolve fixture paths once up front so each request is cheap.
 $CaptionsDir = Join-Path $FixturesRoot 'captions'
 $RegistryDir = Join-Path $FixturesRoot 'registry'
+$NativeRegistryDir = Join-Path $FixturesRoot 'native-registry'
 $RequestCounts = @{}
 
 $listener = New-Object System.Net.HttpListener
@@ -129,6 +130,30 @@ try {
 				$file = $path.Substring('/registry/'.Length)
 				$ct = if ($file -like '*.zip') { 'application/zip' } else { 'application/octet-stream' }
 				Send-File $response (Join-Path $RegistryDir $file) $ct
+				continue
+			}
+
+			# Native registry routes mirror wkopenvr-module-registry's static
+			# v1 layout.
+			if ($path -eq '/native-registry/v1/index' -or $path -eq '/native-registry/v1/index.json') {
+				Send-File $response (Join-Path $NativeRegistryDir 'index.json') 'application/json'
+				continue
+			}
+			if ($path -match '^/native-registry/v1/modules/([^/]+)/manifest$') {
+				$uuid = $Matches[1]
+				Send-File $response (Join-Path $NativeRegistryDir "v1\modules\$uuid\manifest.json") 'application/json'
+				continue
+			}
+			if ($path -match '^/native-registry/v1/modules/([^/]+)/versions/([^/]+)/manifest$') {
+				$uuid = $Matches[1]
+				$version = $Matches[2]
+				Send-File $response (Join-Path $NativeRegistryDir "v1\modules\$uuid\versions\$version\manifest.json") 'application/json'
+				continue
+			}
+			if ($path -match '^/native-registry/v1/modules/([^/]+)/versions/([^/]+)/payload$') {
+				$uuid = $Matches[1]
+				$version = $Matches[2]
+				Send-File $response (Join-Path $NativeRegistryDir "v1\modules\$uuid\versions\$version\payload.zip") 'application/zip'
 				continue
 			}
 
