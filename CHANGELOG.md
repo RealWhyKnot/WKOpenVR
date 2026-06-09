@@ -51,6 +51,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Expand shadow quality diagnostics (d91727d)
 - **dashboardinput:** Add safe overlay input path (f589f1e)
 - **calibration:** Gate headset offset correction (63dd0d7)
+- **updater:** Queue verified installer on SteamVR close (c5b6559)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
