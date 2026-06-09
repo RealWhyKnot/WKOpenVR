@@ -191,18 +191,20 @@ void NotifyDebugLoggingChanged(std::vector<std::unique_ptr<FeaturePlugin>>& plug
 
 void ResolveShellTabSelection(ShellContext& context, const std::vector<ShellTabEntry>& entries,
                               const std::vector<std::string_view>& installedFlags, std::string& selectedShellTabKey,
-                              std::string& desktopDefaultTabAppliedFor)
+                              std::string& desktopDefaultTabAppliedFor, std::string& pendingTabJumpKey)
 {
 	const std::string desktopDefaultFlag = context.DesktopDefaultModuleFlagFileName();
 	if (!context.vrConnected && !desktopDefaultFlag.empty() && desktopDefaultTabAppliedFor != desktopDefaultFlag &&
 	    ContainsFeatureFlag(installedFlags, desktopDefaultFlag)) {
 		selectedShellTabKey = ModuleTabKey(desktopDefaultFlag);
+		pendingTabJumpKey = selectedShellTabKey;
 		desktopDefaultTabAppliedFor = desktopDefaultFlag;
 	}
 	if (!ContainsShellTabKey(entries, selectedShellTabKey)) {
 		selectedShellTabKey = installedFlags.empty() && ContainsShellTabKey(entries, kModulesTabKey)
 		                          ? std::string(kModulesTabKey)
 		                          : (entries.empty() ? std::string() : entries.front().key);
+		pendingTabJumpKey = selectedShellTabKey;
 	}
 }
 
@@ -214,59 +216,84 @@ const ShellTabEntry* FindShellTabEntry(const std::vector<ShellTabEntry>& entries
 	return nullptr;
 }
 
-void DrawShellTabStrip(const std::vector<ShellTabEntry>& entries, std::string& selectedShellTabKey)
+void DrawShellTabStrip(const std::vector<ShellTabEntry>& entries, std::string& selectedShellTabKey,
+                       std::string& pendingTabJumpKey)
 {
-	if (entries.empty()) return;
+	if (entries.empty()) {
+		pendingTabJumpKey.clear();
+		return;
+	}
 
 	const int selectedIndex = ShellTabIndex(entries, selectedShellTabKey);
 	const bool canMoveLeft = selectedIndex > 0;
 	const ImGuiStyle& style = ImGui::GetStyle();
 	const float buttonSize = ImGui::GetFrameHeight();
 
-	{
-		ui::DisabledSection disabled(!canMoveLeft, canMoveLeft ? nullptr : "This is the first tab.");
+	// Previous-tab arrow. Replaced by a same-size spacer on the first tab so the
+	// control only shows when it can do something and the strip never shifts.
+	if (canMoveLeft) {
 		if (ImGui::ArrowButton("##shell_tab_left", ImGuiDir_Left)) {
-			MoveShellTabSelection(entries, selectedShellTabKey, -1);
+			std::string target = selectedShellTabKey;
+			MoveShellTabSelection(entries, target, -1);
+			pendingTabJumpKey = target;
 		}
-		disabled.AttachReasonTooltip();
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Previous tab");
+		}
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Previous tab");
+	else {
+		ImGui::Dummy(ImVec2(buttonSize, buttonSize));
 	}
 
 	ImGui::SameLine();
-	const float stripWidth = std::max(120.0f, ImGui::GetContentRegionAvail().x - buttonSize - style.ItemSpacing.x);
-	ui::ChildScope strip("##shell_tab_strip",
-	                     ImVec2(stripWidth, ImGui::GetFrameHeightWithSpacing() + style.ItemSpacing.y),
-	                     ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-	if (strip) {
-		ui::TabBarScope tabs("tabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTabListScrollingButtons);
-		if (tabs) {
-			for (const ShellTabEntry& entry : entries) {
-				ImGuiTabItemFlags flags = ImGuiTabItemFlags_None;
-				if (entry.key == selectedShellTabKey) {
-					flags |= ImGuiTabItemFlags_SetSelected;
-				}
-				ui::TabItemScope tab(entry.label, nullptr, flags);
-				if (tab) {
-					selectedShellTabKey = entry.key;
+	// Reserve the next-tab button plus a spacing of margin so it never lands on
+	// the content clip edge (which would clip it out of view entirely).
+	const float stripWidth =
+	    std::max(120.0f, ImGui::GetContentRegionAvail().x - buttonSize - style.ItemSpacing.x * 2.0f);
+	{
+		ui::ChildScope strip("##shell_tab_strip",
+		                     ImVec2(stripWidth, ImGui::GetFrameHeightWithSpacing() + style.ItemSpacing.y),
+		                     ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		if (strip) {
+			ui::TabBarScope tabs("tabs",
+			                     ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTabListScrollingButtons);
+			if (tabs) {
+				for (const ShellTabEntry& entry : entries) {
+					// SetSelected is applied only on the single frame a jump was
+					// requested (arrow button or desktop default). Forcing it every
+					// frame would override the user's click and snap the selection
+					// back to the tracked tab; ImGui owns the selection otherwise.
+					ImGuiTabItemFlags flags = ImGuiTabItemFlags_None;
+					if (!pendingTabJumpKey.empty() && entry.key == pendingTabJumpKey) {
+						flags |= ImGuiTabItemFlags_SetSelected;
+					}
+					ui::TabItemScope tab(entry.label, nullptr, flags);
+					if (tab) {
+						selectedShellTabKey = entry.key;
+					}
 				}
 			}
 		}
 	}
+	// A jump request lives for exactly one strip draw. Clearing it here lets the
+	// next-tab arrow below schedule a fresh jump for the following frame.
+	pendingTabJumpKey.clear();
 
 	ImGui::SameLine();
 	const int rightSelectedIndex = ShellTabIndex(entries, selectedShellTabKey);
 	const bool canMoveRight = rightSelectedIndex >= 0 && rightSelectedIndex + 1 < static_cast<int>(entries.size());
-	{
-		ui::DisabledSection disabled(!canMoveRight, canMoveRight ? nullptr : "This is the last tab.");
+	if (canMoveRight) {
 		if (ImGui::ArrowButton("##shell_tab_right", ImGuiDir_Right)) {
-			MoveShellTabSelection(entries, selectedShellTabKey, 1);
+			std::string target = selectedShellTabKey;
+			MoveShellTabSelection(entries, target, 1);
+			pendingTabJumpKey = target;
 		}
-		disabled.AttachReasonTooltip();
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Next tab");
+		}
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Next tab");
+	else {
+		ImGui::Dummy(ImVec2(buttonSize, buttonSize));
 	}
 }
 
@@ -332,6 +359,7 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 {
 	static std::string desktopDefaultTabAppliedFor;
 	static std::string selectedShellTabKey;
+	static std::string pendingTabJumpKey;
 	context.TickStatus();
 
 	const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -357,8 +385,9 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 		installedPlugins = OrderPluginsByModuleTabOrder(installedPlugins, context.ModuleTabOrder());
 		const std::vector<std::string_view> installedFlags = ModuleFlagsFromPlugins(installedPlugins);
 		const std::vector<ShellTabEntry> entries = BuildShellTabEntries(installedPlugins);
-		ResolveShellTabSelection(context, entries, installedFlags, selectedShellTabKey, desktopDefaultTabAppliedFor);
-		DrawShellTabStrip(entries, selectedShellTabKey);
+		ResolveShellTabSelection(context, entries, installedFlags, selectedShellTabKey, desktopDefaultTabAppliedFor,
+		                         pendingTabJumpKey);
+		DrawShellTabStrip(entries, selectedShellTabKey, pendingTabJumpKey);
 
 		ImGui::Spacing();
 		ui::ChildScope body("##shell_tab_body", ImVec2(0.0f, 0.0f));
