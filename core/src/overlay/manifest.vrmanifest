@@ -4,6 +4,7 @@
 		"app_key": "wk.wkopenvr",
 		"launch_type": "binary",
 		"binary_path_windows": "WKOpenVR.exe",
+		"action_manifest_path": "action_manifest.json",
 		"is_dashboard_overlay": true,
 
 		"strings": {

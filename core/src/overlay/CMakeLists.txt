@@ -169,6 +169,19 @@ add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
 		"${CMAKE_CURRENT_LIST_DIR}/manifest.vrmanifest"
 		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/manifest.vrmanifest")
 
+# Stage SteamVR Input actions and default bindings for the Dashboard Input safe overlay.
+foreach(WKOPENVR_OVERLAY_INPUT_RESOURCE
+	action_manifest.json
+	bindings_dashboardinput_knuckles.json
+	bindings_dashboardinput_touch.json
+	bindings_dashboardinput_vive.json
+	bindings_dashboardinput_generic.json)
+	add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${CMAKE_CURRENT_LIST_DIR}/${WKOPENVR_OVERLAY_INPUT_RESOURCE}"
+			"$<TARGET_FILE_DIR:OpenVRPairOverlay>/${WKOPENVR_OVERLAY_INPUT_RESOURCE}")
+endforeach()
+
 # Stage the dashboard-overlay thumbnail next to the exe. VrOverlayHost
 # loads it at runtime via SetOverlayFromFile using an exe-relative path.
 add_custom_command(TARGET OpenVRPairOverlay POST_BUILD

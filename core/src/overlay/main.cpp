@@ -4,6 +4,7 @@
 #include "FeaturePlugin.h"
 #include "ManifestRegistration.h"
 #include "Migration.h"
+#include "ModuleRegistry.h"
 #include "ProcessPerfLog.h"
 #include "RuntimeHealthSummary.h"
 #include "SafeModeRecovery.h"
@@ -405,6 +406,10 @@ int main(int argc, char** argv)
 	bool prevActiveDashboardOverlay = false;
 	bool prevAnyDashboardVisible = false;
 	bool prevVrConnected = false;
+	bool prevSafeOverlayVisible = false;
+	bool prevSafeOverlayInputReady = false;
+	bool prevSafeOverlayGlobalPriorityEnabled = false;
+	std::string prevSafeOverlayStatus;
 	int prevPrimaryDashboardHand = 0;
 	openvr_pair::common::ProcessPerfSampler perfSampler;
 	CompositorTimingSampler compositorSampler;
@@ -431,30 +436,51 @@ int main(int argc, char** argv)
 		// queue in order on NewFrame; later events override earlier
 		// ones. When the dashboard is not visible no mouse events
 		// fire and GLFW's position is used unchanged.
-		const bool dashboardVisible = vrOverlay->TickFrame();
+		const bool dashboardInputEnabled = context.IsFlagPresent(
+		    openvr_pair::common::modules::FlagFileName(openvr_pair::common::modules::ModuleId::DashboardInput));
+		vrOverlay->SetSafeOverlayEnabled(dashboardInputEnabled);
+		const bool activeDashboardOverlay = vrOverlay->TickFrame(kVrFboWidth, kVrFboHeight);
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
+		const bool safeOverlayVisible = vrOverlay->SafeOverlayVisible();
+		const bool vrSurfaceVisible = activeDashboardOverlay || safeOverlayVisible;
 		context.vrConnected = vrOverlay->VrConnected();
-		context.activeDashboardOverlay = dashboardVisible;
+		context.activeDashboardOverlay = activeDashboardOverlay;
 		context.anyDashboardVisible = anyDashboardVisible;
 		context.primaryDashboardDevice = vrOverlay->PrimaryDashboardDevice();
 		context.primaryDashboardHand = vrOverlay->PrimaryDashboardHand();
-		context.dashboardVisible = dashboardVisible;
+		context.dashboardVisible = activeDashboardOverlay;
+		context.dashboardInputSafeOverlayVisible = safeOverlayVisible;
+		context.dashboardInputSafeOverlayInputReady = vrOverlay->SafeOverlayInputReady();
+		context.dashboardInputSafeOverlayGlobalPriorityEnabled = vrOverlay->SafeOverlayGlobalPriorityEnabled();
+		context.dashboardInputSafeOverlayStatus = vrOverlay->SafeOverlayStatus();
 		if (context.vrConnected) {
 			compositorSampler.MaybeSample(glfwGetTime());
 		}
-		if (!haveVrState || dashboardVisible != prevActiveDashboardOverlay ||
+		if (!haveVrState || activeDashboardOverlay != prevActiveDashboardOverlay ||
 		    anyDashboardVisible != prevAnyDashboardVisible || context.vrConnected != prevVrConnected ||
+		    safeOverlayVisible != prevSafeOverlayVisible ||
+		    context.dashboardInputSafeOverlayInputReady != prevSafeOverlayInputReady ||
+		    context.dashboardInputSafeOverlayGlobalPriorityEnabled != prevSafeOverlayGlobalPriorityEnabled ||
+		    context.dashboardInputSafeOverlayStatus != prevSafeOverlayStatus ||
 		    context.primaryDashboardHand != prevPrimaryDashboardHand) {
 			openvr_pair::common::DiagnosticLog(
 			    "overlay",
 			    "vr_state active_dashboard_overlay=%d any_dashboard_visible=%d vr_connected=%d "
-			    "primary_dashboard_device=%u primary_dashboard_hand=%d",
-			    dashboardVisible ? 1 : 0, anyDashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0,
-			    context.primaryDashboardDevice, context.primaryDashboardHand);
+			    "primary_dashboard_device=%u primary_dashboard_hand=%d safe_overlay_visible=%d "
+			    "safe_input_ready=%d safe_global_priority=%d safe_status='%s'",
+			    activeDashboardOverlay ? 1 : 0, anyDashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0,
+			    context.primaryDashboardDevice, context.primaryDashboardHand, safeOverlayVisible ? 1 : 0,
+			    context.dashboardInputSafeOverlayInputReady ? 1 : 0,
+			    context.dashboardInputSafeOverlayGlobalPriorityEnabled ? 1 : 0,
+			    context.dashboardInputSafeOverlayStatus.c_str());
 			haveVrState = true;
-			prevActiveDashboardOverlay = dashboardVisible;
+			prevActiveDashboardOverlay = activeDashboardOverlay;
 			prevAnyDashboardVisible = anyDashboardVisible;
 			prevVrConnected = context.vrConnected;
+			prevSafeOverlayVisible = safeOverlayVisible;
+			prevSafeOverlayInputReady = context.dashboardInputSafeOverlayInputReady;
+			prevSafeOverlayGlobalPriorityEnabled = context.dashboardInputSafeOverlayGlobalPriorityEnabled;
+			prevSafeOverlayStatus = context.dashboardInputSafeOverlayStatus;
 			prevPrimaryDashboardHand = context.primaryDashboardHand;
 		}
 
@@ -463,7 +489,7 @@ int main(int argc, char** argv)
 		}
 
 		ImGuiIO& io = ImGui::GetIO();
-		if (dashboardVisible) {
+		if (vrSurfaceVisible) {
 			// VR render target is fixed-resolution; override what GLFW
 			// reported so ImGui lays out at the FBO size and the VR mouse
 			// coords (which are in submitted-texture pixel space) map back
@@ -495,7 +521,7 @@ int main(int argc, char** argv)
 		int fbh = 0;
 		glfwGetFramebufferSize(window, &fbw, &fbh);
 
-		if (dashboardVisible) {
+		if (vrSurfaceVisible) {
 			// VR path: render into the fixed-size FBO and submit. The
 			// desktop blit stretches because monitor users behind a VR
 			// session are not the primary audience here.
@@ -545,7 +571,7 @@ int main(int argc, char** argv)
 		// process idle cheaply.
 		constexpr double kDashboardFrameSeconds = 1.0 / 90.0;
 		constexpr double kIdleFrameSeconds = 1.0 / 30.0;
-		const double waitSeconds = dashboardVisible ? kDashboardFrameSeconds : kIdleFrameSeconds;
+		const double waitSeconds = vrSurfaceVisible ? kDashboardFrameSeconds : kIdleFrameSeconds;
 		glfwWaitEventsTimeout(waitSeconds);
 	}
 

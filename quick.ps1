@@ -634,6 +634,13 @@ $srcOpenVR = Join-Path $artifactsDir "openvr_api.dll"
 $srcManifest = Join-Path $artifactsDir "manifest.vrmanifest"
 $srcIcon = Join-Path $artifactsDir "dashboard_icon.png"
 $srcBoundaryIcon = Join-Path $artifactsDir "boundary_icon.png"
+$overlayInputResources = @(
+	"action_manifest.json",
+	"bindings_dashboardinput_knuckles.json",
+	"bindings_dashboardinput_touch.json",
+	"bindings_dashboardinput_vive.json",
+	"bindings_dashboardinput_generic.json"
+)
 
 $required = @(
 	@("WKOpenVR.exe", $srcExe),
@@ -658,10 +665,28 @@ $required = @(
 	@("questapp uninstaller", (Join-Path $overlayResourcesSource "questapp\uninstall-questapp.ps1")),
 	@("questapp companion apk", (Join-Path $overlayResourcesSource "questapp\WKOpenVRQuestCompanion.apk"))
 )
+foreach ($resource in $overlayInputResources) {
+	$required += ,@($resource, (Join-Path $artifactsDir $resource))
+}
 
 Write-Step "Checking artifacts"
 foreach ($item in $required) {
 	Assert-File -Label $item[0] -Path $item[1]
+}
+
+$overlayFiles = @(
+	[ordered]@{ Label = "WKOpenVR.exe";          Source = $srcExe;          Destination = (Join-Path $InstallDir "WKOpenVR.exe") },
+	[ordered]@{ Label = "openvr_api.dll";       Source = $srcOpenVR;       Destination = (Join-Path $InstallDir "openvr_api.dll") },
+	[ordered]@{ Label = "manifest.vrmanifest";  Source = $srcManifest;     Destination = (Join-Path $InstallDir "manifest.vrmanifest") },
+	[ordered]@{ Label = "dashboard_icon.png";   Source = $srcIcon;         Destination = (Join-Path $InstallDir "dashboard_icon.png") },
+	[ordered]@{ Label = "boundary_icon.png";    Source = $srcBoundaryIcon; Destination = (Join-Path $InstallDir "boundary_icon.png") }
+)
+foreach ($resource in $overlayInputResources) {
+	$overlayFiles += ,([ordered]@{
+		Label       = $resource
+		Source      = (Join-Path $artifactsDir $resource)
+		Destination = (Join-Path $InstallDir $resource)
+	})
 }
 
 $plan = [ordered]@{
@@ -673,13 +698,7 @@ $plan = [ordered]@{
 	OverlayResourceSource = $overlayResourcesSource
 	OverlayResourceDest   = (Join-Path $InstallDir "resources")
 	OverlayExeDest        = (Join-Path $InstallDir "WKOpenVR.exe")
-	OverlayFiles          = @(
-		[ordered]@{ Label = "WKOpenVR.exe";       Source = $srcExe;        Destination = (Join-Path $InstallDir "WKOpenVR.exe") },
-		[ordered]@{ Label = "openvr_api.dll";    Source = $srcOpenVR;     Destination = (Join-Path $InstallDir "openvr_api.dll") },
-		[ordered]@{ Label = "manifest.vrmanifest"; Source = $srcManifest; Destination = (Join-Path $InstallDir "manifest.vrmanifest") },
-		[ordered]@{ Label = "dashboard_icon.png"; Source = $srcIcon;      Destination = (Join-Path $InstallDir "dashboard_icon.png") },
-		[ordered]@{ Label = "boundary_icon.png"; Source = $srcBoundaryIcon; Destination = (Join-Path $InstallDir "boundary_icon.png") }
-	)
+	OverlayFiles          = $overlayFiles
 	Shortcuts = @(
 		[ordered]@{ Name = "WKOpenVR.lnk";                    Arguments = "--launch=umbrella" },
 		[ordered]@{ Name = "WKOpenVR - Space Calibrator.lnk"; Arguments = "--launch=calibration" },

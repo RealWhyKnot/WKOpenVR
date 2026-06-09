@@ -182,6 +182,35 @@ void DashboardInputPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 		    });
 	    });
 
+	openvr_pair::overlay::ui::DrawSectionHeading("Safe overlay");
+	openvr_pair::overlay::ui::DrawSettingTable(
+	    "dashboard_input_safe_overlay_status", 170.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+		    openvr_pair::overlay::ui::SettingRow(table, "Overlay", [&] {
+			    openvr_pair::overlay::ui::DrawStatusCell(
+			        context.dashboardInputSafeOverlayVisible ? "Visible" : "Hidden",
+			        context.dashboardInputSafeOverlayVisible ? openvr_pair::overlay::ui::StatusTone::Ok
+			                                                 : openvr_pair::overlay::ui::StatusTone::Idle,
+			        false);
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Input", [&] {
+			    const char* label = context.dashboardInputSafeOverlayStatus.empty()
+			                            ? (context.dashboardInputSafeOverlayInputReady ? "Ready" : "Starting")
+			                            : context.dashboardInputSafeOverlayStatus.c_str();
+			    openvr_pair::overlay::ui::DrawStatusCell(label,
+			                                             context.dashboardInputSafeOverlayInputReady
+			                                                 ? openvr_pair::overlay::ui::StatusTone::Ok
+			                                                 : openvr_pair::overlay::ui::StatusTone::Warn,
+			                                             false);
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Global priority", [&] {
+			    openvr_pair::overlay::ui::DrawStatusCell(
+			        context.dashboardInputSafeOverlayGlobalPriorityEnabled ? "Enabled" : "Unavailable",
+			        context.dashboardInputSafeOverlayGlobalPriorityEnabled ? openvr_pair::overlay::ui::StatusTone::Ok
+			                                                               : openvr_pair::overlay::ui::StatusTone::Warn,
+			        false);
+		    });
+	    });
+
 	openvr_pair::overlay::ShellFooterStatus footer;
 	footer.driverConnected = ipc_.IsConnected();
 	footer.vrConnected = context.vrConnected;
