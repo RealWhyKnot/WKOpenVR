@@ -51,12 +51,16 @@ public:
 	// True once we have a live Overlay-mode VR session. The
 	// desktop window keeps working when this is false.
 	bool VrConnected() const { return vrReady_; }
+	bool AnyDashboardVisible() const { return anyDashboardVisible_; }
+	uint32_t PrimaryDashboardDevice() const { return primaryDashboardDevice_; }
+	int PrimaryDashboardHand() const { return primaryDashboardHand_; }
 
 private:
 	bool TryInitVrStack();
 	void TryCreateOverlay();
 	void DrainOverlayEvents();
-	bool IsDashboardVisible() const;
+	void RefreshDashboardState();
+	bool IsActiveDashboardOverlay() const;
 
 	std::string ResolveIconPath() const;
 
@@ -66,6 +70,9 @@ private:
 	bool vrReady_ = false;
 	bool overlayCreated_ = false;
 	bool quitRequested_ = false;
+	bool anyDashboardVisible_ = false;
+	uint32_t primaryDashboardDevice_ = vr::k_unTrackedDeviceIndexInvalid;
+	int primaryDashboardHand_ = 0;
 
 	// Wall-clock seconds of the last TryInitVrStack attempt. Drives
 	// the 1-second retry cadence so we don't hammer SteamVR while

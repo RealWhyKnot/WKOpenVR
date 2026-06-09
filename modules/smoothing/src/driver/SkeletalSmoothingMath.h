@@ -27,6 +27,22 @@ struct FingerFrameResult
 	int minQuatDotBone = -1;
 };
 
+struct DashboardFrameState
+{
+	bool initialized = false;
+	vr::VRBoneTransform_t previous[kFingerBoneCount] = {};
+};
+
+struct DashboardFrameObservation
+{
+	bool active = false;
+	bool seeded = false;
+	bool liveFrame = false;
+	float maxPosDelta = 0.0f;
+	int maxPosDeltaBone = -1;
+	float minQuatDot = 1.0f;
+};
+
 float Lerpf(float a, float b, float t);
 vr::HmdQuaternionf_t SlerpQuat(const vr::HmdQuaternionf_t& a, vr::HmdQuaternionf_t b, float t);
 int FingerIndexForBone(uint32_t bone);
@@ -34,5 +50,7 @@ float SmoothnessToAlpha(uint8_t smoothness);
 FingerFrameResult SmoothFingerFrame(FingerFrameState& state, const vr::VRBoneTransform_t* input, uint32_t count,
                                     int handBase, uint16_t fingerMask, const float alphaPerFinger[kFingersPerHand],
                                     vr::VRBoneTransform_t* output);
+DashboardFrameObservation ObserveDashboardFrame(DashboardFrameState& state, bool dashboardActive,
+                                                const vr::VRBoneTransform_t* input, uint32_t count);
 
 } // namespace skeletal::math

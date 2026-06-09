@@ -61,6 +61,48 @@ float SmoothnessToAlpha(uint8_t smoothness)
 	return 1.0f - (s / 100.0f) * 0.95f;
 }
 
+DashboardFrameObservation ObserveDashboardFrame(DashboardFrameState& state, bool dashboardActive,
+                                                const vr::VRBoneTransform_t* input, uint32_t count)
+{
+	DashboardFrameObservation observation{};
+	if (!dashboardActive || !input || count != kFingerBoneCount) {
+		state.initialized = false;
+		return observation;
+	}
+
+	observation.active = true;
+	if (!state.initialized) {
+		std::memcpy(state.previous, input, sizeof(state.previous));
+		state.initialized = true;
+		observation.seeded = true;
+		return observation;
+	}
+
+	for (uint32_t i = 0; i < kFingerBoneCount; ++i) {
+		const auto& in = input[i];
+		const auto& prev = state.previous[i];
+		const float dx = in.position.v[0] - prev.position.v[0];
+		const float dy = in.position.v[1] - prev.position.v[1];
+		const float dz = in.position.v[2] - prev.position.v[2];
+		const float posDelta = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (posDelta > observation.maxPosDelta) {
+			observation.maxPosDelta = posDelta;
+			observation.maxPosDeltaBone = static_cast<int>(i);
+		}
+
+		const float qd = in.orientation.w * prev.orientation.w + in.orientation.x * prev.orientation.x +
+		                 in.orientation.y * prev.orientation.y + in.orientation.z * prev.orientation.z;
+		const float absQd = qd < 0.0f ? -qd : qd;
+		if (absQd < observation.minQuatDot) {
+			observation.minQuatDot = absQd;
+		}
+	}
+
+	observation.liveFrame = observation.maxPosDelta > 0.0001f || observation.minQuatDot < 0.9999f;
+	std::memcpy(state.previous, input, sizeof(state.previous));
+	return observation;
+}
+
 FingerFrameResult SmoothFingerFrame(FingerFrameState& state, const vr::VRBoneTransform_t* input, uint32_t count,
                                     int handBase, uint16_t fingerMask, const float alphaPerFinger[kFingersPerHand],
                                     vr::VRBoneTransform_t* output)

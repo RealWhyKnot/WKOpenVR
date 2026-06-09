@@ -31,6 +31,11 @@ void MarkFingersNeedReseed(uint16_t fingerBits);
 #include <exception>
 #include <random>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #ifndef OPENVR_PAIR_HAS_CALIBRATION_DRIVER
 #define OPENVR_PAIR_HAS_CALIBRATION_DRIVER 0
 #endif
@@ -1671,6 +1676,50 @@ protocol::FingerSmoothingConfig ServerTrackedDeviceProvider::GetFingerSmoothingC
 	const uint64_t header = fingerCfgPacked.load(std::memory_order_acquire);
 	const uint64_t low = perFingerSmoothness0to7Packed.load(std::memory_order_acquire);
 	return pairdriver::UnpackFingerSmoothing(header, low);
+}
+
+namespace {
+
+constexpr uint64_t kDashboardHandTrackingStaleAfterMs = 1500;
+
+const char* DashboardHandName(uint8_t hand)
+{
+	switch (hand) {
+		case protocol::DashboardHandTrackingHandLeft:
+			return "left";
+		case protocol::DashboardHandTrackingHandRight:
+			return "right";
+		default:
+			return "unknown";
+	}
+}
+
+} // namespace
+
+void ServerTrackedDeviceProvider::SetDashboardHandTrackingState(const protocol::DashboardHandTrackingState& state)
+{
+	const uint64_t newPacked = pairdriver::PackDashboardHandTrackingState(state);
+	const uint64_t oldPacked = dashboardHandTrackingPacked.exchange(newPacked, std::memory_order_acq_rel);
+	if (oldPacked != newPacked) {
+		const protocol::DashboardHandTrackingState prev = pairdriver::UnpackDashboardHandTrackingState(oldPacked);
+		const protocol::DashboardHandTrackingState next = pairdriver::UnpackDashboardHandTrackingState(newPacked);
+		LOG("[skeletal] SetDashboardHandTrackingState via IPC: enabled=%u dashboard_visible=%u primary=%s "
+		    "update_ms=%llu (was: enabled=%u dashboard_visible=%u primary=%s update_ms=%llu)",
+		    (unsigned)next.enabled, (unsigned)next.dashboard_visible, DashboardHandName(next.primary_hand),
+		    (unsigned long long)next.update_mono_ms, (unsigned)prev.enabled, (unsigned)prev.dashboard_visible,
+		    DashboardHandName(prev.primary_hand), (unsigned long long)prev.update_mono_ms);
+	}
+}
+
+pairdriver::DashboardHandTrackingSnapshot ServerTrackedDeviceProvider::GetDashboardHandTrackingSnapshot() const
+{
+	const uint64_t packed = dashboardHandTrackingPacked.load(std::memory_order_acquire);
+	const protocol::DashboardHandTrackingState state = pairdriver::UnpackDashboardHandTrackingState(packed);
+	if (!state.enabled || !state.dashboard_visible) {
+		return pairdriver::DecodeDashboardHandTrackingState(packed, state.update_mono_ms,
+		                                                    kDashboardHandTrackingStaleAfterMs);
+	}
+	return pairdriver::DecodeDashboardHandTrackingState(packed, ::GetTickCount64(), kDashboardHandTrackingStaleAfterMs);
 }
 
 void ServerTrackedDeviceProvider::SetInputHealthConfig(const protocol::InputHealthConfig& cfg)

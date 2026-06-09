@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,10 @@ struct ShellContext
 	double statusClearAtSeconds = 0.0;
 	std::string desktopDefaultModuleFlagFileName;
 	bool vrConnected = false;
+	bool activeDashboardOverlay = false;
+	bool anyDashboardVisible = false;
+	uint32_t primaryDashboardDevice = 0xFFFFFFFFu;
+	int primaryDashboardHand = 0;
 	bool dashboardVisible = false;
 
 	std::string DesktopDefaultModuleFlagFileName() const;

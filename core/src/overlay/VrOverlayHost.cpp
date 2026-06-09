@@ -204,10 +204,33 @@ void VrOverlayHost::TryCreateOverlay()
 	                                   kOverlayWidthMeters);
 }
 
-bool VrOverlayHost::IsDashboardVisible() const
+bool VrOverlayHost::IsActiveDashboardOverlay() const
 {
 	if (!overlayCreated_ || !vr::VROverlay()) return false;
 	return vr::VROverlay()->IsActiveDashboardOverlay(mainHandle_);
+}
+
+void VrOverlayHost::RefreshDashboardState()
+{
+	anyDashboardVisible_ = false;
+	primaryDashboardDevice_ = vr::k_unTrackedDeviceIndexInvalid;
+	primaryDashboardHand_ = 0;
+
+	if (!vrReady_ || !vr::VROverlay()) return;
+	anyDashboardVisible_ = vr::VROverlay()->IsDashboardVisible();
+	if (!anyDashboardVisible_) return;
+
+	primaryDashboardDevice_ = vr::VROverlay()->GetPrimaryDashboardDevice();
+	if (primaryDashboardDevice_ == vr::k_unTrackedDeviceIndexInvalid || !vr::VRSystem()) return;
+
+	const vr::ETrackedControllerRole role =
+	    vr::VRSystem()->GetControllerRoleForTrackedDeviceIndex(primaryDashboardDevice_);
+	if (role == vr::TrackedControllerRole_LeftHand) {
+		primaryDashboardHand_ = 1;
+	}
+	else if (role == vr::TrackedControllerRole_RightHand) {
+		primaryDashboardHand_ = 2;
+	}
 }
 
 void VrOverlayHost::DrainOverlayEvents()
@@ -256,7 +279,10 @@ bool VrOverlayHost::TickFrame()
 			lastInitRetry_ = now;
 			TryInitVrStack();
 		}
-		if (!vrReady_) return false;
+		if (!vrReady_) {
+			RefreshDashboardState();
+			return false;
+		}
 	}
 
 	// Stage 2: register the dashboard overlay (one-shot).
@@ -268,14 +294,15 @@ bool VrOverlayHost::TickFrame()
 	// across the pin range and is best landed after the dashboard
 	// render path is verified end-to-end.
 	DrainOverlayEvents();
+	RefreshDashboardState();
 
-	return IsDashboardVisible();
+	return IsActiveDashboardOverlay();
 }
 
 void VrOverlayHost::SubmitTexture(unsigned int glTextureId, int width, int height)
 {
 	if (!overlayCreated_ || !vr::VROverlay()) return;
-	if (!IsDashboardVisible()) return;
+	if (!IsActiveDashboardOverlay()) return;
 	if (glTextureId == 0 || width <= 0 || height <= 0) return;
 
 	vr::Texture_t tex{};

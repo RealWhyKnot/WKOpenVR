@@ -63,6 +63,7 @@ static void SkeletalContainmentFault(const char* what)
 struct HandState
 {
 	skeletal::math::FingerFrameState frame;
+	skeletal::math::DashboardFrameState dashboardFrame;
 
 	// Steady-state motion diagnostic. Track worst per-bone output delta across
 	// the 30 s stats window so the next jitter report has a signature in the
@@ -81,6 +82,9 @@ struct HandState
 	int windowMaxPosDeltaBone = -1;
 	float windowMinQuatDot = 1.0f;
 	int windowMinQuatDotBone = -1;
+	float dashboardWindowRawMaxPosDelta = 0.0f;
+	int dashboardWindowRawMaxPosDeltaBone = -1;
+	float dashboardWindowRawMinQuatDot = 1.0f;
 };
 static HandState g_handState[2];
 
@@ -171,6 +175,10 @@ static std::atomic<bool> g_lastAnySmoothing[2] = {{false}, {false}};
 static std::atomic<int> g_postEnableFramesLeft[2] = {{0}, {0}};
 static constexpr int kPostEnableFrames = 30;
 static constexpr int kPostEnableLogStride = 5;
+static std::atomic<uint64_t> g_dashboardFramesInWindow[2] = {{0}, {0}};
+static std::atomic<uint64_t> g_dashboardLiveFramesInWindow[2] = {{0}, {0}};
+static std::atomic<int> g_lastDashboardActive{-1};
+static std::atomic<bool> g_dashboardWindowHadFrames{false};
 // Per-hand snapshot of the bone array as we emitted it on the previous
 // smoothed frame. Guarded by g_handStateMutex so accesses serialize with the
 // hot path. Filled on each smoothed frame post-transition, read on the next.
@@ -180,6 +188,45 @@ struct PostEnableSnapshot
 	vr::VRBoneTransform_t bones[31] = {};
 };
 static PostEnableSnapshot g_postEnableSnap[2];
+
+static const char* DashboardHandName(uint8_t hand)
+{
+	switch (hand) {
+		case protocol::DashboardHandTrackingHandLeft:
+			return "left";
+		case protocol::DashboardHandTrackingHandRight:
+			return "right";
+		default:
+			return "unknown";
+	}
+}
+
+static void ResetDashboardFrameObservers()
+{
+	std::lock_guard<std::mutex> lk(g_handStateMutex);
+	for (int h = 0; h < 2; ++h) {
+		g_handState[h].dashboardFrame = {};
+		g_handState[h].dashboardWindowRawMaxPosDelta = 0.0f;
+		g_handState[h].dashboardWindowRawMaxPosDeltaBone = -1;
+		g_handState[h].dashboardWindowRawMinQuatDot = 1.0f;
+	}
+}
+
+static void MaybeLogDashboardStateTransition(const pairdriver::DashboardHandTrackingSnapshot& dashboard)
+{
+	const int active = dashboard.active ? 1 : 0;
+	const int prev = g_lastDashboardActive.exchange(active, std::memory_order_relaxed);
+	if (prev == active) return;
+	if (prev < 0 && !dashboard.active) return;
+
+	LOG("[skeletal] dashboard hand passthrough %s: enabled=%d dashboard_visible=%d stale=%d age_ms=%llu "
+	    "primary_hand=%s",
+	    dashboard.active ? "active" : "inactive", dashboard.enabled ? 1 : 0, dashboard.dashboardVisible ? 1 : 0,
+	    dashboard.stale ? 1 : 0, (unsigned long long)dashboard.ageMs, DashboardHandName(dashboard.primaryHand));
+	if (!dashboard.active) {
+		ResetDashboardFrameObservers();
+	}
+}
 
 static void MaybeLogStats(const char* callerTag)
 {
@@ -220,28 +267,52 @@ static void MaybeLogStats(const char* callerTag)
 	// bone in the window (smoothness=0 or finger mask all clear). Reset under
 	// g_handStateMutex so the next window starts fresh.
 	float l_posDelta, r_posDelta, l_quatDot, r_quatDot;
-	int l_posBone, r_posBone, l_quatBone, r_quatBone;
+	float l_dashRawPosDelta, r_dashRawPosDelta, l_dashRawQuatDot, r_dashRawQuatDot;
+	int l_posBone, r_posBone, l_quatBone, r_quatBone, l_dashRawPosBone, r_dashRawPosBone;
 	{
 		std::lock_guard<std::mutex> lk(g_handStateMutex);
 		l_posDelta = g_handState[0].windowMaxPosDelta;
 		l_posBone = g_handState[0].windowMaxPosDeltaBone;
 		l_quatDot = g_handState[0].windowMinQuatDot;
 		l_quatBone = g_handState[0].windowMinQuatDotBone;
+		l_dashRawPosDelta = g_handState[0].dashboardWindowRawMaxPosDelta;
+		l_dashRawPosBone = g_handState[0].dashboardWindowRawMaxPosDeltaBone;
+		l_dashRawQuatDot = g_handState[0].dashboardWindowRawMinQuatDot;
 		r_posDelta = g_handState[1].windowMaxPosDelta;
 		r_posBone = g_handState[1].windowMaxPosDeltaBone;
 		r_quatDot = g_handState[1].windowMinQuatDot;
 		r_quatBone = g_handState[1].windowMinQuatDotBone;
+		r_dashRawPosDelta = g_handState[1].dashboardWindowRawMaxPosDelta;
+		r_dashRawPosBone = g_handState[1].dashboardWindowRawMaxPosDeltaBone;
+		r_dashRawQuatDot = g_handState[1].dashboardWindowRawMinQuatDot;
 		for (int h = 0; h < 2; ++h) {
 			g_handState[h].windowMaxPosDelta = 0.0f;
 			g_handState[h].windowMaxPosDeltaBone = -1;
 			g_handState[h].windowMinQuatDot = 1.0f;
 			g_handState[h].windowMinQuatDotBone = -1;
+			g_handState[h].dashboardWindowRawMaxPosDelta = 0.0f;
+			g_handState[h].dashboardWindowRawMaxPosDeltaBone = -1;
+			g_handState[h].dashboardWindowRawMinQuatDot = 1.0f;
 		}
 	}
 	LOG("[skeletal] motion(%s, %.1fs window) L:maxPosDelta=%.4fm(bone=%d) minQuatDot=%.4f(bone=%d)  "
 	    "R:maxPosDelta=%.4fm(bone=%d) minQuatDot=%.4f(bone=%d)",
 	    callerTag, elapsedSec, l_posDelta, l_posBone, l_quatDot, l_quatBone, r_posDelta, r_posBone, r_quatDot,
 	    r_quatBone);
+
+	const uint64_t l_dashFrames = g_dashboardFramesInWindow[0].exchange(0, std::memory_order_relaxed);
+	const uint64_t r_dashFrames = g_dashboardFramesInWindow[1].exchange(0, std::memory_order_relaxed);
+	const uint64_t l_dashLive = g_dashboardLiveFramesInWindow[0].exchange(0, std::memory_order_relaxed);
+	const uint64_t r_dashLive = g_dashboardLiveFramesInWindow[1].exchange(0, std::memory_order_relaxed);
+	const bool hadDashboardFrames =
+	    g_dashboardWindowHadFrames.exchange(false, std::memory_order_relaxed) || l_dashFrames != 0 || r_dashFrames != 0;
+	if (hadDashboardFrames) {
+		LOG("[skeletal] dashboard(%s, %.1fs window) L:frames=%llu live=%llu rawMaxPosDelta=%.4fm(bone=%d) "
+		    "rawMinQuatDot=%.4f  R:frames=%llu live=%llu rawMaxPosDelta=%.4fm(bone=%d) rawMinQuatDot=%.4f",
+		    callerTag, elapsedSec, (unsigned long long)l_dashFrames, (unsigned long long)l_dashLive, l_dashRawPosDelta,
+		    l_dashRawPosBone, l_dashRawQuatDot, (unsigned long long)r_dashFrames, (unsigned long long)r_dashLive,
+		    r_dashRawPosDelta, r_dashRawPosBone, r_dashRawQuatDot);
+	}
 }
 
 // Forward-declare for use in MaybeLogDeepState below -- defined later in this
@@ -303,6 +374,10 @@ static void MaybeLogDeepState(const char* callerTag)
 		auto cfg = g_driver->GetFingerSmoothingConfig();
 		LOG("[skeletal]   cfg: enabled=%d smoothness=%u mask=0x%04x", (int)cfg.master_enabled, (unsigned)cfg.smoothness,
 		    (unsigned)cfg.finger_mask);
+		auto dashboard = g_driver->GetDashboardHandTrackingSnapshot();
+		LOG("[skeletal]   dashboard: active=%d enabled=%d visible=%d stale=%d age_ms=%llu primary=%s",
+		    dashboard.active ? 1 : 0, dashboard.enabled ? 1 : 0, dashboard.dashboardVisible ? 1 : 0,
+		    dashboard.stale ? 1 : 0, (unsigned long long)dashboard.ageMs, DashboardHandName(dashboard.primaryHand));
 	}
 	else {
 		LOG("[skeletal]   cfg: g_driver is NULL (subsystem un-Init'd?)");
@@ -427,6 +502,7 @@ DetourPublicCreateSkeletonComponent(vr::IVRDriverInput* _this, vr::PropertyConta
 			// Mark uninitialised so the first UpdateSkeleton after this snaps
 			// to the new pose instead of slerp-blending out of stale state.
 			g_handState[handedness].frame.initialized = false;
+			g_handState[handedness].dashboardFrame = {};
 			// Reset the verbose-call counter for this hand so the user sees
 			// detailed dumps after a re-create (driver reload, hand reconnect).
 			g_verboseCallsRemaining[handedness].store(kVerboseFirstCalls);
@@ -541,6 +617,27 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponentImpl(vr::IVRDriverIn
 		    bone0.position.v[1], bone0.position.v[2], bone1.position.v[0], bone1.position.v[1], bone1.position.v[2],
 		    bone2.position.v[0], bone2.position.v[1], bone2.position.v[2], bone0.orientation.w, bone0.orientation.x,
 		    bone0.orientation.y, bone0.orientation.z);
+	}
+
+	const auto dashboard = g_driver->GetDashboardHandTrackingSnapshot();
+	MaybeLogDashboardStateTransition(dashboard);
+	if (dashboard.active) {
+		g_dashboardFramesInWindow[handedness].fetch_add(1, std::memory_order_relaxed);
+		g_dashboardWindowHadFrames.store(true, std::memory_order_relaxed);
+		std::lock_guard<std::mutex> lk(g_handStateMutex);
+		HandState& state = g_handState[handedness];
+		const auto observation =
+		    skeletal::math::ObserveDashboardFrame(state.dashboardFrame, true, pTransforms, unTransformCount);
+		if (observation.liveFrame) {
+			g_dashboardLiveFramesInWindow[handedness].fetch_add(1, std::memory_order_relaxed);
+		}
+		if (observation.maxPosDelta > state.dashboardWindowRawMaxPosDelta) {
+			state.dashboardWindowRawMaxPosDelta = observation.maxPosDelta;
+			state.dashboardWindowRawMaxPosDeltaBone = observation.maxPosDeltaBone;
+		}
+		if (observation.minQuatDot < state.dashboardWindowRawMinQuatDot) {
+			state.dashboardWindowRawMinQuatDot = observation.minQuatDot;
+		}
 	}
 
 	// Periodic deep-state dump. Cheap when not firing (atomic load + arithmetic),
@@ -692,12 +789,16 @@ void Init(ServerTrackedDeviceProvider* driver)
 	g_invalidTransformCalls.store(0);
 	g_firstUnknownHandleLogged.store(false);
 	g_firstCreateSkeletonLogged.store(false);
+	g_lastDashboardActive.store(-1, std::memory_order_relaxed);
+	g_dashboardWindowHadFrames.store(false, std::memory_order_relaxed);
 	for (int h = 0; h < 2; ++h) {
 		g_stats[h].totalCalls.store(0);
 		g_stats[h].smoothedCalls.store(0);
 		g_stats[h].passthroughCalls.store(0);
 		g_stats[h].firstCallLogged.store(false);
 		g_verboseCallsRemaining[h].store(kVerboseFirstCalls);
+		g_dashboardFramesInWindow[h].store(0, std::memory_order_relaxed);
+		g_dashboardLiveFramesInWindow[h].store(0, std::memory_order_relaxed);
 	}
 	{
 		// Lock order: handedness before state.
@@ -706,10 +807,14 @@ void Init(ServerTrackedDeviceProvider* driver)
 		g_handleToHandedness.clear();
 		for (int h = 0; h < 2; ++h) {
 			g_handState[h].frame = {};
+			g_handState[h].dashboardFrame = {};
 			g_handState[h].windowMaxPosDelta = 0.0f;
 			g_handState[h].windowMaxPosDeltaBone = -1;
 			g_handState[h].windowMinQuatDot = 1.0f;
 			g_handState[h].windowMinQuatDotBone = -1;
+			g_handState[h].dashboardWindowRawMaxPosDelta = 0.0f;
+			g_handState[h].dashboardWindowRawMaxPosDeltaBone = -1;
+			g_handState[h].dashboardWindowRawMinQuatDot = 1.0f;
 			g_postEnableSnap[h].valid = false;
 			g_postEnableFramesLeft[h].store(0, std::memory_order_relaxed);
 			g_lastAnySmoothing[h].store(false, std::memory_order_relaxed);
@@ -755,11 +860,19 @@ void Shutdown()
 		g_handleToHandedness.clear();
 		for (int h = 0; h < 2; ++h) {
 			g_handState[h].frame = {};
+			g_handState[h].dashboardFrame = {};
+			g_handState[h].dashboardWindowRawMaxPosDelta = 0.0f;
+			g_handState[h].dashboardWindowRawMaxPosDeltaBone = -1;
+			g_handState[h].dashboardWindowRawMinQuatDot = 1.0f;
 			g_postEnableSnap[h].valid = false;
 			g_postEnableFramesLeft[h].store(0, std::memory_order_relaxed);
 			g_lastAnySmoothing[h].store(false, std::memory_order_relaxed);
+			g_dashboardFramesInWindow[h].store(0, std::memory_order_relaxed);
+			g_dashboardLiveFramesInWindow[h].store(0, std::memory_order_relaxed);
 		}
 	}
+	g_lastDashboardActive.store(-1, std::memory_order_relaxed);
+	g_dashboardWindowHadFrames.store(false, std::memory_order_relaxed);
 }
 
 void MarkFingersNeedReseed(uint16_t fingerBits)

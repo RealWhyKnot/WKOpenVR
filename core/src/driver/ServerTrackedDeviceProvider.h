@@ -8,6 +8,7 @@
 #include "IPCServer.h"
 #include "ModuleSafety.h"
 #include "Protocol.h"
+#include "ServerTrackedDeviceProviderConfigPacking.h"
 #include "IsometryTransform.h"
 #include "SmartSmoothingShadowMath.h"
 
@@ -83,6 +84,8 @@ public:
 	// and vice-versa.
 	void SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig& cfg);
 	protocol::FingerSmoothingConfig GetFingerSmoothingConfig() const;
+	void SetDashboardHandTrackingState(const protocol::DashboardHandTrackingState& state);
+	pairdriver::DashboardHandTrackingSnapshot GetDashboardHandTrackingSnapshot() const;
 
 	// Input-health config cache. Written by IPCServer when the WKOpenVR-InputHealth
 	// overlay pushes a new config (rare). Read by the boolean / scalar input
@@ -432,6 +435,11 @@ private:
 	// until the overlay has sent a real config.
 	mutable std::atomic<uint64_t> fingerCfgPacked{0};
 	mutable std::atomic<uint64_t> perFingerSmoothness0to7Packed{0};
+
+	// v32 dashboard hand-tracking state from the Smoothing overlay. Packed into
+	// one atomic so the skeletal hook can cheaply tell whether the SteamVR
+	// dashboard is currently visible and whether that state is still fresh.
+	mutable std::atomic<uint64_t> dashboardHandTrackingPacked{0};
 
 	// Input-health config packed into an atomic uint64_t. Same pattern as
 	// fingerCfgPacked: single-writer (IPC thread on user UI input), many-

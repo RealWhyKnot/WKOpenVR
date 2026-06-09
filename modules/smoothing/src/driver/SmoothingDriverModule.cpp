@@ -59,6 +59,10 @@ public:
 				provider_->SetDevicePrediction(request.setDevicePrediction);
 				response.type = protocol::ResponseSuccess;
 				return true;
+			case protocol::RequestSetDashboardHandTrackingState:
+				provider_->SetDashboardHandTrackingState(request.setDashboardHandTrackingState);
+				response.type = protocol::ResponseSuccess;
+				return true;
 			default:
 				return false;
 		}

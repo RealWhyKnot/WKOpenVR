@@ -5,6 +5,7 @@
 #include "IPCClient.h"
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <set>
 
@@ -40,11 +41,19 @@ private:
 	std::set<std::string> lastKnownCalibrationLocks_;
 	std::string lastPredictionDeviceSignature_;
 	std::chrono::steady_clock::time_point lastPredictionReplayScan_{};
+	bool dashboardStateDirty_ = true;
+	bool haveLastDashboardStateSent_ = false;
+	bool lastDashboardStateEnabled_ = false;
+	bool lastDashboardStateVisible_ = false;
+	uint8_t lastDashboardStateHand_ = 0;
+	std::chrono::steady_clock::time_point lastDashboardStateSend_{};
 
 	bool ConnectIfNeeded();
 	void SendConfig();                                            // finger smoothing config
 	void SendDevicePrediction(uint32_t openVRID, int smoothness); // per-device prediction
-	void ReplayDevicePredictions(const char* reason);             // resend whole map on connect/device changes
+	void SendDashboardHandTrackingState(openvr_pair::overlay::ShellContext& context, bool force);
+	void TickDashboardHandTracking(openvr_pair::overlay::ShellContext& context);
+	void ReplayDevicePredictions(const char* reason); // resend whole map on connect/device changes
 	void TickPredictionRestore();
 	void TickExternalToolDetection();
 	void TickCalibrationLockClear(); // zero driver slots when locks change

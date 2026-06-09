@@ -261,7 +261,13 @@ namespace protocol {
 // v31 (2026-06-06): FaceTrackingConfig carries eyelid_sync_mode so eyelid
 // sync can target either the most closed eye or the most open eye instead of
 // always averaging both eyelid openness values.
-const uint32_t Version = 31;
+//
+// v32 (2026-06-09): adds RequestSetDashboardHandTrackingState. The Smoothing
+// overlay reports whether the SteamVR dashboard is visible, independent of
+// whether WKOpenVR's own dashboard tab is active, so the skeletal hook can keep
+// dashboard-window live-frame diagnostics and avoid dashboard-specific static
+// hand fallbacks when the source stream is still live.
+const uint32_t Version = 32;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -367,6 +373,9 @@ enum RequestType
 	// v28 (2026-06-02): body-completion solver calibration and
 	// confidence threshold for Phantom virtual roles.
 	RequestSetPhantomSolverConfig,
+	// v32 (2026-06-09): SteamVR dashboard hand-tracking state from the
+	// Smoothing overlay. Appended to preserve prior request ordinals.
+	RequestSetDashboardHandTrackingState,
 };
 
 enum ResponseType

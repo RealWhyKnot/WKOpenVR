@@ -398,8 +398,10 @@ int main(int argc, char** argv)
 
 	auto vrOverlay = std::make_unique<VrOverlayHost>();
 	bool haveVrState = false;
-	bool prevDashboardVisible = false;
+	bool prevActiveDashboardOverlay = false;
+	bool prevAnyDashboardVisible = false;
 	bool prevVrConnected = false;
+	int prevPrimaryDashboardHand = 0;
 	openvr_pair::common::ProcessPerfSampler perfSampler;
 	CompositorTimingSampler compositorSampler;
 
@@ -426,17 +428,30 @@ int main(int argc, char** argv)
 		// ones. When the dashboard is not visible no mouse events
 		// fire and GLFW's position is used unchanged.
 		const bool dashboardVisible = vrOverlay->TickFrame();
+		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
 		context.vrConnected = vrOverlay->VrConnected();
+		context.activeDashboardOverlay = dashboardVisible;
+		context.anyDashboardVisible = anyDashboardVisible;
+		context.primaryDashboardDevice = vrOverlay->PrimaryDashboardDevice();
+		context.primaryDashboardHand = vrOverlay->PrimaryDashboardHand();
 		context.dashboardVisible = dashboardVisible;
 		if (context.vrConnected) {
 			compositorSampler.MaybeSample(glfwGetTime());
 		}
-		if (!haveVrState || dashboardVisible != prevDashboardVisible || context.vrConnected != prevVrConnected) {
-			openvr_pair::common::DiagnosticLog("overlay", "vr_state dashboard_visible=%d vr_connected=%d",
-			                                   dashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0);
+		if (!haveVrState || dashboardVisible != prevActiveDashboardOverlay ||
+		    anyDashboardVisible != prevAnyDashboardVisible || context.vrConnected != prevVrConnected ||
+		    context.primaryDashboardHand != prevPrimaryDashboardHand) {
+			openvr_pair::common::DiagnosticLog(
+			    "overlay",
+			    "vr_state active_dashboard_overlay=%d any_dashboard_visible=%d vr_connected=%d "
+			    "primary_dashboard_device=%u primary_dashboard_hand=%d",
+			    dashboardVisible ? 1 : 0, anyDashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0,
+			    context.primaryDashboardDevice, context.primaryDashboardHand);
 			haveVrState = true;
-			prevDashboardVisible = dashboardVisible;
+			prevActiveDashboardOverlay = dashboardVisible;
+			prevAnyDashboardVisible = anyDashboardVisible;
 			prevVrConnected = context.vrConnected;
+			prevPrimaryDashboardHand = context.primaryDashboardHand;
 		}
 
 		for (auto& plugin : plugins) {
