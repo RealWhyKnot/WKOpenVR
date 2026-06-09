@@ -98,9 +98,8 @@ TEST(PhantomUiLogic, EveryTrackerStateHasAConcreteTone)
 	// No live tracker state should fall through to the Idle/default tone -- a
 	// row always shows a meaningful green/amber/orange/red badge.
 	const phantom::TrackerState states[] = {
-	    phantom::TrackerState::REAL,         phantom::TrackerState::BLEND_OUT,
-	    phantom::TrackerState::SYNTH_RECKON, phantom::TrackerState::SYNTH_IK,
-	    phantom::TrackerState::SYNTH_ML,     phantom::TrackerState::BLEND_IN,
+	    phantom::TrackerState::REAL,         phantom::TrackerState::BLEND_OUT, phantom::TrackerState::SYNTH_RECKON,
+	    phantom::TrackerState::SYNTH_IK,     phantom::TrackerState::SYNTH_ML,  phantom::TrackerState::BLEND_IN,
 	    phantom::TrackerState::OUT_OF_RANGE, phantom::TrackerState::LOST,
 	};
 	for (const auto s : states) {

@@ -29,9 +29,13 @@ inline std::string ParseAudioInputDeviceId(const std::string& raw)
 {
 	size_t begin = 0;
 	size_t end = raw.size();
-	auto is_trim = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-	while (begin < end && is_trim(raw[begin])) ++begin;
-	while (end > begin && is_trim(raw[end - 1])) --end;
+	auto is_trim = [](char c) {
+		return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+	};
+	while (begin < end && is_trim(raw[begin]))
+		++begin;
+	while (end > begin && is_trim(raw[end - 1]))
+		--end;
 	return raw.substr(begin, end - begin);
 }
 

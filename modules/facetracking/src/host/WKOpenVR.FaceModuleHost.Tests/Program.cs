@@ -65,7 +65,7 @@ static async Task InfersCurrentAvatarFromObservedParameters()
     fixture.WriteAvatarConfig("avtr_other", "Other", other);
 
     bool restored = await AvatarParameterAllowList.RefreshFromObservedParametersAsync(
-        active.Take(10).ToArray(),
+        [.. active.Take(10)],
         fixture.Logger,
         CancellationToken.None,
         fixture.OscRoot,
@@ -120,9 +120,7 @@ static async Task DoesNotInferAmbiguousObservedParameters()
 
 static string[] MakeAddresses(string prefix, int count)
 {
-    return Enumerable.Range(0, count)
-        .Select(i => $"/avatar/parameters/{prefix}{i}")
-        .ToArray();
+    return [.. Enumerable.Range(0, count).Select(i => $"/avatar/parameters/{prefix}{i}")];
 }
 
 static void Require(bool condition, string message)

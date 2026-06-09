@@ -219,7 +219,7 @@ public sealed class OscQueryAdvertiser : IDisposable
             }
 
             _lastInferenceObservedCount = _observedAvatarParameters.Count;
-            snapshot = _observedAvatarParameters.ToArray();
+            snapshot = [.. _observedAvatarParameters];
         }
 
         if (Interlocked.CompareExchange(ref _allowListInferenceInFlight, 1, 0) != 0)
