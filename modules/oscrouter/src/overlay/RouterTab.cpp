@@ -262,30 +262,29 @@ void RouterTab::DrawConnectedModules(openvr_pair::overlay::ShellContext& ctx)
 
 	ImGui::Spacing();
 	ImGui::Text("Connected modules:");
-	if (ImGui::BeginTable("oscrouter_connected", 3,
-	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-		ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.5f);
-		ImGui::TableSetupColumn("Sends", ImGuiTableColumnFlags_WidthStretch, 4.0f);
-		ImGui::TableHeadersRow();
+	{
+		openvr_pair::overlay::ui::TableScope table("oscrouter_connected", 3,
+		                                           ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg |
+		                                               ImGuiTableFlags_SizingStretchProp);
+		if (table) {
+			openvr_pair::overlay::ui::SetupStretchColumn("Module", 3.0f);
+			openvr_pair::overlay::ui::SetupStretchColumn("Status", 1.5f);
+			openvr_pair::overlay::ui::SetupStretchColumn("Sends", 4.0f);
+			openvr_pair::overlay::ui::DrawTableHeader();
 
-		const auto& palette = openvr_pair::overlay::ui::GetPalette();
-		for (const auto& e : kEntries) {
-			const bool enabled = ctx.IsFlagPresent(e.flag);
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(e.label);
-			ImGui::TableSetColumnIndex(1);
-			if (enabled) {
-				ImGui::TextColored(palette.statusOk, "enabled");
+			for (const auto& e : kEntries) {
+				const bool enabled = ctx.IsFlagPresent(e.flag);
+				openvr_pair::overlay::ui::NextRow();
+				openvr_pair::overlay::ui::SetColumn(0);
+				ImGui::TextUnformatted(e.label);
+				openvr_pair::overlay::ui::SetColumn(1);
+				openvr_pair::overlay::ui::DrawStatusText(enabled ? "enabled" : "disabled",
+				                                         enabled ? openvr_pair::overlay::ui::StatusTone::Ok
+				                                                 : openvr_pair::overlay::ui::StatusTone::Idle);
+				openvr_pair::overlay::ui::SetColumn(2);
+				ImGui::TextUnformatted(e.summary);
 			}
-			else {
-				ImGui::TextColored(palette.statusIdle, "disabled");
-			}
-			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(e.summary);
 		}
-		ImGui::EndTable();
 	}
 	ImGui::TextDisabled("These features send OSC through the router, which merges them into\n"
 	                    "one stable connection to VRChat.");
@@ -294,27 +293,27 @@ void RouterTab::DrawConnectedModules(openvr_pair::overlay::ShellContext& ctx)
 void RouterTab::DrawRouteTable()
 {
 	ImGui::Text("Active routes:");
-	if (ImGui::BeginTable("routes", 3,
-	                      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Pattern", ImGuiTableColumnFlags_WidthStretch, 5.0f);
-		ImGui::TableSetupColumn("Matched", ImGuiTableColumnFlags_WidthStretch, 1.5f);
-		ImGui::TableSetupColumn("Dropped", ImGuiTableColumnFlags_WidthStretch, 1.5f);
-		ImGui::TableHeadersRow();
+	openvr_pair::overlay::ui::TableScope table(
+	    "routes", 3, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
+	if (table) {
+		openvr_pair::overlay::ui::SetupStretchColumn("Pattern", 5.0f);
+		openvr_pair::overlay::ui::SetupStretchColumn("Matched", 1.5f);
+		openvr_pair::overlay::ui::SetupStretchColumn("Dropped", 1.5f);
+		openvr_pair::overlay::ui::DrawTableHeader();
 
 		for (uint32_t i = 0; i < OscRouterStatsReader::RouteSlotCount(); ++i) {
 			protocol::OscRouterRouteSlot slot;
 			if (!statsReader_.ReadRoute(i, slot)) continue;
 			if (!slot.active) continue;
 
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
+			openvr_pair::overlay::ui::NextRow();
+			openvr_pair::overlay::ui::SetColumn(0);
 			ImGui::TextUnformatted(slot.address_pattern);
-			ImGui::TableSetColumnIndex(1);
+			openvr_pair::overlay::ui::SetColumn(1);
 			ImGui::Text("%llu", (unsigned long long)slot.match_count.load(std::memory_order_relaxed));
-			ImGui::TableSetColumnIndex(2);
+			openvr_pair::overlay::ui::SetColumn(2);
 			ImGui::Text("%llu", (unsigned long long)slot.drop_count.load(std::memory_order_relaxed));
 		}
-		ImGui::EndTable();
 	}
 }
 
