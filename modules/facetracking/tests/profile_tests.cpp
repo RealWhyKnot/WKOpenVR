@@ -232,12 +232,16 @@ TEST(FacetrackingProfiles, AvatarDisplayNamePrefersAliasThenOscNameThenCompactId
 	AvatarShapeTuningMetadata metadata;
 	metadata.auto_name = "OSC Avatar";
 	EXPECT_EQ(AvatarDisplayName("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", &metadata), "OSC Avatar");
+	EXPECT_EQ(AvatarDisplaySourceLabel("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", &metadata), "OSC");
 
 	metadata.custom_name = "  Favorite Smile Test  ";
 	EXPECT_EQ(AvatarDisplayName("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", &metadata), "Favorite Smile Test");
+	EXPECT_EQ(AvatarDisplaySourceLabel("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", &metadata), "Alias");
 
 	EXPECT_EQ(AvatarDisplayName("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", nullptr), "avtr_67bb9fae");
+	EXPECT_EQ(AvatarDisplaySourceLabel("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", nullptr), "ID");
 	EXPECT_EQ(AvatarDisplayName(kDefaultAvatarShapeTuningKey, nullptr), "Default profile");
+	EXPECT_EQ(AvatarDisplaySourceLabel(kDefaultAvatarShapeTuningKey, nullptr), "Default");
 }
 
 TEST(FacetrackingProfiles, FormatAvatarLastUsedAgeUsesHumanUnits)

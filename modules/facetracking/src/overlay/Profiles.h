@@ -86,6 +86,7 @@ AvatarShapeTuningMetadata& MetadataForAvatar(FacetrackingProfile& profile, const
 const AvatarShapeTuningMetadata* FindMetadataForAvatar(const FacetrackingProfile& profile,
                                                        const std::string& avatarKey);
 std::string AvatarDisplayName(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata);
+std::string AvatarDisplaySourceLabel(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata);
 int64_t AvatarLastUsedUnixSeconds(const std::string& utc);
 std::string FormatAvatarLastUsedAge(const std::string& utc, int64_t now_unix_seconds);
 std::string FormatAvatarLastUsedAge(const std::string& utc);

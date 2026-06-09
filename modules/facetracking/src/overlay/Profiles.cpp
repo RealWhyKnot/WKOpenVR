@@ -321,6 +321,17 @@ std::string AvatarDisplayName(const std::string& avatarKey, const AvatarShapeTun
 	return key;
 }
 
+std::string AvatarDisplaySourceLabel(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata)
+{
+	if (metadata) {
+		if (!TrimAsciiCopy(metadata->custom_name).empty()) return "Alias";
+		if (!TrimAsciiCopy(metadata->auto_name).empty()) return "OSC";
+	}
+
+	const std::string key = NormalizeAvatarShapeTuningKey(avatarKey);
+	return key == kDefaultAvatarShapeTuningKey ? "Default" : "ID";
+}
+
 int64_t AvatarLastUsedUnixSeconds(const std::string& utc)
 {
 	int year = 0;
