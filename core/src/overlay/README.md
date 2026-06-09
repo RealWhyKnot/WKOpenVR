@@ -74,6 +74,23 @@ stretch columns, `DrawPanel`, and `ResponsiveColumnsScope` over fixed
 Text: a tab gets at most one line of context; detail belongs in per-control
 tooltips, not a paragraph at the top.
 
+## Pitfall: do not fight the user every frame
+
+Let ImGui own interactive state and read it back; do not force the state from
+your own variable on every frame.
+
+- Tabs: pass `ImGuiTabItemFlags_SetSelected` only on the one frame you change
+  selection programmatically (a next-tab button, a default), then stop. Forcing
+  it every frame to mirror an externally-tracked key overrides the user's click
+  and the selection oscillates back. Otherwise read the choice via
+  `if (tab) selected = key;` and leave the flag off.
+- Same rule for `SetKeyboardFocusHere`, `ActivateItem`, and `SetScrollHereY`:
+  one-shot on the frame you mean it, never unconditionally.
+- Text fields: hydrate the buffer once (or when the selection changes), let the
+  user edit, and commit on `IsItemDeactivatedAfterEdit`. Re-copying a model
+  string into the buffer every frame is only safe if you also write edits back
+  the same frame so the two never diverge.
+
 ## Adding a component
 
 Promote a pattern to this library once two or more modules need it. Put the

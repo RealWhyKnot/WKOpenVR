@@ -42,6 +42,11 @@ struct TabBarScope
 	TabBarScope& operator=(const TabBarScope&) = delete;
 };
 
+// A single tab item. Prefer letting ImGui own the selection and reading it back
+// (`if (tab) selected = key;`). If you must steer selection from your own state,
+// pass ImGuiTabItemFlags_SetSelected ONLY on the single frame you change it
+// programmatically (e.g. a next-tab button), never every frame -- forcing it each
+// frame overrides the user's click and the selection oscillates back.
 struct TabItemScope
 {
 	bool open = false;
