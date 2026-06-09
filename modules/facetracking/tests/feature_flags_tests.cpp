@@ -1,5 +1,7 @@
 #include "FeatureFlags.h"
 
+#include "DashboardInputRuntimeGate.h"
+
 #include <gtest/gtest.h>
 
 namespace {
@@ -32,6 +34,12 @@ TEST(FeatureFlags, DashboardInputIsIndependent)
 	const uint32_t flags = pairdriver::ComposeFeatureFlags(false, false, true, false, false, false, false, false);
 
 	EXPECT_EQ(flags, pairdriver::kFeatureDashboardInput);
+}
+
+TEST(FeatureFlags, DashboardInputRuntimeGateRequiresOptIn)
+{
+	EXPECT_FALSE(openvr_pair::common::dashboardinput::RuntimeEnabled(true, false));
+	EXPECT_TRUE(openvr_pair::common::dashboardinput::RuntimeEnabled(true, true));
 }
 
 TEST(FeatureFlags, EmptyMaskStaysInert)

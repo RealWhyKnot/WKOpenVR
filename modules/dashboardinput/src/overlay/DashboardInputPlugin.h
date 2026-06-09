@@ -10,9 +10,13 @@
 class DashboardInputPlugin final : public openvr_pair::overlay::FeaturePlugin
 {
 public:
+	static constexpr openvr_pair::overlay::FeaturePluginChannel kPluginChannel =
+	    openvr_pair::overlay::FeaturePluginChannel::Development;
+
 	const char* Name() const override { return ModuleName(ModuleId::DashboardInput); }
 	const char* FlagFileName() const override { return ModuleFlagFileName(ModuleId::DashboardInput); }
 	const char* PipeName() const override { return ModulePipeName(ModuleId::DashboardInput); }
+	openvr_pair::overlay::FeaturePluginChannel Channel() const override { return kPluginChannel; }
 
 	void OnStart(openvr_pair::overlay::ShellContext& context) override;
 	void OnShutdown(openvr_pair::overlay::ShellContext& context) override;
@@ -30,6 +34,7 @@ private:
 	bool lastVisible_ = false;
 	uint8_t lastPrimaryHand_ = 0;
 
+	bool RuntimeEnabled(const openvr_pair::overlay::ShellContext& context) const;
 	bool ConnectIfNeeded();
 	void SendDashboardState(openvr_pair::overlay::ShellContext& context, bool enabled, bool forceLog);
 	void TickDashboardState(openvr_pair::overlay::ShellContext& context);

@@ -1,4 +1,5 @@
 #include "BuildChannel.h"
+#include "DashboardInputRuntimeGate.h"
 #include "DebugLogging.h"
 #include "DiagnosticsLog.h"
 #include "FeaturePlugin.h"
@@ -438,7 +439,10 @@ int main(int argc, char** argv)
 		// fire and GLFW's position is used unchanged.
 		const bool dashboardInputEnabled = context.IsFlagPresent(
 		    openvr_pair::common::modules::FlagFileName(openvr_pair::common::modules::ModuleId::DashboardInput));
-		vrOverlay->SetSafeOverlayEnabled(dashboardInputEnabled);
+		const bool dashboardInputRuntimeEnabled = openvr_pair::common::dashboardinput::RuntimeEnabled(
+		    dashboardInputEnabled,
+		    context.IsFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName));
+		vrOverlay->SetSafeOverlayEnabled(dashboardInputRuntimeEnabled);
 		const bool activeDashboardOverlay = vrOverlay->TickFrame(kVrFboWidth, kVrFboHeight);
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
 		const bool safeOverlayVisible = vrOverlay->SafeOverlayVisible();

@@ -1,5 +1,6 @@
 #include "DashboardInputPlugin.h"
 
+#include "DashboardInputRuntimeGate.h"
 #include "DiagnosticsLog.h"
 #include "Protocol.h"
 #include "ShellContext.h"
@@ -50,23 +51,49 @@ uint64_t MonotonicMilliseconds()
 void DashboardInputPlugin::OnStart(openvr_pair::overlay::ShellContext& context)
 {
 	openvr_pair::common::DiagnosticLog("dashboardinput", "plugin_start protocol=%u", (unsigned)protocol::Version);
+	if (!RuntimeEnabled(context)) {
+		if (context.IsFlagPresent(FlagFileName())) {
+			openvr_pair::common::DiagnosticLog("dashboardinput", "runtime_disabled missing_flag='%s'",
+			                                   openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName);
+		}
+		return;
+	}
 	ConnectIfNeeded();
 	SendDashboardState(context, true, true);
 }
 
 void DashboardInputPlugin::OnShutdown(openvr_pair::overlay::ShellContext& context)
 {
-	SendDashboardState(context, false, true);
+	if (ipc_.IsConnected()) {
+		SendDashboardState(context, false, true);
+	}
 	ipc_.Close();
 	openvr_pair::common::DiagnosticLog("dashboardinput", "plugin_shutdown");
 }
 
 void DashboardInputPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 {
+	if (!RuntimeEnabled(context)) {
+		if (ipc_.IsConnected()) {
+			SendDashboardState(context, false, true);
+			ipc_.Close();
+		}
+		connectError_.clear();
+		stateDirty_ = true;
+		haveLastStateSent_ = false;
+		return;
+	}
 	if (!ipc_.IsConnected() && ConnectIfNeeded()) {
 		stateDirty_ = true;
 	}
 	TickDashboardState(context);
+}
+
+bool DashboardInputPlugin::RuntimeEnabled(const openvr_pair::overlay::ShellContext& context) const
+{
+	return openvr_pair::common::dashboardinput::RuntimeEnabled(
+	    context.IsFlagPresent(FlagFileName()),
+	    context.IsFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName));
 }
 
 bool DashboardInputPlugin::ConnectIfNeeded()
@@ -157,11 +184,21 @@ void DashboardInputPlugin::TickDashboardState(openvr_pair::overlay::ShellContext
 
 void DashboardInputPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 {
+	const bool runtimeEnabled = RuntimeEnabled(context);
 	openvr_pair::overlay::ui::DrawSectionHeading("SteamVR dashboard");
 	openvr_pair::overlay::ui::DrawSettingTable(
 	    "dashboard_input_status", 170.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+		    openvr_pair::overlay::ui::SettingRow(table, "Runtime", [&] {
+			    openvr_pair::overlay::ui::DrawStatusCell(runtimeEnabled ? "Opted in" : "Disabled",
+			                                             runtimeEnabled ? openvr_pair::overlay::ui::StatusTone::Warn
+			                                                            : openvr_pair::overlay::ui::StatusTone::Idle,
+			                                             false);
+		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Finger passthrough", [&] {
-			    openvr_pair::overlay::ui::DrawStatusCell("Enabled", openvr_pair::overlay::ui::StatusTone::Ok, false);
+			    openvr_pair::overlay::ui::DrawStatusCell(runtimeEnabled ? "Enabled" : "Disabled",
+			                                             runtimeEnabled ? openvr_pair::overlay::ui::StatusTone::Warn
+			                                                            : openvr_pair::overlay::ui::StatusTone::Idle,
+			                                             false);
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Dashboard", [&] {
 			    openvr_pair::overlay::ui::DrawStatusCell(context.anyDashboardVisible ? "Visible" : "Hidden",
@@ -187,26 +224,31 @@ void DashboardInputPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 	    "dashboard_input_safe_overlay_status", 170.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
 		    openvr_pair::overlay::ui::SettingRow(table, "Overlay", [&] {
 			    openvr_pair::overlay::ui::DrawStatusCell(
-			        context.dashboardInputSafeOverlayVisible ? "Visible" : "Hidden",
-			        context.dashboardInputSafeOverlayVisible ? openvr_pair::overlay::ui::StatusTone::Ok
-			                                                 : openvr_pair::overlay::ui::StatusTone::Idle,
+			        !runtimeEnabled ? "Disabled" : (context.dashboardInputSafeOverlayVisible ? "Visible" : "Hidden"),
+			        runtimeEnabled && context.dashboardInputSafeOverlayVisible
+			            ? openvr_pair::overlay::ui::StatusTone::Ok
+			            : openvr_pair::overlay::ui::StatusTone::Idle,
 			        false);
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Input", [&] {
-			    const char* label = context.dashboardInputSafeOverlayStatus.empty()
+			    const char* label = !runtimeEnabled ? "Disabled"
+			                        : context.dashboardInputSafeOverlayStatus.empty()
 			                            ? (context.dashboardInputSafeOverlayInputReady ? "Ready" : "Starting")
 			                            : context.dashboardInputSafeOverlayStatus.c_str();
 			    openvr_pair::overlay::ui::DrawStatusCell(label,
-			                                             context.dashboardInputSafeOverlayInputReady
+			                                             runtimeEnabled && context.dashboardInputSafeOverlayInputReady
 			                                                 ? openvr_pair::overlay::ui::StatusTone::Ok
-			                                                 : openvr_pair::overlay::ui::StatusTone::Warn,
+			                                                 : openvr_pair::overlay::ui::StatusTone::Idle,
 			                                             false);
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Global priority", [&] {
 			    openvr_pair::overlay::ui::DrawStatusCell(
-			        context.dashboardInputSafeOverlayGlobalPriorityEnabled ? "Enabled" : "Unavailable",
-			        context.dashboardInputSafeOverlayGlobalPriorityEnabled ? openvr_pair::overlay::ui::StatusTone::Ok
-			                                                               : openvr_pair::overlay::ui::StatusTone::Warn,
+			        !runtimeEnabled
+			            ? "Disabled"
+			            : (context.dashboardInputSafeOverlayGlobalPriorityEnabled ? "Enabled" : "Unavailable"),
+			        runtimeEnabled && context.dashboardInputSafeOverlayGlobalPriorityEnabled
+			            ? openvr_pair::overlay::ui::StatusTone::Ok
+			            : openvr_pair::overlay::ui::StatusTone::Idle,
 			        false);
 		    });
 	    });

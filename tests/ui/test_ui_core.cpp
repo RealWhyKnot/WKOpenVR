@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "FeaturePlugin.h"
+#include "DashboardInputPlugin.h"
 #include "ShellFooter.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
@@ -74,6 +75,13 @@ TEST(FeaturePlugin, ChannelHelpersRouteReleaseAndDevelopmentModules)
 	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::Release));
 	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::Development));
 	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::DevTools));
+}
+
+TEST(FeaturePlugin, DashboardInputIsADevelopmentModule)
+{
+	EXPECT_EQ(openvr_pair::overlay::FeaturePluginChannel::Development, DashboardInputPlugin::kPluginChannel);
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInModulesTab(DashboardInputPlugin::kPluginChannel));
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInDevModuleList(DashboardInputPlugin::kPluginChannel));
 }
 
 TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
