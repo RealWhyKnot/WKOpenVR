@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace openvr_pair::overlay::ui {
 
@@ -28,6 +29,19 @@ struct ScopedStyleColor
 	~ScopedStyleColor();
 	ScopedStyleColor(const ScopedStyleColor&) = delete;
 	ScopedStyleColor& operator=(const ScopedStyleColor&) = delete;
+};
+
+// RAII for pushing several style colors at once -- replaces hand-balanced
+// PushStyleColor/PopStyleColor chains (a common pop-count footgun).
+struct ScopedStyleColors
+{
+	explicit ScopedStyleColors(std::initializer_list<std::pair<ImGuiCol, ImVec4>> colors);
+	~ScopedStyleColors();
+	ScopedStyleColors(const ScopedStyleColors&) = delete;
+	ScopedStyleColors& operator=(const ScopedStyleColors&) = delete;
+
+private:
+	int count_;
 };
 
 struct DisabledSection
@@ -57,6 +71,8 @@ void TooltipForLastItem(const char* tooltip);
 void TooltipOnHover(const char* tooltip);
 bool CheckboxWithTooltip(const char* label, bool* value, const char* tooltip);
 bool SliderIntWithTooltip(const char* label, int* value, int min, int max, const char* format, const char* tooltip);
+bool SliderFloatWithTooltip(const char* label, float* value, float min, float max, const char* format,
+                            const char* tooltip, ImGuiSliderFlags flags = 0);
 bool RadioButtonWithTooltip(const char* label, bool active, const char* tooltip);
 void DrawHelpMarker(const char* tooltip);
 
@@ -66,6 +82,9 @@ void DrawColoredText(const char* text, ImVec4 color);
 void DrawStatusText(const char* text, StatusTone tone);
 void DrawEmptyState(const char* text);
 void DrawStatusDot(ImU32 color);
+// Inline pill/chip: a rounded, tone-tinted background behind tone-colored
+// label text. Advances the cursor so it flows like any other inline item.
+void StatusBadge(const char* text, StatusTone tone);
 void RightAlignText(const char* text, ImVec4 color, bool colored = true);
 
 bool CopyToClipboardButton(const char* id, const char* text);

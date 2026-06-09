@@ -16,12 +16,23 @@ void ApplyOverlayStyle()
 
 	style.WindowPadding = ImVec2(12.0f, 10.0f);
 	style.FramePadding = ImVec2(8.0f, 4.0f);
+	style.CellPadding = ImVec2(8.0f, 4.0f);
 	style.ItemSpacing = ImVec2(10.0f, 6.0f);
 	style.ItemInnerSpacing = ImVec2(8.0f, 4.0f);
 	style.IndentSpacing = 20.0f;
 	style.ScrollbarSize = 14.0f;
+
+	// Rounding + a hairline window border give every theme a softer, more
+	// cohesive frame. These are geometry only, so they survive a theme switch
+	// (SetTheme rewrites colors, never the style metrics).
+	style.WindowRounding = 6.0f;
+	style.ChildRounding = 6.0f;
+	style.FrameRounding = 4.0f;
+	style.PopupRounding = 4.0f;
+	style.ScrollbarRounding = 6.0f;
 	style.TabRounding = 4.0f;
 	style.GrabRounding = 4.0f;
+	style.WindowBorderSize = 1.0f;
 }
 
 void BeginGroupPanel(const char* name, const ImVec2& size)

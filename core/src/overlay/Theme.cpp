@@ -242,6 +242,67 @@ void ApplyPureDarkImGuiColors()
 	c[ImGuiCol_HeaderActive] = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
 }
 
+// Modern palette: the refreshed first-launch default. Keeps Legacy's
+// well-tuned semantic accents but pairs them with a cooler, cohesive dark
+// chrome (see ApplyModernImGuiColors) and a matching window background.
+SemanticPalette ModernPalette()
+{
+	SemanticPalette p = LegacyPalette();
+	p.statusOk = ImVec4(0.40f, 0.82f, 0.52f, 1.0f);
+	p.statusInfo = ImVec4(0.45f, 0.68f, 0.98f, 1.0f);
+	p.windowBg = ImVec4(0.10f, 0.11f, 0.13f, 1.00f);
+	return p;
+}
+
+// Cohesive dark theme with a single blue accent threaded through the
+// interactive chrome (checkmarks, sliders, buttons, headers, tabs). Built on
+// StyleColorsDark and retuned rather than hand-rolled from scratch so any
+// ImGui color not listed here keeps a sane default.
+void ApplyModernImGuiColors()
+{
+	ImGui::StyleColorsDark();
+	ImVec4* c = ImGui::GetStyle().Colors;
+	const ImVec4 accent(0.27f, 0.59f, 0.93f, 1.00f);
+
+	c[ImGuiCol_Text] = ImVec4(0.92f, 0.93f, 0.94f, 1.00f);
+	c[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.52f, 0.55f, 1.00f);
+	c[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.11f, 0.13f, 1.00f);
+	c[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.13f, 0.16f, 0.98f);
+	c[ImGuiCol_Border] = ImVec4(0.26f, 0.28f, 0.33f, 0.50f);
+	c[ImGuiCol_FrameBg] = ImVec4(0.16f, 0.18f, 0.22f, 1.00f);
+	c[ImGuiCol_FrameBgHovered] = ImVec4(0.22f, 0.25f, 0.30f, 1.00f);
+	c[ImGuiCol_FrameBgActive] = ImVec4(0.26f, 0.30f, 0.36f, 1.00f);
+	c[ImGuiCol_TitleBg] = ImVec4(0.09f, 0.10f, 0.12f, 1.00f);
+	c[ImGuiCol_TitleBgActive] = ImVec4(0.13f, 0.15f, 0.19f, 1.00f);
+	c[ImGuiCol_MenuBarBg] = ImVec4(0.13f, 0.14f, 0.17f, 1.00f);
+	c[ImGuiCol_ScrollbarBg] = ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
+	c[ImGuiCol_ScrollbarGrab] = ImVec4(0.24f, 0.27f, 0.32f, 1.00f);
+	c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.34f, 0.40f, 1.00f);
+	c[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.36f, 0.40f, 0.48f, 1.00f);
+	c[ImGuiCol_CheckMark] = accent;
+	c[ImGuiCol_SliderGrab] = ImVec4(0.33f, 0.62f, 0.92f, 1.00f);
+	c[ImGuiCol_SliderGrabActive] = accent;
+	c[ImGuiCol_Button] = ImVec4(0.20f, 0.24f, 0.30f, 1.00f);
+	c[ImGuiCol_ButtonHovered] = ImVec4(0.27f, 0.45f, 0.66f, 1.00f);
+	c[ImGuiCol_ButtonActive] = accent;
+	c[ImGuiCol_Header] = ImVec4(0.20f, 0.25f, 0.32f, 1.00f);
+	c[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.38f, 0.54f, 1.00f);
+	c[ImGuiCol_HeaderActive] = ImVec4(0.28f, 0.45f, 0.65f, 1.00f);
+	c[ImGuiCol_Separator] = ImVec4(0.26f, 0.28f, 0.33f, 0.60f);
+	c[ImGuiCol_SeparatorHovered] = ImVec4(0.30f, 0.45f, 0.62f, 0.78f);
+	c[ImGuiCol_SeparatorActive] = accent;
+	c[ImGuiCol_Tab] = ImVec4(0.13f, 0.15f, 0.19f, 1.00f);
+	c[ImGuiCol_TabHovered] = ImVec4(0.26f, 0.38f, 0.54f, 1.00f);
+	c[ImGuiCol_TabActive] = ImVec4(0.20f, 0.30f, 0.44f, 1.00f);
+	c[ImGuiCol_TabUnfocused] = ImVec4(0.11f, 0.13f, 0.16f, 1.00f);
+	c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.16f, 0.21f, 0.29f, 1.00f);
+	c[ImGuiCol_TableHeaderBg] = ImVec4(0.15f, 0.17f, 0.21f, 1.00f);
+	c[ImGuiCol_TableBorderStrong] = ImVec4(0.26f, 0.28f, 0.33f, 1.00f);
+	c[ImGuiCol_TableBorderLight] = ImVec4(0.20f, 0.22f, 0.26f, 1.00f);
+	c[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.025f);
+	c[ImGuiCol_TextSelectedBg] = ImVec4(accent.x, accent.y, accent.z, 0.35f);
+}
+
 struct ThemeDef
 {
 	ThemeId id;
@@ -252,6 +313,8 @@ struct ThemeDef
 };
 
 const ThemeDef kThemes[] = {
+    {ThemeId::Modern, "Modern", "Refined dark palette with a cohesive blue accent. Default.", &ModernPalette,
+     &ApplyModernImGuiColors},
     {ThemeId::Legacy, "Legacy", "Original Space Calibrator look. Warm dark palette.", &LegacyPalette,
      &ApplyLegacyImGuiColors},
     {ThemeId::Dark, "Dark", "Cooler neutral grays. Higher panel contrast.", &DarkPalette, &ApplyDarkImGuiColors},
@@ -268,8 +331,8 @@ static_assert(sizeof(kThemes) / sizeof(kThemes[0]) == (size_t)ThemeId::Count_,
 // File-scope active state. SetTheme writes both; GetPalette reads palette.
 // Initialised to Legacy so calls before InitThemeFromDisk return a usable
 // reference (matters when feature modules construct during plugin init).
-ThemeId g_currentId = ThemeId::Legacy;
-SemanticPalette g_currentPalette = LegacyPalette();
+ThemeId g_currentId = ThemeId::Modern;
+SemanticPalette g_currentPalette = ModernPalette();
 std::wstring g_profileRoot;
 
 bool ParseThemeId(const std::string& value, ThemeId& out)
@@ -335,8 +398,8 @@ void SetTheme(ThemeId id)
 void InitThemeFromDisk(const ShellContext& context)
 {
 	g_profileRoot = context.profileRoot;
-	ThemeId id = ThemeId::Legacy;
-	ReadThemeFromDisk(id); // failure leaves id as Legacy
+	ThemeId id = ThemeId::Modern;
+	ReadThemeFromDisk(id); // failure leaves id as the Modern default
 	const ThemeDef& t = FindTheme(id);
 	t.applyImGuiColors();
 	g_currentPalette = t.makePalette();

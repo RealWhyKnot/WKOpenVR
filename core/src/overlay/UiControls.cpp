@@ -41,6 +41,19 @@ ScopedStyleColor::~ScopedStyleColor()
 	ImGui::PopStyleColor();
 }
 
+ScopedStyleColors::ScopedStyleColors(std::initializer_list<std::pair<ImGuiCol, ImVec4>> colors)
+    : count_(static_cast<int>(colors.size()))
+{
+	for (const auto& [idx, color] : colors) {
+		ImGui::PushStyleColor(idx, color);
+	}
+}
+
+ScopedStyleColors::~ScopedStyleColors()
+{
+	if (count_ > 0) ImGui::PopStyleColor(count_);
+}
+
 DisabledSection::DisabledSection(bool disabled, const char* whyTooltip) : active(disabled), why(whyTooltip)
 {
 	if (active) ImGui::BeginDisabled();
@@ -80,6 +93,14 @@ bool CheckboxWithTooltip(const char* label, bool* value, const char* tooltip)
 bool SliderIntWithTooltip(const char* label, int* value, int min, int max, const char* format, const char* tooltip)
 {
 	const bool changed = ImGui::SliderInt(label, value, min, max, format);
+	TooltipForLastItem(tooltip);
+	return changed;
+}
+
+bool SliderFloatWithTooltip(const char* label, float* value, float min, float max, const char* format,
+                            const char* tooltip, ImGuiSliderFlags flags)
+{
+	const bool changed = ImGui::SliderFloat(label, value, min, max, format, flags);
 	TooltipForLastItem(tooltip);
 	return changed;
 }
@@ -137,6 +158,24 @@ void DrawStatusDot(ImU32 color)
 	dl->AddCircleFilled(center, r, color);
 	ImGui::Dummy(ImVec2(r * 2.0f + 4.0f, h));
 	ImGui::SameLine();
+}
+
+void StatusBadge(const char* text, StatusTone tone)
+{
+	if (!text || !text[0]) return;
+	const ImVec4 col = StatusColor(tone);
+	const ImVec2 textSize = ImGui::CalcTextSize(text);
+	const ImVec2 pad(8.0f, 2.0f);
+	const ImVec2 rectMin = ImGui::GetCursorScreenPos();
+	const ImVec2 rectMax(rectMin.x + textSize.x + pad.x * 2.0f, rectMin.y + textSize.y + pad.y * 2.0f);
+
+	ImDrawList* dl = ImGui::GetWindowDrawList();
+	const float rounding = (rectMax.y - rectMin.y) * 0.5f;
+	dl->AddRectFilled(rectMin, rectMax, ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.18f)), rounding);
+	dl->AddRect(rectMin, rectMax, ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.55f)), rounding);
+	dl->AddText(ImVec2(rectMin.x + pad.x, rectMin.y + pad.y), ImGui::GetColorU32(col), text);
+
+	ImGui::Dummy(ImVec2(rectMax.x - rectMin.x, rectMax.y - rectMin.y));
 }
 
 void RightAlignText(const char* text, ImVec4 color, bool colored)

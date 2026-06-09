@@ -16,7 +16,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(ui_core_tests
 	test_bug_report.cpp
-	test_ui_core.cpp)
+	test_ui_core.cpp
+	test_ui_responsive_logic.cpp)
 
 target_include_directories(ui_core_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common

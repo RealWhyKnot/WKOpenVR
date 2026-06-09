@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+namespace ui = openvr_pair::overlay::ui;
+
 namespace {
 
 class UiCoreTest : public ::testing::Test
@@ -256,6 +258,81 @@ TEST_F(UiCoreTest, BannersDisabledStateAndActionsRender)
 		                                                          ImVec2(120.0f, 0.0f), [] {}},
 		               });
 	});
+}
+
+TEST_F(UiCoreTest, ExpandedComponentsRenderAtSmallAndDashboardSizes)
+{
+	for (const ImVec2 size : {ImVec2(640.0f, 480.0f), ImVec2(1200.0f, 780.0f)}) {
+		RenderAt(size, [] {
+			float ratio = 0.5f;
+
+			ui::DrawCard("Connection", ui::StatusTone::Ok, [&] {
+				ui::StatusBadge("connected", ui::StatusTone::Ok);
+				ui::SliderFloatWithTooltip("##ratio", &ratio, 0.0f, 1.0f, "%.2f", "Shared float slider.");
+				ui::ScopedStyleColors tint({
+				    {ImGuiCol_Button, ui::StatusColor(ui::StatusTone::Warn)},
+				    {ImGuiCol_Text, ui::StatusColor(ui::StatusTone::Idle)},
+				});
+				ImGui::Button("Tinted");
+			});
+
+			ui::DrawCard("Plain", ui::StatusTone::Idle, [] { ui::DrawTextWrapped("Untinted card body."); });
+
+			{
+				ui::TableScope table("tone_cells", 2,
+				                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter |
+				                         ImGuiTableFlags_SizingStretchProp);
+				if (table) {
+					ui::SetupStretchColumn("Name", 2.0f);
+					ui::SetupFixedColumn("State", 90.0f);
+					ui::NextRow();
+					ui::SetColumn(0);
+					ImGui::TextUnformatted("Tracker 0");
+					ui::SetColumn(1);
+					ui::SetCellToneBg(ui::StatusTone::Error);
+					ui::DrawStatusCell("lost", ui::StatusTone::Error);
+				}
+			}
+
+			{
+				ui::ResponsiveColumnsScope cols("grid", 3, 220.0f);
+				if (cols) {
+					ImGui::TextUnformatted("A");
+					cols.Next();
+					ImGui::TextUnformatted("B");
+					cols.Next();
+					ImGui::TextUnformatted("C");
+				}
+			}
+
+			{
+				ui::FlowRowScope flow;
+				for (int i = 0; i < 8; ++i) {
+					flow.Item();
+					ui::StatusBadge("chip", ui::StatusTone::Info);
+				}
+			}
+		});
+	}
+}
+
+TEST_F(UiCoreTest, ModernThemeAppliesAndRenders)
+{
+	ui::SetTheme(ui::ThemeId::Modern);
+	RenderAt(ImVec2(1200.0f, 780.0f),
+	         [] { ui::DrawCard("Modern", ui::StatusTone::Info, [] { ui::DrawTextWrapped("Modern theme body."); }); });
+}
+
+TEST(Theme, RegistersModernAsDefaultAndNamesEveryTheme)
+{
+	EXPECT_EQ(0, (int)ui::ThemeId::Modern);
+	EXPECT_STREQ("Modern", ui::ThemeName(ui::ThemeId::Modern));
+	EXPECT_STREQ("Legacy", ui::ThemeName(ui::ThemeId::Legacy));
+	for (int i = 0; i < (int)ui::ThemeId::Count_; ++i) {
+		const char* name = ui::ThemeName((ui::ThemeId)i);
+		ASSERT_NE(nullptr, name);
+		EXPECT_NE('\0', name[0]);
+	}
 }
 
 TEST(UiSharedFormatting, ByteCountsAndFileAgesUseCompactLabels)

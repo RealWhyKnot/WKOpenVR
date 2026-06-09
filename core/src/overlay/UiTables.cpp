@@ -82,4 +82,18 @@ void DrawStatusCell(const char* text, StatusTone tone, bool rightAlign)
 	}
 }
 
+ImU32 ToneCellBgColor(StatusTone tone, float alpha)
+{
+	if (tone == StatusTone::Idle) return 0;
+	ImVec4 c = StatusColor(tone);
+	c.w = alpha;
+	return ImGui::GetColorU32(c);
+}
+
+void SetCellToneBg(StatusTone tone, float alpha)
+{
+	const ImU32 color = ToneCellBgColor(tone, alpha);
+	if (color != 0) ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, color);
+}
+
 } // namespace openvr_pair::overlay::ui

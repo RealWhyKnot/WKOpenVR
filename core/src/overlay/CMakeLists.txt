@@ -43,6 +43,9 @@ add_library(openvr_pair_overlay_ui STATIC
 	UiHelpers.h
 	UiLayout.cpp
 	UiLayout.h
+	UiResponsive.cpp
+	UiResponsive.h
+	UiResponsiveLogic.h
 	UiTables.cpp
 	UiTables.h)
 

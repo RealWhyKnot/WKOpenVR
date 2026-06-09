@@ -38,6 +38,12 @@ void SetColumn(int column);
 void DrawKeyValueRow(const char* label, const char* value);
 void DrawStatusCell(const char* text, StatusTone tone, bool rightAlign = false);
 
+// Theme-derived dimmed fill for a status cell. Returns 0 for Idle (no fill).
+// Replaces hand-rolled ARGB literals passed to ImGui::TableSetBgColor.
+ImU32 ToneCellBgColor(StatusTone tone, float alpha = 0.35f);
+// Tints the current table cell's background from a tone. No-op on Idle.
+void SetCellToneBg(StatusTone tone, float alpha = 0.35f);
+
 template <typename Body> void DrawSettingTable(const char* id, float labelWidth, Body&& body)
 {
 	SettingTableScope table(id, labelWidth);

@@ -9,8 +9,9 @@
 // literals at the call site. This lets a theme switch (Themes tab) recolor
 // the entire UI live without touching feature-module call sites.
 //
-// First-launch default is ThemeId::Legacy, which reproduces the exact colors
-// the app shipped with before the theme system existed.
+// First-launch default is ThemeId::Modern, a refined dark palette. Legacy
+// reproduces the exact colors the app shipped with before the theme system
+// existed and stays one click away on the Themes tab.
 namespace openvr_pair::overlay {
 struct ShellContext;
 }
@@ -60,7 +61,8 @@ struct SemanticPalette
 
 enum class ThemeId
 {
-	Legacy = 0,
+	Modern = 0,
+	Legacy,
 	Dark,
 	Light,
 	HighContrast,
