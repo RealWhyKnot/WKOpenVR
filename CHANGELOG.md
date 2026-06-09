@@ -32,6 +32,22 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Add dropout timing presets (97a9306)
 - **captions:** Add private caption preview (c5be597)
 - **modules:** Gate chatbox captions and virtual tracker roles (e526af6)
+- **overlay:** Expand shared UI component library (cdcb631)
+- **ui:** Restore ordered module tabs (871091f)
+- **facetracking:** Flesh out avatar tuning UI (2a0577a)
+- **facetracking:** Label avatar tuning profiles (9b37570)
+- **facetracking:** Add per-avatar shape tuning (058f83a)
+- **dashboardinput:** Split dashboard hand tracking module (b770342)
+- **smoothing:** Pass dashboard hand state through skeletal path (e73c81f)
+- **captions:** Add sidecar runtime toggle (bb96f0c)
+- **captions:** Add speech model and no-speech controls (4388ebd)
+- **captions:** Add realtime tuning toggles (2b0d7a5)
+- **captions:** Add speech typing indicator (10a13f6)
+- **questapp:** Add remote version reporting and mic recovery (045442b)
+- **core:** Auto-recover SteamVR safe mode and contain module crashes (098a931)
+- **facetracking:** Persist and infer the avatar parameter allowlist (6c84959)
+- **captions:** Add audio input device picker and live level meter (a0f4ebf)
+- **phantom:** Restyle overlay tabs and fix the diagnostics table (0a5eec2)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -59,6 +75,12 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **modules:** Centralize module metadata (e89e52f)
 - style: apply dotnet format to native module adapter (dd40d84)
 - style: apply formatter output (02af6b7)
+- style: apply clang-format and dotnet format to changed files (c608ff6)
+- **calibration:** Adopt shared settings tables and responsive device cards (8c34c7a)
+- **calibration:** Route status colors through the theme palette (03fdf2a)
+- **phantom:** Use shared SetCellToneBg for diagnostics cells (2061df8)
+- **facetracking:** Adopt shared tab bar and table components (f904a86)
+- **oscrouter:** Draw tables and status text via shared UI library (356bf84)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -143,6 +165,14 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **smoothing:** Strengthen tracker smoothing max (7c51929)
 - **facetracking:** Disable continuous calibration (65b0e48)
 - **facetracking:** Deterministic eyelid-sync smoothing on sub-ms dt (33f33d2)
+- **facetracking:** Prefer registry payload downloads (f508b7c)
+- **captions:** Polish live captions runtime flow (efb9f53)
+- **captions:** Harden realtime speech output (96cf8a4)
+- **captions:** Restore native translation output (b2affe5)
+- **captions:** Preserve continuous speech boundaries (2186544)
+- **captions:** Carry prompt context across chunks (d538c01)
+- **captions:** Adapt always-on speech segmentation (636f443)
+- **captions:** Recover always-on speech detection (11f391f)
 
 ---
 
