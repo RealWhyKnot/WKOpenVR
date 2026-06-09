@@ -67,10 +67,24 @@ struct Sample
 	// callers (tests, replay harness, the two `valid=true` constructors)
 	// behave as they always did.
 	bool pairedMotionValid = true;
+	bool refDeviceConnected = true;
+	bool targetDeviceConnected = true;
+	bool refPoseValid = true;
+	bool targetPoseValid = true;
+	int refTrackingResult = static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK);
+	int targetTrackingResult = static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK);
 	double refPoseAgeMs = 0.0;
 	double targetPoseAgeMs = 0.0;
 	double refPoseGapMs = 0.0;
 	double targetPoseGapMs = 0.0;
+	double refLinearSpeedMps = 0.0;
+	double targetLinearSpeedMps = 0.0;
+	double refAngularSpeedRadps = 0.0;
+	double targetAngularSpeedRadps = 0.0;
+	bool refZeroPose = false;
+	bool targetZeroPose = false;
+	bool refPoseUnchanged = false;
+	bool targetPoseUnchanged = false;
 	bool trackingPoseStale = false;
 	bool trackingPoseJump = false;
 	Sample() : valid(false), timestamp(0) {}
@@ -80,22 +94,46 @@ struct Sample
 struct CalibrationResidualStats
 {
 	int count = 0;
+	double meanM = std::numeric_limits<double>::infinity();
 	double medianM = std::numeric_limits<double>::infinity();
 	double madSigmaM = std::numeric_limits<double>::infinity();
+	double p75M = std::numeric_limits<double>::infinity();
 	double p90M = std::numeric_limits<double>::infinity();
 	double p95M = std::numeric_limits<double>::infinity();
+	double p99M = std::numeric_limits<double>::infinity();
 	double maxM = std::numeric_limits<double>::infinity();
 	double rmsM = std::numeric_limits<double>::infinity();
+	double trimmedRmsM = std::numeric_limits<double>::infinity();
+	double inlierFraction20Mm = 0.0;
+	double inlierFraction50Mm = 0.0;
+	double inlierFraction100Mm = 0.0;
 	double outlierFraction = 0.0;
+	int outlierCount = 0;
+	int modifiedZOutlierCount = 0;
 };
 
 struct CalibrationQualityReport
 {
 	size_t sampleCount = 0;
 	int validSampleCount = 0;
+	int invalidSampleCount = 0;
 	int pairedSampleCount = 0;
+	int strictHealthySampleCount = 0;
+	int refDisconnectedSampleCount = 0;
+	int targetDisconnectedSampleCount = 0;
+	int refPoseInvalidSampleCount = 0;
+	int targetPoseInvalidSampleCount = 0;
+	int refNonRunningSampleCount = 0;
+	int targetNonRunningSampleCount = 0;
+	int zeroPoseSampleCount = 0;
+	int unchangedPoseSampleCount = 0;
+	int highMotionSampleCount = 0;
 	int trackingStaleSampleCount = 0;
 	int trackingJumpSampleCount = 0;
+	int totalRotationPairCount = 0;
+	int deltaPair5DegCount = 0;
+	int deltaPair10DegCount = 0;
+	int deltaPair23DegCount = 0;
 	int validRotationPairCount = 0;
 	int translationRank = 0;
 	Eigen::Vector3d refRangeM = Eigen::Vector3d::Zero();
@@ -105,10 +143,30 @@ struct CalibrationQualityReport
 	double rotationSpanDeg = 0.0;
 	double maxPoseAgeMs = 0.0;
 	double maxPoseGapMs = 0.0;
+	double maxLinearSpeedMps = 0.0;
+	double maxAngularSpeedDegps = 0.0;
+	double medianRotationDeltaDeg = 0.0;
+	double maxRefRotationDeltaDeg = 0.0;
+	double maxTargetRotationDeltaDeg = 0.0;
+	double deltaPair23Fraction = 0.0;
+	double axisVariance0 = 0.0;
+	double axisVariance1 = 0.0;
+	double axisVariance2 = 0.0;
+	double axisVariance3 = 0.0;
 	double rotationConditionRatio = 0.0;
+	double rotationSingularMin = 0.0;
+	double rotationSingularMax = 0.0;
+	double positionConditionRatio = 0.0;
 	double translationConditionRatio = 0.0;
+	double translationSingularMin = 0.0;
+	double translationSingularMax = 0.0;
+	double targetPathLengthM = 0.0;
+	double holdoutTrainRmsRatio = 0.0;
 	double dynamicLimitM = std::numeric_limits<double>::infinity();
 	bool legacyRmsPass = false;
+	bool developAxisVariancePass = false;
+	bool novaDeltaPairsPass = false;
+	bool strictSamplesPass = false;
 	bool geometryPass = false;
 	bool robustResidualPass = false;
 	bool holdoutPass = false;
@@ -272,6 +330,7 @@ private:
 	// coherence check.
 	double m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 	double m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
+	int m_shadowConsecutiveImprovingCandidates = 0;
 
 private:
 	/*

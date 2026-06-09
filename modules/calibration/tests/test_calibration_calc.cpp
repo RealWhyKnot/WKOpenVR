@@ -223,14 +223,25 @@ TEST(CalibrationCalcTest, QualityReportPassesWellCoveredLegacyFit)
 	EXPECT_TRUE(report.holdoutPass);
 	EXPECT_TRUE(report.trackingHealthPass);
 	EXPECT_TRUE(report.shadowDynamicPass);
+	EXPECT_TRUE(report.strictSamplesPass);
+	EXPECT_EQ(report.strictHealthySampleCount, kSampleCount);
 	const CalibrationQualityVerdict verdict = EvaluateCalibrationQualityVerdict(report);
 	EXPECT_TRUE(verdict.wouldAccept);
 	EXPECT_STREQ(verdict.reason, "pass");
 	EXPECT_GT(report.validRotationPairCount, 10);
+	EXPECT_GT(report.totalRotationPairCount, report.validRotationPairCount);
+	EXPECT_GT(report.deltaPair23DegCount, 0);
+	EXPECT_TRUE(report.novaDeltaPairsPass);
 	EXPECT_GE(report.translationRank, 2);
 	EXPECT_TRUE(std::isfinite(report.dynamicLimitM));
 	EXPECT_LT(report.residuals.rmsM, 1e-4);
+	EXPECT_LT(report.residuals.trimmedRmsM, 1e-4);
+	EXPECT_DOUBLE_EQ(report.residuals.inlierFraction20Mm, 1.0);
+	EXPECT_DOUBLE_EQ(report.residuals.inlierFraction50Mm, 1.0);
+	EXPECT_DOUBLE_EQ(report.residuals.inlierFraction100Mm, 1.0);
 	EXPECT_LT(report.holdoutResiduals.rmsM, 1e-3);
+	EXPECT_TRUE(std::isfinite(report.holdoutTrainRmsRatio));
+	EXPECT_GE(report.maxTargetRotationDeltaDeg, report.rotationSpanDeg);
 }
 
 TEST(CalibrationCalcTest, QualityReportRejectsStaleTrackingInShadowVerdict)
@@ -266,6 +277,36 @@ TEST(CalibrationCalcTest, QualityReportRejectsStaleTrackingInShadowVerdict)
 	EXPECT_TRUE(signals.legacyAcceptedButShadowRejected);
 }
 
+TEST(CalibrationCalcTest, QualityReportTracksStrictSampleHealthAndMotion)
+{
+	const double yawRad = 15.0 * EIGEN_PI / 180.0;
+	Eigen::Vector3d trans(0.35, -0.08, 0.22);
+	Eigen::AffineCompact3d expected = MakeTransform(yawRad, 0.0, 0.0, trans);
+
+	CalibrationCalc calc;
+	auto samples = MakeSamplePairs(expected, kSampleCount, 0x5150);
+	samples[0].refDeviceConnected = false;
+	samples[1].targetPoseValid = false;
+	samples[2].refTrackingResult = static_cast<int>(vr::ETrackingResult::TrackingResult_Fallback_RotationOnly);
+	samples[3].targetZeroPose = true;
+	samples[4].refLinearSpeedMps = 2.0;
+	for (const auto& s : samples) {
+		calc.PushSample(s);
+	}
+
+	ASSERT_TRUE(calc.ComputeOneshot(false));
+	const CalibrationQualityReport report = calc.EvaluateCalibrationQuality(calc.Transformation(), true, false);
+
+	EXPECT_FALSE(report.strictSamplesPass);
+	EXPECT_EQ(report.strictHealthySampleCount, kSampleCount - 3);
+	EXPECT_EQ(report.refDisconnectedSampleCount, 1);
+	EXPECT_EQ(report.targetPoseInvalidSampleCount, 1);
+	EXPECT_EQ(report.refNonRunningSampleCount, 1);
+	EXPECT_EQ(report.zeroPoseSampleCount, 1);
+	EXPECT_EQ(report.highMotionSampleCount, 1);
+	EXPECT_TRUE(report.trackingHealthPass);
+}
+
 TEST(CalibrationCalcTest, QualityReportRejectsLowGeometryEvenWhenRmsIsSmall)
 {
 	CalibrationCalc calc;
@@ -290,6 +331,9 @@ TEST(CalibrationCalcTest, QualityReportRejectsLowGeometryEvenWhenRmsIsSmall)
 	EXPECT_TRUE(signals.lowResidualGeometryReject);
 	EXPECT_TRUE(signals.novaWouldRejectForDeltaPairs);
 	EXPECT_FALSE(signals.novaDeltaPairsPass);
+	EXPECT_FALSE(report.novaDeltaPairsPass);
+	EXPECT_EQ(report.deltaPair23DegCount, 0);
+	EXPECT_EQ(report.totalRotationPairCount, 435);
 }
 
 TEST(CalibrationCalcTest, QualityVerdictReportsFirstFailedGate)

@@ -178,6 +178,19 @@ inline double QpcDeltaMs(LONGLONG newer, LONGLONG older, LONGLONG frequency)
 	return (static_cast<double>(newer - older) * 1000.0) / static_cast<double>(frequency);
 }
 
+double Vector3Norm(const double (&v)[3])
+{
+	return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+bool PoseLooksZero(const vr::DriverPose_t& pose)
+{
+	const double posNorm = Vector3Norm(pose.vecPosition);
+	const double quatVecNorm = std::sqrt(pose.qRotation.x * pose.qRotation.x + pose.qRotation.y * pose.qRotation.y +
+	                                     pose.qRotation.z * pose.qRotation.z);
+	return posNorm < 1e-9 && quatVecNorm < 1e-9 && std::fabs(pose.qRotation.w - 1.0) < 1e-9;
+}
+
 PoseHealthProbe ProbePoseHealth(int deviceId, const Pose& pose, const LARGE_INTEGER& sampleTime,
                                 const LARGE_INTEGER& now, const LARGE_INTEGER& frequency)
 {
@@ -452,6 +465,20 @@ bool CollectSample(const CalibrationContext& ctx)
 		runtimeHealth.refTrackingResult = static_cast<int>(reference.result);
 		runtimeHealth.targetTrackingResult = static_cast<int>(target.result);
 		openvr_pair::common::RecordRuntimePoseHealth(runtimeHealth);
+		static double s_lastStrictRejectLog = -1e9;
+		const double nowSec = glfwGetTime();
+		if (nowSec - s_lastStrictRejectLog >= 1.0) {
+			s_lastStrictRejectLog = nowSec;
+			char hbuf[520];
+			snprintf(hbuf, sizeof hbuf,
+			         "[cal-sample-health-reject] state=%d ref_connected=%d ref_pose_valid=%d ref_result=%d"
+			         " target_connected=%d target_pose_valid=%d target_result=%d"
+			         " ref_silent_invalid=%d target_silent_invalid=%d head_mount_source=%d",
+			         (int)CalCtx.state, (int)reference.deviceIsConnected, (int)reference.poseIsValid,
+			         (int)reference.result, (int)target.deviceIsConnected, (int)target.poseIsValid, (int)target.result,
+			         (int)refSilentInvalid, (int)tgtSilentInvalid, (int)(headMountEngaged ? 1 : 0));
+			Metrics::WriteLogAnnotation(hbuf);
+		}
 		if (CalCtx.state != CalibrationState::Continuous) {
 			CalCtx.Log("Aborting calibration!\n");
 			CalCtx.state = CalibrationState::None;
@@ -532,10 +559,22 @@ bool CollectSample(const CalibrationContext& ctx)
 
 	Sample collectedSample(refPose, tgtPose, glfwGetTime());
 	collectedSample.pairedMotionValid = pairedMotionValid;
+	collectedSample.refDeviceConnected = reference.deviceIsConnected;
+	collectedSample.targetDeviceConnected = target.deviceIsConnected;
+	collectedSample.refPoseValid = reference.poseIsValid;
+	collectedSample.targetPoseValid = target.poseIsValid;
+	collectedSample.refTrackingResult = static_cast<int>(reference.result);
+	collectedSample.targetTrackingResult = static_cast<int>(target.result);
 	collectedSample.refPoseAgeMs = refHealth.ageMs;
 	collectedSample.targetPoseAgeMs = targetHealth.ageMs;
 	collectedSample.refPoseGapMs = refHealth.gapMs;
 	collectedSample.targetPoseGapMs = targetHealth.gapMs;
+	collectedSample.refLinearSpeedMps = Vector3Norm(reference.vecVelocity);
+	collectedSample.targetLinearSpeedMps = Vector3Norm(target.vecVelocity);
+	collectedSample.refAngularSpeedRadps = Vector3Norm(reference.vecAngularVelocity);
+	collectedSample.targetAngularSpeedRadps = Vector3Norm(target.vecAngularVelocity);
+	collectedSample.refZeroPose = PoseLooksZero(reference);
+	collectedSample.targetZeroPose = PoseLooksZero(target);
 	collectedSample.trackingPoseStale = refHealth.stale || targetHealth.stale;
 	collectedSample.trackingPoseJump = refHealth.jump || targetHealth.jump;
 	calibration.PushSample(collectedSample);

@@ -127,29 +127,54 @@ CalibrationResidualStats ResidualStatsFor(std::vector<double> residuals)
 	if (residuals.empty()) return out;
 
 	double sumSq = 0.0;
-	for (double r : residuals)
+	double sum = 0.0;
+	int in20 = 0;
+	int in50 = 0;
+	int in100 = 0;
+	for (double r : residuals) {
+		sum += r;
 		sumSq += r * r;
+		if (r <= 0.020) ++in20;
+		if (r <= 0.050) ++in50;
+		if (r <= 0.100) ++in100;
+	}
 	std::sort(residuals.begin(), residuals.end());
 
+	out.meanM = sum / static_cast<double>(residuals.size());
 	out.medianM = PercentileSorted(residuals, 0.50);
+	out.p75M = PercentileSorted(residuals, 0.75);
 	out.p90M = PercentileSorted(residuals, 0.90);
 	out.p95M = PercentileSorted(residuals, 0.95);
+	out.p99M = PercentileSorted(residuals, 0.99);
 	out.maxM = residuals.back();
 	out.rmsM = std::sqrt(sumSq / static_cast<double>(residuals.size()));
+	out.inlierFraction20Mm = static_cast<double>(in20) / static_cast<double>(residuals.size());
+	out.inlierFraction50Mm = static_cast<double>(in50) / static_cast<double>(residuals.size());
+	out.inlierFraction100Mm = static_cast<double>(in100) / static_cast<double>(residuals.size());
+
+	const size_t trimmedCount = std::max<size_t>(1, static_cast<size_t>(std::ceil(residuals.size() * 0.90)));
+	double trimmedSumSq = 0.0;
+	for (size_t i = 0; i < trimmedCount; ++i)
+		trimmedSumSq += residuals[i] * residuals[i];
+	out.trimmedRmsM = std::sqrt(trimmedSumSq / static_cast<double>(trimmedCount));
 
 	std::vector<double> absDev;
 	absDev.reserve(residuals.size());
 	for (double r : residuals)
 		absDev.push_back(std::abs(r - out.medianM));
 	std::sort(absDev.begin(), absDev.end());
-	out.madSigmaM = 1.4826 * PercentileSorted(absDev, 0.50);
+	const double madM = PercentileSorted(absDev, 0.50);
+	out.madSigmaM = 1.4826 * madM;
 
 	const double outlierCut = out.medianM + std::max(0.010, 4.0 * out.madSigmaM);
-	int outliers = 0;
 	for (double r : residuals) {
-		if (r > outlierCut) ++outliers;
+		if (r > outlierCut) ++out.outlierCount;
+		if (madM > 1e-9) {
+			const double modifiedZ = 0.6745 * (r - out.medianM) / madM;
+			if (std::abs(modifiedZ) > 3.5) ++out.modifiedZOutlierCount;
+		}
 	}
-	out.outlierFraction = static_cast<double>(outliers) / static_cast<double>(residuals.size());
+	out.outlierFraction = static_cast<double>(out.outlierCount) / static_cast<double>(residuals.size());
 	return out;
 }
 
@@ -227,6 +252,66 @@ double AverageOrMinusOne(double sum, int count)
 	return count > 0 ? sum / static_cast<double>(count) : -1.0;
 }
 
+double RatioOrMinusOne(double numerator, double denominator)
+{
+	if (!std::isfinite(numerator) || !std::isfinite(denominator) || denominator <= 1e-12) return -1.0;
+	return numerator / denominator;
+}
+
+bool TransformAllFinite(const Eigen::AffineCompact3d& transform)
+{
+	return transform.matrix().allFinite();
+}
+
+double TransformRotationDeltaDeg(const Eigen::AffineCompact3d& lhs, const Eigen::AffineCompact3d& rhs)
+{
+	const Eigen::Matrix3d delta = lhs.rotation().transpose() * rhs.rotation();
+	const double cosAngle = std::clamp((delta.trace() - 1.0) * 0.5, -1.0, 1.0);
+	return std::acos(cosAngle) * (180.0 / EIGEN_PI);
+}
+
+void RecordContinuousPolicyShadow(const char* label, bool hasCurrent, const Eigen::AffineCompact3d& current,
+                                  const Eigen::AffineCompact3d& candidate, bool candidateAvailable,
+                                  bool runtimeWouldApply, bool usingRelPose, double threshold, double priorErrorM,
+                                  double candidateErrorM, double relPoseErrorM, double lastCandidateErrorM,
+                                  int consecutiveImprovingCandidates)
+{
+	const bool candidateFinite = candidateAvailable && TransformAllFinite(candidate);
+	const bool finitePrior = std::isfinite(priorErrorM);
+	const bool finiteCandidate = std::isfinite(candidateErrorM);
+	const bool finiteLast = std::isfinite(lastCandidateErrorM);
+	const double improvementM = finitePrior && finiteCandidate ? priorErrorM - candidateErrorM : -1.0;
+	const double candidateVsPriorRatio = RatioOrMinusOne(candidateErrorM, priorErrorM);
+	const bool wouldAcceptRms = finiteCandidate && candidateErrorM <= 0.100;
+	const bool wouldAcceptNovaNotWorse = !finitePrior || (finiteCandidate && candidateErrorM <= priorErrorM);
+	const bool wouldAcceptImprove10 = !hasCurrent || (finitePrior && finiteCandidate && improvementM >= 0.010 &&
+	                                                  candidateErrorM <= priorErrorM * 0.90);
+	const bool wouldAcceptHysteresis = !hasCurrent || consecutiveImprovingCandidates >= 2;
+	const bool worseThanLast = finiteLast && finiteCandidate && candidateErrorM > lastCandidateErrorM;
+	const bool largeTransformJump = hasCurrent && candidateFinite &&
+	                                ((candidate.translation() - current.translation()).norm() > 0.050 ||
+	                                 TransformRotationDeltaDeg(current, candidate) > 3.0);
+	const double deltaTranslationCm =
+	    hasCurrent && candidateFinite ? (candidate.translation() - current.translation()).norm() * 100.0 : -1.0;
+	const double deltaRotationDeg =
+	    hasCurrent && candidateFinite ? TransformRotationDeltaDeg(current, candidate) : -1.0;
+
+	char buf[1150];
+	snprintf(buf, sizeof buf,
+	         "[cal-shadow-continuous][%s] candidate_available=%d runtime_would_apply=%d using_relpose=%d"
+	         " threshold=%.3f prior_rms_mm=%.3f candidate_rms_mm=%.3f relpose_rms_mm=%.3f"
+	         " last_candidate_rms_mm=%.3f improvement_mm=%.3f candidate_prior_ratio=%.3f"
+	         " delta_trans_cm=%.2f delta_rot_deg=%.2f consecutive_improve=%d"
+	         " would_accept_rms=%d would_accept_nova_not_worse=%d would_accept_improve10=%d"
+	         " would_accept_hysteresis=%d worse_than_last=%d large_transform_jump=%d",
+	         label ? label : "incremental", (int)candidateFinite, (int)runtimeWouldApply, (int)usingRelPose, threshold,
+	         priorErrorM * 1000.0, candidateErrorM * 1000.0, relPoseErrorM * 1000.0, lastCandidateErrorM * 1000.0,
+	         improvementM * 1000.0, candidateVsPriorRatio, deltaTranslationCm, deltaRotationDeg,
+	         consecutiveImprovingCandidates, (int)wouldAcceptRms, (int)wouldAcceptNovaNotWorse,
+	         (int)wouldAcceptImprove10, (int)wouldAcceptHysteresis, (int)worseThanLast, (int)largeTransformJump);
+	Metrics::WriteLogAnnotation(buf);
+}
+
 void RecordCalibrationShadowDiagnostics(const char* label, const CalibrationQualityReport& q)
 {
 	const CalibrationQualityShadowSignals signals = EvaluateCalibrationQualityShadowSignals(q);
@@ -247,6 +332,54 @@ void RecordCalibrationShadowDiagnostics(const char* label, const CalibrationQual
 	         q.residuals.rmsM * 1000.0, q.residuals.p95M * 1000.0, q.holdoutResiduals.rmsM * 1000.0,
 	         q.targetSpanM * 100.0, q.rotationSpanDeg);
 	Metrics::WriteLogAnnotation(shadowBuf);
+
+	char sampleBuf[1050];
+	snprintf(sampleBuf, sizeof sampleBuf,
+	         "[cal-shadow-sample][%s] samples=%zu valid=%d invalid=%d paired=%d strict_healthy=%d"
+	         " strict_pass=%d ref_disconnected=%d target_disconnected=%d ref_pose_invalid=%d target_pose_invalid=%d"
+	         " ref_non_running=%d target_non_running=%d stale=%d jump=%d zero_pose=%d unchanged_pose=%d"
+	         " high_motion=%d max_age_ms=%.1f max_gap_ms=%.1f max_speed_mps=%.2f max_ang_speed_dps=%.1f",
+	         safeLabel, q.sampleCount, q.validSampleCount, q.invalidSampleCount, q.pairedSampleCount,
+	         q.strictHealthySampleCount, (int)q.strictSamplesPass, q.refDisconnectedSampleCount,
+	         q.targetDisconnectedSampleCount, q.refPoseInvalidSampleCount, q.targetPoseInvalidSampleCount,
+	         q.refNonRunningSampleCount, q.targetNonRunningSampleCount, q.trackingStaleSampleCount,
+	         q.trackingJumpSampleCount, q.zeroPoseSampleCount, q.unchangedPoseSampleCount, q.highMotionSampleCount,
+	         q.maxPoseAgeMs, q.maxPoseGapMs, q.maxLinearSpeedMps, q.maxAngularSpeedDegps);
+	Metrics::WriteLogAnnotation(sampleBuf);
+
+	char residualBuf[1050];
+	snprintf(residualBuf, sizeof residualBuf,
+	         "[cal-shadow-residual][%s] count=%d mean_mm=%.3f median_mm=%.3f madn_mm=%.3f"
+	         " p75_mm=%.3f p90_mm=%.3f p95_mm=%.3f p99_mm=%.3f max_mm=%.3f rms_mm=%.3f"
+	         " trimmed_rms_mm=%.3f inlier20=%.3f inlier50=%.3f inlier100=%.3f"
+	         " outliers=%d modified_z_outliers=%d outlier_frac=%.3f"
+	         " holdout_count=%d holdout_rms_mm=%.3f holdout_p95_mm=%.3f holdout_train_ratio=%.3f",
+	         safeLabel, q.residuals.count, q.residuals.meanM * 1000.0, q.residuals.medianM * 1000.0,
+	         q.residuals.madSigmaM * 1000.0, q.residuals.p75M * 1000.0, q.residuals.p90M * 1000.0,
+	         q.residuals.p95M * 1000.0, q.residuals.p99M * 1000.0, q.residuals.maxM * 1000.0, q.residuals.rmsM * 1000.0,
+	         q.residuals.trimmedRmsM * 1000.0, q.residuals.inlierFraction20Mm, q.residuals.inlierFraction50Mm,
+	         q.residuals.inlierFraction100Mm, q.residuals.outlierCount, q.residuals.modifiedZOutlierCount,
+	         q.residuals.outlierFraction, q.holdoutResiduals.count, q.holdoutResiduals.rmsM * 1000.0,
+	         q.holdoutResiduals.p95M * 1000.0, q.holdoutTrainRmsRatio);
+	Metrics::WriteLogAnnotation(residualBuf);
+
+	char geometryBuf[1150];
+	snprintf(geometryBuf, sizeof geometryBuf,
+	         "[cal-shadow-geometry][%s] total_pairs=%d delta5=%d delta10=%d delta23=%d"
+	         " valid_delta_pairs=%d delta23_frac=%.3f nova_min200_pass=%d"
+	         " median_pair_deg=%.2f max_ref_delta_deg=%.2f max_target_delta_deg=%.2f"
+	         " rot_span_deg=%.2f ref_span_cm=%.2f target_span_cm=%.2f target_path_m=%.2f"
+	         " axis_var=(%.6g,%.6g,%.6g,%.6g) develop_axis_pass=%d"
+	         " rot_cond=%.6g rot_sv_min=%.6g rot_sv_max=%.6g"
+	         " pos_cond=%.6g trans_rank=%d trans_cond=%.6g trans_sv_min=%.6g trans_sv_max=%.6g",
+	         safeLabel, q.totalRotationPairCount, q.deltaPair5DegCount, q.deltaPair10DegCount, q.deltaPair23DegCount,
+	         q.validRotationPairCount, q.deltaPair23Fraction, (int)q.novaDeltaPairsPass, q.medianRotationDeltaDeg,
+	         q.maxRefRotationDeltaDeg, q.maxTargetRotationDeltaDeg, q.rotationSpanDeg, q.refSpanM * 100.0,
+	         q.targetSpanM * 100.0, q.targetPathLengthM, q.axisVariance0, q.axisVariance1, q.axisVariance2,
+	         q.axisVariance3, (int)q.developAxisVariancePass, q.rotationConditionRatio, q.rotationSingularMin,
+	         q.rotationSingularMax, q.positionConditionRatio, q.translationRank, q.translationConditionRatio,
+	         q.translationSingularMin, q.translationSingularMax);
+	Metrics::WriteLogAnnotation(geometryBuf);
 
 	static CalibrationShadowRollup rollup;
 	const double now = std::isfinite(Metrics::CurrentTime) ? Metrics::CurrentTime : 0.0;
@@ -369,6 +502,7 @@ void CalibrationCalc::Clear()
 	m_relativePosCalibrated = false;
 	m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
+	m_shadowConsecutiveImprovingCandidates = 0;
 }
 
 void CalibrationCalc::SeedEstimatedTransformation(const Eigen::AffineCompact3d& transform, bool annotate)
@@ -885,7 +1019,7 @@ CalibrationQualityShadowSignals EvaluateCalibrationQualityShadowSignals(const Ca
 	signals.lowResidualGeometryReject = report.legacyRmsPass && !report.geometryPass && report.residuals.count > 0 &&
 	                                    report.residuals.rmsM <= kLowResidualGeometryRejectM;
 	signals.trackingContaminated = !report.trackingHealthPass;
-	signals.novaDeltaPairsPass = report.validRotationPairCount >= kNovaMinDeltaPairCount;
+	signals.novaDeltaPairsPass = report.novaDeltaPairsPass;
 	signals.novaWouldRejectForDeltaPairs =
 	    report.validSampleCount > 0 && report.legacyRmsPass && !signals.novaDeltaPairsPass;
 	return signals;
@@ -904,24 +1038,65 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 	Eigen::Vector3d refMax = -refMin;
 	Eigen::Vector3d targetMin = refMin;
 	Eigen::Vector3d targetMax = -targetMin;
+	std::vector<Eigen::Quaterniond> refRotations;
 	std::vector<Eigen::Quaterniond> targetRotations;
+	std::vector<Eigen::Vector3d> targetPositions;
+	bool havePreviousTargetPath = false;
+	Eigen::Vector3d previousTargetPath = Eigen::Vector3d::Zero();
 
 	std::vector<double> residuals;
 	residuals.reserve(m_samples.size());
 	for (const auto& sample : m_samples) {
-		if (!sample.valid) continue;
+		if (!sample.valid) {
+			++report.invalidSampleCount;
+			continue;
+		}
 		validSamples.push_back(&sample);
 		++report.validSampleCount;
 		if (sample.pairedMotionValid) ++report.pairedSampleCount;
+		if (sample.refDeviceConnected && sample.targetDeviceConnected && sample.refPoseValid &&
+		    sample.targetPoseValid &&
+		    sample.refTrackingResult == static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK) &&
+		    sample.targetTrackingResult == static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK)) {
+			++report.strictHealthySampleCount;
+		}
+		if (!sample.refDeviceConnected) ++report.refDisconnectedSampleCount;
+		if (!sample.targetDeviceConnected) ++report.targetDisconnectedSampleCount;
+		if (!sample.refPoseValid) ++report.refPoseInvalidSampleCount;
+		if (!sample.targetPoseValid) ++report.targetPoseInvalidSampleCount;
+		if (sample.refTrackingResult != static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK)) {
+			++report.refNonRunningSampleCount;
+		}
+		if (sample.targetTrackingResult != static_cast<int>(vr::ETrackingResult::TrackingResult_Running_OK)) {
+			++report.targetNonRunningSampleCount;
+		}
+		if (sample.refZeroPose || sample.targetZeroPose) ++report.zeroPoseSampleCount;
+		if (sample.refPoseUnchanged || sample.targetPoseUnchanged) ++report.unchangedPoseSampleCount;
 		if (sample.trackingPoseStale) ++report.trackingStaleSampleCount;
 		if (sample.trackingPoseJump) ++report.trackingJumpSampleCount;
 		report.maxPoseAgeMs = std::max(report.maxPoseAgeMs, std::max(sample.refPoseAgeMs, sample.targetPoseAgeMs));
 		report.maxPoseGapMs = std::max(report.maxPoseGapMs, std::max(sample.refPoseGapMs, sample.targetPoseGapMs));
+		report.maxLinearSpeedMps =
+		    std::max(report.maxLinearSpeedMps, std::max(sample.refLinearSpeedMps, sample.targetLinearSpeedMps));
+		report.maxAngularSpeedDegps = std::max(report.maxAngularSpeedDegps,
+		                                       std::max(sample.refAngularSpeedRadps, sample.targetAngularSpeedRadps) *
+		                                           (180.0 / static_cast<double>(EIGEN_PI)));
+		if (std::max(sample.refLinearSpeedMps, sample.targetLinearSpeedMps) > 1.5 ||
+		    std::max(sample.refAngularSpeedRadps, sample.targetAngularSpeedRadps) > static_cast<double>(EIGEN_PI)) {
+			++report.highMotionSampleCount;
+		}
 		refMin = refMin.cwiseMin(sample.ref.trans);
 		refMax = refMax.cwiseMax(sample.ref.trans);
 		targetMin = targetMin.cwiseMin(sample.target.trans);
 		targetMax = targetMax.cwiseMax(sample.target.trans);
+		refRotations.emplace_back(sample.ref.rot);
 		targetRotations.emplace_back(sample.target.rot);
+		targetPositions.push_back(sample.target.trans);
+		if (havePreviousTargetPath) {
+			report.targetPathLengthM += (sample.target.trans - previousTargetPath).norm();
+		}
+		previousTargetPath = sample.target.trans;
+		havePreviousTargetPath = true;
 
 		const auto updatedPose = ApplyTransform(sample.target, calibration);
 		const Eigen::Vector3d hmdPoseSpace = sample.ref.rot * report.posOffsetM + sample.ref.trans;
@@ -938,13 +1113,68 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 		report.targetSpanM = report.targetRangeM.norm();
 	}
 
+	std::vector<double> rotationPairMinAnglesDeg;
+	rotationPairMinAnglesDeg.reserve(targetRotations.size() * targetRotations.size() / 2);
 	for (size_t i = 0; i < targetRotations.size(); ++i) {
 		for (size_t j = i + 1; j < targetRotations.size(); ++j) {
-			const double angleDeg = targetRotations[i].angularDistance(targetRotations[j]) * (180.0 / EIGEN_PI);
-			if (angleDeg > report.rotationSpanDeg) {
-				report.rotationSpanDeg = angleDeg;
-			}
+			const double refAngleDeg = refRotations[i].angularDistance(refRotations[j]) * (180.0 / EIGEN_PI);
+			const double targetAngleDeg = targetRotations[i].angularDistance(targetRotations[j]) * (180.0 / EIGEN_PI);
+			report.maxRefRotationDeltaDeg = std::max(report.maxRefRotationDeltaDeg, refAngleDeg);
+			report.maxTargetRotationDeltaDeg = std::max(report.maxTargetRotationDeltaDeg, targetAngleDeg);
+			report.rotationSpanDeg = std::max(report.rotationSpanDeg, targetAngleDeg);
+			const double minAngleDeg = std::min(refAngleDeg, targetAngleDeg);
+			rotationPairMinAnglesDeg.push_back(minAngleDeg);
+			++report.totalRotationPairCount;
+			if (minAngleDeg >= 5.0) ++report.deltaPair5DegCount;
+			if (minAngleDeg >= 10.0) ++report.deltaPair10DegCount;
+			if (minAngleDeg >= 22.9183) ++report.deltaPair23DegCount;
 		}
+	}
+	if (!rotationPairMinAnglesDeg.empty()) {
+		std::sort(rotationPairMinAnglesDeg.begin(), rotationPairMinAnglesDeg.end());
+		report.medianRotationDeltaDeg = PercentileSorted(rotationPairMinAnglesDeg, 0.50);
+		report.deltaPair23Fraction =
+		    static_cast<double>(report.deltaPair23DegCount) / static_cast<double>(report.totalRotationPairCount);
+	}
+
+	if (targetPositions.size() >= 2) {
+		Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+		for (const auto& p : targetPositions)
+			mean += p;
+		mean /= static_cast<double>(targetPositions.size());
+		Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
+		for (const auto& p : targetPositions) {
+			const Eigen::Vector3d d = p - mean;
+			cov += d * d.transpose();
+		}
+		cov /= static_cast<double>(targetPositions.size());
+		const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(cov);
+		if (solver.info() == Eigen::Success) {
+			const auto& values = solver.eigenvalues();
+			report.positionConditionRatio = SafeRatio(values.minCoeff(), values.maxCoeff());
+		}
+	}
+
+	{
+		const Eigen::Vector4d axisVariance = ComputeAxisVariance(calibration);
+		report.axisVariance0 = axisVariance(0);
+		report.axisVariance1 = axisVariance(1);
+		report.axisVariance2 = axisVariance(2);
+		report.axisVariance3 = axisVariance(3);
+		report.developAxisVariancePass = axisVariance(1) >= AxisVarianceThreshold;
+	}
+
+	if (report.totalRotationPairCount > 0) {
+		report.novaDeltaPairsPass = report.deltaPair23DegCount >= kNovaMinDeltaPairCount;
+	}
+	else {
+		report.novaDeltaPairsPass = false;
+	}
+
+	if (report.validSampleCount > 0) {
+		report.strictSamplesPass = report.strictHealthySampleCount == report.validSampleCount &&
+		                           report.trackingStaleSampleCount == 0 && report.trackingJumpSampleCount == 0 &&
+		                           report.zeroPoseSampleCount == 0;
 	}
 
 	std::vector<DSample> rotationDeltas;
@@ -977,6 +1207,8 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 		const Eigen::Matrix2d cross = refPoints.transpose() * targetPoints;
 		const Eigen::JacobiSVD<Eigen::Matrix2d> svd(cross);
 		const auto& values = svd.singularValues();
+		report.rotationSingularMin = values.minCoeff();
+		report.rotationSingularMax = values.maxCoeff();
 		report.rotationConditionRatio = SafeRatio(values.minCoeff(), values.maxCoeff());
 	}
 
@@ -1024,7 +1256,9 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 			}
 		}
 		report.translationRank = rank;
-		report.translationConditionRatio = SafeRatio(minNonZero, maxSv);
+		report.translationSingularMin = std::isfinite(minNonZero) ? minNonZero : 0.0;
+		report.translationSingularMax = maxSv;
+		report.translationConditionRatio = SafeRatio(report.translationSingularMin, maxSv);
 	}
 
 	if (includeHoldout && validSamples.size() >= 24) {
@@ -1052,6 +1286,7 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 		}
 		report.holdoutResiduals = ResidualStatsFor(std::move(heldoutResiduals));
 	}
+	report.holdoutTrainRmsRatio = RatioOrMinusOne(report.holdoutResiduals.rmsM, report.residuals.rmsM);
 
 	const double residualNoise = std::isfinite(report.residuals.madSigmaM) ? report.residuals.madSigmaM : 0.0;
 	const double motionSpanTerm =
@@ -1316,6 +1551,8 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 {
 	Metrics::RecordTimestamp();
 	m_lastComputeUsedRelPose = false;
+	const bool hadCurrentAtStart = m_isValid;
+	const Eigen::AffineCompact3d currentAtStart = m_estimatedTransformation;
 	static double s_lastHoldoutQualityLogAt = -1e9;
 	const bool includeHoldoutThisPass = Metrics::CurrentTime - s_lastHoldoutQualityLogAt >= 5.0;
 	if (includeHoldoutThisPass) {
@@ -1327,6 +1564,10 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 		double relPoseError = INFINITY;
 		Eigen::Vector3d relPosOffset;
 		if (CalibrateByRelPose(byRelPose) && ValidateCalibration(byRelPose, &relPoseError, &relPosOffset)) {
+			RecordContinuousPolicyShadow("relpose_locked_candidate", hadCurrentAtStart, currentAtStart, byRelPose, true,
+			                             true, true, threshold, std::numeric_limits<double>::infinity(), relPoseError,
+			                             relPoseError, m_lastCandidateRetargetingErrorM,
+			                             m_shadowConsecutiveImprovingCandidates);
 			if (includeHoldoutThisPass) {
 				LogCalibrationQualitySnapshot("relpose_locked_candidate", byRelPose, true, ignoreOutliers);
 			}
@@ -1356,11 +1597,13 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 	double newError = INFINITY;
 	bool newCalibrationValid = false;
 	Eigen::AffineCompact3d byRelPose;
-	Eigen::AffineCompact3d calibration;
+	Eigen::AffineCompact3d calibration = Eigen::AffineCompact3d::Identity();
 	bool usingRelPose = false;
+	bool candidateComputed = false;
 	double relPoseError = INFINITY;
 
 	if (enableStaticRecalibration && CalibrateByRelPose(byRelPose)) {
+		candidateComputed = TransformAllFinite(byRelPose);
 		if (includeHoldoutThisPass) {
 			LogCalibrationQualitySnapshot("relpose_candidate", byRelPose, true, ignoreOutliers);
 		}
@@ -1390,6 +1633,7 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 	bool shouldRapidCorrect = true;
 	if (!newCalibrationValid) {
 		calibration = ComputeCalibration(ignoreOutliers);
+		candidateComputed = TransformAllFinite(calibration);
 		if (includeHoldoutThisPass) {
 			LogCalibrationQualitySnapshot("legacy_full_candidate", calibration, true, ignoreOutliers);
 		}
@@ -1428,8 +1672,26 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			usingRelPose = true;
 			newError = relPoseError;
 			calibration = byRelPose;
+			candidateComputed = TransformAllFinite(calibration);
 		}
 	}
+
+	const bool candidateAvailable = candidateComputed && TransformAllFinite(calibration);
+	const bool shadowImproves =
+	    candidateAvailable && (!hadCurrentAtStart || (std::isfinite(priorCalibrationError) && std::isfinite(newError) &&
+	                                                  (priorCalibrationError - newError) >= 0.010 &&
+	                                                  newError <= priorCalibrationError * 0.90));
+	if (shadowImproves) {
+		m_shadowConsecutiveImprovingCandidates =
+		    std::min(m_shadowConsecutiveImprovingCandidates + 1, std::numeric_limits<int>::max() - 1);
+	}
+	else if (candidateAvailable) {
+		m_shadowConsecutiveImprovingCandidates = 0;
+	}
+	RecordContinuousPolicyShadow("incremental_candidate", hadCurrentAtStart, currentAtStart, calibration,
+	                             candidateAvailable, newCalibrationValid, usingRelPose, threshold,
+	                             priorCalibrationError, newError, relPoseError, m_lastCandidateRetargetingErrorM,
+	                             m_shadowConsecutiveImprovingCandidates);
 
 	if (newCalibrationValid) {
 		lerp = m_isValid;

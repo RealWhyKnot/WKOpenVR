@@ -307,6 +307,11 @@ struct HeadMountShadowOffsetRuntime
 	int stableWindowCount = 0;
 	std::string lastBlockedReason;
 	double lastBlockedLogTime = -1e9;
+	bool hasInvariantPrevious = false;
+	Eigen::Affine3d previousInvariantHmd = Eigen::Affine3d::Identity();
+	Eigen::Affine3d previousInvariantTrackerReference = Eigen::Affine3d::Identity();
+	Eigen::Affine3d previousInvariantLocalOffset = Eigen::Affine3d::Identity();
+	double lastInvariantLogTime = -1e9;
 };
 
 static HeadMountShadowOffsetRuntime g_headMountShadowOffset;
@@ -321,6 +326,10 @@ static void ResetHeadMountShadowOffsetRuntime(bool clearStableWindows)
 	g_headMountShadowOffset.hasPreviousMotionPose = false;
 	g_headMountShadowOffset.previousMotionPose = Eigen::Affine3d::Identity();
 	g_headMountShadowOffset.previousMotionTime = 0.0;
+	g_headMountShadowOffset.hasInvariantPrevious = false;
+	g_headMountShadowOffset.previousInvariantHmd = Eigen::Affine3d::Identity();
+	g_headMountShadowOffset.previousInvariantTrackerReference = Eigen::Affine3d::Identity();
+	g_headMountShadowOffset.previousInvariantLocalOffset = Eigen::Affine3d::Identity();
 	if (clearStableWindows) {
 		g_headMountShadowOffset.hasLastCandidate = false;
 		g_headMountShadowOffset.lastCandidate = Eigen::AffineCompact3d::Identity();
@@ -358,6 +367,65 @@ static bool PoseFreshEnough(const CalibrationContext& ctx, int32_t deviceId, con
 	ageMs =
 	    (static_cast<double>(now.QuadPart - sampleTime.QuadPart) * 1000.0) / static_cast<double>(frequency.QuadPart);
 	return ageMs <= spacecal::headmount::kShadowFreshPoseMaxAgeMs;
+}
+
+static void TickHeadMountInvariantShadow(const CalibrationContext& ctx, double time,
+                                         const Eigen::Affine3d& hmdReference, const Eigen::Affine3d& trackerTarget,
+                                         double hmdAgeMs, double trackerAgeMs)
+{
+	if (!ctx.validProfile) {
+		g_headMountShadowOffset.hasInvariantPrevious = false;
+		return;
+	}
+
+	const Eigen::Affine3d targetToReference = CalibrationTransformFromContext(ctx);
+	const Eigen::Affine3d trackerReference = targetToReference * trackerTarget;
+	const Eigen::Affine3d localOffset = hmdReference.inverse() * trackerReference;
+	const Eigen::Affine3d savedLocalOffset = Eigen::Affine3d(ctx.headMount.headFromTracker.inverse());
+	const double savedDeltaM = (localOffset.translation() - savedLocalOffset.translation()).norm();
+	const double savedDeltaDeg = RotationDeltaRad(savedLocalOffset, localOffset) * (180.0 / EIGEN_PI);
+
+	double hmdDeltaM = -1.0;
+	double trackerDeltaM = -1.0;
+	double mismatchM = -1.0;
+	double localJumpM = -1.0;
+	double localJumpDeg = -1.0;
+	if (g_headMountShadowOffset.hasInvariantPrevious) {
+		hmdDeltaM = (hmdReference.translation() - g_headMountShadowOffset.previousInvariantHmd.translation()).norm();
+		trackerDeltaM =
+		    (trackerReference.translation() - g_headMountShadowOffset.previousInvariantTrackerReference.translation())
+		        .norm();
+		mismatchM = std::abs(hmdDeltaM - trackerDeltaM);
+		localJumpM =
+		    (localOffset.translation() - g_headMountShadowOffset.previousInvariantLocalOffset.translation()).norm();
+		localJumpDeg =
+		    RotationDeltaRad(g_headMountShadowOffset.previousInvariantLocalOffset, localOffset) * (180.0 / EIGEN_PI);
+	}
+
+	const bool softSnap = localJumpM > 0.030 || localJumpDeg > 5.0 || mismatchM > 0.050;
+	const bool hardSnap = localJumpM > 0.075 || localJumpDeg > 10.0 || mismatchM > 0.150;
+	const bool shouldLog = hardSnap || softSnap || (time - g_headMountShadowOffset.lastInvariantLogTime) >= 1.0;
+	if (shouldLog) {
+		g_headMountShadowOffset.lastInvariantLogTime = time;
+		char buf[1050];
+		snprintf(buf, sizeof buf,
+		         "[hm-invariant-shadow] mode=%d deviceID=%d valid_profile=%d"
+		         " local_offset_cm=(%.2f,%.2f,%.2f) saved_delta_cm=%.2f saved_delta_rot_deg=%.2f"
+		         " local_jump_cm=%.2f local_jump_rot_deg=%.2f"
+		         " hmd_delta_cm=%.2f tracker_cal_delta_cm=%.2f mismatch_cm=%.2f"
+		         " soft_snap=%d hard_snap=%d hmd_age_ms=%.1f tracker_age_ms=%.1f offset_version=%u",
+		         (int)ctx.headMount.mode, (int)ctx.headMount.deviceID, (int)ctx.validProfile,
+		         localOffset.translation().x() * 100.0, localOffset.translation().y() * 100.0,
+		         localOffset.translation().z() * 100.0, savedDeltaM * 100.0, savedDeltaDeg, localJumpM * 100.0,
+		         localJumpDeg, hmdDeltaM * 100.0, trackerDeltaM * 100.0, mismatchM * 100.0, (int)softSnap,
+		         (int)hardSnap, hmdAgeMs, trackerAgeMs, (unsigned)ctx.headMountOffsetVersion);
+		Metrics::WriteLogAnnotation(buf);
+	}
+
+	g_headMountShadowOffset.previousInvariantHmd = hmdReference;
+	g_headMountShadowOffset.previousInvariantTrackerReference = trackerReference;
+	g_headMountShadowOffset.previousInvariantLocalOffset = localOffset;
+	g_headMountShadowOffset.hasInvariantPrevious = true;
 }
 
 static double CurrentProfileFitRmsMm()
@@ -616,6 +684,7 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 
 	const Eigen::Affine3d hmdReference = DriverPoseToAffine(ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd]);
 	const Eigen::Affine3d trackerTarget = DriverPoseToAffine(ctx.devicePoses[ctx.headMount.deviceID]);
+	TickHeadMountInvariantShadow(ctx, time, hmdReference, trackerTarget, hmdAgeMs, trackerAgeMs);
 	const Eigen::Affine3d hmdTarget = g_headMountShadowOffset.targetFromReferenceAtStart * hmdReference;
 
 	double derivedLinearSpeedMps = 0.0;
