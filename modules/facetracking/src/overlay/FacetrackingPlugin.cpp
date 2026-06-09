@@ -23,6 +23,7 @@
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -36,10 +37,42 @@ bool StartsWith(const std::string& value, const char* prefix)
 	return prefix && value.rfind(prefix, 0) == 0;
 }
 
+bool IsAsciiSpace(char c)
+{
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+std::string TrimAsciiCopy(std::string value)
+{
+	size_t first = 0;
+	while (first < value.size() && IsAsciiSpace(value[first]))
+		++first;
+	size_t last = value.size();
+	while (last > first && IsAsciiSpace(value[last - 1]))
+		--last;
+	if (first > 0 || last < value.size()) value = value.substr(first, last - first);
+	return value;
+}
+
 bool IsDriverWaitError(const std::string& error)
 {
 	return StartsWith(error, "FaceTracking IPC:") || StartsWith(error, "Driver connection:") ||
 	       StartsWith(error, "Not connected");
+}
+
+bool IsMetadataEmpty(const AvatarShapeTuningMetadata& metadata)
+{
+	return TrimAsciiCopy(metadata.custom_name).empty() && TrimAsciiCopy(metadata.auto_name).empty() &&
+	       TrimAsciiCopy(metadata.last_used_utc).empty() && TrimAsciiCopy(metadata.config_path).empty();
+}
+
+uint32_t CountShapeOverrides(const FaceShapeScaleArray& values)
+{
+	uint32_t count = 0;
+	for (int value : values) {
+		if (value != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) ++count;
+	}
+	return count;
 }
 
 } // namespace
@@ -60,6 +93,10 @@ void FacetrackingPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 	profile_.Load();
 	avatar_state_.Tick();
 	active_avatar_tuning_key_ = CurrentAvatarTuningKey();
+	selected_avatar_tuning_key_ = active_avatar_tuning_key_;
+	if (UpdateAvatarMetadataFromState()) {
+		profile_.Save();
+	}
 
 	// Seed sources.json on first run; load the catalogue for Tick() to use.
 	sources_catalogue_ = facetracking::EnsureSourcesCatalogue();
@@ -102,12 +139,18 @@ void FacetrackingPlugin::Tick(openvr_pair::overlay::ShellContext&)
 	host_status_.Tick();
 
 	avatar_state_.Tick();
+	const bool avatarMetadataChanged = UpdateAvatarMetadataFromState();
 	const std::string avatarKey = CurrentAvatarTuningKey();
 	if (avatarKey != active_avatar_tuning_key_) {
 		FT_LOG_OVL("[tuning] active avatar changed: '%s' -> '%s'", active_avatar_tuning_key_.c_str(),
 		           avatarKey.c_str());
 		active_avatar_tuning_key_ = avatarKey;
+		selected_avatar_tuning_key_ = avatarKey;
 		PushShapeTuningToDriver();
+	}
+	if (avatarMetadataChanged) {
+		profile_.Save();
+		last_save_ = now;
 	}
 
 	// Pull the latest driver_telemetry.json snapshot (same cadence).
@@ -160,6 +203,33 @@ void FacetrackingPlugin::HandleSyncResult(const facetracking::SyncResult& result
 
 	completed_sync_results_.push_back(result);
 	if (completed_sync_results_.size() > 8) completed_sync_results_.erase(completed_sync_results_.begin());
+}
+
+bool FacetrackingPlugin::UpdateAvatarMetadataFromState()
+{
+	const auto& avatar = avatar_state_.Snapshot();
+	if (!avatar.valid || avatar.avatar_id.empty()) return false;
+
+	const std::string key = NormalizeAvatarShapeTuningKey(avatar.avatar_id);
+	AvatarShapeTuningMetadata& metadata = MetadataForAvatar(profile_.current, key);
+	bool changed = false;
+
+	const std::string autoName = TrimAsciiCopy(avatar.avatar_name);
+	if (!autoName.empty() && metadata.auto_name != autoName) {
+		metadata.auto_name = autoName;
+		changed = true;
+	}
+	const std::string lastUsed = TrimAsciiCopy(avatar.updated_at_utc);
+	if (!lastUsed.empty() && metadata.last_used_utc != lastUsed) {
+		metadata.last_used_utc = lastUsed;
+		changed = true;
+	}
+	const std::string configPath = TrimAsciiCopy(avatar.config_path);
+	if (!configPath.empty() && metadata.config_path != configPath) {
+		metadata.config_path = configPath;
+		changed = true;
+	}
+	return changed;
 }
 
 void FacetrackingPlugin::PushConfigToDriver()
@@ -256,9 +326,78 @@ std::string FacetrackingPlugin::CurrentAvatarTuningKey() const
 
 std::string FacetrackingPlugin::CurrentAvatarLabel() const
 {
-	const auto& avatar = avatar_state_.Snapshot();
-	if (avatar.valid && !avatar.avatar_id.empty()) return avatar.avatar_id;
-	return "Default profile";
+	return AvatarDisplayLabel(CurrentAvatarTuningKey());
+}
+
+std::vector<std::string> FacetrackingPlugin::AvatarTuningKeys() const
+{
+	std::set<std::string> unique;
+	unique.insert(CurrentAvatarTuningKey());
+	if (!selected_avatar_tuning_key_.empty()) unique.insert(NormalizeAvatarShapeTuningKey(selected_avatar_tuning_key_));
+	for (const auto& entry : profile_.current.avatar_shape_tuning) {
+		unique.insert(NormalizeAvatarShapeTuningKey(entry.first));
+	}
+	for (const auto& entry : profile_.current.avatar_shape_metadata) {
+		unique.insert(NormalizeAvatarShapeTuningKey(entry.first));
+	}
+
+	std::vector<std::string> keys(unique.begin(), unique.end());
+	const std::string activeKey = CurrentAvatarTuningKey();
+	std::sort(keys.begin(), keys.end(), [&](const std::string& a, const std::string& b) {
+		const bool aActive = a == activeKey;
+		const bool bActive = b == activeKey;
+		if (aActive != bActive) return aActive;
+
+		const AvatarShapeTuningMetadata* aMeta = FindMetadataForAvatar(profile_.current, a);
+		const AvatarShapeTuningMetadata* bMeta = FindMetadataForAvatar(profile_.current, b);
+		const std::string aLast = aMeta ? aMeta->last_used_utc : std::string{};
+		const std::string bLast = bMeta ? bMeta->last_used_utc : std::string{};
+		if (aLast != bLast) return aLast > bLast;
+
+		const std::string aLabel = AvatarDisplayName(a, aMeta);
+		const std::string bLabel = AvatarDisplayName(b, bMeta);
+		if (aLabel != bLabel) return aLabel < bLabel;
+		return a < b;
+	});
+	return keys;
+}
+
+std::string FacetrackingPlugin::SelectedAvatarTuningKey() const
+{
+	return selected_avatar_tuning_key_.empty() ? CurrentAvatarTuningKey()
+	                                           : NormalizeAvatarShapeTuningKey(selected_avatar_tuning_key_);
+}
+
+void FacetrackingPlugin::SelectAvatarTuningKey(const std::string& key)
+{
+	selected_avatar_tuning_key_ = NormalizeAvatarShapeTuningKey(key);
+}
+
+std::string FacetrackingPlugin::AvatarDisplayLabel(const std::string& key) const
+{
+	return AvatarDisplayName(key, FindMetadataForAvatar(profile_.current, key));
+}
+
+std::string FacetrackingPlugin::AvatarLastUsedLabel(const std::string& key) const
+{
+	const AvatarShapeTuningMetadata* metadata = FindMetadataForAvatar(profile_.current, key);
+	return metadata ? FormatAvatarLastUsedAge(metadata->last_used_utc) : std::string("last used unknown");
+}
+
+uint32_t FacetrackingPlugin::AvatarOverrideCount(const std::string& key) const
+{
+	const FaceShapeScaleArray* values = FindShapeTuningForAvatar(profile_.current, key);
+	return values ? CountShapeOverrides(*values) : 0;
+}
+
+void FacetrackingPlugin::RenameAvatarTuningKey(const std::string& key, const std::string& name)
+{
+	const std::string normalized = NormalizeAvatarShapeTuningKey(key);
+	AvatarShapeTuningMetadata& metadata = MetadataForAvatar(profile_.current, normalized);
+	metadata.custom_name = TrimAsciiCopy(name);
+	if (IsMetadataEmpty(metadata)) {
+		profile_.current.avatar_shape_metadata.erase(normalized);
+	}
 }
 
 bool FacetrackingPlugin::SendShapeTuningRequest(uint16_t index, uint16_t percent)
@@ -314,39 +453,53 @@ void FacetrackingPlugin::PushShapeTuningToDriver()
 	}
 }
 
-void FacetrackingPlugin::SetCurrentAvatarShapeScale(uint32_t index, int percent)
+void FacetrackingPlugin::SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent)
 {
 	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return;
 	const int value = std::clamp(percent, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
-	const std::string avatarKey = CurrentAvatarTuningKey();
-	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, avatarKey);
+	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
+	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, normalized);
 	if (values[index] == value) return;
 
 	values[index] = value;
-	PruneAvatarShapeTuning(profile_.current, avatarKey);
+	PruneAvatarShapeTuning(profile_.current, normalized);
 
-	try {
-		SendShapeTuningRequest(static_cast<uint16_t>(index), static_cast<uint16_t>(value));
+	if (normalized == CurrentAvatarTuningKey()) {
+		try {
+			SendShapeTuningRequest(static_cast<uint16_t>(index), static_cast<uint16_t>(value));
+		}
+		catch (const std::exception& e) {
+			last_error_ = std::string("IPC error: ") + e.what();
+			FT_LOG_OVL("[ipc] SetAvatarShapeScale failed: %s", e.what());
+		}
 	}
-	catch (const std::exception& e) {
-		last_error_ = std::string("IPC error: ") + e.what();
-		FT_LOG_OVL("[ipc] SetCurrentAvatarShapeScale failed: %s", e.what());
+}
+
+void FacetrackingPlugin::ResetAvatarShapeTuning(const std::string& avatarKey)
+{
+	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
+	profile_.current.avatar_shape_tuning.erase(normalized);
+
+	if (normalized == CurrentAvatarTuningKey()) {
+		try {
+			SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX,
+			                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+		}
+		catch (const std::exception& e) {
+			last_error_ = std::string("IPC error: ") + e.what();
+			FT_LOG_OVL("[ipc] ResetAvatarShapeTuning failed: %s", e.what());
+		}
 	}
+}
+
+void FacetrackingPlugin::SetCurrentAvatarShapeScale(uint32_t index, int percent)
+{
+	SetAvatarShapeScale(CurrentAvatarTuningKey(), index, percent);
 }
 
 void FacetrackingPlugin::ResetCurrentAvatarShapeTuning()
 {
-	const std::string avatarKey = CurrentAvatarTuningKey();
-	profile_.current.avatar_shape_tuning.erase(NormalizeAvatarShapeTuningKey(avatarKey));
-
-	try {
-		SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX,
-		                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
-	}
-	catch (const std::exception& e) {
-		last_error_ = std::string("IPC error: ") + e.what();
-		FT_LOG_OVL("[ipc] ResetCurrentAvatarShapeTuning failed: %s", e.what());
-	}
+	ResetAvatarShapeTuning(CurrentAvatarTuningKey());
 }
 
 void FacetrackingPlugin::SendEnabledModules(const std::vector<std::string>& uuids)

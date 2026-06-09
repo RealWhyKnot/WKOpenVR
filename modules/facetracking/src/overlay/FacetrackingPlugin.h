@@ -70,6 +70,18 @@ public:
 	std::optional<facetracking::SyncResult> ConsumeSyncResult();
 	void ReconcileEnabledModulesWithInstalled(const std::string& preferred_uuid);
 
+	std::string CurrentAvatarTuningKey() const;
+	std::string CurrentAvatarLabel() const;
+	std::vector<std::string> AvatarTuningKeys() const;
+	std::string SelectedAvatarTuningKey() const;
+	void SelectAvatarTuningKey(const std::string& key);
+	std::string AvatarDisplayLabel(const std::string& key) const;
+	std::string AvatarLastUsedLabel(const std::string& key) const;
+	uint32_t AvatarOverrideCount(const std::string& key) const;
+	void RenameAvatarTuningKey(const std::string& key, const std::string& name);
+	void SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent);
+	void ResetAvatarShapeTuning(const std::string& avatarKey);
+
 private:
 	friend void facetracking::ui::DrawSettingsTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawTuningTab(FacetrackingPlugin& plugin);
@@ -88,6 +100,7 @@ private:
 
 	std::string last_error_;
 	std::string active_avatar_tuning_key_;
+	std::string selected_avatar_tuning_key_;
 	uint64_t observed_ipc_generation_ = 0;
 
 	std::chrono::steady_clock::time_point last_connection_check_{};
@@ -95,8 +108,7 @@ private:
 
 	void DrawStatusBanner();
 	void HandleSyncResult(const facetracking::SyncResult& result);
-	std::string CurrentAvatarTuningKey() const;
-	std::string CurrentAvatarLabel() const;
+	bool UpdateAvatarMetadataFromState();
 	void SetCurrentAvatarShapeScale(uint32_t index, int percent);
 	void ResetCurrentAvatarShapeTuning();
 	void PushShapeTuningToDriver();

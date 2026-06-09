@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "AvatarStatePoller.h"
 #include "JsonUtil.h"
 #include "Profiles.h"
+#include "Win32Text.h"
 
 #include <windows.h>
 
@@ -55,6 +57,11 @@ private:
 std::filesystem::path ProfilePathUnder(const std::filesystem::path& localLow)
 {
 	return localLow / L"WKOpenVR" / L"profiles" / L"facetracking.json";
+}
+
+std::filesystem::path AvatarStatePathUnder(const std::filesystem::path& localLow)
+{
+	return localLow / L"WKOpenVR" / L"facetracking" / L"avatar_parameter_cache" / L"state.json";
 }
 
 void WriteText(const std::filesystem::path& path, const std::string& body)
@@ -161,6 +168,42 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 	std::filesystem::remove_all(temp, ec);
 }
 
+TEST(FacetrackingProfiles, AvatarShapeMetadataRoundTrips)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.avatar_shape_metadata["avtr_test"] =
+	    AvatarShapeTuningMetadata{"My Alias", "OSC Avatar", "2026-06-09T02:14:58.4249754Z", "C:\\avatars\\a.json"};
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	const picojson::value* metadata = openvr_pair::common::json::ValueAt(saved, "avatar_shape_metadata");
+	ASSERT_NE(metadata, nullptr);
+	ASSERT_TRUE(metadata->is<picojson::object>());
+	const auto& metadataObj = metadata->get<picojson::object>();
+	auto avatarIt = metadataObj.find("avtr_test");
+	ASSERT_NE(avatarIt, metadataObj.end());
+	EXPECT_EQ(openvr_pair::common::json::StringAt(avatarIt->second, "custom_name"), "My Alias");
+	EXPECT_EQ(openvr_pair::common::json::StringAt(avatarIt->second, "auto_name"), "OSC Avatar");
+	EXPECT_EQ(openvr_pair::common::json::StringAt(avatarIt->second, "last_used_utc"), "2026-06-09T02:14:58.4249754Z");
+	EXPECT_EQ(openvr_pair::common::json::StringAt(avatarIt->second, "config_path"), "C:\\avatars\\a.json");
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	const AvatarShapeTuningMetadata* loadedMetadata = FindMetadataForAvatar(loaded.current, "avtr_test");
+	ASSERT_NE(loadedMetadata, nullptr);
+	EXPECT_EQ(loadedMetadata->custom_name, "My Alias");
+	EXPECT_EQ(loadedMetadata->auto_name, "OSC Avatar");
+	EXPECT_EQ(loadedMetadata->last_used_utc, "2026-06-09T02:14:58.4249754Z");
+	EXPECT_EQ(loadedMetadata->config_path, "C:\\avatars\\a.json");
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
 TEST(FacetrackingProfiles, AvatarShapeTuningOmitsAllDefaultEntries)
 {
 	auto temp = MakeProfileTempDir();
@@ -182,4 +225,64 @@ TEST(FacetrackingProfiles, NormalizeAvatarShapeTuningKeyFallsBackToDefault)
 {
 	EXPECT_EQ(NormalizeAvatarShapeTuningKey(" \t\r\n"), kDefaultAvatarShapeTuningKey);
 	EXPECT_EQ(NormalizeAvatarShapeTuningKey(" avtr_123 "), "avtr_123");
+}
+
+TEST(FacetrackingProfiles, AvatarDisplayNamePrefersAliasThenOscNameThenCompactId)
+{
+	AvatarShapeTuningMetadata metadata;
+	metadata.auto_name = "OSC Avatar";
+	EXPECT_EQ(AvatarDisplayName("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", &metadata), "OSC Avatar");
+
+	metadata.custom_name = "  Favorite Smile Test  ";
+	EXPECT_EQ(AvatarDisplayName("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", &metadata), "Favorite Smile Test");
+
+	EXPECT_EQ(AvatarDisplayName("avtr_67bb9fae-11fe-441a-afa7-3d3086a99cd7", nullptr), "avtr_67bb9fae");
+	EXPECT_EQ(AvatarDisplayName(kDefaultAvatarShapeTuningKey, nullptr), "Default profile");
+}
+
+TEST(FacetrackingProfiles, FormatAvatarLastUsedAgeUsesHumanUnits)
+{
+	const int64_t now = AvatarLastUsedUnixSeconds("2026-06-09T02:15:58Z");
+	ASSERT_GT(now, 0);
+
+	EXPECT_EQ(FormatAvatarLastUsedAge("2026-06-09T02:15:56Z", now), "used just now");
+	EXPECT_EQ(FormatAvatarLastUsedAge("2026-06-09T02:15:11Z", now), "used 47 seconds ago");
+	EXPECT_EQ(FormatAvatarLastUsedAge("2026-06-09T02:14:58.4249754Z", now), "used 1 minute ago");
+	EXPECT_EQ(FormatAvatarLastUsedAge("2026-06-09T00:15:58Z", now), "used 2 hours ago");
+	EXPECT_EQ(FormatAvatarLastUsedAge("2026-06-06T02:15:58Z", now), "used 3 days ago");
+	EXPECT_EQ(FormatAvatarLastUsedAge("not-a-date", now), "last used unknown");
+}
+
+TEST(FacetrackingProfiles, AvatarStatePollerReadsOscConfigName)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto statePath = AvatarStatePathUnder(temp);
+	const auto configPath = temp / L"VRChat" / L"OSC" / L"usr_test" / L"Avatars" / L"avtr_test.json";
+	const std::string configPathUtf8 = openvr_pair::common::WideToUtf8(configPath.wstring());
+
+	WriteText(configPath, "{\n"
+	                      "  \"id\": \"avtr_test\",\n"
+	                      "  \"name\": \"Readable Avatar\",\n"
+	                      "  \"parameters\": []\n"
+	                      "}\n");
+
+	picojson::object state;
+	state["AvatarId"] = picojson::value(std::string("avtr_test"));
+	state["ConfigPath"] = picojson::value(configPathUtf8);
+	state["UpdatedAtUtc"] = picojson::value(std::string("2026-06-09T02:14:58.4249754Z"));
+	WriteText(statePath, picojson::value(state).serialize(true));
+
+	facetracking::AvatarStatePoller poller;
+	poller.Tick();
+
+	const facetracking::AvatarStateSnapshot& snapshot = poller.Snapshot();
+	ASSERT_TRUE(snapshot.valid);
+	EXPECT_EQ(snapshot.avatar_id, "avtr_test");
+	EXPECT_EQ(snapshot.avatar_name, "Readable Avatar");
+	EXPECT_EQ(snapshot.config_path, configPathUtf8);
+	EXPECT_EQ(snapshot.updated_at_utc, "2026-06-09T02:14:58.4249754Z");
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
 }

@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace facetracking::ui {
 
@@ -35,6 +37,8 @@ constexpr const char* kGroupLabels[] = {
 struct TuningTabState
 {
 	char filter[64] = {};
+	char rename[128] = {};
+	std::string rename_key;
 	int group = 0;
 };
 
@@ -90,13 +94,126 @@ bool ContainsNoCase(const char* haystack, const char* needle)
 	return false;
 }
 
-uint32_t CountOverrides(const FaceShapeScaleArray& values)
+void SyncRenameBuffer(FacetrackingPlugin& plugin, const std::string& avatarKey)
 {
-	uint32_t count = 0;
-	for (int value : values) {
-		if (value != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) ++count;
+	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
+	if (g_state.rename_key == normalized) return;
+
+	g_state.rename_key = normalized;
+	const AvatarShapeTuningMetadata* metadata = FindMetadataForAvatar(plugin.Profile().current, normalized);
+	const std::string custom = metadata ? metadata->custom_name : std::string{};
+	std::snprintf(g_state.rename, sizeof(g_state.rename), "%s", custom.c_str());
+}
+
+void DrawAvatarProfiles(FacetrackingPlugin& plugin)
+{
+	const std::vector<std::string> keys = plugin.AvatarTuningKeys();
+	const std::string activeKey = plugin.CurrentAvatarTuningKey();
+	std::string selectedKey = plugin.SelectedAvatarTuningKey();
+
+	ImGuiTableFlags flags =
+	    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
+	if (!ImGui::BeginTable("ft_avatar_tuning_profiles", 4, flags,
+	                       ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 5.0f))) {
+		return;
 	}
-	return count;
+
+	ImGui::TableSetupColumn("Now", ImGuiTableColumnFlags_WidthFixed, 44.0f);
+	ImGui::TableSetupColumn("Avatar");
+	ImGui::TableSetupColumn("Last used", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+	ImGui::TableSetupColumn("Overrides", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+	ImGui::TableHeadersRow();
+
+	for (const std::string& key : keys) {
+		const bool isActive = (key == activeKey);
+		const bool isSelected = (key == selectedKey);
+		const std::string label = plugin.AvatarDisplayLabel(key);
+		const std::string lastUsed = plugin.AvatarLastUsedLabel(key);
+		const uint32_t overrides = plugin.AvatarOverrideCount(key);
+
+		ImGui::TableNextRow();
+		ImGui::PushID(key.c_str());
+
+		ImGui::TableSetColumnIndex(0);
+		if (isActive) {
+			DrawStatusText("On", StatusTone::Ok);
+		}
+		else {
+			ImGui::TextDisabled("-");
+		}
+
+		ImGui::TableSetColumnIndex(1);
+		if (ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+			plugin.SelectAvatarTuningKey(key);
+			selectedKey = key;
+			SyncRenameBuffer(plugin, key);
+		}
+		TooltipForLastItem(key.c_str());
+
+		ImGui::TableSetColumnIndex(2);
+		ImGui::TextDisabled("%s", lastUsed.c_str());
+
+		ImGui::TableSetColumnIndex(3);
+		ImGui::Text("%u", (unsigned)overrides);
+
+		ImGui::PopID();
+	}
+
+	ImGui::EndTable();
+}
+
+void DrawSelectedAvatarDetails(FacetrackingPlugin& plugin, const std::string& selectedKey)
+{
+	SyncRenameBuffer(plugin, selectedKey);
+
+	const std::string activeKey = plugin.CurrentAvatarTuningKey();
+	const std::string selectedLabel = plugin.AvatarDisplayLabel(selectedKey);
+	const AvatarShapeTuningMetadata* metadata = FindMetadataForAvatar(plugin.Profile().current, selectedKey);
+
+	ImGui::Spacing();
+	ImGui::Text("Selected: %s", selectedLabel.c_str());
+	if (selectedKey == activeKey) {
+		ImGui::SameLine();
+		DrawStatusText("Active", StatusTone::Ok);
+	}
+
+	ImGui::SetNextItemWidth(320.0f);
+	ImGui::InputText("Alias##ft_avatar_alias", g_state.rename, sizeof(g_state.rename));
+	if (ImGui::IsItemDeactivatedAfterEdit()) {
+		plugin.RenameAvatarTuningKey(selectedKey, g_state.rename);
+		plugin.Profile().Save();
+		g_state.rename_key.clear();
+		SyncRenameBuffer(plugin, selectedKey);
+		metadata = FindMetadataForAvatar(plugin.Profile().current, selectedKey);
+	}
+	TooltipForLastItem("Optional display name for this avatar's tuning profile.");
+
+	if (metadata && !metadata->auto_name.empty()) {
+		ImGui::TextDisabled("OSC name: %s", metadata->auto_name.c_str());
+		if (!metadata->custom_name.empty()) {
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Use OSC name##ft_avatar_use_osc_name")) {
+				g_state.rename[0] = '\0';
+				plugin.RenameAvatarTuningKey(selectedKey, "");
+				plugin.Profile().Save();
+				g_state.rename_key.clear();
+				SyncRenameBuffer(plugin, selectedKey);
+				metadata = FindMetadataForAvatar(plugin.Profile().current, selectedKey);
+			}
+			TooltipForLastItem("Clear the alias and show the OSC config name.");
+		}
+	}
+
+	ImGui::TextDisabled("Last used: %s", plugin.AvatarLastUsedLabel(selectedKey).c_str());
+	ImGui::TextDisabled("ID:");
+	ImGui::SameLine();
+	DrawFilePath(selectedKey.c_str());
+
+	if (metadata && !metadata->config_path.empty()) {
+		ImGui::TextDisabled("OSC config:");
+		ImGui::SameLine();
+		DrawFilePath(metadata->config_path.c_str());
+	}
 }
 
 } // namespace
@@ -105,21 +222,30 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 {
 	DrawSectionHeading("Avatar tuning");
 
-	const std::string avatarLabel = plugin.CurrentAvatarLabel();
-	ImGui::Text("Avatar: %s", avatarLabel.c_str());
-	const FaceShapeScaleArray* stored =
-	    FindShapeTuningForAvatar(plugin.profile_.current, plugin.CurrentAvatarTuningKey());
+	const std::string activeKey = plugin.CurrentAvatarTuningKey();
+	ImGui::Text("Active: %s", plugin.CurrentAvatarLabel().c_str());
+	ImGui::SameLine();
+	ImGui::TextDisabled("%s", plugin.AvatarLastUsedLabel(activeKey).c_str());
+
+	DrawAvatarProfiles(plugin);
+
+	const std::string selectedKey = plugin.SelectedAvatarTuningKey();
+	DrawSelectedAvatarDetails(plugin, selectedKey);
+
+	const FaceShapeScaleArray* stored = FindShapeTuningForAvatar(plugin.Profile().current, selectedKey);
 	FaceShapeScaleArray values = stored ? *stored : DefaultFaceShapeScales();
 
-	const uint32_t overrideCount = CountOverrides(values);
+	const uint32_t overrideCount = plugin.AvatarOverrideCount(selectedKey);
 	ImGui::TextDisabled("Overrides: %u", (unsigned)overrideCount);
 	ImGui::SameLine();
-	if (ImGui::Button("Reset avatar##ft_shape_reset_avatar")) {
-		plugin.ResetCurrentAvatarShapeTuning();
-		plugin.profile_.Save();
+	ImGui::BeginDisabled(overrideCount == 0);
+	if (ImGui::Button("Reset selected avatar##ft_shape_reset_avatar")) {
+		plugin.ResetAvatarShapeTuning(selectedKey);
+		plugin.Profile().Save();
 		values = DefaultFaceShapeScales();
 	}
-	TooltipForLastItem("Reset every expression scale for the current avatar.");
+	ImGui::EndDisabled();
+	TooltipForLastItem("Reset every expression scale for the selected avatar.");
 
 	ImGui::Spacing();
 	ImGui::InputText("Search##ft_shape_search", g_state.filter, sizeof(g_state.filter));
@@ -159,18 +285,18 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::SliderInt("##scale", &value, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT, "%d%%")) {
 			values[i] = value;
-			plugin.SetCurrentAvatarShapeScale(i, value);
+			plugin.SetAvatarShapeScale(selectedKey, i, value);
 		}
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
-			plugin.profile_.Save();
+			plugin.Profile().Save();
 		}
 
 		ImGui::TableSetColumnIndex(2);
 		if (values[i] != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) {
 			if (ImGui::SmallButton("Reset")) {
 				values[i] = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
-				plugin.SetCurrentAvatarShapeScale(i, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
-				plugin.profile_.Save();
+				plugin.SetAvatarShapeScale(selectedKey, i, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+				plugin.Profile().Save();
 			}
 		}
 		else {

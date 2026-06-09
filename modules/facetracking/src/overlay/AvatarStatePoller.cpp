@@ -21,6 +21,22 @@ std::wstring ResolveAvatarStatePath()
 	return dir.empty() ? std::wstring() : dir + L"\\state.json";
 }
 
+std::string ReadAvatarNameFromConfigPath(const std::string& path)
+{
+	if (path.empty()) return {};
+
+	std::ifstream is(openvr_pair::common::Utf8ToWide(path));
+	if (!is) return {};
+
+	std::stringstream ss;
+	ss << is.rdbuf();
+
+	picojson::value root;
+	if (!openvr_pair::common::json::ParseObject(root, ss.str())) return {};
+
+	return openvr_pair::common::json::StringAt(root, "name");
+}
+
 } // namespace
 
 AvatarStatePoller::AvatarStatePoller()
@@ -71,6 +87,7 @@ void AvatarStatePoller::ReadFile()
 	AvatarStateSnapshot next;
 	next.avatar_id = openvr_pair::common::json::StringAt(root, "AvatarId");
 	next.config_path = openvr_pair::common::json::StringAt(root, "ConfigPath");
+	next.avatar_name = ReadAvatarNameFromConfigPath(next.config_path);
 	next.updated_at_utc = openvr_pair::common::json::StringAt(root, "UpdatedAtUtc");
 	next.valid = !next.avatar_id.empty();
 	snapshot_ = std::move(next);

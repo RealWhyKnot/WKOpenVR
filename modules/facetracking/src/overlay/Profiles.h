@@ -16,6 +16,14 @@ FaceShapeScaleArray DefaultFaceShapeScales();
 std::string NormalizeAvatarShapeTuningKey(std::string key);
 bool IsDefaultFaceShapeScales(const FaceShapeScaleArray& values);
 
+struct AvatarShapeTuningMetadata
+{
+	std::string custom_name;
+	std::string auto_name;
+	std::string last_used_utc;
+	std::string config_path;
+};
+
 // Overlay-side settings for the FaceTracking feature.
 // Serialised to %LocalAppDataLow%\WKOpenVR\profiles\facetracking.json.
 // This file holds settings that the overlay itself needs across sessions.
@@ -64,6 +72,7 @@ struct FacetrackingProfile
 	// Per-avatar expression output scales. Values are percentages in [0, 200],
 	// with 100 meaning pass-through. Stored sparse in JSON by expression name.
 	std::map<std::string, FaceShapeScaleArray> avatar_shape_tuning;
+	std::map<std::string, AvatarShapeTuningMetadata> avatar_shape_metadata;
 
 	// --- overlay-only preferences ---
 	bool show_raw_values = false;
@@ -73,6 +82,13 @@ struct FacetrackingProfile
 FaceShapeScaleArray& ShapeTuningForAvatar(FacetrackingProfile& profile, const std::string& avatarKey);
 const FaceShapeScaleArray* FindShapeTuningForAvatar(const FacetrackingProfile& profile, const std::string& avatarKey);
 void PruneAvatarShapeTuning(FacetrackingProfile& profile, const std::string& avatarKey);
+AvatarShapeTuningMetadata& MetadataForAvatar(FacetrackingProfile& profile, const std::string& avatarKey);
+const AvatarShapeTuningMetadata* FindMetadataForAvatar(const FacetrackingProfile& profile,
+                                                       const std::string& avatarKey);
+std::string AvatarDisplayName(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata);
+int64_t AvatarLastUsedUnixSeconds(const std::string& utc);
+std::string FormatAvatarLastUsedAge(const std::string& utc, int64_t now_unix_seconds);
+std::string FormatAvatarLastUsedAge(const std::string& utc);
 
 class FacetrackingProfileStore
 {

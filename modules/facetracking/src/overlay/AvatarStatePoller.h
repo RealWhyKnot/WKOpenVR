@@ -9,6 +9,7 @@ struct AvatarStateSnapshot
 {
 	bool valid = false;
 	std::string avatar_id;
+	std::string avatar_name;
 	std::string config_path;
 	std::string updated_at_utc;
 };
