@@ -29,6 +29,8 @@ namespace openvr_pair::overlay {
 
 namespace {
 
+namespace module_registry = openvr_pair::common::modules;
+
 void DrawTransientStatus(ShellContext& context)
 {
 	if (context.status.empty()) return;
@@ -219,6 +221,22 @@ std::vector<FeaturePlugin*> OrderPluginsByModuleTabOrder(const std::vector<Featu
 		ordered.push_back(plugin);
 	}
 	return ordered;
+}
+
+bool IsFeatureContentTabVisible(ShellContext& context, FeaturePlugin& plugin)
+{
+	const char* flag = plugin.FlagFileName();
+	const bool installed = plugin.IsInstalled(context);
+	const bool autoDisabled = context.IsModuleAutoDisabled(flag);
+	bool dependencyBlocked = false;
+
+	if (const module_registry::ModuleInfo* module = module_registry::FindByFlagFileName(flag)) {
+		dependencyBlocked =
+		    module->requires_osc_router &&
+		    context.IsModuleAutoDisabled(module_registry::FlagFileName(module_registry::ModuleId::OscRouter));
+	}
+
+	return ShouldShowFeatureContentTab(installed, autoDisabled, dependencyBlocked);
 }
 
 bool ContainsShellTabKey(const std::vector<ShellTabEntry>& entries, std::string_view key)
@@ -482,7 +500,7 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 	                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 		std::vector<FeaturePlugin*> installedPlugins;
 		for (auto& plugin : plugins) {
-			if (!plugin || !plugin->IsInstalled(context)) continue;
+			if (!plugin || !IsFeatureContentTabVisible(context, *plugin)) continue;
 			installedPlugins.push_back(plugin.get());
 		}
 		installedPlugins = OrderPluginsByModuleTabOrder(installedPlugins, context.ModuleTabOrder());

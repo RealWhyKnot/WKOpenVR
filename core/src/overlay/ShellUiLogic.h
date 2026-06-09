@@ -40,6 +40,11 @@ inline bool ContainsFeatureFlag(const std::vector<std::string_view>& installedFl
 	return false;
 }
 
+inline bool ShouldShowFeatureContentTab(bool installed, bool autoDisabled, bool dependencyBlocked)
+{
+	return installed && !autoDisabled && !dependencyBlocked;
+}
+
 inline std::string TrimShellToken(std::string_view value)
 {
 	size_t begin = 0;

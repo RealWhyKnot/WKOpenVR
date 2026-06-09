@@ -112,6 +112,14 @@ TEST(ShellUiLogic, FeaturePickerSelectionKeepsTopNavStable)
 	EXPECT_FALSE(selection.applyDesktopDefault);
 }
 
+TEST(ShellUiLogic, FeatureContentTabsRequireEffectiveEnabledModule)
+{
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowFeatureContentTab(true, false, false));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowFeatureContentTab(false, false, false));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowFeatureContentTab(true, true, false));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowFeatureContentTab(true, false, true));
+}
+
 TEST(ShellUiLogic, ModuleTabOrderParsesAndSerializesValidFlags)
 {
 	const std::vector<std::string> parsed = openvr_pair::overlay::ParseModuleTabOrderSetting(
