@@ -1,0 +1,136 @@
+#include <gtest/gtest.h>
+
+#include "PerfHistory.h"
+
+namespace {
+
+namespace modules = openvr_pair::common::modules;
+namespace moduleperf = openvr_pair::common::moduleperf;
+namespace overlay = openvr_pair::overlay;
+
+uint32_t Slot(modules::ModuleId id)
+{
+	return moduleperf::SlotIndex(id);
+}
+
+} // namespace
+
+TEST(PerfHistory, FloorsUnattributedCpuAtZero)
+{
+	moduleperf::PerfSampleResult sample{};
+	sample.process.cpuValid = true;
+	sample.process.cpuPctOneCore = 5.0;
+	sample.modules[Slot(modules::ModuleId::Calibration)].active = true;
+	sample.modules[Slot(modules::ModuleId::Calibration)].sectionCpuPctOneCore = 4.0;
+	sample.modules[Slot(modules::ModuleId::Smoothing)].active = true;
+	sample.modules[Slot(modules::ModuleId::Smoothing)].threadCpuPctOneCore = 4.0;
+
+	EXPECT_DOUBLE_EQ(0.0, overlay::UnattributedPct(sample));
+}
+
+TEST(PerfHistory, PushesOverlayAndDriverSeries)
+{
+	overlay::PerfHistoryStore store;
+
+	moduleperf::PerfSampleResult overlaySample{};
+	overlaySample.process.cpuValid = true;
+	overlaySample.process.cpuPctOneCore = 12.5;
+	overlaySample.process.snapshot.memoryValid = true;
+	overlaySample.process.snapshot.workingSetBytes = 64ULL * 1024ULL * 1024ULL;
+	overlaySample.modules[Slot(modules::ModuleId::Calibration)].active = true;
+	overlaySample.modules[Slot(modules::ModuleId::Calibration)].sectionCpuPctOneCore = 2.0;
+
+	moduleperf::PerfSampleResult driverSample{};
+	driverSample.process.cpuValid = true;
+	driverSample.process.cpuPctOneCore = 7.0;
+	driverSample.process.snapshot.memoryValid = true;
+	driverSample.process.snapshot.workingSetBytes = 128ULL * 1024ULL * 1024ULL;
+	driverSample.modules[Slot(modules::ModuleId::FaceTracking)].active = true;
+	driverSample.modules[Slot(modules::ModuleId::FaceTracking)].threadCpuPctOneCore = 1.0;
+	driverSample.modules[Slot(modules::ModuleId::FaceTracking)].sidecarValid = true;
+	driverSample.modules[Slot(modules::ModuleId::FaceTracking)].sidecarCpuPctOneCore = 3.5;
+
+	overlay::PushPerfHistory(store, 10.0, overlaySample, true, driverSample);
+
+	EXPECT_EQ(1u, store.overlay.totalCpuPctOneCore.Size());
+	EXPECT_FLOAT_EQ(12.5f, store.overlay.totalCpuPctOneCore.Latest());
+	EXPECT_FLOAT_EQ(64.0f, store.overlay.workingSetMb.Latest());
+	EXPECT_FLOAT_EQ(2.0f, store.overlay.moduleCpuPctOneCore[Slot(modules::ModuleId::Calibration)].Latest());
+	EXPECT_FLOAT_EQ(7.0f, store.driver.totalCpuPctOneCore.Latest());
+	EXPECT_FLOAT_EQ(128.0f, store.driver.workingSetMb.Latest());
+	EXPECT_FLOAT_EQ(1.0f, store.driver.moduleCpuPctOneCore[Slot(modules::ModuleId::FaceTracking)].Latest());
+	EXPECT_FLOAT_EQ(3.5f, store.sidecarModuleCpuPctOneCore[Slot(modules::ModuleId::FaceTracking)].Latest());
+	EXPECT_FLOAT_EQ(3.5f, store.sidecarTotalCpuPctOneCore.Latest());
+}
+
+TEST(PerfHistory, EvictsOldPointsByWindow)
+{
+	overlay::PerfTimeSeries series;
+	series.Push(1.0, 1.0f);
+	series.Push(overlay::PerfTimeSeries::kWindowSeconds + 1.0, 2.0f);
+	series.Push(overlay::PerfTimeSeries::kWindowSeconds + 1.01, 3.0f);
+
+	ASSERT_EQ(2u, series.Size());
+	EXPECT_DOUBLE_EQ(overlay::PerfTimeSeries::kWindowSeconds + 1.0, series.At(0).first);
+	EXPECT_FLOAT_EQ(3.0f, series.Latest());
+}
+
+TEST(PerfHistory, BuildsMergedModuleRows)
+{
+	moduleperf::PerfSampleResult overlaySample{};
+	overlaySample.process.cpuPctOneCore = 5.0;
+	overlaySample.process.snapshot.processId = 111;
+	overlaySample.process.snapshot.workingSetBytes = 32ULL * 1024ULL * 1024ULL;
+	overlaySample.process.snapshot.handleCount = 10;
+	overlaySample.processThreadCount = 4;
+	overlaySample.modules[Slot(modules::ModuleId::Calibration)].active = true;
+	overlaySample.modules[Slot(modules::ModuleId::Calibration)].sectionCpuPctOneCore = 1.25;
+
+	moduleperf::PerfSampleResult driverSample{};
+	driverSample.process.cpuPctOneCore = 6.0;
+	driverSample.process.snapshot.processId = 222;
+	driverSample.process.snapshot.workingSetBytes = 48ULL * 1024ULL * 1024ULL;
+	driverSample.process.snapshot.handleCount = 20;
+	driverSample.processThreadCount = 8;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].active = true;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].threadCpuPctOneCore = 2.0;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].sidecarValid = true;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].sidecarCpuPctOneCore = 3.0;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].sidecarThreadCount = 5;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].sidecarPid = 333;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].sidecarProcessCount = 1;
+	driverSample.modules[Slot(modules::ModuleId::Calibration)].sidecarWorkingSetBytes = 96ULL * 1024ULL * 1024ULL;
+
+	const overlay::PerfViewModel vm = overlay::BuildPerfViewModel(overlaySample, true, driverSample, 0.25);
+
+	ASSERT_EQ(1u, vm.rows.size());
+	EXPECT_TRUE(vm.driverConnected);
+	EXPECT_EQ(111u, vm.overlayPid);
+	EXPECT_EQ(222u, vm.driverPid);
+	EXPECT_DOUBLE_EQ(32.0, vm.overlayWorkingSetMb);
+	EXPECT_DOUBLE_EQ(48.0, vm.driverWorkingSetMb);
+	EXPECT_DOUBLE_EQ(3.0, vm.sidecarTotalPct);
+
+	const overlay::PerfModuleRow& row = vm.rows.front();
+	EXPECT_EQ(modules::ModuleId::Calibration, row.id);
+	EXPECT_TRUE(row.overlayActive);
+	EXPECT_TRUE(row.driverActive);
+	EXPECT_TRUE(row.sidecarPresent);
+	EXPECT_DOUBLE_EQ(1.25, row.overlayPct);
+	EXPECT_DOUBLE_EQ(2.0, row.driverPct);
+	EXPECT_DOUBLE_EQ(3.0, row.sidecarPct);
+	EXPECT_DOUBLE_EQ(6.25, row.totalPct);
+	EXPECT_EQ(333u, row.sidecarPid);
+	EXPECT_EQ(5u, row.sidecarThreads);
+	EXPECT_EQ(96ULL * 1024ULL * 1024ULL, row.sidecarWorkingSetBytes);
+}
+
+TEST(PerfHistory, EmaSeedsThenSmooths)
+{
+	bool valid = false;
+	double value = overlay::EmaUpdate(0.0, 10.0, valid);
+	EXPECT_DOUBLE_EQ(10.0, value);
+	valid = true;
+	value = overlay::EmaUpdate(value, 20.0, valid, 0.25);
+	EXPECT_DOUBLE_EQ(12.5, value);
+}

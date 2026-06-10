@@ -1,10 +1,15 @@
 #pragma once
 
 #include <windows.h>
-#include <cstdint>
 #include <atomic>
-#include <stdexcept>
+#include <cstddef>
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
 #include <functional>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 
 #ifndef _OPENVR_API
 #include <openvr_driver.h>
@@ -271,7 +276,14 @@ namespace protocol {
 // v33 (2026-06-09): adds RequestSetFaceShapeTuning. Face Tracking overlay sends
 // one compact per-expression scale at a time, plus a reset sentinel, so avatar-
 // specific under/overextension can update live without growing FaceTrackingConfig.
-const uint32_t Version = 33;
+//
+// v34 (2026-06-10): adds the always-on WKOpenVRPerfStatsV1 segment
+// (PerfStatsShmem). The driver host publishes process totals plus per-module
+// CPU/memory attribution at 1 Hz for the overlay's Modules-tab performance
+// card; replaces the old [perf] text-line-only sampler. Unlike the feature
+// shmems this segment is created in driver Init regardless of which feature
+// flags are present.
+const uint32_t Version = 34;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -1514,7 +1526,11 @@ public:
 		hMapFile = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(ShmemData), segment_name);
 		if (!hMapFile) return false;
 		pData = reinterpret_cast<ShmemData*>(MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(ShmemData)));
-		if (!pData) return false;
+		if (!pData) {
+			CloseHandle(hMapFile);
+			hMapFile = INVALID_HANDLE_VALUE;
+			return false;
+		}
 		pData->magic = SHMEM_MAGIC;
 		pData->shmem_version = SHMEM_VERSION;
 		return true;
@@ -1621,6 +1637,238 @@ public:
 			std::memcpy(&out, &s, sizeof(OscRouterRouteSlot));
 			std::atomic_thread_fence(std::memory_order_acquire);
 			const uint64_t g2 = s.generation.load(std::memory_order_acquire);
+			if (g1 == g2) return true;
+		}
+		return false;
+	}
+};
+
+// =========================================================================
+// Performance stats shmem (v34).
+//
+// Written by the driver host at 1 Hz with process totals and per-module
+// CPU/memory attribution; the overlay reads it to render the Modules-tab
+// performance card and to log driver-side perf lines next to its own.
+// Unlike the feature shmems above, this segment is created in driver Init
+// regardless of which feature flags are present, so the overlay can always
+// distinguish "driver not running" from "modules idle".
+//
+// Writer: ServerTrackedDeviceProvider::RunFrame (vrserver main loop).
+// Reader: the overlay's perf hub (main loop, 1 Hz).
+// One whole-snapshot seqlock guards the payload; the writer publishes a
+// complete sample at a time so readers never see a half-updated table.
+// =========================================================================
+
+// Attribution slots indexed by ModuleId value. Spare slots stay zeroed so
+// the module enum can grow without a layout change. Mirrors
+// moduleperf::kSlotCount; bump SHMEM_VERSION if either side changes.
+static const uint32_t PERF_STATS_MODULE_SLOTS = 16;
+
+// Whole-process counters for the publishing process (the driver host).
+struct PerfStatsProcessBlock
+{
+	uint32_t pid;
+	uint32_t logicalProcessors;
+	float cpuPctOneCore; // process CPU delta over the sample interval
+	float cpuPctTotal;   // cpuPctOneCore / logicalProcessors, clamped to 100
+	uint64_t cpuTimeMs;  // cumulative process CPU time
+	uint64_t workingSetBytes;
+	uint64_t privateBytes;
+	uint64_t peakWorkingSetBytes;
+	uint32_t handleCount;
+	uint32_t threadCount;
+	uint8_t cpuValid;
+	uint8_t memoryValid;
+	uint8_t handleValid;
+	uint8_t _pad;
+	uint32_t _reserved;
+};
+static_assert(std::is_trivially_copyable<PerfStatsProcessBlock>::value,
+              "PerfStatsProcessBlock crosses a process boundary; keep it trivially copyable");
+static_assert(sizeof(PerfStatsProcessBlock) == 64,
+              "PerfStatsProcessBlock layout drifted; bump PerfStatsShmem::SHMEM_VERSION");
+
+// One module's attribution inside the driver host plus its sidecar process,
+// when the module spawns one. Percentages are of one core, matching the
+// process block's cpuPctOneCore scale.
+struct PerfStatsModuleSlot
+{
+	uint8_t active; // module showed activity this session
+	uint8_t hasSidecar;
+	uint8_t _pad[2];
+	uint32_t threadCount;       // registered driver worker threads
+	float sectionCpuPctOneCore; // hot-path scoped sections (wall time)
+	float threadCpuPctOneCore;  // registered-thread CPU time
+	float sidecarCpuPctOneCore; // sidecar whole-process CPU
+	float sidecarCpuPctTotal;
+	uint32_t sidecarPid;
+	uint32_t sidecarProcessCount;
+	uint64_t sidecarWorkingSetBytes;
+	uint64_t sidecarPrivateBytes;
+	uint32_t sidecarThreadCount;
+	uint32_t sidecarHandleCount;
+	uint32_t _reserved[2];
+};
+static_assert(std::is_trivially_copyable<PerfStatsModuleSlot>::value,
+              "PerfStatsModuleSlot crosses a process boundary; keep it trivially copyable");
+static_assert(sizeof(PerfStatsModuleSlot) == 64,
+              "PerfStatsModuleSlot layout drifted; bump PerfStatsShmem::SHMEM_VERSION");
+
+// Reader-side copy of one published sample.
+struct PerfStatsSnapshot
+{
+	uint64_t sampleIndex = 0;
+	uint64_t sampleTickMs = 0; // writer's GetTickCount64 at publish time
+	uint64_t intervalMs = 0;   // wall interval the percentages cover
+	PerfStatsProcessBlock process{};
+	PerfStatsModuleSlot modules[PERF_STATS_MODULE_SLOTS]{};
+};
+
+class PerfStatsShmem
+{
+public:
+	static const uint32_t SHMEM_MAGIC = 0x50455246; // "PERF"
+	static const uint32_t SHMEM_VERSION = 1;
+
+private:
+	struct ShmemData
+	{
+		uint32_t magic;
+		uint32_t shmem_version;
+		std::atomic<uint64_t> generation; // seqlock: odd = mid-write
+		uint64_t sampleIndex;             // increments once per publish
+		uint64_t sampleTickMs;
+		uint64_t intervalMs;
+		PerfStatsProcessBlock process;
+		PerfStatsModuleSlot modules[PERF_STATS_MODULE_SLOTS];
+	};
+	static_assert(offsetof(ShmemData, generation) == 8, "PerfStats header layout drifted; bump SHMEM_VERSION");
+	static_assert(offsetof(ShmemData, process) == 40, "PerfStats header layout drifted; bump SHMEM_VERSION");
+	static_assert(offsetof(ShmemData, modules) == 104, "PerfStats header layout drifted; bump SHMEM_VERSION");
+	static_assert(sizeof(ShmemData) == 104 + 64 * PERF_STATS_MODULE_SLOTS,
+	              "PerfStats layout drifted; bump SHMEM_VERSION");
+
+	HANDLE hMapFile = INVALID_HANDLE_VALUE;
+	ShmemData* pData = nullptr;
+
+	std::string LastErrorString(DWORD lastError)
+	{
+		LPSTR buffer = nullptr;
+		DWORD size =
+		    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		                   NULL, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
+		std::string msg(buffer ? buffer : "", size);
+		if (buffer) LocalFree(buffer);
+		return msg;
+	}
+
+public:
+	PerfStatsShmem() = default;
+	~PerfStatsShmem() { Close(); }
+
+	PerfStatsShmem(const PerfStatsShmem&) = delete;
+	PerfStatsShmem& operator=(const PerfStatsShmem&) = delete;
+
+	operator bool() const { return pData != nullptr; }
+
+	void Close()
+	{
+		if (pData) {
+			UnmapViewOfFile(pData);
+			pData = nullptr;
+		}
+		if (hMapFile && hMapFile != INVALID_HANDLE_VALUE) {
+			CloseHandle(hMapFile);
+			hMapFile = INVALID_HANDLE_VALUE;
+		}
+	}
+
+	// Driver-side: create or re-open the segment and stamp a clean header.
+	bool Create(LPCSTR segment_name)
+	{
+		Close();
+		hMapFile = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(ShmemData), segment_name);
+		if (!hMapFile) return false;
+		pData = reinterpret_cast<ShmemData*>(MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(ShmemData)));
+		if (!pData) {
+			CloseHandle(hMapFile);
+			hMapFile = INVALID_HANDLE_VALUE;
+			return false;
+		}
+		pData->magic = SHMEM_MAGIC;
+		pData->shmem_version = SHMEM_VERSION;
+		pData->generation.store(0, std::memory_order_release);
+		pData->sampleIndex = 0;
+		pData->sampleTickMs = 0;
+		pData->intervalMs = 0;
+		pData->process = PerfStatsProcessBlock{};
+		std::memset(pData->modules, 0, sizeof(pData->modules));
+		return true;
+	}
+
+	// Overlay-side: open an existing segment. Throws on missing or
+	// mismatched header so the caller can surface a paired-install hint.
+	void Open(LPCSTR segment_name)
+	{
+		Close();
+		hMapFile = OpenFileMappingA(FILE_MAP_READ, FALSE, segment_name);
+		if (!hMapFile) {
+			throw std::runtime_error(std::string("Failed to open PerfStats shmem: ") + LastErrorString(GetLastError()));
+		}
+		pData = reinterpret_cast<ShmemData*>(MapViewOfFile(hMapFile, FILE_MAP_READ, 0, 0, sizeof(ShmemData)));
+		if (!pData) {
+			DWORD err = GetLastError();
+			CloseHandle(hMapFile);
+			hMapFile = INVALID_HANDLE_VALUE;
+			throw std::runtime_error(std::string("Failed to map PerfStats shmem: ") + LastErrorString(err));
+		}
+		if (pData->magic != SHMEM_MAGIC) {
+			char buf[160];
+			snprintf(buf, sizeof buf, "PerfStats shmem magic mismatch: got 0x%08X, expected 0x%08X", pData->magic,
+			         SHMEM_MAGIC);
+			Close();
+			throw std::runtime_error(buf);
+		}
+		if (pData->shmem_version != SHMEM_VERSION) {
+			char buf[160];
+			snprintf(buf, sizeof buf, "PerfStats shmem version mismatch: got %u, expected %u", pData->shmem_version,
+			         SHMEM_VERSION);
+			Close();
+			throw std::runtime_error(buf);
+		}
+	}
+
+	// Driver-side: publish one complete sample under the snapshot seqlock.
+	// Single writer (the vrserver main loop).
+	void Publish(const PerfStatsProcessBlock& process, const PerfStatsModuleSlot (&modules)[PERF_STATS_MODULE_SLOTS],
+	             uint64_t intervalMs, uint64_t sampleTickMs)
+	{
+		if (!pData) return;
+		const uint64_t prev = pData->generation.load(std::memory_order_relaxed);
+		pData->generation.store(prev + 1, std::memory_order_release);
+		pData->sampleIndex += 1;
+		pData->sampleTickMs = sampleTickMs;
+		pData->intervalMs = intervalMs;
+		pData->process = process;
+		std::memcpy(pData->modules, modules, sizeof(pData->modules));
+		pData->generation.store(prev + 2, std::memory_order_release);
+	}
+
+	// Overlay-side: copy out the latest sample. Returns false when the
+	// writer raced every retry or no segment is mapped.
+	bool TryRead(PerfStatsSnapshot& out, int max_retries = 8) const
+	{
+		if (!pData) return false;
+		for (int attempt = 0; attempt < max_retries; ++attempt) {
+			const uint64_t g1 = pData->generation.load(std::memory_order_acquire);
+			if ((g1 & 1ULL) != 0ULL) continue;
+			out.sampleIndex = pData->sampleIndex;
+			out.sampleTickMs = pData->sampleTickMs;
+			out.intervalMs = pData->intervalMs;
+			out.process = pData->process;
+			std::memcpy(out.modules, pData->modules, sizeof(out.modules));
+			std::atomic_thread_fence(std::memory_order_acquire);
+			const uint64_t g2 = pData->generation.load(std::memory_order_acquire);
 			if (g1 == g2) return true;
 		}
 		return false;

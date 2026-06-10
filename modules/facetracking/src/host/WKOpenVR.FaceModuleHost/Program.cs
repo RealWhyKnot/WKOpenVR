@@ -11,6 +11,7 @@ CancellationToken ct = cts.Token;
 var logger = new HostLogger(logFilePath: opts.LogFilePath, forceEnabled: opts.DebugLoggingEnabled);
 logger.Info("[startup] phase=logger-open");
 logger.Info($"[startup] paths root={AppPaths.RootDir()} logs={AppPaths.LogsDir()} modules={opts.ModulesInstallDir} status={opts.StatusFilePath}");
+logger.Info($"[startup] owner-liveness configured={opts.OwnerLivenessConfigured} name={opts.OwnerLivenessName ?? "(none)"}");
 
 AppDomain.CurrentDomain.UnhandledException += (s, e) =>
 {
@@ -34,6 +35,10 @@ if (opts.E2eFakeFrames)
 // two host processes from overlapping SteamVR sessions cannot coexist.
 var _sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value ?? "unknown";
 var _mutexName = $@"Global\WKOpenVR-FaceModuleHost-Singleton-{_sid}";
+if (!string.IsNullOrWhiteSpace(opts.E2eSingletonSuffix))
+{
+    _mutexName += "-" + opts.E2eSingletonSuffix;
+}
 bool _createdNew;
 // Static field so the GC cannot collect it while main is running.
 var _singleton = new System.Threading.Mutex(initiallyOwned: true, name: _mutexName, createdNew: out _createdNew);
@@ -139,6 +144,7 @@ try
         loader.RunActiveAsync(writer, ct),
         status.RunAsync(ct),
         RunHostHeartbeatAsync(loader, writer, ct),
+        OwnerLivenessWatchdog.RunAsync(opts, logger, cts, ct),
     };
 
     logger.Info("[startup] phase=running");

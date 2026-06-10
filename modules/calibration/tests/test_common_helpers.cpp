@@ -1,7 +1,8 @@
 #include "FileLog.h"
 #include "JsonUtil.h"
 #include "LogPaths.h"
-#include "ProcessPerfLog.h"
+#include "ModulePerf.h"
+#include "Protocol.h"
 #include "RuntimeHealthSummary.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -140,7 +141,7 @@ TEST(FileLog, FlushLogFileToDiskAcceptsOpenFile)
 	RemoveDirectoryW(dir.c_str());
 }
 
-TEST(ProcessPerfLog, CalculatesCpuPercentAgainstWholeCpu)
+TEST(ModulePerf, CalculatesCpuPercentAgainstWholeCpu)
 {
 	constexpr uint64_t kOneSecond100ns = 10ULL * 1000ULL * 1000ULL;
 
@@ -150,7 +151,7 @@ TEST(ProcessPerfLog, CalculatesCpuPercentAgainstWholeCpu)
 	EXPECT_DOUBLE_EQ(0.0, openvr_pair::common::CalculateProcessCpuPercentTotal(kOneSecond100ns, 0, 4));
 }
 
-TEST(ProcessPerfLog, ThrottlesBySampleInterval)
+TEST(ModulePerf, ThrottlesBySampleInterval)
 {
 	EXPECT_TRUE(openvr_pair::common::ShouldTakeProcessPerfSample(0, 100, 10000));
 	EXPECT_FALSE(openvr_pair::common::ShouldTakeProcessPerfSample(100, 9999, 10000));
@@ -158,7 +159,7 @@ TEST(ProcessPerfLog, ThrottlesBySampleInterval)
 	EXPECT_TRUE(openvr_pair::common::ShouldTakeProcessPerfSample(500, 100, 10000));
 }
 
-TEST(ProcessPerfLog, CollectsCurrentProcessSnapshot)
+TEST(ModulePerf, CollectsCurrentProcessSnapshot)
 {
 	openvr_pair::common::ProcessPerfSnapshot snapshot{};
 	ASSERT_TRUE(openvr_pair::common::CollectProcessPerfSnapshot(snapshot));
@@ -171,30 +172,102 @@ TEST(ProcessPerfLog, CollectsCurrentProcessSnapshot)
 	}
 }
 
-TEST(ProcessPerfLog, FormatsStableLogFields)
+TEST(ModulePerf, FormatsStableProcessLogFields)
 {
-	openvr_pair::common::ProcessPerfSample sample{};
-	sample.snapshot.processId = 1234;
-	sample.snapshot.logicalProcessors = 8;
-	sample.snapshot.memoryValid = true;
-	sample.snapshot.workingSetBytes = 128ULL * 1024ULL * 1024ULL;
-	sample.snapshot.privateBytes = 64ULL * 1024ULL * 1024ULL;
-	sample.snapshot.peakWorkingSetBytes = 256ULL * 1024ULL * 1024ULL;
-	sample.snapshot.handleCountValid = true;
-	sample.snapshot.handleCount = 55;
-	sample.cpuValid = true;
-	sample.intervalMs = 10000;
-	sample.processCpuMs = 250;
-	sample.cpuPctTotal = 0.31;
-	sample.cpuPctOneCore = 2.50;
+	openvr_pair::common::moduleperf::PerfSampleResult result{};
+	result.process.snapshot.processId = 1234;
+	result.process.snapshot.logicalProcessors = 8;
+	result.process.snapshot.memoryValid = true;
+	result.process.snapshot.workingSetBytes = 128ULL * 1024ULL * 1024ULL;
+	result.process.snapshot.privateBytes = 64ULL * 1024ULL * 1024ULL;
+	result.process.snapshot.peakWorkingSetBytes = 256ULL * 1024ULL * 1024ULL;
+	result.process.snapshot.handleCountValid = true;
+	result.process.snapshot.handleCount = 55;
+	result.process.cpuValid = true;
+	result.process.intervalMs = 10000;
+	result.process.processCpuMs = 250;
+	result.process.cpuPctTotal = 0.31;
+	result.process.cpuPctOneCore = 2.50;
+	result.processThreadCount = 12;
 
-	const std::string line = openvr_pair::common::FormatProcessPerfSample("overlay", sample);
+	const std::string line = openvr_pair::common::moduleperf::FormatPerfProcessLine("overlay", result);
 	EXPECT_NE(std::string::npos, line.find("role=overlay"));
 	EXPECT_NE(std::string::npos, line.find("cpu_pct_total=0.31"));
 	EXPECT_NE(std::string::npos, line.find("cpu_pct_one_core=2.50"));
 	EXPECT_NE(std::string::npos, line.find("working_set_mb=128.00"));
 	EXPECT_NE(std::string::npos, line.find("private_mb=64.00"));
 	EXPECT_NE(std::string::npos, line.find("handles=55"));
+	EXPECT_NE(std::string::npos, line.find("threads=12"));
+}
+
+TEST(ModulePerf, FormatsStableModuleLogFields)
+{
+	openvr_pair::common::moduleperf::ModuleSample sample{};
+	sample.active = true;
+	sample.threadCount = 3;
+	sample.sectionCpuPctOneCore = 1.25;
+	sample.threadCpuPctOneCore = 2.50;
+	sample.sidecarValid = true;
+	sample.sidecarPid = 4321;
+	sample.sidecarCpuPctOneCore = 3.75;
+	sample.sidecarCpuPctTotal = 0.47;
+	sample.sidecarWorkingSetBytes = 96ULL * 1024ULL * 1024ULL;
+	sample.sidecarPrivateBytes = 48ULL * 1024ULL * 1024ULL;
+	sample.sidecarThreadCount = 5;
+	sample.sidecarHandleCount = 65;
+
+	const std::string line = openvr_pair::common::moduleperf::FormatPerfModuleLine(
+	    "driver-host", openvr_pair::common::modules::ModuleId::FaceTracking, sample);
+	EXPECT_NE(std::string::npos, line.find("role=driver-host"));
+	EXPECT_NE(std::string::npos, line.find("module=facetracking"));
+	EXPECT_NE(std::string::npos, line.find("section_pct_one_core=1.25"));
+	EXPECT_NE(std::string::npos, line.find("thread_pct_one_core=2.50"));
+	EXPECT_NE(std::string::npos, line.find("sidecar_pid=4321"));
+	EXPECT_NE(std::string::npos, line.find("sidecar_cpu_pct_one_core=3.75"));
+	EXPECT_NE(std::string::npos, line.find("sidecar_ws_mb=96.00"));
+	EXPECT_NE(std::string::npos, line.find("sidecar_threads=5"));
+	EXPECT_NE(std::string::npos, line.find("sidecar_handles=65"));
+}
+
+TEST(PerfStatsShmem, RecreateResetsStaleSnapshot)
+{
+	const std::string name = "Local\\WKOpenVRTestPerfStats_" + std::to_string(GetCurrentProcessId()) + "_" +
+	                         std::to_string(GetTickCount64());
+
+	protocol::PerfStatsShmem writer;
+	ASSERT_TRUE(writer.Create(name.c_str()));
+
+	protocol::PerfStatsProcessBlock process{};
+	process.pid = 1234;
+	process.cpuValid = 1;
+	process.cpuPctOneCore = 7.5f;
+	protocol::PerfStatsModuleSlot modules[protocol::PERF_STATS_MODULE_SLOTS]{};
+	modules[4].active = 1;
+	modules[4].sidecarPid = 4321;
+	writer.Publish(process, modules, 1000, GetTickCount64());
+
+	protocol::PerfStatsShmem reader;
+	ASSERT_NO_THROW(reader.Open(name.c_str()));
+	protocol::PerfStatsSnapshot snapshot{};
+	ASSERT_TRUE(reader.TryRead(snapshot));
+	EXPECT_EQ(1u, snapshot.sampleIndex);
+	EXPECT_EQ(1234u, snapshot.process.pid);
+	EXPECT_EQ(4321u, snapshot.modules[4].sidecarPid);
+
+	protocol::PerfStatsShmem restartedWriter;
+	ASSERT_TRUE(restartedWriter.Create(name.c_str()));
+	ASSERT_TRUE(reader.TryRead(snapshot));
+	EXPECT_EQ(0u, snapshot.sampleIndex);
+	EXPECT_EQ(0u, snapshot.process.pid);
+	EXPECT_EQ(0u, snapshot.modules[4].sidecarPid);
+
+	process.pid = 5678;
+	modules[4].sidecarPid = 8765;
+	restartedWriter.Publish(process, modules, 1000, GetTickCount64());
+	ASSERT_TRUE(reader.TryRead(snapshot));
+	EXPECT_EQ(1u, snapshot.sampleIndex);
+	EXPECT_EQ(5678u, snapshot.process.pid);
+	EXPECT_EQ(8765u, snapshot.modules[4].sidecarPid);
 }
 
 TEST(RuntimeHealthSummary, FormatsRuntimeHealthJson)

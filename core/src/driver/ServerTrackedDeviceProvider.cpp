@@ -4,8 +4,8 @@
 #include "InterfaceHookInjector.h"
 #include "IsometryTransform.h"
 #include "Logging.h"
+#include "ModulePerf.h"
 #include "ModuleRegistry.h"
-#include "ProcessPerfLog.h"
 #include "PredictionSmoothingMath.h"
 #include "RuntimeHealthSummary.h"
 #include "ServerTrackedDeviceProviderConfigPacking.h"
@@ -29,6 +29,7 @@ void MarkFingersNeedReseed(uint16_t fingerBits);
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <optional>
 #include <random>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -101,6 +102,80 @@ const module_safety::ModuleSpec* SafetySpecForFeatureMask(uint32_t featureMask)
 	}
 }
 
+uint32_t FeatureMaskForModuleId(module_registry::ModuleId id)
+{
+	switch (id) {
+		case module_registry::ModuleId::Calibration:
+			return pairdriver::kFeatureCalibration;
+		case module_registry::ModuleId::Smoothing:
+			return pairdriver::kFeatureSmoothing;
+		case module_registry::ModuleId::DashboardInput:
+			return pairdriver::kFeatureDashboardInput;
+		case module_registry::ModuleId::InputHealth:
+			return pairdriver::kFeatureInputHealth;
+		case module_registry::ModuleId::FaceTracking:
+			return pairdriver::kFeatureFaceTracking;
+		case module_registry::ModuleId::OscRouter:
+			return pairdriver::kFeatureOscRouter;
+		case module_registry::ModuleId::Captions:
+			return pairdriver::kFeatureCaptions;
+		case module_registry::ModuleId::Phantom:
+			return pairdriver::kFeaturePhantom;
+		default:
+			return 0;
+	}
+}
+
+// Maps one sampled interval onto the wire layout. A slot reads active when
+// the module measured any work this session OR its feature flag survived
+// Init, so enabled-but-idle modules still get a row in the overlay.
+void FillPerfStatsBlocks(const openvr_pair::common::moduleperf::PerfSampleResult& perf, uint32_t featureFlags,
+                         protocol::PerfStatsProcessBlock& process,
+                         protocol::PerfStatsModuleSlot (&slots)[protocol::PERF_STATS_MODULE_SLOTS])
+{
+	namespace moduleperf = openvr_pair::common::moduleperf;
+	static_assert(moduleperf::kSlotCount == protocol::PERF_STATS_MODULE_SLOTS,
+	              "registry slots and wire slots must stay in lockstep");
+
+	const openvr_pair::common::ProcessPerfSnapshot& snap = perf.process.snapshot;
+	process = protocol::PerfStatsProcessBlock{};
+	process.pid = snap.processId;
+	process.logicalProcessors = snap.logicalProcessors;
+	process.cpuPctOneCore = static_cast<float>(perf.process.cpuPctOneCore);
+	process.cpuPctTotal = static_cast<float>(perf.process.cpuPctTotal);
+	process.cpuTimeMs = snap.cpuTime100ns / 10000ULL;
+	process.workingSetBytes = snap.workingSetBytes;
+	process.privateBytes = snap.privateBytes;
+	process.peakWorkingSetBytes = snap.peakWorkingSetBytes;
+	process.handleCount = snap.handleCount;
+	process.threadCount = perf.processThreadCount;
+	process.cpuValid = perf.process.cpuValid ? 1 : 0;
+	process.memoryValid = snap.memoryValid ? 1 : 0;
+	process.handleValid = snap.handleCountValid ? 1 : 0;
+
+	size_t moduleCount = 0;
+	const module_registry::ModuleInfo* infos = module_registry::All(&moduleCount);
+	for (size_t i = 0; i < moduleCount; ++i) {
+		const uint32_t slot = moduleperf::SlotIndex(infos[i].id);
+		const moduleperf::ModuleSample& m = perf.modules[slot];
+		protocol::PerfStatsModuleSlot& out = slots[slot];
+		out = protocol::PerfStatsModuleSlot{};
+		out.active = (m.active || (featureFlags & FeatureMaskForModuleId(infos[i].id)) != 0) ? 1 : 0;
+		out.hasSidecar = m.sidecarValid ? 1 : 0;
+		out.threadCount = m.threadCount;
+		out.sectionCpuPctOneCore = static_cast<float>(m.sectionCpuPctOneCore);
+		out.threadCpuPctOneCore = static_cast<float>(m.threadCpuPctOneCore);
+		out.sidecarCpuPctOneCore = static_cast<float>(m.sidecarCpuPctOneCore);
+		out.sidecarCpuPctTotal = static_cast<float>(m.sidecarCpuPctTotal);
+		out.sidecarPid = m.sidecarPid;
+		out.sidecarProcessCount = m.sidecarProcessCount;
+		out.sidecarWorkingSetBytes = m.sidecarWorkingSetBytes;
+		out.sidecarPrivateBytes = m.sidecarPrivateBytes;
+		out.sidecarThreadCount = m.sidecarThreadCount;
+		out.sidecarHandleCount = m.sidecarHandleCount;
+	}
+}
+
 const char* ModuleDisableReason(const char* reason)
 {
 	return (reason && reason[0]) ? reason : "module_fault";
@@ -155,6 +230,14 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 	// no shmem.
 	featureFlags = pairdriver::DetectFeatureFlags();
 	LOG("Driver feature mask detected: 0x%08x", (unsigned)featureFlags);
+
+	// Always-on perf segment (v34): created before module activation so the
+	// overlay can map it even when the driver runs inert with zero flags.
+	// Non-fatal on failure -- everything works without published stats.
+	if (!perfStatsShmem.Create(OPENVR_PAIRDRIVER_PERFSTATS_SHMEM_NAME)) {
+		LOG("perfStatsShmem.Create(%s) failed (GetLastError=%u); perf stats publishing disabled",
+		    OPENVR_PAIRDRIVER_PERFSTATS_SHMEM_NAME, (unsigned)GetLastError());
+	}
 
 	{
 		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
@@ -384,6 +467,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 			}
 		}
 		shmem.Close();
+		perfStatsShmem.Close();
 		VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 		return vr::VRInitError_Driver_Failed;
 	}
@@ -403,22 +487,44 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 
 void ServerTrackedDeviceProvider::RunFrame()
 {
+	ReconcileSidecarFeatureFlags();
+
 	// SteamVR main-loop callback (driver process). Perf sampling + the health-
 	// summary JSON write touch the filesystem and can throw; an unhandled throw
 	// here would terminate vrserver, so contain it.
 	try {
-		static openvr_pair::common::ProcessPerfSampler s_perfSampler;
+		openvr_pair::common::moduleperf::PerfSampleResult perf{};
+		if (!perfSampler.MaybeSample(perf)) return;
+
+		// Publish every sample: the overlay reads the segment at 1 Hz to drive
+		// the Modules-tab performance card whether or not debug logging is on.
+		protocol::PerfStatsProcessBlock process{};
+		protocol::PerfStatsModuleSlot slots[protocol::PERF_STATS_MODULE_SLOTS]{};
+		FillPerfStatsBlocks(perf, featureFlags, process, slots);
+		perfStatsShmem.Publish(process, slots, perf.process.intervalMs, GetTickCount64());
+
+		openvr_pair::common::RecordRuntimeProcessSample("driver-host", perf.process);
+
+		// Text lines and the health JSON write to disk, so they keep the old
+		// 10 s cadence and stay behind the debug-logging gate.
 		if (!openvr_pair::common::IsDebugLoggingEnabled()) {
-			s_perfSampler.Reset();
+			lastPerfLogWallMs = 0;
 			return;
 		}
+		const uint64_t nowMs = GetTickCount64();
+		if (lastPerfLogWallMs != 0 && nowMs - lastPerfLogWallMs < 10000) return;
+		lastPerfLogWallMs = nowMs;
 
-		openvr_pair::common::ProcessPerfSample perfSample{};
-		if (!s_perfSampler.MaybeSample(perfSample)) return;
-
-		const std::string line = openvr_pair::common::FormatProcessPerfSample("driver-host", perfSample);
-		LOG("[perf] %s", line.c_str());
-		openvr_pair::common::RecordRuntimeProcessSample("driver-host", perfSample);
+		LOG("[perf] %s", openvr_pair::common::moduleperf::FormatPerfProcessLine("driver-host", perf).c_str());
+		size_t moduleCount = 0;
+		const module_registry::ModuleInfo* infos = module_registry::All(&moduleCount);
+		for (size_t i = 0; i < moduleCount; ++i) {
+			const uint32_t slot = openvr_pair::common::moduleperf::SlotIndex(infos[i].id);
+			if (!slots[slot].active) continue;
+			LOG("[perf] %s",
+			    openvr_pair::common::moduleperf::FormatPerfModuleLine("driver-host", infos[i].id, perf.modules[slot])
+			        .c_str());
+		}
 		openvr_pair::common::MaybeWriteRuntimeHealthSummary(10000, L"runtime_health_driver_host.json");
 	}
 	catch (const std::exception& ex) {
@@ -429,25 +535,34 @@ void ServerTrackedDeviceProvider::RunFrame()
 	}
 }
 
-void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry, const char* reason)
+void ServerTrackedDeviceProvider::DisableDetachedModule(ActiveDriverModule entry, const char* reason, bool markClean)
 {
 	const char* disableReason = ModuleDisableReason(reason);
 	const char* name = entry.module ? entry.module->Name() : "(unknown)";
-	LOG("Driver module '%s' disabled by safety gate reason=%s", name, disableReason);
-	if (entry.safety) {
+	LOG("Driver module '%s' disabled reason=%s clean=%d", name, disableReason, markClean ? 1 : 0);
+	if (entry.safety && !markClean) {
 		module_safety::MarkFault(*entry.safety, disableReason);
 	}
+	bool shutdownClean = true;
 	if (entry.module) {
 		try {
-			ModuleSafetyScope safetyScope(entry.safety, "fault_shutdown");
+			ModuleSafetyScope safetyScope(entry.safety, markClean ? disableReason : "fault_shutdown");
 			entry.module->Shutdown();
 		}
 		catch (const std::exception& ex) {
+			shutdownClean = false;
 			LOG("Driver module '%s' shutdown after fault threw: %s", name, ex.what());
 		}
 		catch (...) {
+			shutdownClean = false;
 			LOG("Driver module '%s' shutdown after fault threw an unknown exception", name);
 		}
+	}
+	if (entry.safety && markClean) {
+		if (shutdownClean)
+			module_safety::MarkClean(*entry.safety);
+		else
+			module_safety::MarkFault(*entry.safety, "shutdown_exception");
 	}
 }
 
@@ -461,10 +576,10 @@ void ServerTrackedDeviceProvider::DisableActiveModuleAt(size_t index, const char
 		activeModules.erase(activeModules.begin() + static_cast<std::ptrdiff_t>(index));
 		if (entry.module) featureFlags &= ~entry.module->FeatureMask();
 	}
-	DisableDetachedModule(std::move(entry), reason);
+	DisableDetachedModule(std::move(entry), reason, false);
 }
 
-bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask, const char* reason)
+bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask, const char* reason, bool markClean)
 {
 	ActiveDriverModule entry;
 	bool found = false;
@@ -481,16 +596,56 @@ bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask
 		}
 	}
 	if (found) {
-		DisableDetachedModule(std::move(entry), reason);
+		DisableDetachedModule(std::move(entry), reason, markClean);
+		if (markClean) {
+			StopIpcServerForFeatureMask(featureMask);
+		}
 		return true;
 	}
 
 	const module_safety::ModuleSpec* safety = SafetySpecForFeatureMask(featureMask);
-	if (safety) {
+	if (safety && !markClean) {
 		module_safety::MarkFault(*safety, ModuleDisableReason(reason));
 	}
 	featureFlags &= ~featureMask;
+	if (markClean) {
+		StopIpcServerForFeatureMask(featureMask);
+	}
 	return false;
+}
+
+void ServerTrackedDeviceProvider::StopIpcServerForFeatureMask(uint32_t featureMask)
+{
+	if (featureMask == pairdriver::kFeatureFaceTracking) {
+		if (faceTrackingServer) {
+			faceTrackingServer->Stop();
+			faceTrackingServer.reset();
+		}
+	}
+	else if (featureMask == pairdriver::kFeatureCaptions) {
+		if (captionsServer) {
+			captionsServer->Stop();
+			captionsServer.reset();
+		}
+	}
+}
+
+void ServerTrackedDeviceProvider::ReconcileSidecarFeatureFlags()
+{
+	const uint64_t nowMs = GetTickCount64();
+	if (lastSidecarFlagCheckMs != 0 && nowMs - lastSidecarFlagCheckMs < 1000) return;
+	lastSidecarFlagCheckMs = nowMs;
+
+	if ((featureFlags & pairdriver::kFeatureFaceTracking) != 0 &&
+	    !pairdriver::IsRuntimeFeatureFlagPresent(pairdriver::kFeatureFaceTracking)) {
+		LOG("Runtime flag reconciliation: enable_facetracking.flag absent; disabling FaceTracking module");
+		DisableActiveModuleByMask(pairdriver::kFeatureFaceTracking, "flag_removed", true);
+	}
+	if ((featureFlags & pairdriver::kFeatureCaptions) != 0 &&
+	    !pairdriver::IsRuntimeFeatureFlagPresent(pairdriver::kFeatureCaptions)) {
+		LOG("Runtime flag reconciliation: enable_captions.flag absent; disabling Captions module");
+		DisableActiveModuleByMask(pairdriver::kFeatureCaptions, "flag_removed", true);
+	}
 }
 
 void ServerTrackedDeviceProvider::Cleanup()
@@ -562,6 +717,7 @@ void ServerTrackedDeviceProvider::Cleanup()
 	if (smoothingServer) smoothingServer->Stop();
 	if (calibrationServer) calibrationServer->Stop();
 	shmem.Close();
+	perfStatsShmem.Close();
 	VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 	LOG("ServerTrackedDeviceProvider::Cleanup complete");
 }
@@ -613,7 +769,7 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(uint32_t featureMask, const p
 			}
 		}
 		if (disableFaulted) {
-			DisableDetachedModule(std::move(faulted), "request_exception");
+			DisableDetachedModule(std::move(faulted), "request_exception", false);
 		}
 	}
 
@@ -659,7 +815,7 @@ void ServerTrackedDeviceProvider::OnGetGenericInterface(const char* pchInterface
 			}
 		}
 		if (disableFaulted) {
-			DisableDetachedModule(std::move(faulted), "interface_exception");
+			DisableDetachedModule(std::move(faulted), "interface_exception", false);
 		}
 	}
 }
@@ -1112,6 +1268,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		}
 	}
 	if (smoothness > 0 && !m_smoothingPoseFaulted.load(std::memory_order_relaxed)) {
+		openvr_pair::common::moduleperf::ScopedSection perfSection(openvr_pair::common::modules::ModuleId::Smoothing);
 		// Clamp defensively -- a buggy overlay (or a stale-protocol mismatch)
 		// shouldn't be able to push a value above 100 here.
 		if (smoothness > 100) smoothness = 100;
@@ -1160,8 +1317,18 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	}
 
 #if WKOPENVR_BUILD_IS_DEV
-	UpdateSmartSmoothingShadow(openVRID, tf, rawSmoothingInput, pose);
+	{
+		openvr_pair::common::moduleperf::ScopedSection perfShadowSection(
+		    openvr_pair::common::modules::ModuleId::Smoothing);
+		UpdateSmartSmoothingShadow(openVRID, tf, rawSmoothingInput, pose);
+	}
 #endif
+
+	// Everything from the pose-shmem write through the head-mount synthesis
+	// and transform apply below belongs to the calibration module; the
+	// section ends before the phantom pipeline so each lands in its own slot.
+	std::optional<openvr_pair::common::moduleperf::ScopedSection> calibrationPerfSection;
+	calibrationPerfSection.emplace(openvr_pair::common::modules::ModuleId::Calibration);
 
 	shmem.SetPose(openVRID, pose);
 
@@ -1503,6 +1670,8 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		ApplyLockedHeadsetSmoothing(pose, driverSynthSmoothing);
 	}
 
+	calibrationPerfSection.reset();
+
 #if OPENVR_PAIR_HAS_PHANTOM_DRIVER
 	// Phantom-tracker pipeline. OnRealPoseObserved records the pose AFTER
 	// existing transforms (calibration / smoothing) have run so the
@@ -1519,6 +1688,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	// dropouts on visible trackers, not babysitting an intentionally-hidden
 	// one.
 	if ((featureFlags & pairdriver::kFeaturePhantom) && !tf.quash) {
+		openvr_pair::common::moduleperf::ScopedSection perfSection(openvr_pair::common::modules::ModuleId::Phantom);
 		try {
 			static std::atomic<bool> s_phantomPoseSafetyMarked{false};
 			if (!s_phantomPoseSafetyMarked.exchange(true, std::memory_order_relaxed)) {
@@ -1695,7 +1865,13 @@ protocol::FingerSmoothingConfig ServerTrackedDeviceProvider::GetFingerSmoothingC
 
 namespace {
 
-constexpr uint64_t kDashboardHandTrackingStaleAfterMs = 1500;
+// Asymmetric staleness window: an active state survives a stalled refresh
+// stream for 3s (covers a momentarily wedged overlay loop), while
+// re-activation needs an update fresher than 750ms (three healthy 250ms
+// refresh cycles). A symmetric 1500ms cutoff produced ~1Hz active<->stale
+// flapping whenever refresh pushes ran late.
+constexpr uint64_t kDashboardHandTrackingStaleAfterMs = 3000;
+constexpr uint64_t kDashboardHandTrackingFreshAfterMs = 750;
 
 const char* DashboardHandName(uint8_t hand)
 {
@@ -1718,11 +1894,15 @@ void ServerTrackedDeviceProvider::SetDashboardHandTrackingState(const protocol::
 	if (oldPacked != newPacked) {
 		const protocol::DashboardHandTrackingState prev = pairdriver::UnpackDashboardHandTrackingState(oldPacked);
 		const protocol::DashboardHandTrackingState next = pairdriver::UnpackDashboardHandTrackingState(newPacked);
-		LOG("[skeletal] SetDashboardHandTrackingState via IPC: enabled=%u dashboard_visible=%u primary=%s "
-		    "update_ms=%llu (was: enabled=%u dashboard_visible=%u primary=%s update_ms=%llu)",
-		    (unsigned)next.enabled, (unsigned)next.dashboard_visible, DashboardHandName(next.primary_hand),
-		    (unsigned long long)next.update_mono_ms, (unsigned)prev.enabled, (unsigned)prev.dashboard_visible,
-		    DashboardHandName(prev.primary_hand), (unsigned long long)prev.update_mono_ms);
+		// update_mono_ms changes on every keepalive push (4 Hz while the
+		// dashboard is visible); only flag/hand changes are worth a line.
+		if (pairdriver::DashboardHandTrackingMeaningfulChange(prev, next)) {
+			LOG("[skeletal] SetDashboardHandTrackingState via IPC: enabled=%u dashboard_visible=%u primary=%s "
+			    "update_ms=%llu (was: enabled=%u dashboard_visible=%u primary=%s update_ms=%llu)",
+			    (unsigned)next.enabled, (unsigned)next.dashboard_visible, DashboardHandName(next.primary_hand),
+			    (unsigned long long)next.update_mono_ms, (unsigned)prev.enabled, (unsigned)prev.dashboard_visible,
+			    DashboardHandName(prev.primary_hand), (unsigned long long)prev.update_mono_ms);
+		}
 	}
 }
 
@@ -1731,10 +1911,17 @@ pairdriver::DashboardHandTrackingSnapshot ServerTrackedDeviceProvider::GetDashbo
 	const uint64_t packed = dashboardHandTrackingPacked.load(std::memory_order_acquire);
 	const protocol::DashboardHandTrackingState state = pairdriver::UnpackDashboardHandTrackingState(packed);
 	if (!state.enabled || !state.dashboard_visible) {
+		dashboardHandTrackingWasActive.store(false, std::memory_order_relaxed);
 		return pairdriver::DecodeDashboardHandTrackingState(packed, state.update_mono_ms,
 		                                                    kDashboardHandTrackingStaleAfterMs);
 	}
-	return pairdriver::DecodeDashboardHandTrackingState(packed, ::GetTickCount64(), kDashboardHandTrackingStaleAfterMs);
+	const bool wasActive = dashboardHandTrackingWasActive.load(std::memory_order_relaxed);
+	const pairdriver::DashboardHandTrackingSnapshot snapshot =
+	    pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, ::GetTickCount64(),
+	                                                               kDashboardHandTrackingStaleAfterMs,
+	                                                               kDashboardHandTrackingFreshAfterMs, wasActive);
+	dashboardHandTrackingWasActive.store(snapshot.active, std::memory_order_relaxed);
+	return snapshot;
 }
 
 void ServerTrackedDeviceProvider::SetInputHealthConfig(const protocol::InputHealthConfig& cfg)

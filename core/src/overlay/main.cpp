@@ -6,7 +6,7 @@
 #include "ManifestRegistration.h"
 #include "Migration.h"
 #include "ModuleRegistry.h"
-#include "ProcessPerfLog.h"
+#include "PerfStatsHub.h"
 #include "RuntimeHealthSummary.h"
 #include "SafeModeRecovery.h"
 #include "ShellContext.h"
@@ -43,6 +43,7 @@
 #include <array>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -410,19 +411,22 @@ int main(int argc, char** argv)
 	bool prevSafeOverlayVisible = false;
 	std::string prevSafeOverlayStatus;
 	int prevPrimaryDashboardHand = 0;
-	openvr_pair::common::ProcessPerfSampler perfSampler;
 	CompositorTimingSampler compositorSampler;
 
+	// Resolve each plugin's ModuleId once; the per-frame Tick loop wraps
+	// every call in a perf section keyed by this id.
+	std::vector<std::optional<openvr_pair::common::modules::ModuleId>> pluginPerfIds;
+	pluginPerfIds.reserve(plugins.size());
+	for (const auto& plugin : plugins) {
+		const auto* info = openvr_pair::common::modules::FindByFlagFileName(plugin->FlagFileName());
+		pluginPerfIds.push_back(info ? std::optional(info->id) : std::nullopt);
+	}
+
 	while (!glfwWindowShouldClose(window) && !vrOverlay->QuitRequested()) {
-		openvr_pair::common::ProcessPerfSample perfSample{};
-		if (perfSampler.MaybeSample(perfSample)) {
-			openvr_pair::common::RecordRuntimeProcessSample("overlay", perfSample);
-			if (openvr_pair::common::IsDebugLoggingEnabled()) {
-				const std::string line = openvr_pair::common::FormatProcessPerfSample("overlay", perfSample);
-				openvr_pair::common::DiagnosticLog("perf", "%s", line.c_str());
-			}
-			openvr_pair::common::MaybeWriteRuntimeHealthSummary();
-		}
+		// Samples this process + the driver's perf segment at 1 Hz, updates
+		// the Modules-tab performance card data, and replaces the old
+		// process-only [perf] log lines.
+		openvr_pair::overlay::GetPerfStatsHub().Tick(glfwGetTime());
 
 		context.TickToggles();
 
@@ -481,8 +485,16 @@ int main(int argc, char** argv)
 			prevPrimaryDashboardHand = context.primaryDashboardHand;
 		}
 
-		for (auto& plugin : plugins) {
-			if (plugin->IsInstalled(context)) plugin->Tick(context);
+		for (size_t i = 0; i < plugins.size(); ++i) {
+			auto& plugin = plugins[i];
+			if (!plugin->IsInstalled(context)) continue;
+			if (pluginPerfIds[i]) {
+				openvr_pair::common::moduleperf::ScopedSection perfSection(*pluginPerfIds[i]);
+				plugin->Tick(context);
+			}
+			else {
+				plugin->Tick(context);
+			}
 		}
 
 		ImGuiIO& io = ImGui::GetIO();

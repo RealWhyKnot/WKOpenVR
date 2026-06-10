@@ -8,6 +8,7 @@
 #include "InputHealthState.h"
 #include "InterfaceHookInjector.h" // InterfaceHooks::DetourScope
 #include "Logging.h"
+#include "ModulePerf.h"
 #include "ServerTrackedDeviceProvider.h"
 
 #include <atomic>
@@ -129,6 +130,7 @@ static vr::EVRInputError DetourUpdateBooleanComponent(vr::IVRDriverInput* _this,
 
 	auto* driver = g_driver.load(std::memory_order_acquire);
 	if (driver) {
+		openvr_pair::common::moduleperf::ScopedSection perfSection(openvr_pair::common::modules::ModuleId::InputHealth);
 		try {
 			const auto cfg = driver->GetInputHealthConfig();
 			if (cfg.master_enabled) {
@@ -229,6 +231,7 @@ static vr::EVRInputError DetourUpdateScalarComponent(vr::IVRDriverInput* _this,
 
 	auto* driver = g_driver.load(std::memory_order_acquire);
 	if (driver) {
+		openvr_pair::common::moduleperf::ScopedSection perfSection(openvr_pair::common::modules::ModuleId::InputHealth);
 		try {
 			const auto cfg = driver->GetInputHealthConfig();
 			if (cfg.master_enabled) {

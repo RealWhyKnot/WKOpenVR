@@ -12,10 +12,12 @@
 #include "OscRouter.h"
 #include "OscWire.h"
 #include "Protocol.h"
+#include "SidecarOwnerLease.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -50,6 +52,29 @@ std::wstring Utf8ToWide(const std::string& value)
 	std::wstring out(static_cast<size_t>(needed), L'\0');
 	MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), out.data(), needed);
 	return out;
+}
+
+std::string HexNonce(uint64_t nonce)
+{
+	char buf[32] = {};
+	std::snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(nonce));
+	return buf;
+}
+
+std::vector<std::wstring> OwnerLeaseArgs(const openvr_pair::common::sidecar_owner::LeaseOwner& lease)
+{
+	return {
+	    L"--owner-liveness",
+	    Utf8ToWide(lease.Name()),
+	    L"--owner-liveness-nonce",
+	    Utf8ToWide(HexNonce(lease.Nonce())),
+	};
+}
+
+std::wstring UniqueE2eSuffix(const wchar_t* name)
+{
+	return std::wstring(name) + L"-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+	       std::to_wstring(GetTickCount64());
 }
 
 std::filesystem::path CurrentExePath()
@@ -800,6 +825,107 @@ TEST(E2E, FaceHostFakeFramesReachFakeVrchat)
 	EXPECT_NEAR(smileJerryV2, 0.2f, 0.001f);
 
 	harness.Stop();
+}
+
+TEST(E2E, FaceHostExitsWhenOwnerLeaseGoesStale)
+{
+	ASSERT_TRUE(std::filesystem::exists(FaceHostPath())) << "Face host missing at " << FaceHostPath().string();
+
+	auto temp = MakeTempDir(L"face_owner_liveness");
+	auto modulesDir = temp / L"modules";
+	auto statusPath = temp / L"face_status.json";
+	auto logPath = temp / L"face_host.log";
+	std::filesystem::create_directories(modulesDir);
+
+	const std::string shmemName =
+	    "WKOpenVR_E2E_FaceOwner_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64());
+	protocol::FaceTrackingFrameShmem shmem;
+	ASSERT_TRUE(shmem.Create(shmemName.c_str()));
+
+	openvr_pair::common::sidecar_owner::LeaseOwner lease;
+	ASSERT_TRUE(lease.Create(openvr_pair::common::modules::ModuleId::FaceTracking));
+
+	const std::wstring pipeName = L"\\\\.\\pipe\\WKOpenVR-E2E-FaceOwner-" + std::to_wstring(GetCurrentProcessId()) +
+	                              L"-" + std::to_wstring(GetTickCount64());
+	std::vector<std::wstring> args = {
+	    L"--driver-handshake-pipe",
+	    pipeName,
+	    L"--shmem-name",
+	    Utf8ToWide(shmemName),
+	    L"--e2e-singleton-suffix",
+	    UniqueE2eSuffix(L"FaceOwner"),
+	    L"--modules-dir",
+	    modulesDir.wstring(),
+	    L"--status-file",
+	    statusPath.wstring(),
+	    L"--log-file",
+	    logPath.wstring(),
+	    L"--debug-logging",
+	    L"1",
+	};
+	std::vector<std::wstring> leaseArgs = OwnerLeaseArgs(lease);
+	args.insert(args.end(), leaseArgs.begin(), leaseArgs.end());
+
+	RunningProcess host;
+	ASSERT_TRUE(host.Start(FaceHostPath(), args)) << "CreateProcess failed: " << host.ExitCode();
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    lease.Heartbeat();
+		    return ReadFileUtf8(logPath).find("[startup] phase=running") != std::string::npos;
+	    },
+	    60000ms))
+	    << "face host log: " << ReadFileUtf8(logPath);
+
+	const auto keepAliveUntil = std::chrono::steady_clock::now() + 4s;
+	while (std::chrono::steady_clock::now() < keepAliveUntil) {
+		lease.Heartbeat();
+		ASSERT_FALSE(host.Wait(0)) << "face host exited while owner lease was fresh; log: " << ReadFileUtf8(logPath);
+		std::this_thread::sleep_for(250ms);
+	}
+
+	ASSERT_TRUE(host.Wait(10000)) << "face host did not exit after owner heartbeat stopped; log: "
+	                              << ReadFileUtf8(logPath);
+	EXPECT_EQ(host.ExitCode(), 0u) << "face host log: " << ReadFileUtf8(logPath);
+}
+
+TEST(E2E, CaptionsHostExitsWhenOwnerLeaseDisabled)
+{
+	ASSERT_TRUE(std::filesystem::exists(CaptionsHostPath()))
+	    << "Captions host missing at " << CaptionsHostPath().string();
+
+	auto temp = MakeTempDir(L"captions_owner_liveness");
+	auto statusPath = temp / L"captions_status.json";
+
+	openvr_pair::common::sidecar_owner::LeaseOwner lease;
+	ASSERT_TRUE(lease.Create(openvr_pair::common::modules::ModuleId::Captions));
+	lease.Heartbeat();
+
+	const std::wstring controlPipe = L"\\\\.\\pipe\\WKOpenVR-E2E-CaptionsOwner-" +
+	                                 std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+	std::vector<std::wstring> args = {
+	    L"--status-file",      statusPath.wstring(), L"--e2e-singleton-suffix", UniqueE2eSuffix(L"CaptionsOwner"),
+	    L"--e2e-control-pipe", controlPipe,
+	};
+	std::vector<std::wstring> leaseArgs = OwnerLeaseArgs(lease);
+	args.insert(args.end(), leaseArgs.begin(), leaseArgs.end());
+
+	RunningProcess host;
+	ASSERT_TRUE(host.Start(CaptionsHostPath(), args)) << "CreateProcess failed: " << host.ExitCode();
+	ASSERT_TRUE(WaitUntil(
+	    [&] {
+		    lease.Heartbeat();
+		    std::string status = ReadFileUtf8(statusPath);
+		    return status.find("\"phase\": \"singleton-acquired\"") != std::string::npos ||
+		           status.find("\"phase\": \"opening-control-pipe\"") != std::string::npos ||
+		           status.find("\"phase\": \"running\"") != std::string::npos;
+	    },
+	    60000ms))
+	    << "captions status: " << ReadFileUtf8(statusPath);
+
+	lease.MarkDisabled();
+	ASSERT_TRUE(host.Wait(15000)) << "captions host did not exit after owner lease was disabled; status: "
+	                              << ReadFileUtf8(statusPath);
+	EXPECT_EQ(host.ExitCode(), 0u) << "captions status: " << ReadFileUtf8(statusPath);
 }
 
 TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)

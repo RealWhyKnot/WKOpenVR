@@ -364,3 +364,146 @@ TEST(SmoothFingerFrame, ReseedPassesRawForOneFrameThenSmooths)
 	EXPECT_TRUE(smoothed.appliedSmoothing);
 	EXPECT_NEAR(output[6].position.v[0], (second[6].position.v[0] + third[6].position.v[0]) * 0.5f, kEpsilon);
 }
+
+TEST(DashboardHandTrackingHysteresis, ActiveStateSurvivesUntilStaleThreshold)
+{
+	protocol::DashboardHandTrackingState state{};
+	state.enabled = 1;
+	state.dashboard_visible = 1;
+	state.update_mono_ms = 1000;
+	const uint64_t packed = pairdriver::PackDashboardHandTrackingState(state);
+
+	// wasActive=true: stays active right up to staleAfterMs, drops after.
+	const auto held = pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, 3500, 3000, 750, true);
+	EXPECT_TRUE(held.active);
+	const auto dropped = pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, 4001, 3000, 750, true);
+	EXPECT_FALSE(dropped.active);
+	EXPECT_TRUE(dropped.stale);
+}
+
+TEST(DashboardHandTrackingHysteresis, ReactivationRequiresFreshUpdate)
+{
+	protocol::DashboardHandTrackingState state{};
+	state.enabled = 1;
+	state.dashboard_visible = 1;
+	state.update_mono_ms = 1000;
+	const uint64_t packed = pairdriver::PackDashboardHandTrackingState(state);
+
+	// wasActive=false: an update older than freshAfterMs is not enough,
+	// even though it is inside the staleAfterMs window.
+	const auto tooOld = pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, 2500, 3000, 750, false);
+	EXPECT_FALSE(tooOld.active);
+	EXPECT_TRUE(tooOld.stale);
+	const auto fresh = pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, 1500, 3000, 750, false);
+	EXPECT_TRUE(fresh.active);
+}
+
+TEST(DashboardHandTrackingHysteresis, LateRefreshStreamSettlesInsteadOfFlapping)
+{
+	// Refresh pushes arriving every 1600ms with a symmetric 1500ms cutoff
+	// used to flap active<->stale once per push. With staleAfter=3000 and
+	// the active state held across the gap, the decode stays active at
+	// every point of the late-refresh cycle.
+	protocol::DashboardHandTrackingState state{};
+	state.enabled = 1;
+	state.dashboard_visible = 1;
+
+	bool wasActive = false;
+	uint64_t updateMs = 1000;
+	state.update_mono_ms = updateMs;
+	auto first = pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(
+	    pairdriver::PackDashboardHandTrackingState(state), updateMs + 100, 3000, 750, wasActive);
+	wasActive = first.active;
+	EXPECT_TRUE(wasActive);
+
+	int transitions = 0;
+	for (int cycle = 0; cycle < 10; ++cycle) {
+		updateMs += 1600;
+		state.update_mono_ms = updateMs;
+		const uint64_t packed = pairdriver::PackDashboardHandTrackingState(state);
+		// Sample just before and just after each late refresh lands.
+		for (const uint64_t now : {updateMs + 1599, updateMs + 1600}) {
+			const auto snap =
+			    pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, now, 3000, 750, wasActive);
+			if (snap.active != wasActive) ++transitions;
+			wasActive = snap.active;
+		}
+	}
+	EXPECT_EQ(transitions, 0);
+	EXPECT_TRUE(wasActive);
+}
+
+TEST(DashboardHandTrackingMeaningfulChange, IgnoresRefreshTimestamp)
+{
+	protocol::DashboardHandTrackingState a{};
+	a.enabled = 1;
+	a.dashboard_visible = 1;
+	a.primary_hand = protocol::DashboardHandTrackingHandLeft;
+	a.update_mono_ms = 1000;
+	protocol::DashboardHandTrackingState b = a;
+	b.update_mono_ms = 1250;
+	EXPECT_FALSE(pairdriver::DashboardHandTrackingMeaningfulChange(a, b));
+
+	b.dashboard_visible = 0;
+	EXPECT_TRUE(pairdriver::DashboardHandTrackingMeaningfulChange(a, b));
+	b = a;
+	b.enabled = 0;
+	EXPECT_TRUE(pairdriver::DashboardHandTrackingMeaningfulChange(a, b));
+	b = a;
+	b.primary_hand = protocol::DashboardHandTrackingHandRight;
+	EXPECT_TRUE(pairdriver::DashboardHandTrackingMeaningfulChange(a, b));
+	// Both out-of-range hands normalize to unknown -- not a change.
+	a.primary_hand = 200;
+	b.primary_hand = 250;
+	EXPECT_FALSE(pairdriver::DashboardHandTrackingMeaningfulChange(a, b));
+}
+
+TEST(MotionRangeIndex, MapsBothSkeletalRanges)
+{
+	EXPECT_EQ(skeletal::math::MotionRangeIndex(static_cast<int>(vr::VRSkeletalMotionRange_WithController)), 0);
+	EXPECT_EQ(skeletal::math::MotionRangeIndex(static_cast<int>(vr::VRSkeletalMotionRange_WithoutController)), 1);
+	EXPECT_GE(skeletal::math::MotionRangeIndex(static_cast<int>(vr::VRSkeletalMotionRange_WithController)), 0);
+	EXPECT_LT(skeletal::math::MotionRangeIndex(static_cast<int>(vr::VRSkeletalMotionRange_WithoutController)),
+	          skeletal::math::kMotionRangeCount);
+}
+
+TEST(DashboardFrameObserver, PerRangeStatesIgnoreCrossRangePoseGap)
+{
+	// WithController and WithoutController submissions interleave on the
+	// same handle but describe different poses. A single observer reads
+	// that gap as huge per-frame motion; one observer per range sees two
+	// still streams.
+	vr::VRBoneTransform_t withController[kFingerBoneCount];
+	vr::VRBoneTransform_t withoutController[kFingerBoneCount];
+	MakeFrame(withController, 0.0f);
+	MakeFrame(withoutController, 0.5f); // 0.5m apart -- an obvious pose gap
+
+	skeletal::math::DashboardFrameState perRange[skeletal::math::kMotionRangeCount] = {};
+	float maxDelta = 0.0f;
+	for (int i = 0; i < 6; ++i) {
+		const bool without = (i % 2) != 0;
+		const auto obs = skeletal::math::ObserveDashboardFrame(
+		    perRange[skeletal::math::MotionRangeIndex(static_cast<int>(
+		        without ? vr::VRSkeletalMotionRange_WithoutController : vr::VRSkeletalMotionRange_WithController))],
+		    true, without ? withoutController : withController, kFingerBoneCount);
+		if (obs.maxPosDelta > maxDelta) maxDelta = obs.maxPosDelta;
+	}
+	EXPECT_NEAR(maxDelta, 0.0f, kEpsilon);
+
+	// The old single-state behavior reports the inter-stream gap instead.
+	skeletal::math::DashboardFrameState shared{};
+	skeletal::math::ObserveDashboardFrame(shared, true, withController, kFingerBoneCount);
+	const auto crossRange = skeletal::math::ObserveDashboardFrame(shared, true, withoutController, kFingerBoneCount);
+	EXPECT_GT(crossRange.maxPosDelta, 0.4f);
+}
+
+TEST(ComputeRateHz, GuardsZeroElapsedAndComputesCumulativeRate)
+{
+	EXPECT_DOUBLE_EQ(skeletal::math::ComputeRateHz(1000, 0.0), 0.0);
+	EXPECT_DOUBLE_EQ(skeletal::math::ComputeRateHz(1000, -5.0), 0.0);
+	EXPECT_DOUBLE_EQ(skeletal::math::ComputeRateHz(0, 10.0), 0.0);
+	// 4,387,892 calls over a 23,041.5s session is ~190 Hz; dividing the
+	// cumulative total by one 60s window misreports it as ~73 kHz.
+	EXPECT_NEAR(skeletal::math::ComputeRateHz(4387892, 23041.5), 190.4, 0.1);
+	EXPECT_NEAR(skeletal::math::ComputeRateHz(4387892, 60.0), 73131.5, 0.1);
+}

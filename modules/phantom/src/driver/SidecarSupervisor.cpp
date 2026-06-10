@@ -1,6 +1,7 @@
 #include "SidecarSupervisor.h"
 
 #include "Logging.h"
+#include "ModulePerf.h"
 
 #include <chrono>
 #include <cstring>
@@ -74,6 +75,8 @@ void SidecarSupervisor::Stop()
 
 void SidecarSupervisor::SuperviseLoop()
 {
+	openvr_pair::common::moduleperf::ScopedThreadRegistration perfRegistration(
+	    openvr_pair::common::modules::ModuleId::Phantom, "sidecar-supervisor");
 	const std::wstring exe = ResolveSidecarPath();
 	if (exe.empty()) {
 		LOG("[phantom] sidecar: unable to resolve exe path; supervisor exiting");
@@ -101,6 +104,8 @@ void SidecarSupervisor::SuperviseLoop()
 			LOG("[phantom] sidecar: spawned pid=%u", (unsigned)pi.dwProcessId);
 			child_process_ = pi.hProcess;
 			CloseHandle(pi.hThread);
+			openvr_pair::common::moduleperf::Registry::Instance().RegisterChildProcess(
+			    openvr_pair::common::modules::ModuleId::Phantom, child_process_, "phantom-sidecar");
 			// Block until exit or stop.
 			for (;;) {
 				const DWORD wait = WaitForSingleObject(child_process_, 250);
@@ -113,6 +118,8 @@ void SidecarSupervisor::SuperviseLoop()
 			}
 			DWORD exit_code = 0;
 			GetExitCodeProcess(child_process_, &exit_code);
+			openvr_pair::common::moduleperf::Registry::Instance().UnregisterChildProcess(
+			    openvr_pair::common::modules::ModuleId::Phantom, pi.dwProcessId);
 			CloseHandle(child_process_);
 			child_process_ = nullptr;
 			last_exit_code_.store(exit_code, std::memory_order_release);

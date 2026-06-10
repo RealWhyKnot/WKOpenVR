@@ -60,6 +60,30 @@ bool ModuleFlagFileExists(const std::wstring& resourcesDir, const module_registr
 	return module.legacy_flag_file_wide && FlagFileExists(resourcesDir, module.legacy_flag_file_wide);
 }
 
+const module_registry::ModuleInfo* ModuleForFeatureMask(uint32_t featureMask)
+{
+	switch (featureMask) {
+		case kFeatureCalibration:
+			return &module_registry::Get(module_registry::ModuleId::Calibration);
+		case kFeatureSmoothing:
+			return &module_registry::Get(module_registry::ModuleId::Smoothing);
+		case kFeatureDashboardInput:
+			return &module_registry::Get(module_registry::ModuleId::DashboardInput);
+		case kFeatureInputHealth:
+			return &module_registry::Get(module_registry::ModuleId::InputHealth);
+		case kFeatureFaceTracking:
+			return &module_registry::Get(module_registry::ModuleId::FaceTracking);
+		case kFeatureOscRouter:
+			return &module_registry::Get(module_registry::ModuleId::OscRouter);
+		case kFeatureCaptions:
+			return &module_registry::Get(module_registry::ModuleId::Captions);
+		case kFeaturePhantom:
+			return &module_registry::Get(module_registry::ModuleId::Phantom);
+		default:
+			return nullptr;
+	}
+}
+
 constexpr unsigned kActiveOnlyAutoDisableThreshold = 3;
 
 struct SafetyGateResult
@@ -202,6 +226,14 @@ uint32_t DetectFeatureFlags()
 	    (int)dashRuntimeOptIn, (int)ihOn, (int)ihSafe, (int)ftOn, (int)ftSafe, (int)orOn, (int)orSafe, (int)orEffective,
 	    (int)capOn, (int)capSafe, (int)phOn, (int)phSafe, (unsigned)flags);
 	return flags;
+}
+
+bool IsRuntimeFeatureFlagPresent(uint32_t featureMask)
+{
+	std::wstring dir = GetResourcesDir();
+	if (dir.empty()) return false;
+	const module_registry::ModuleInfo* module = ModuleForFeatureMask(featureMask);
+	return module && ModuleFlagFileExists(dir, *module);
 }
 
 } // namespace pairdriver

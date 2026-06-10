@@ -9,8 +9,10 @@
                                    // drain in-flight callers before the DLL
                                    // is unmapped on driver unload.
 #include "Logging.h"
+#include "ModulePerf.h"
 #include "ServerTrackedDeviceProvider.h"
 
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -74,7 +76,10 @@ static void SkeletalContainmentFault(const char* what)
 struct HandState
 {
 	skeletal::math::FingerFrameState frame;
-	skeletal::math::DashboardFrameState dashboardFrame;
+	// One observer per skeletal motion range -- WithController and
+	// WithoutController interleave on the same handle, and cross-range
+	// deltas are pose gaps, not motion.
+	std::array<skeletal::math::DashboardFrameState, skeletal::math::kMotionRangeCount> dashboardFrame;
 
 	// Steady-state motion diagnostic. Track worst per-bone output delta across
 	// the 30 s stats window so the next jitter report has a signature in the
@@ -144,6 +149,10 @@ static std::atomic<uint64_t> g_unknownHandleCalls{0};
 static std::atomic<uint64_t> g_invalidTransformCalls{0};
 static std::atomic<int64_t> g_lastStatsLogQpc{0};
 static std::atomic<int64_t> g_lastDeepStateLogQpc{0};
+// QPC at subsystem arm; denominates the cumulative per_hand rate. The deep-
+// state window is the wrong denominator for cumulative totals (it froze at
+// one window length and inflated the printed Hz by total/window).
+static std::atomic<int64_t> g_subsystemInitQpc{0};
 static LARGE_INTEGER g_qpcFreq{};
 static constexpr double kStatsLogIntervalSec = 30.0;
 static constexpr double kDeepStateLogIntervalSec = 60.0;
@@ -362,8 +371,10 @@ static void MaybeLogDeepState(const char* callerTag)
 		l_init = g_handState[0].frame.initialized;
 		r_init = g_handState[1].frame.initialized;
 	}
-	double l_hz = (double)l_total / elapsedSec;
-	double r_hz = (double)r_total / elapsedSec;
+	const int64_t initQpc = g_subsystemInitQpc.load(std::memory_order_relaxed);
+	const double sinceInitSec = initQpc != 0 ? (double)(now.QuadPart - initQpc) / (double)g_qpcFreq.QuadPart : 0.0;
+	const double l_hz = skeletal::math::ComputeRateHz(l_total, sinceInitSec);
+	const double r_hz = skeletal::math::ComputeRateHz(r_total, sinceInitSec);
 
 	LOG("[skeletal] deep_state(%s, %.1fs window):", callerTag, elapsedSec);
 	LOG("[skeletal]   verboseRemaining=L%d/R%d", g_verboseCallsRemaining[0].load(), g_verboseCallsRemaining[1].load());
@@ -394,8 +405,8 @@ static void MaybeLogDeepState(const char* callerTag)
 		LOG("[skeletal]   cfg: g_driver is NULL (subsystem un-Init'd?)");
 	}
 
-	LOG("[skeletal]   per_hand: L{init=%d total=%llu(%.1fHz) smoothed=%llu} R{init=%d total=%llu(%.1fHz) "
-	    "smoothed=%llu}",
+	LOG("[skeletal]   per_hand: L{init=%d total=%llu(%.1fHz since_init) smoothed=%llu} R{init=%d total=%llu(%.1fHz "
+	    "since_init) smoothed=%llu}",
 	    (int)l_init, (unsigned long long)l_total, l_hz, (unsigned long long)l_smooth, (int)r_init,
 	    (unsigned long long)r_total, r_hz, (unsigned long long)r_smooth);
 
@@ -637,8 +648,9 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponentImpl(vr::IVRDriverIn
 		g_dashboardWindowHadFrames.store(true, std::memory_order_relaxed);
 		std::lock_guard<std::mutex> lk(g_handStateMutex);
 		HandState& state = g_handState[handedness];
-		const auto observation =
-		    skeletal::math::ObserveDashboardFrame(state.dashboardFrame, true, pTransforms, unTransformCount);
+		const auto observation = skeletal::math::ObserveDashboardFrame(
+		    state.dashboardFrame[skeletal::math::MotionRangeIndex((int)eMotionRange)], true, pTransforms,
+		    unTransformCount);
 		if (observation.liveFrame) {
 			g_dashboardLiveFramesInWindow[handedness].fetch_add(1, std::memory_order_relaxed);
 		}
@@ -772,6 +784,7 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponent(vr::IVRDriverInput*
 	if (g_skeletalFaulted.load(std::memory_order_relaxed)) {
 		return PublicUpdateSkeletonHook.originalFunc(_this, ulComponent, eMotionRange, pTransforms, unTransformCount);
 	}
+	openvr_pair::common::moduleperf::ScopedSection perfSection(openvr_pair::common::modules::ModuleId::Smoothing);
 	try {
 		return DetourPublicUpdateSkeletonComponentImpl(_this, ulComponent, eMotionRange, pTransforms, unTransformCount);
 	}
@@ -800,6 +813,11 @@ void Init(ServerTrackedDeviceProvider* driver, uint32_t ownerFeatureMask)
 		return;
 	}
 	QueryPerformanceFrequency(&g_qpcFreq);
+	{
+		LARGE_INTEGER initNow;
+		QueryPerformanceCounter(&initNow);
+		g_subsystemInitQpc.store(initNow.QuadPart);
+	}
 	g_lastStatsLogQpc.store(0);
 	g_lastDeepStateLogQpc.store(0);
 	g_unknownHandleCalls.store(0);

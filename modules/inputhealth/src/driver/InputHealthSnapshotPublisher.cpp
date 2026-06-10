@@ -2,6 +2,7 @@
 
 #include "InputHealthSnapshotStaging.h"
 #include "Logging.h"
+#include "ModulePerf.h"
 #include "Protocol.h"
 
 #include <atomic>
@@ -92,6 +93,8 @@ void PublishOneTickSafely()
 
 void WorkerMain()
 {
+	openvr_pair::common::moduleperf::ScopedThreadRegistration perfRegistration(
+	    openvr_pair::common::modules::ModuleId::InputHealth, "snapshot-publisher");
 	LOG("[inputhealth-publisher] worker thread started (%d Hz)", kPublishHz);
 
 	while (true) {

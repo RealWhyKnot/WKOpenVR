@@ -29,10 +29,16 @@ protected:
 	void BuildCommandLine(std::wstring& commandLine, const std::wstring& exe_path) const override;
 	void OnHostReady() override;
 	void OnHostExited() override;
+	void RequestGracefulShutdown() override;
 	void LogV(const char* fmt, va_list args) override;
+	std::optional<openvr_pair::common::modules::ModuleId> PerfModuleId() const override
+	{
+		return openvr_pair::common::modules::ModuleId::FaceTracking;
+	}
 
 private:
 	bool TrySendUuid(const std::string& uuid);
+	bool TrySendShutdown();
 
 	std::mutex uuid_mutex_;
 	std::string pending_uuid_;

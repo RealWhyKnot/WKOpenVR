@@ -21,6 +21,7 @@
 #include "ModelDownloader.h"
 #include "RouterPublisher.h"
 #include "SileroVad.h"
+#include "SidecarOwnerLease.h"
 #include "TranscriptText.h"
 #include "WasapiCapture.h"
 #include "WhisperEngine.h"
@@ -33,6 +34,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <cstdio>
 #include <cstring>
@@ -273,6 +275,13 @@ struct HostConfig
 	bool RealtimeEnabled(uint8_t flag) const { return captions::CaptionsRealtimeFlagEnabled(realtime_flags, flag); }
 };
 
+struct OwnerLivenessConfig
+{
+	std::string name;
+	uint64_t nonce = 0;
+	bool Configured() const { return !name.empty() && nonce != 0; }
+};
+
 static std::mutex g_config_mutex;
 static HostConfig g_config;
 
@@ -283,6 +292,7 @@ static HostConfig g_config;
 #define HOST_CONTROL_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-Captions.host"
 
 static std::atomic<bool> g_shutdown{false};
+static std::string g_control_pipe_name = HOST_CONTROL_PIPE_NAME;
 
 static bool TryParseInt(const std::string& text, int& value)
 {
@@ -374,10 +384,10 @@ static void ControlPipeThread()
 	// connection; after each message we disconnect and wait for the next
 	// client without destroying the server handle -- this avoids the race
 	// window where a second host process could steal the server slot.
-	HANDLE pipe =
-	    CreateNamedPipeA(HOST_CONTROL_PIPE_NAME, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-	                     2, // max 2 instances: tolerates brief driver reconnect overlap
-	                     0, 4096, 1000, nullptr);
+	HANDLE pipe = CreateNamedPipeA(g_control_pipe_name.c_str(), PIPE_ACCESS_INBOUND,
+	                               PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+	                               2, // max 2 instances: tolerates brief driver reconnect overlap
+	                               0, 4096, 1000, nullptr);
 
 	if (pipe == INVALID_HANDLE_VALUE) {
 		DWORD err = GetLastError();
@@ -410,6 +420,47 @@ static void ControlPipeThread()
 	}
 
 	CloseHandle(pipe);
+}
+
+static void WakeControlPipe()
+{
+	HANDLE h = CreateFileA(g_control_pipe_name.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+	                       nullptr);
+	if (h != INVALID_HANDLE_VALUE) {
+		CloseHandle(h);
+	}
+}
+
+static void OwnerLivenessThread(OwnerLivenessConfig config)
+{
+	if (!config.Configured()) return;
+
+	namespace owner = openvr_pair::common::sidecar_owner;
+	owner::LeaseReader reader;
+	if (!reader.Open(config.name)) {
+		TH_LOG("[owner-liveness] failed to open lease '%s'; shutting down", config.name.c_str());
+		g_shutdown.store(true, std::memory_order_release);
+		return;
+	}
+
+	TH_LOG("[owner-liveness] watching lease '%s'", config.name.c_str());
+	while (!g_shutdown.load(std::memory_order_acquire)) {
+		owner::LeaseSnapshot snapshot{};
+		owner::WatchdogStatus status = owner::WatchdogStatus::Missing;
+		if (reader.TryRead(snapshot)) {
+			status = owner::EvaluateLeaseSnapshot(snapshot, openvr_pair::common::modules::ModuleId::Captions,
+			                                      config.nonce, owner::MonotonicMillis(), 3000);
+		}
+		if (status != owner::WatchdogStatus::Alive) {
+			TH_LOG("[owner-liveness] owner lease no longer alive: %s; shutting down",
+			       owner::WatchdogStatusName(status));
+			g_shutdown.store(true, std::memory_order_release);
+			break;
+		}
+		for (int i = 0; i < 25 && !g_shutdown.load(std::memory_order_acquire); ++i) {
+			Sleep(10);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +603,8 @@ try {
 	bool self_test = false;
 	std::string rejected_live_publish_arg;
 	std::wstring status_path_override;
+	std::wstring e2e_singleton_suffix;
+	OwnerLivenessConfig owner_liveness;
 
 	// Parse optional command-line overrides: --model <path> --silero <path>
 	{
@@ -570,6 +623,22 @@ try {
 			}
 			else if (i + 1 < argc && strcmp(argv[i], "--status-file") == 0) {
 				status_path_override = openvr_pair::common::Utf8ToWide(argv[i + 1]);
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--e2e-singleton-suffix") == 0) {
+				e2e_singleton_suffix = openvr_pair::common::Utf8ToWide(argv[i + 1]);
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--e2e-control-pipe") == 0) {
+				g_control_pipe_name = argv[i + 1];
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--owner-liveness") == 0) {
+				owner_liveness.name = argv[i + 1];
+				++i;
+			}
+			else if (i + 1 < argc && strcmp(argv[i], "--owner-liveness-nonce") == 0) {
+				owner_liveness.nonce = _strtoui64(argv[i + 1], nullptr, 16);
 				++i;
 			}
 			else if (i + 1 < argc && strcmp(argv[i], "--model") == 0) {
@@ -615,7 +684,13 @@ try {
 	{
 		std::wstring user = GetUserSidString();
 		wchar_t mname[512] = {};
-		swprintf_s(mname, L"Global\\WKOpenVR-CaptionsHost-Singleton-%ls", user.c_str());
+		if (e2e_singleton_suffix.empty()) {
+			swprintf_s(mname, L"Global\\WKOpenVR-CaptionsHost-Singleton-%ls", user.c_str());
+		}
+		else {
+			swprintf_s(mname, L"Global\\WKOpenVR-CaptionsHost-Singleton-%ls-%ls", user.c_str(),
+			           e2e_singleton_suffix.c_str());
+		}
 
 		g_singletonMutex = CreateMutexW(nullptr, TRUE, mname);
 		DWORD merr = GetLastError();
@@ -642,10 +717,16 @@ try {
 	TH_LOG("[startup] phase=singleton-acquired");
 	status.SetPhase("singleton-acquired");
 	status.Flush();
+	TH_LOG("[startup] owner-liveness configured=%d name=%s", owner_liveness.Configured() ? 1 : 0,
+	       owner_liveness.name.empty() ? "(none)" : owner_liveness.name.c_str());
 
 	TH_LOG("[startup] phase=opening-control-pipe");
 	status.SetPhase("opening-control-pipe");
 	status.Flush();
+	std::thread owner_thread;
+	if (owner_liveness.Configured()) {
+		owner_thread = std::thread(OwnerLivenessThread, owner_liveness);
+	}
 	// Start control pipe thread.
 	std::thread ctrl_thread(ControlPipeThread);
 
@@ -1325,7 +1406,9 @@ try {
 	if (vr_ok) vr::VR_Shutdown();
 
 	g_shutdown.store(true, std::memory_order_release);
+	WakeControlPipe();
 	if (ctrl_thread.joinable()) ctrl_thread.join();
+	if (owner_thread.joinable()) owner_thread.join();
 
 	CaptionsHostFlushLog();
 	return 0;

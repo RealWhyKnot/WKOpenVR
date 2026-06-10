@@ -6,6 +6,7 @@
 #include "OscWire.h"
 #include "Logging.h"
 #include "FeatureFlags.h"
+#include "ModulePerf.h"
 #include "ModuleRegistry.h"
 #include "Protocol.h"
 
@@ -402,6 +403,8 @@ static bool ShouldLogCounter(uint64_t value)
 
 void OscRouter::SendWorkerMain()
 {
+	openvr_pair::common::moduleperf::ScopedThreadRegistration perfRegistration(
+	    openvr_pair::common::modules::ModuleId::OscRouter, "osc-send");
 	OR_LOG("OscRouter send worker started");
 
 	using clock = std::chrono::steady_clock;
@@ -529,6 +532,8 @@ void OscRouter::SendWorkerMain()
 
 void OscRouter::PubPipeWorkerMain()
 {
+	openvr_pair::common::moduleperf::ScopedThreadRegistration perfRegistration(
+	    openvr_pair::common::modules::ModuleId::OscRouter, "osc-pub-pipe");
 	OR_LOG("OscRouter pub-pipe worker started");
 
 	// Each client connection is handled synchronously in a blocking read loop.

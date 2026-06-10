@@ -5,12 +5,18 @@
 #endif
 #include <windows.h>
 
+#include "ModuleRegistry.h"
+
 #include <atomic>
 #include <cstdarg>
 #include <cstdint>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+
+#include "SidecarOwnerLease.h"
 
 namespace openvr_pair::common {
 
@@ -85,6 +91,10 @@ protected:
 	// "sent" flags so the queued message is retried against the next host.
 	virtual void OnHostExited() {}
 
+	// Called before forceful termination when the driver intentionally stops
+	// this host. Subclasses with a control-pipe shutdown command override it.
+	virtual void RequestGracefulShutdown() {}
+
 	// Default returns empty. Captions overrides to provide a table of
 	// known exit codes.
 	virtual std::string DescribeExitCode(DWORD code) const
@@ -92,6 +102,17 @@ protected:
 		(void)code;
 		return {};
 	}
+
+	// Module that owns this host, for per-module perf attribution. When set,
+	// the supervisor registers the spawned child process plus its own monitor
+	// thread with the perf registry. Attach-to-existing hosts hold no process
+	// handle, so they are not attributed until the next respawn.
+	virtual std::optional<modules::ModuleId> PerfModuleId() const { return std::nullopt; }
+
+	// Module that owns this sidecar for the owner-liveness lease. Defaults to
+	// the perf owner because every HostSupervisorBase instance is a feature
+	// host and the current concrete supervisors already declare their module.
+	virtual std::optional<modules::ModuleId> SidecarOwnerModuleId() const { return PerfModuleId(); }
 
 	// Route a printf-style log line to the subclass's logger. Pure: there is
 	// no shared driver log file, each feature has its own (FT_LOG_DRV /
@@ -123,6 +144,11 @@ private:
 	bool Spawn();
 	void Kill();
 	void MonitorLoop();
+	bool EnsureOwnerLease();
+	void HeartbeatOwnerLease(sidecar_owner::LeaseState state = sidecar_owner::LeaseState::Alive);
+	void MarkOwnerLeaseShuttingDown();
+	void MarkOwnerLeaseDisabled();
+	void AppendOwnerLivenessArgs(std::wstring& commandLine) const;
 
 	std::string host_exe_path_;
 	std::atomic<bool> stop_requested_{false};
@@ -140,6 +166,8 @@ private:
 	std::string last_exit_description_;
 
 	std::thread monitor_thread_;
+	mutable std::mutex owner_lease_mutex_;
+	std::unique_ptr<sidecar_owner::LeaseOwner> owner_lease_;
 
 	static constexpr int kFastExitThresholdMs = 2000;
 	static constexpr int kCircuitBreakerThreshold = 5;

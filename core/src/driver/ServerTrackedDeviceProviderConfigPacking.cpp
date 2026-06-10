@@ -126,6 +126,25 @@ DashboardHandTrackingSnapshot DecodeDashboardHandTrackingState(uint64_t packed, 
 	return snapshot;
 }
 
+DashboardHandTrackingSnapshot DecodeDashboardHandTrackingStateWithHysteresis(uint64_t packed, uint64_t nowMonoMs,
+                                                                             uint64_t staleAfterMs,
+                                                                             uint64_t freshAfterMs, bool wasActive)
+{
+	DashboardHandTrackingSnapshot snapshot = DecodeDashboardHandTrackingState(packed, nowMonoMs, staleAfterMs);
+	if (!wasActive && snapshot.active && snapshot.ageMs > freshAfterMs) {
+		snapshot.stale = true;
+		snapshot.active = false;
+	}
+	return snapshot;
+}
+
+bool DashboardHandTrackingMeaningfulChange(const protocol::DashboardHandTrackingState& a,
+                                           const protocol::DashboardHandTrackingState& b)
+{
+	return a.enabled != b.enabled || a.dashboard_visible != b.dashboard_visible ||
+	       NormalizeDashboardHand(a.primary_hand) != NormalizeDashboardHand(b.primary_hand);
+}
+
 uint64_t PackInputHealthConfig(const protocol::InputHealthConfig& cfg)
 {
 	static_assert(sizeof(protocol::InputHealthConfig) <= sizeof(uint64_t),

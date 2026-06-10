@@ -85,6 +85,24 @@ std::string EncodeSelectModule(const std::string& uuid)
 	return wire;
 }
 
+std::string EncodeShutdown()
+{
+	std::string body;
+	body.push_back(static_cast<char>(0xA1)); // map with 1 pair
+	CborAppendTextString(body, "type", 4);
+	CborAppendTextString(body, "Shutdown", 8);
+
+	std::string wire;
+	wire.reserve(4 + body.size());
+	const uint32_t len = static_cast<uint32_t>(body.size());
+	wire.push_back(static_cast<char>(len & 0xff));
+	wire.push_back(static_cast<char>((len >> 8) & 0xff));
+	wire.push_back(static_cast<char>((len >> 16) & 0xff));
+	wire.push_back(static_cast<char>((len >> 24) & 0xff));
+	wire.append(body);
+	return wire;
+}
+
 // Returns the current user's SID as the canonical S-1-... string. Matches
 // what the C# host writes via WindowsIdentity.GetCurrent().User.Value so
 // the supervisor can probe the same mutex name from the driver side.
@@ -190,6 +208,11 @@ void HostSupervisor::OnHostExited()
 	if (has_pending_uuid_) uuid_sent_ = false;
 }
 
+void HostSupervisor::RequestGracefulShutdown()
+{
+	TrySendShutdown();
+}
+
 bool HostSupervisor::TrySendUuid(const std::string& uuid)
 {
 	std::string msg = EncodeSelectModule(uuid);
@@ -201,6 +224,16 @@ bool HostSupervisor::TrySendUuid(const std::string& uuid)
 		uuid_sent_ = true;
 	}
 	Log("[host] sent SelectModule uuid '%s'", uuid.c_str());
+	return true;
+}
+
+bool HostSupervisor::TrySendShutdown()
+{
+	std::string msg = EncodeShutdown();
+	if (!SendBytesOverControlPipe(msg.data(), msg.size())) {
+		return false;
+	}
+	Log("[host] sent Shutdown request");
 	return true;
 }
 

@@ -17,7 +17,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(driver_safety_tests
 	test_module_registry.cpp
 	test_module_safety.cpp
-	test_safe_mode_recovery.cpp)
+	test_safe_mode_recovery.cpp
+	test_sidecar_owner_lease.cpp)
 
 target_include_directories(driver_safety_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common

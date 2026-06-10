@@ -1,10 +1,53 @@
 #include "IPCServer.h"
 #include "FeatureFlags.h"
 #include "Logging.h"
+#include "ModulePerf.h"
+#include "ModuleRegistry.h"
 #include "ServerTrackedDeviceProvider.h"
 
 #include <exception>
+#include <optional>
 #include <vector>
+
+namespace {
+
+// Each IPC server carries exactly one feature bit; resolve it back to the
+// module that owns the pipe so the server thread's CPU time lands in that
+// module's perf slot.
+bool ModuleIdForFeatureMask(uint32_t featureMask, openvr_pair::common::modules::ModuleId& out)
+{
+	using openvr_pair::common::modules::ModuleId;
+	switch (featureMask) {
+		case pairdriver::kFeatureCalibration:
+			out = ModuleId::Calibration;
+			return true;
+		case pairdriver::kFeatureSmoothing:
+			out = ModuleId::Smoothing;
+			return true;
+		case pairdriver::kFeatureDashboardInput:
+			out = ModuleId::DashboardInput;
+			return true;
+		case pairdriver::kFeatureInputHealth:
+			out = ModuleId::InputHealth;
+			return true;
+		case pairdriver::kFeatureFaceTracking:
+			out = ModuleId::FaceTracking;
+			return true;
+		case pairdriver::kFeatureOscRouter:
+			out = ModuleId::OscRouter;
+			return true;
+		case pairdriver::kFeatureCaptions:
+			out = ModuleId::Captions;
+			return true;
+		case pairdriver::kFeaturePhantom:
+			out = ModuleId::Phantom;
+			return true;
+		default:
+			return false;
+	}
+}
+
+} // namespace
 
 void IPCServer::HandleRequest(const protocol::Request& request, protocol::Response& response)
 {
@@ -73,6 +116,13 @@ void IPCServer::RunThread(IPCServer* _this)
 {
 	_this->running = true;
 	LOG("IPC[%s] server thread entered feature_mask=0x%08x", _this->pipeName.c_str(), (unsigned)_this->featureMask);
+
+	// Attribute this thread's CPU time to the module owning the pipe.
+	openvr_pair::common::modules::ModuleId perfModuleId{};
+	std::optional<openvr_pair::common::moduleperf::ScopedThreadRegistration> perfRegistration;
+	if (ModuleIdForFeatureMask(_this->featureMask, perfModuleId)) {
+		perfRegistration.emplace(perfModuleId, "ipc-pipe");
+	}
 
 	// RAII guard: on any exit path (normal or error) drain any still-open
 	// PipeInstance objects, clear `running`, and close `connectEvent` once.

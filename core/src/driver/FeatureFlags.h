@@ -56,4 +56,9 @@ constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool da
 // and the result to the driver log so install issues are easy to diagnose.
 uint32_t DetectFeatureFlags();
 
+// Runtime probe for a single feature's enable flag. Used only for off-only
+// reconciliation of sidecar-owning modules; it does not apply safety gates or
+// imply dependent features.
+bool IsRuntimeFeatureFlagPresent(uint32_t featureMask);
+
 } // namespace pairdriver

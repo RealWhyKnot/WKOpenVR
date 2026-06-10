@@ -33,8 +33,13 @@ protected:
 	std::wstring SingletonMutexName() const override;
 	void OnHostReady() override;
 	void OnHostExited() override;
+	void RequestGracefulShutdown() override { RequestHostShutdown(); }
 	std::string DescribeExitCode(DWORD code) const override;
 	void LogV(const char* fmt, va_list args) override;
+	std::optional<openvr_pair::common::modules::ModuleId> PerfModuleId() const override
+	{
+		return openvr_pair::common::modules::ModuleId::Captions;
+	}
 
 private:
 	bool TrySendCommand(const std::string& command);

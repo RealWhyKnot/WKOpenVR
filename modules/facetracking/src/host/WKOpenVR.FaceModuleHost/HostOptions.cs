@@ -31,6 +31,10 @@ public sealed class HostOptions
     public bool E2eFakeFrames { get; set; } = false;
     public int E2eFakeFrameCount { get; set; } = 5;
     public int E2eFakeFrameIntervalMs { get; set; } = 5;
+    public string? E2eSingletonSuffix { get; set; }
+    public string? OwnerLivenessName { get; set; }
+    public ulong OwnerLivenessNonce { get; set; }
+    public bool OwnerLivenessConfigured => !string.IsNullOrWhiteSpace(OwnerLivenessName) && OwnerLivenessNonce != 0;
 
     public static HostOptions FromArgs(string[] args)
     {
@@ -63,6 +67,15 @@ public sealed class HostOptions
                 case "--status-file" when i + 1 < args.Length: opts.StatusFilePath = args[++i]; break;
                 case "--log-file" when i + 1 < args.Length: opts.LogFilePath = args[++i]; break;
                 case "--debug-logging" when i + 1 < args.Length: opts.DebugLoggingEnabled = IsTruthy(args[++i]); break;
+                case "--e2e-singleton-suffix" when i + 1 < args.Length: opts.E2eSingletonSuffix = args[++i]; break;
+                case "--owner-liveness" when i + 1 < args.Length: opts.OwnerLivenessName = args[++i]; break;
+                case "--owner-liveness-nonce" when i + 1 < args.Length:
+                    if (ulong.TryParse(args[++i], System.Globalization.NumberStyles.HexNumber, null, out ulong nonce))
+                    {
+                        opts.OwnerLivenessNonce = nonce;
+                    }
+
+                    break;
                 case "--e2e-fake-face-output": opts.E2eFakeFrames = true; break;
                 case "--e2e-fake-frame-count" when i + 1 < args.Length:
                     if (int.TryParse(args[++i], out int frameCount))

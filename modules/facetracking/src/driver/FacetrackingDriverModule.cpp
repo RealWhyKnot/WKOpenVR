@@ -11,6 +11,7 @@
 #include "DriverModule.h"
 #include "DebugLogging.h"
 #include "FeatureFlags.h"
+#include "ModulePerf.h"
 #include "ModuleRegistry.h"
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
@@ -579,6 +580,8 @@ private:
 	// -----------------------------------------------------------------------
 	void WorkerLoop()
 	{
+		openvr_pair::common::moduleperf::ScopedThreadRegistration perfRegistration(
+		    openvr_pair::common::modules::ModuleId::FaceTracking, "face-frame-worker");
 		FT_LOG_DRV("[worker] started", 0);
 
 		uint64_t last_idx = 0;

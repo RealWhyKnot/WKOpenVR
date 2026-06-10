@@ -4,6 +4,7 @@
 #include "DebugLogging.h"
 #include "FeaturePlugin.h"
 #include "ModuleToggleUi.h"
+#include "PerfStatsHub.h"
 #include "ShellContext.h"
 #include "ShellUiLogic.h"
 #include "Theme.h"
@@ -11,6 +12,7 @@
 #include "UpdateNotice.h"
 
 #include <imgui.h>
+#include <implot.h>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -21,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -67,6 +70,235 @@ std::string FormatUpdateDownloadProgress(const UpdateInstallState& install)
 	snprintf(buf, sizeof(buf), "%s of %s (%.0f%%)", ui::FormatByteCount(install.bytesDownloaded).c_str(),
 	         ui::FormatByteCount(install.totalBytes).c_str(), pct);
 	return buf;
+}
+
+ImPlotPoint PerfSeriesGetter(int idx, void* ptr)
+{
+	const auto* series = static_cast<const PerfTimeSeries*>(ptr);
+	const auto& point = series->At(static_cast<size_t>(idx));
+	return ImPlotPoint(point.first, point.second);
+}
+
+std::string FormatPercent(double value)
+{
+	char buf[32] = {};
+	snprintf(buf, sizeof(buf), "%.2f%%", value);
+	return buf;
+}
+
+std::string FormatPid(uint32_t pid)
+{
+	if (pid == 0) return "-";
+	char buf[32] = {};
+	snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(pid));
+	return buf;
+}
+
+std::string FormatThreadTriple(uint32_t overlayThreads, uint32_t driverThreads, uint32_t sidecarThreads)
+{
+	char buf[64] = {};
+	snprintf(buf, sizeof(buf), "%lu / %lu / %lu", static_cast<unsigned long>(overlayThreads),
+	         static_cast<unsigned long>(driverThreads), static_cast<unsigned long>(sidecarThreads));
+	return buf;
+}
+
+ui::StatusTone PerfTone(double pctOneCore)
+{
+	if (pctOneCore >= 50.0) return ui::StatusTone::Error;
+	if (pctOneCore >= 20.0) return ui::StatusTone::Warn;
+	if (pctOneCore > 0.0) return ui::StatusTone::Info;
+	return ui::StatusTone::Idle;
+}
+
+double LatestPerfTimestamp(const PerfHistoryStore& history)
+{
+	double latest = 0.0;
+	auto consider = [&latest](const PerfTimeSeries& series) {
+		if (!series.Empty()) latest = std::max(latest, series.At(series.Size() - 1).first);
+	};
+	consider(history.overlay.totalCpuPctOneCore);
+	consider(history.driver.totalCpuPctOneCore);
+	consider(history.sidecarTotalCpuPctOneCore);
+	return latest;
+}
+
+float MaxCpuSeriesValue(const PerfHistoryStore& history)
+{
+	float best = 0.0f;
+	best = std::max(best, history.overlay.totalCpuPctOneCore.Max());
+	best = std::max(best, history.driver.totalCpuPctOneCore.Max());
+	best = std::max(best, history.sidecarTotalCpuPctOneCore.Max());
+	best = std::max(best, history.overlay.unattributedPctOneCore.Max());
+	best = std::max(best, history.driver.unattributedPctOneCore.Max());
+	return best;
+}
+
+void PlotPerfSeries(const char* label, const PerfTimeSeries& series)
+{
+	if (series.Empty()) return;
+	ImPlot::PlotLineG(label, PerfSeriesGetter, const_cast<PerfTimeSeries*>(&series), static_cast<int>(series.Size()));
+}
+
+void DrawPerfCpuGraph(const PerfHistoryStore& history)
+{
+	const double latest = LatestPerfTimestamp(history);
+	if (latest <= 0.0) {
+		ui::DrawEmptyState("Waiting for performance samples.");
+		return;
+	}
+
+	const float yMax = std::max(10.0f, MaxCpuSeriesValue(history) * 1.20f);
+	if (ImPlot::BeginPlot("##module_perf_cpu", ImVec2(-1.0f, 190.0f), ImPlotFlags_NoMenus)) {
+		ImPlot::SetupAxes("seconds", "% of one core", ImPlotAxisFlags_NoTickLabels, 0);
+		ImPlot::SetupAxisLimits(ImAxis_X1, latest - PerfTimeSeries::kWindowSeconds, latest, ImGuiCond_Always);
+		ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, yMax, ImGuiCond_Always);
+		PlotPerfSeries("Overlay", history.overlay.totalCpuPctOneCore);
+		PlotPerfSeries("Driver host", history.driver.totalCpuPctOneCore);
+		PlotPerfSeries("Sidecars", history.sidecarTotalCpuPctOneCore);
+		PlotPerfSeries("Overlay other", history.overlay.unattributedPctOneCore);
+		PlotPerfSeries("Driver other", history.driver.unattributedPctOneCore);
+		ImPlot::EndPlot();
+	}
+}
+
+void DrawPerfMemoryGraph(const PerfHistoryStore& history)
+{
+	const double latest = LatestPerfTimestamp(history);
+	if (latest <= 0.0) return;
+	const float yMax =
+	    std::max(64.0f, std::max(history.overlay.workingSetMb.Max(), history.driver.workingSetMb.Max()) * 1.15f);
+	if (ImPlot::BeginPlot("##module_perf_memory", ImVec2(-1.0f, 130.0f), ImPlotFlags_NoMenus)) {
+		ImPlot::SetupAxes("seconds", "working set MB", ImPlotAxisFlags_NoTickLabels, 0);
+		ImPlot::SetupAxisLimits(ImAxis_X1, latest - PerfTimeSeries::kWindowSeconds, latest, ImGuiCond_Always);
+		ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, yMax, ImGuiCond_Always);
+		PlotPerfSeries("Overlay", history.overlay.workingSetMb);
+		PlotPerfSeries("Driver host", history.driver.workingSetMb);
+		ImPlot::EndPlot();
+	}
+}
+
+void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double memoryMb, uint32_t threads,
+                        uint32_t handles, const char* status)
+{
+	ui::NextRow();
+	ui::NextColumn();
+	ImGui::TextUnformatted(label);
+	ui::NextColumn();
+	ImGui::TextUnformatted(FormatPid(pid).c_str());
+	ui::NextColumn();
+	ui::DrawStatusCell(FormatPercent(cpuPct).c_str(), PerfTone(cpuPct), true);
+	ui::NextColumn();
+	ImGui::Text("%.1f", memoryMb);
+	ui::NextColumn();
+	ImGui::Text("%lu", static_cast<unsigned long>(threads));
+	ui::NextColumn();
+	ImGui::Text("%lu", static_cast<unsigned long>(handles));
+	ui::NextColumn();
+	ImGui::TextUnformatted(status);
+}
+
+void DrawPerfProcessTable(const PerfViewModel& vm)
+{
+	ui::TableScope table("module_perf_processes", 7,
+	                     ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
+	if (!table) return;
+	ui::SetupStretchColumn("Process", 1.0f);
+	ui::SetupFixedColumn("PID", 70.0f);
+	ui::SetupFixedColumn("CPU", 76.0f);
+	ui::SetupFixedColumn("WS MB", 80.0f);
+	ui::SetupFixedColumn("Threads", 82.0f);
+	ui::SetupFixedColumn("Handles", 82.0f);
+	ui::SetupFixedColumn("Status", 110.0f);
+	ui::DrawTableHeader();
+
+	DrawPerfProcessRow("Overlay", vm.overlayPid, vm.overlayTotalPct, vm.overlayWorkingSetMb, vm.overlayThreadCount,
+	                   vm.overlayHandleCount, "local");
+	if (vm.driverConnected) {
+		DrawPerfProcessRow("Driver host", vm.driverPid, vm.driverTotalPct, vm.driverWorkingSetMb, vm.driverThreadCount,
+		                   vm.driverHandleCount, "live");
+	}
+	else {
+		DrawPerfProcessRow("Driver host", 0, 0.0, 0.0, 0, 0, "not mapped");
+	}
+}
+
+void DrawPerfModuleTable(const PerfViewModel& vm, const PerfStatsHub& hub)
+{
+	if (vm.rows.empty()) {
+		ui::DrawEmptyState("No module samples yet.");
+		return;
+	}
+
+	ui::TableScope table("module_perf_attribution", 7,
+	                     ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
+	if (!table) return;
+	ui::SetupStretchColumn("Module", 1.0f);
+	ui::SetupFixedColumn("Total", 76.0f);
+	ui::SetupFixedColumn("Overlay", 76.0f);
+	ui::SetupFixedColumn("Driver", 76.0f);
+	ui::SetupFixedColumn("Sidecar", 82.0f);
+	ui::SetupFixedColumn("Threads", 100.0f);
+	ui::SetupFixedColumn("Sidecar WS", 96.0f);
+	ui::DrawTableHeader();
+
+	for (const PerfModuleRow& row : vm.rows) {
+		const uint32_t slot = openvr_pair::common::moduleperf::SlotIndex(row.id);
+		const double smoothedTotal = hub.SmoothedTotalPct(slot);
+		ui::NextRow();
+		ui::NextColumn();
+		ImGui::TextUnformatted(module_registry::DisplayName(row.id));
+		if (row.sidecarPresent && row.sidecarProcessCount > 1) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("(%lu sidecars)", static_cast<unsigned long>(row.sidecarProcessCount));
+		}
+		ui::NextColumn();
+		ui::DrawStatusCell(FormatPercent(smoothedTotal).c_str(), PerfTone(smoothedTotal), true);
+		ui::NextColumn();
+		ImGui::TextUnformatted(FormatPercent(row.overlayPct).c_str());
+		ui::NextColumn();
+		ImGui::TextUnformatted(row.driverActive ? FormatPercent(row.driverPct).c_str() : "-");
+		ui::NextColumn();
+		ImGui::TextUnformatted(row.sidecarPresent ? FormatPercent(row.sidecarPct).c_str() : "-");
+		ui::NextColumn();
+		ImGui::TextUnformatted(FormatThreadTriple(row.overlayThreads, row.driverThreads, row.sidecarThreads).c_str());
+		ui::NextColumn();
+		if (row.sidecarWorkingSetBytes > 0) {
+			ImGui::TextUnformatted(ui::FormatByteCount(row.sidecarWorkingSetBytes).c_str());
+		}
+		else {
+			ImGui::TextUnformatted("-");
+		}
+		if (row.sidecarPresent && row.sidecarPid != 0 && ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Sidecar PID %lu", static_cast<unsigned long>(row.sidecarPid));
+		}
+	}
+}
+
+void DrawPerformanceCard()
+{
+	const PerfStatsHub& hub = GetPerfStatsHub();
+	const PerfViewModel& vm = hub.ViewModel();
+	const PerfHistoryStore& history = hub.History();
+	const ui::StatusTone tone = vm.driverConnected ? ui::StatusTone::Info : ui::StatusTone::Warn;
+
+	ui::DrawCard("Performance", tone, [&] {
+		if (vm.driverConnected) {
+			ui::StatusBadge("Driver live", ui::StatusTone::Ok);
+			ImGui::SameLine();
+			ImGui::TextDisabled("age %.1fs", vm.driverSnapshotAgeSec);
+		}
+		else {
+			ui::StatusBadge(hub.DriverSegmentOpen() ? "Driver stale" : "Driver offline", ui::StatusTone::Warn);
+		}
+
+		ImGui::Spacing();
+		DrawPerfProcessTable(vm);
+		ImGui::Spacing();
+		DrawPerfCpuGraph(history);
+		DrawPerfMemoryGraph(history);
+		ImGui::Spacing();
+		DrawPerfModuleTable(vm, hub);
+	});
 }
 
 void DrawUpdatePrompt(ShellContext& context, const std::vector<std::string_view>& installedFlags)
@@ -454,6 +686,8 @@ void DrawModulesTab(ShellContext& context, std::vector<std::unique_ptr<FeaturePl
 	options.markDevelopmentModules = true;
 	options.allowTabReorder = true;
 	DrawModuleToggleTable(context, modules, "modules", "No modules were compiled into this build.", options);
+	ImGui::Spacing();
+	DrawPerformanceCard();
 }
 
 void DrawThemesTab(ShellContext&)

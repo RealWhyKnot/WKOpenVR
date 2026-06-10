@@ -6,6 +6,7 @@
 #include "DriverModule.h"
 #include "DriverSynthCompose.h"
 #include "IPCServer.h"
+#include "ModulePerf.h"
 #include "ModuleSafety.h"
 #include "Protocol.h"
 #include "ServerTrackedDeviceProviderConfigPacking.h"
@@ -106,8 +107,10 @@ private:
 	};
 
 	void DisableActiveModuleAt(size_t index, const char* reason);
-	bool DisableActiveModuleByMask(uint32_t featureMask, const char* reason);
-	void DisableDetachedModule(ActiveDriverModule entry, const char* reason);
+	bool DisableActiveModuleByMask(uint32_t featureMask, const char* reason, bool markClean = false);
+	void DisableDetachedModule(ActiveDriverModule entry, const char* reason, bool markClean);
+	void StopIpcServerForFeatureMask(uint32_t featureMask);
+	void ReconcileSidecarFeatureFlags();
 
 	// Per-feature IPC servers, allocated only when the matching enable_*.flag
 	// is detected at Init. Any may be null in feature-disabled builds; the
@@ -127,6 +130,17 @@ private:
 	// calibration overlay opens this segment to read driver-side pose
 	// snapshots and telemetry counters.
 	protocol::DriverPoseShmem shmem;
+
+	// Always-on perf stats segment: process totals plus per-module CPU and
+	// sidecar attribution, published at 1 Hz from RunFrame for the overlay's
+	// Modules-tab performance card. Created in Init regardless of feature
+	// flags so the overlay can tell "driver not running" from "modules idle".
+	protocol::PerfStatsShmem perfStatsShmem;
+	openvr_pair::common::moduleperf::Sampler perfSampler{1000};
+	// Wall clock of the last [perf] text-line batch; lines keep the old 10 s
+	// cadence while the shmem publish runs at the 1 Hz sample rate.
+	uint64_t lastPerfLogWallMs = 0;
+	uint64_t lastSidecarFlagCheckMs = 0;
 
 	// Bitmask of pairdriver::kFeature* flags detected at Init(). 0 means
 	// neither flag was present and the driver is running inert.
@@ -441,6 +455,9 @@ private:
 	// one atomic so the skeletal hook can cheaply tell whether the SteamVR
 	// dashboard is currently visible and whether that state is still fresh.
 	mutable std::atomic<uint64_t> dashboardHandTrackingPacked{0};
+	// Last decoded active state; feeds the staleness hysteresis so a refresh
+	// stream hovering near the stale boundary settles instead of flapping.
+	mutable std::atomic<bool> dashboardHandTrackingWasActive{false};
 
 	// Input-health config packed into an atomic uint64_t. Same pattern as
 	// fingerCfgPacked: single-writer (IPC thread on user UI input), many-

@@ -41,10 +41,12 @@ add_library(openvr_pair_common STATIC
 	ModuleRegistry.h
 	ModuleSafety.cpp
 	ModuleSafety.h
-	ProcessPerfLog.cpp
-	ProcessPerfLog.h
+	ModulePerf.cpp
+	ModulePerf.h
 	RuntimeHealthSummary.cpp
 	RuntimeHealthSummary.h
+	SidecarOwnerLease.cpp
+	SidecarOwnerLease.h
 	SteamVrControl.cpp
 	SteamVrControl.h
 	Win32Errors.cpp

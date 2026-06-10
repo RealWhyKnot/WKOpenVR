@@ -2,6 +2,7 @@
 #include "HostSupervisorBase.h"
 
 #include "DiagnosticsLog.h"
+#include "ModulePerf.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cwchar>
 #include <cstring>
 #include <exception>
 #include <utility>
@@ -43,6 +45,29 @@ std::string LowerAscii(const wchar_t* w)
 			out.push_back(ch);
 		}
 	}
+	return out;
+}
+
+std::wstring WidenUtf8(const std::string& value)
+{
+	if (value.empty()) return {};
+	int needed = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), nullptr, 0);
+	if (needed <= 0) return {};
+	std::wstring out(static_cast<size_t>(needed), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), out.data(), needed);
+	return out;
+}
+
+std::wstring QuoteArg(const std::wstring& value)
+{
+	std::wstring out = L"\"";
+	for (wchar_t ch : value) {
+		if (ch == L'"')
+			out += L"\\\"";
+		else
+			out.push_back(ch);
+	}
+	out += L"\"";
 	return out;
 }
 
@@ -93,6 +118,8 @@ bool HostSupervisorBase::Start()
 		consecutive_fast_exits_ = 0;
 		attached_to_existing_ = false;
 	}
+	EnsureOwnerLease();
+	HeartbeatOwnerLease();
 	bool initial_spawned = Spawn();
 	if (!initial_spawned) {
 		Log("[host-supervisor] initial spawn failed; monitor will retry");
@@ -119,7 +146,10 @@ bool HostSupervisorBase::Start()
 void HostSupervisorBase::Stop()
 {
 	stop_requested_.store(true, std::memory_order_release);
+	MarkOwnerLeaseShuttingDown();
+	RequestGracefulShutdown();
 	Kill();
+	MarkOwnerLeaseDisabled();
 	if (monitor_thread_.joinable()) monitor_thread_.join();
 	std::lock_guard<std::mutex> lk(process_mutex_);
 	halted_ = false;
@@ -135,8 +165,11 @@ void HostSupervisorBase::Restart()
 		consecutive_fast_exits_ = 0;
 	}
 	OnHostExited();
+	MarkOwnerLeaseShuttingDown();
+	RequestGracefulShutdown();
 	Kill();
 	if (!stop_requested_.load(std::memory_order_acquire)) {
+		HeartbeatOwnerLease();
 		Spawn();
 	}
 }
@@ -179,6 +212,66 @@ void HostSupervisorBase::Log(const char* fmt, ...)
 void HostSupervisorBase::BuildCommandLine(std::wstring& /*commandLine*/, const std::wstring& /*exe_path*/) const
 {
 	// Default: nothing appended after argv[0].
+}
+
+bool HostSupervisorBase::EnsureOwnerLease()
+{
+	const auto ownerModule = SidecarOwnerModuleId();
+	if (!ownerModule) return false;
+
+	std::lock_guard<std::mutex> lk(owner_lease_mutex_);
+	if (!owner_lease_) {
+		owner_lease_ = std::make_unique<sidecar_owner::LeaseOwner>();
+	}
+	if (owner_lease_->IsOpen()) return true;
+	if (!owner_lease_->Create(*ownerModule)) {
+		Log("[host-supervisor] failed to create sidecar owner lease for module=%s", modules::Slug(*ownerModule));
+		return false;
+	}
+	Log("[host-supervisor] sidecar owner lease created module=%s name=%s nonce=0x%016llX", modules::Slug(*ownerModule),
+	    owner_lease_->Name().c_str(), static_cast<unsigned long long>(owner_lease_->Nonce()));
+	return true;
+}
+
+void HostSupervisorBase::HeartbeatOwnerLease(sidecar_owner::LeaseState state)
+{
+	if (state == sidecar_owner::LeaseState::Alive && stop_requested_.load(std::memory_order_acquire)) {
+		return;
+	}
+	std::lock_guard<std::mutex> lk(owner_lease_mutex_);
+	if (owner_lease_ && owner_lease_->IsOpen()) {
+		owner_lease_->Heartbeat(state);
+	}
+}
+
+void HostSupervisorBase::MarkOwnerLeaseShuttingDown()
+{
+	std::lock_guard<std::mutex> lk(owner_lease_mutex_);
+	if (owner_lease_ && owner_lease_->IsOpen()) {
+		owner_lease_->MarkShuttingDown();
+	}
+}
+
+void HostSupervisorBase::MarkOwnerLeaseDisabled()
+{
+	std::lock_guard<std::mutex> lk(owner_lease_mutex_);
+	if (owner_lease_ && owner_lease_->IsOpen()) {
+		owner_lease_->MarkDisabled();
+	}
+}
+
+void HostSupervisorBase::AppendOwnerLivenessArgs(std::wstring& commandLine) const
+{
+	std::lock_guard<std::mutex> lk(owner_lease_mutex_);
+	if (!owner_lease_ || !owner_lease_->IsOpen()) return;
+
+	wchar_t nonce[32] = {};
+	std::swprintf(nonce, sizeof(nonce) / sizeof(nonce[0]), L"%016llX",
+	              static_cast<unsigned long long>(owner_lease_->Nonce()));
+	commandLine += L" --owner-liveness ";
+	commandLine += QuoteArg(WidenUtf8(owner_lease_->Name()));
+	commandLine += L" --owner-liveness-nonce ";
+	commandLine += nonce;
 }
 
 bool HostSupervisorBase::CanConnectToHost(int timeout_ms) const
@@ -284,6 +377,7 @@ bool HostSupervisorBase::Spawn()
 	bool already_running = false;
 	bool attached = false;
 	bool spawned = false;
+	bool rejected_unleased_existing = false;
 
 	{
 		std::lock_guard<std::mutex> lk(process_mutex_);
@@ -299,11 +393,17 @@ bool HostSupervisorBase::Spawn()
 			// owns the mutex but hasn't bound the pipe yet (200 ms window),
 			// and also rejects a stale pipe whose owning process died
 			// without releasing its named-pipe instance.
-			Log("[host-supervisor] existing host responsive on pipe; "
-			    "attaching without spawn");
-			attached_to_existing_ = true;
-			running_.store(true, std::memory_order_release);
-			attached = true;
+			if (SidecarOwnerModuleId()) {
+				Log("[host-supervisor] existing host responsive but not owned by this supervisor; requesting shutdown");
+				rejected_unleased_existing = true;
+			}
+			else {
+				Log("[host-supervisor] existing host responsive on pipe; "
+				    "attaching without spawn");
+				attached_to_existing_ = true;
+				running_.store(true, std::memory_order_release);
+				attached = true;
+			}
 		}
 		else {
 			int spawn_attempt = consecutive_fast_exits_;
@@ -316,6 +416,7 @@ bool HostSupervisorBase::Spawn()
 				if (!wpath.empty() && wpath.back() == L'\0') wpath.pop_back();
 
 				std::wstring commandLine = L"\"" + wpath + L"\"";
+				AppendOwnerLivenessArgs(commandLine);
 				BuildCommandLine(commandLine, wpath);
 
 				STARTUPINFOW si{};
@@ -341,6 +442,10 @@ bool HostSupervisorBase::Spawn()
 					attached_to_existing_ = false;
 					running_.store(true, std::memory_order_release);
 
+					if (const auto perfId = PerfModuleId()) {
+						moduleperf::Registry::Instance().RegisterChildProcess(*perfId, pi.hProcess, "feature-host");
+					}
+
 					if (job_handle_) {
 						if (!AssignProcessToJobObject(job_handle_, pi.hProcess)) {
 							Log("[host-supervisor] AssignProcessToJobObject failed "
@@ -358,6 +463,10 @@ bool HostSupervisorBase::Spawn()
 	} // process_mutex_ released
 
 	if (already_running) return true;
+	if (rejected_unleased_existing) {
+		RequestGracefulShutdown();
+		return false;
+	}
 	if (!attached && !spawned) return false;
 
 	// Subclass flushes any queued control-pipe message OUTSIDE the process
@@ -391,6 +500,9 @@ void HostSupervisorBase::Kill()
 			Log("[host-supervisor] Kill: WaitForSingleObject failed err=%lu", GetLastError());
 		}
 	}
+	if (const auto perfId = PerfModuleId()) {
+		moduleperf::Registry::Instance().UnregisterChildProcess(*perfId, GetProcessId(process_handle_));
+	}
 	CloseHandle(process_handle_);
 	process_handle_ = INVALID_HANDLE_VALUE;
 	attached_to_existing_ = false;
@@ -399,10 +511,16 @@ void HostSupervisorBase::Kill()
 
 void HostSupervisorBase::MonitorLoop()
 {
+	std::optional<moduleperf::ScopedThreadRegistration> perfRegistration;
+	if (const auto perfId = PerfModuleId()) {
+		perfRegistration.emplace(*perfId, "host-supervisor");
+	}
+
 	int backoff_ms = kBackoffStartMs;
 	auto sleep_or_stop = [this](int delay_ms) {
 		int remaining_ms = delay_ms;
 		while (remaining_ms > 0 && !stop_requested_.load(std::memory_order_acquire)) {
+			HeartbeatOwnerLease();
 			int chunk_ms = std::min(remaining_ms, 100);
 			std::this_thread::sleep_for(std::chrono::milliseconds(chunk_ms));
 			remaining_ms -= chunk_ms;
@@ -411,6 +529,7 @@ void HostSupervisorBase::MonitorLoop()
 	};
 
 	while (!stop_requested_.load(std::memory_order_acquire)) {
+		HeartbeatOwnerLease();
 		HANDLE cur_handle = INVALID_HANDLE_VALUE;
 		bool is_halted = false;
 		{
@@ -481,6 +600,9 @@ void HostSupervisorBase::MonitorLoop()
 				std::lock_guard<std::mutex> lk(process_mutex_);
 				if (process_handle_ != INVALID_HANDLE_VALUE) {
 					GetExitCodeProcess(process_handle_, &code);
+					if (const auto perfId = PerfModuleId()) {
+						moduleperf::Registry::Instance().UnregisterChildProcess(*perfId, GetProcessId(process_handle_));
+					}
 					CloseHandle(process_handle_);
 					process_handle_ = INVALID_HANDLE_VALUE;
 					handle_was_valid = true;

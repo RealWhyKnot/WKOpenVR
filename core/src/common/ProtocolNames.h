@@ -66,3 +66,9 @@
 // completion path; kept stable for a future out-of-process backend.
 #define OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_IN_SHMEM_NAME "WKOpenVRPhantomInferenceInV1"
 #define OPENVR_PAIRDRIVER_PHANTOM_INFERENCE_OUT_SHMEM_NAME "WKOpenVRPhantomInferenceOutV1"
+
+// Performance stats shmem. The only always-on segment: created in driver
+// Init regardless of which feature flags are present, so the overlay's
+// Modules-tab performance card can tell "driver not running" apart from
+// "modules idle". Driver publishes at 1 Hz; overlay reads at 1 Hz.
+#define OPENVR_PAIRDRIVER_PERFSTATS_SHMEM_NAME "WKOpenVRPerfStatsV1"

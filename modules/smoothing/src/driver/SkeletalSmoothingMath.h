@@ -8,6 +8,22 @@ namespace skeletal::math {
 
 constexpr uint32_t kFingerBoneCount = 31;
 constexpr int kFingersPerHand = 5;
+constexpr int kMotionRangeCount = 2;
+
+// WithController and WithoutController submissions interleave on the same
+// component handle. A frame observer that treats them as one stream reads
+// the pose gap between the two ranges as per-frame motion, so observer
+// state must be indexed per range.
+inline int MotionRangeIndex(int motionRange)
+{
+	return motionRange == static_cast<int>(vr::VRSkeletalMotionRange_WithoutController) ? 1 : 0;
+}
+
+inline double ComputeRateHz(uint64_t count, double elapsedSec)
+{
+	if (elapsedSec <= 0.0) return 0.0;
+	return static_cast<double>(count) / elapsedSec;
+}
 
 struct FingerFrameState
 {

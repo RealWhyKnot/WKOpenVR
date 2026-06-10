@@ -17,6 +17,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(ui_core_tests
 	test_dashboard_input_safe_overlay_logic.cpp
 	test_bug_report.cpp
+	test_perf_history.cpp
 	test_ui_core.cpp
 	test_ui_responsive_logic.cpp)
 

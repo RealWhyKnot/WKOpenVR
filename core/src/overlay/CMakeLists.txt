@@ -101,6 +101,9 @@ add_executable(OpenVRPairOverlay WIN32
 	Migration.h
 	ModuleToggleUi.cpp
 	ModuleToggleUi.h
+	PerfStatsHub.cpp
+	PerfStatsHub.h
+	PerfHistory.h
 	SafeModeRecovery.cpp
 	SafeModeRecovery.h
 	ShellContext.cpp

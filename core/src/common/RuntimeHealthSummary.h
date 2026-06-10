@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ProcessPerfLog.h"
+#include "ModulePerf.h"
 
 #include <cstdint>
 #include <string>
