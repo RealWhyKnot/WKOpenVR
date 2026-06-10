@@ -153,16 +153,25 @@ ReplayQualitySnapshot SnapshotFromReport(const CalibrationQualityReport& report)
 	out.rmsMm = report.residuals.rmsM * 1000.0;
 	out.p95Mm = report.residuals.p95M * 1000.0;
 	out.holdoutRmsMm = report.holdoutResiduals.rmsM * 1000.0;
+	out.holdoutP90Mm = report.holdoutResiduals.p90M * 1000.0;
+	out.holdoutP95Mm = report.holdoutResiduals.p95M * 1000.0;
 	out.targetSpanM = report.targetSpanM;
 	out.rotationSpanDeg = report.rotationSpanDeg;
+	out.validRotationPairCount = report.validRotationPairCount;
+	out.translationRank = report.translationRank;
+	out.translationConditionRatio = report.translationConditionRatio;
+	out.dynamicLimitMm = report.dynamicLimitM * 1000.0;
+	out.outlierFraction = report.residuals.outlierFraction;
 	out.maxPoseAgeMs = report.maxPoseAgeMs;
 	out.maxPoseGapMs = report.maxPoseGapMs;
 	out.maxLinearSpeedMps = report.maxLinearSpeedMps;
 	out.maxAngularSpeedDegps = report.maxAngularSpeedDegps;
+	out.legacyRmsPass = report.legacyRmsPass;
 	out.strictSamplesPass = report.strictSamplesPass;
 	out.geometryPass = report.geometryPass;
 	out.robustResidualPass = report.robustResidualPass;
 	out.holdoutPass = report.holdoutPass;
+	out.trackingHealthPass = report.trackingHealthPass;
 	out.novaDeltaPairsPass = report.novaDeltaPairsPass;
 	return out;
 }

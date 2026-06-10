@@ -3,14 +3,19 @@
 #include "MotionRecording.h"
 #include "Win32Text.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cmath>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace replay = spacecal::replay;
@@ -22,6 +27,235 @@ replay::LogFileEntry Entry(uint64_t sizeBytes)
 	replay::LogFileEntry entry;
 	entry.sizeBytes = sizeBytes;
 	return entry;
+}
+
+std::string TrimAscii(std::string value)
+{
+	while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+		value.pop_back();
+	}
+	std::size_t first = 0;
+	while (first < value.size() && std::isspace(static_cast<unsigned char>(value[first]))) {
+		++first;
+	}
+	if (first > 0) value.erase(0, first);
+	return value;
+}
+
+std::vector<std::string> SplitReplayEnvList(const std::string& raw)
+{
+	std::vector<std::string> out;
+	std::string cur;
+	for (char c : raw) {
+		if (c == ';' || c == '|') {
+			cur = TrimAscii(std::move(cur));
+			if (!cur.empty()) out.push_back(cur);
+			cur.clear();
+		}
+		else {
+			cur.push_back(c);
+		}
+	}
+	cur = TrimAscii(std::move(cur));
+	if (!cur.empty()) out.push_back(cur);
+	return out;
+}
+
+bool EnvFlag(const char* name, bool fallback)
+{
+	const char* raw = std::getenv(name);
+	if (!raw) return fallback;
+	std::string value = TrimAscii(raw);
+	for (char& c : value) {
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	if (value == "1" || value == "true" || value == "yes" || value == "on") return true;
+	if (value == "0" || value == "false" || value == "no" || value == "off") return false;
+	return fallback;
+}
+
+std::size_t EnvSize(const char* name, std::size_t fallback)
+{
+	const char* raw = std::getenv(name);
+	if (!raw) return fallback;
+	char* end = nullptr;
+	const unsigned long long parsed = std::strtoull(raw, &end, 10);
+	if (end == raw) return fallback;
+	return static_cast<std::size_t>(parsed);
+}
+
+std::vector<std::size_t> ReplaySampleWindows()
+{
+	std::vector<std::size_t> out;
+	if (const char* raw = std::getenv("WKOPENVR_REPLAY_SAMPLE_WINDOWS")) {
+		for (const auto& item : SplitReplayEnvList(raw)) {
+			char* end = nullptr;
+			const unsigned long long parsed = std::strtoull(item.c_str(), &end, 10);
+			if (end != item.c_str()) out.push_back(static_cast<std::size_t>(parsed));
+		}
+	}
+	if (out.empty()) {
+		const replay::ReplayOptions defaults;
+		out.push_back(EnvSize("WKOPENVR_REPLAY_MAX_SAMPLES", defaults.maxContinuousSamples));
+	}
+	return out;
+}
+
+struct ReplayInput
+{
+	std::string name;
+	std::string path;
+};
+
+std::vector<ReplayInput> ReplayInputs()
+{
+	std::vector<ReplayInput> out;
+	if (const char* raw = std::getenv("WKOPENVR_REPLAY_PATHS")) {
+		for (const auto& path : SplitReplayEnvList(raw)) {
+			ReplayInput input;
+			input.path = path;
+			input.name = std::filesystem::path(path).filename().string();
+			if (input.name.empty()) input.name = path;
+			out.push_back(std::move(input));
+		}
+		return out;
+	}
+
+	for (const auto& file : replay::ListRecordings()) {
+		ReplayInput input;
+		input.name = file.name;
+		input.path = openvr_pair::common::WideToUtf8(file.fullPath);
+		out.push_back(std::move(input));
+	}
+	return out;
+}
+
+void AddFinite(std::vector<double>& values, double value)
+{
+	if (std::isfinite(value)) values.push_back(value);
+}
+
+double Percentile(std::vector<double> values, double p)
+{
+	if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
+	std::sort(values.begin(), values.end());
+	const double pos = p * static_cast<double>(values.size() - 1);
+	const std::size_t lo = static_cast<std::size_t>(std::floor(pos));
+	const std::size_t hi = std::min<std::size_t>(lo + 1, values.size() - 1);
+	const double frac = pos - static_cast<double>(lo);
+	return values[lo] * (1.0 - frac) + values[hi] * frac;
+}
+
+double Percent(int count, int total)
+{
+	return total > 0 ? (100.0 * static_cast<double>(count) / static_cast<double>(total)) : 0.0;
+}
+
+struct QualityTraceSummary
+{
+	int reports = 0;
+	int currentAccept = 0;
+	int legacyPass = 0;
+	int geometryPass = 0;
+	int robustPass = 0;
+	int holdoutPass = 0;
+	int trackingPass = 0;
+	int coreNoHoldoutAccept = 0;
+	int softHoldout50Accept = 0;
+	int softHoldout75Accept = 0;
+	int novaRequiredAccept = 0;
+	int lowResidualGeometryRescue = 0;
+	std::map<std::string, int> reasons;
+	std::vector<double> rmsMm;
+	std::vector<double> p95Mm;
+	std::vector<double> holdoutRmsMm;
+	std::vector<double> holdoutP90Mm;
+	std::vector<double> dynamicLimitMm;
+	std::vector<double> targetSpanCm;
+	std::vector<double> rotationSpanDeg;
+	std::vector<double> validRotationPairs;
+	std::vector<double> translationCondition;
+};
+
+QualityTraceSummary SummarizeQualityTrace(const replay::ReplayResult& result)
+{
+	QualityTraceSummary summary;
+	for (const auto& q : result.qualityTrace) {
+		++summary.reports;
+		if (q.shadowWouldAccept) ++summary.currentAccept;
+		if (q.legacyRmsPass) ++summary.legacyPass;
+		if (q.geometryPass) ++summary.geometryPass;
+		if (q.robustResidualPass) ++summary.robustPass;
+		if (q.holdoutPass) ++summary.holdoutPass;
+		if (q.trackingHealthPass) ++summary.trackingPass;
+		if (!q.shadowWouldAccept) ++summary.reasons[q.shadowRejectReason];
+
+		const bool coreNoHoldout = q.legacyRmsPass && q.geometryPass && q.robustResidualPass && q.trackingHealthPass;
+		const bool softHoldout50 =
+		    coreNoHoldout && (q.holdoutPass || (q.holdoutP90Mm <= 50.0 && q.holdoutRmsMm <= 100.0));
+		const bool softHoldout75 =
+		    coreNoHoldout && (q.holdoutPass || (q.holdoutP90Mm <= 75.0 && q.holdoutRmsMm <= 100.0));
+		const bool lowResidualGeometryRescue = q.legacyRmsPass && !q.geometryPass && q.robustResidualPass &&
+		                                       q.holdoutPass && q.trackingHealthPass && q.rmsMm <= 5.0 &&
+		                                       q.p95Mm <= 10.0 && q.targetSpanM >= 0.05 && q.rotationSpanDeg >= 10.0;
+
+		if (coreNoHoldout) ++summary.coreNoHoldoutAccept;
+		if (softHoldout50) ++summary.softHoldout50Accept;
+		if (softHoldout75) ++summary.softHoldout75Accept;
+		if (q.shadowWouldAccept && q.novaDeltaPairsPass) ++summary.novaRequiredAccept;
+		if (lowResidualGeometryRescue) ++summary.lowResidualGeometryRescue;
+
+		AddFinite(summary.rmsMm, q.rmsMm);
+		AddFinite(summary.p95Mm, q.p95Mm);
+		AddFinite(summary.holdoutRmsMm, q.holdoutRmsMm);
+		AddFinite(summary.holdoutP90Mm, q.holdoutP90Mm);
+		AddFinite(summary.dynamicLimitMm, q.dynamicLimitMm);
+		AddFinite(summary.targetSpanCm, q.targetSpanM * 100.0);
+		AddFinite(summary.rotationSpanDeg, q.rotationSpanDeg);
+		AddFinite(summary.validRotationPairs, static_cast<double>(q.validRotationPairCount));
+		AddFinite(summary.translationCondition, q.translationConditionRatio);
+	}
+	return summary;
+}
+
+void PrintQualitySummary(const std::string& name, std::size_t window, const replay::ReplayResult& result)
+{
+	const auto summary = SummarizeQualityTrace(result);
+	std::cout << "[replay-quality] " << name << " window=" << window << " reports=" << summary.reports
+	          << " current=" << summary.currentAccept << "(" << Percent(summary.currentAccept, summary.reports) << "%)"
+	          << " legacy=" << summary.legacyPass << "(" << Percent(summary.legacyPass, summary.reports) << "%)"
+	          << " geometry=" << summary.geometryPass << "(" << Percent(summary.geometryPass, summary.reports) << "%)"
+	          << " robust=" << summary.robustPass << "(" << Percent(summary.robustPass, summary.reports) << "%)"
+	          << " holdout=" << summary.holdoutPass << "(" << Percent(summary.holdoutPass, summary.reports) << "%)"
+	          << " tracking=" << summary.trackingPass << "(" << Percent(summary.trackingPass, summary.reports) << "%)"
+	          << " core_no_holdout=" << summary.coreNoHoldoutAccept << "("
+	          << Percent(summary.coreNoHoldoutAccept, summary.reports) << "%)"
+	          << " soft_holdout50=" << summary.softHoldout50Accept << "("
+	          << Percent(summary.softHoldout50Accept, summary.reports) << "%)"
+	          << " soft_holdout75=" << summary.softHoldout75Accept << "("
+	          << Percent(summary.softHoldout75Accept, summary.reports) << "%)"
+	          << " nova_required=" << summary.novaRequiredAccept << "("
+	          << Percent(summary.novaRequiredAccept, summary.reports) << "%)"
+	          << " low_residual_geometry_rescue=" << summary.lowResidualGeometryRescue << "("
+	          << Percent(summary.lowResidualGeometryRescue, summary.reports) << "%)"
+	          << "\n";
+
+	std::cout << "[replay-quantiles] " << name << " window=" << window << " rms_p50=" << Percentile(summary.rmsMm, 0.50)
+	          << " rms_p95=" << Percentile(summary.rmsMm, 0.95) << " p95_p50=" << Percentile(summary.p95Mm, 0.50)
+	          << " p95_p95=" << Percentile(summary.p95Mm, 0.95)
+	          << " holdout_rms_p50=" << Percentile(summary.holdoutRmsMm, 0.50)
+	          << " holdout_p90_p50=" << Percentile(summary.holdoutP90Mm, 0.50)
+	          << " dynamic_limit_p50=" << Percentile(summary.dynamicLimitMm, 0.50)
+	          << " target_span_cm_p50=" << Percentile(summary.targetSpanCm, 0.50)
+	          << " rot_span_deg_p50=" << Percentile(summary.rotationSpanDeg, 0.50)
+	          << " rot_pairs_p50=" << Percentile(summary.validRotationPairs, 0.50)
+	          << " trans_cond_p50=" << Percentile(summary.translationCondition, 0.50) << "\n";
+
+	std::cout << "[replay-reasons] " << name << " window=" << window;
+	for (const auto& reason : summary.reasons) {
+		std::cout << " " << reason.first << "=" << reason.second;
+	}
+	std::cout << "\n";
 }
 
 } // namespace
@@ -190,40 +424,51 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 		GTEST_SKIP() << "Set WKOPENVR_REPLAY_RECORDINGS=1 to replay retained local recordings.";
 	}
 
-	const auto files = replay::ListRecordings();
-	if (files.empty()) {
+	const auto inputs = ReplayInputs();
+	if (inputs.empty()) {
 		GTEST_SKIP() << "No retained spacecal_log recordings found.";
 	}
 
-	replay::ReplayOptions options;
-	options.continuous = true;
+	replay::ReplayOptions baseOptions;
+	baseOptions.continuous = true;
+	baseOptions.qualityReportInterval = EnvSize("WKOPENVR_REPLAY_QUALITY_INTERVAL", baseOptions.qualityReportInterval);
+	baseOptions.includeHoldoutQuality = EnvFlag("WKOPENVR_REPLAY_HOLDOUT", baseOptions.includeHoldoutQuality);
+	const auto sampleWindows = ReplaySampleWindows();
 
 	std::size_t replayed = 0;
 	std::size_t skippedEmpty = 0;
-	for (const auto& file : files) {
-		SCOPED_TRACE(file.name);
-		const std::string path = openvr_pair::common::WideToUtf8(file.fullPath);
-		const auto recording = replay::LoadRecording(path);
+	for (const auto& input : inputs) {
+		SCOPED_TRACE(input.name);
+		const auto recording = replay::LoadRecording(input.path);
 		ASSERT_TRUE(recording.error.empty()) << recording.error;
 		if (recording.rows.empty()) {
 			++skippedEmpty;
-			std::cout << "[replay] " << file.name << " skipped=no_replayable_rows\n";
+			std::cout << "[replay] " << input.name << " skipped=no_replayable_rows\n";
 			continue;
 		}
 
-		const auto result = replay::RunReplay(recording, options);
-		EXPECT_TRUE(result.succeeded) << result.error;
-		EXPECT_GT(result.rowsReplayed, 0);
-		std::cout << "[replay] " << file.name << " rows=" << result.rowsReplayed << " accepts=" << result.accepts
-		          << " rejects=" << result.rejects << " final_error_mm=" << result.finalErrorMm
-		          << " sample_rows_accepted=" << result.sampleRowsAccepted
-		          << " sample_rows_rejected=" << result.sampleRowsRejected
-		          << " strict_unhealthy=" << result.sampleRowsStrictUnhealthy << " stale=" << result.sampleRowsStale
-		          << " unchanged=" << result.sampleRowsUnchanged << " high_motion=" << result.sampleRowsHighMotion
-		          << " quality_reports=" << result.qualityReports << " shadow_accepts=" << result.shadowWouldAccept
-		          << " shadow_rejects=" << result.shadowWouldReject
-		          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
-		++replayed;
+		for (std::size_t sampleWindow : sampleWindows) {
+			replay::ReplayOptions options = baseOptions;
+			options.maxContinuousSamples = sampleWindow;
+
+			const auto result = replay::RunReplay(recording, options);
+			EXPECT_TRUE(result.succeeded) << result.error;
+			EXPECT_GT(result.rowsReplayed, 0);
+			std::cout << "[replay] " << input.name << " format=v" << recording.formatVersion
+			          << " window=" << sampleWindow << " holdout=" << (options.includeHoldoutQuality ? 1 : 0)
+			          << " quality_interval=" << options.qualityReportInterval << " rows=" << result.rowsReplayed
+			          << " accepts=" << result.accepts << " rejects=" << result.rejects
+			          << " final_error_mm=" << result.finalErrorMm
+			          << " sample_rows_accepted=" << result.sampleRowsAccepted
+			          << " sample_rows_rejected=" << result.sampleRowsRejected
+			          << " strict_unhealthy=" << result.sampleRowsStrictUnhealthy << " stale=" << result.sampleRowsStale
+			          << " unchanged=" << result.sampleRowsUnchanged << " high_motion=" << result.sampleRowsHighMotion
+			          << " quality_reports=" << result.qualityReports << " shadow_accepts=" << result.shadowWouldAccept
+			          << " shadow_rejects=" << result.shadowWouldReject
+			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
+			PrintQualitySummary(input.name, sampleWindow, result);
+			++replayed;
+		}
 	}
 
 	EXPECT_GT(replayed, 0u) << "No retained recordings contained replayable rows; skipped " << skippedEmpty

@@ -102,16 +102,25 @@ struct ReplayQualitySnapshot
 	double rmsMm = 0.0;
 	double p95Mm = 0.0;
 	double holdoutRmsMm = 0.0;
+	double holdoutP90Mm = 0.0;
+	double holdoutP95Mm = 0.0;
 	double targetSpanM = 0.0;
 	double rotationSpanDeg = 0.0;
+	int validRotationPairCount = 0;
+	int translationRank = 0;
+	double translationConditionRatio = 0.0;
+	double dynamicLimitMm = 0.0;
+	double outlierFraction = 0.0;
 	double maxPoseAgeMs = 0.0;
 	double maxPoseGapMs = 0.0;
 	double maxLinearSpeedMps = 0.0;
 	double maxAngularSpeedDegps = 0.0;
+	bool legacyRmsPass = false;
 	bool strictSamplesPass = false;
 	bool geometryPass = false;
 	bool robustResidualPass = false;
 	bool holdoutPass = false;
+	bool trackingHealthPass = false;
 	bool novaDeltaPairsPass = false;
 };
 
