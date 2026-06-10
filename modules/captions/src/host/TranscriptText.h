@@ -424,6 +424,23 @@ inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText,
 	                                             decodeRatio) != TranscriptSuppressionReason::None;
 }
 
+inline bool TranscriptShouldUsePromptContextForDecode(bool alwaysOn, long long audioMs, long long evidenceMs,
+                                                      float maxVadProbability, float speechFrameRatio,
+                                                      float acousticArtifactRisk, int promptQuarantineSegments)
+{
+	if (!alwaysOn) return true;
+	if (promptQuarantineSegments > 0) return false;
+	if (audioMs > 0 && audioMs < 700) return false;
+	if (evidenceMs > 0 && evidenceMs < 500) return false;
+	if (acousticArtifactRisk >= 0.55f) return false;
+	if (speechFrameRatio >= 0.0f && speechFrameRatio < 0.25f && evidenceMs > 0 && evidenceMs < 1000) return false;
+
+	const bool strong_short_segment = maxVadProbability >= 0.70f || (speechFrameRatio >= 0.50f && evidenceMs >= 900);
+	if (audioMs > 0 && audioMs < 1200 && !strong_short_segment) return false;
+
+	return true;
+}
+
 inline bool TranscriptShouldUpdatePromptContext(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
                                                 float maxFramePeak, float speechPeakThreshold,
                                                 float noSpeechProbability, float averageTokenLogProbability,

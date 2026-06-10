@@ -1586,6 +1586,7 @@ try {
 				std::string transcript;
 				WhisperTranscriptResult whisper_result;
 				bool prompt_context_enabled = false;
+				bool prompt_context_used = false;
 				size_t prompt_chars = 0;
 				if (whisper.IsLoaded()) {
 					prompt_context_enabled = cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext);
@@ -1593,8 +1594,13 @@ try {
 						whisper_prompt.Clear();
 					}
 					const bool prompt_context_allowed =
-					    prompt_context_enabled && prompt_context_quarantine_segments <= 0;
+					    prompt_context_enabled &&
+					    captions::TranscriptShouldUsePromptContextForDecode(
+					        always_on, segment_audio_ms, segment_evidence_ms, segment_max_vad_probability,
+					        segment_speech_frame_ratio, segment_acoustic_artifact_risk,
+					        prompt_context_quarantine_segments);
 					const std::string prompt_text = prompt_context_allowed ? whisper_prompt.Text() : std::string();
+					prompt_context_used = !prompt_text.empty();
 					prompt_chars = prompt_text.size();
 					whisper.SetInitialPrompt(prompt_text);
 					WhisperDecodeOptions decode_options;
@@ -1654,7 +1660,7 @@ try {
 				       "acoustic_risk=%.3f speech_band=%.3f zcr=%.3f clipping=%.3f text=%s",
 				       captions::CaptionsSpeechModelName(cfg.speech_model), reported_whisper_model_path.c_str(),
 				       transcribe_reason, detected_lang.c_str(), segment_audio_ms, segment_evidence_ms,
-				       whisper_result.decode_ms, decode_ratio, prompt_context_enabled ? 1 : 0, prompt_chars,
+				       whisper_result.decode_ms, decode_ratio, prompt_context_used ? 1 : 0, prompt_chars,
 				       prompt_context_quarantine_segments, whisper_result.max_no_speech_probability,
 				       whisper_result.average_token_log_probability, whisper_result.token_count,
 				       whisper_result.segment_count, segment_max_frame_peak, segment_speech_peak_threshold,

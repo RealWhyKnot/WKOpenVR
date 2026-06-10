@@ -926,6 +926,18 @@ TEST(TranscriptTextTest, AcousticRiskOnlyHardensWeakShortFiller)
 	EXPECT_EQ(strong_result.reason, captions::TranscriptSuppressionReason::None);
 }
 
+TEST(TranscriptTextTest, PromptContextDecodeDisabledForRiskyAlwaysOnSegments)
+{
+	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 420, 320, 0.20f, 0.20f, 0.10f, 0));
+	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 900, 900, 0.20f, 0.20f, 0.10f, 0));
+	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 1400, 1200, 0.70f, 0.55f, 0.60f, 0));
+	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 1800, 1500, 0.80f, 0.60f, 0.10f, 2));
+
+	EXPECT_TRUE(captions::TranscriptShouldUsePromptContextForDecode(false, 300, 300, 0.0f, 0.0f, 1.0f, 3));
+	EXPECT_TRUE(captions::TranscriptShouldUsePromptContextForDecode(true, 900, 900, 0.78f, 0.30f, 0.10f, 0));
+	EXPECT_TRUE(captions::TranscriptShouldUsePromptContextForDecode(true, 1500, 900, 0.40f, 0.50f, 0.10f, 0));
+}
+
 TEST(TranscriptTextTest, PromptContextRequiresAcceptedHighConfidenceText)
 {
 	const float threshold = 0.04f;
