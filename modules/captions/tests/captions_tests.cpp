@@ -557,6 +557,23 @@ TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
 	                                                    rms_threshold));
 }
 
+TEST(EnergySpeechGateTest, SegmentShapeRejectsSparseWeakEvidence)
+{
+	const float threshold = 0.04f;
+	const float rms_threshold = 0.014f;
+
+	EXPECT_FALSE(captions::SpeechSegmentHasUsableShape(10, 1, 3, captions::AlwaysOnWeakEvidenceSamples() - 1, true,
+	                                                   0.30f, 0.050f, threshold, 0.015f, rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentHasUsableShape(10, 2, 5, captions::AlwaysOnWeakEvidenceSamples() + 1, true,
+	                                                  0.30f, 0.050f, threshold, 0.015f, rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentHasUsableShape(10, 1, 1, captions::AlwaysOnShortSpeechSamples(), true, 0.72f,
+	                                                  0.020f, threshold, 0.004f, rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentHasUsableShape(10, 1, 1, captions::AlwaysOnShortSpeechSamples(), true, 0.30f,
+	                                                  0.100f, threshold, 0.030f, rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentHasUsableShape(0, 0, 0, captions::AlwaysOnShortSpeechSamples(), false, 0.0f,
+	                                                  0.0f, threshold, 0.0f, rms_threshold));
+}
+
 TEST(EnergySpeechGateTest, AdaptiveGateOpensQuietSpeechInQuietRoom)
 {
 	captions::AdaptiveSpeechGate gate;
@@ -795,6 +812,45 @@ TEST(TranscriptTextTest, SuppressesShortWeakAndRepetitiveDecodeOutput)
 	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("hello there", true, 0.10f, 0.045f, threshold, 0.0f,
 	                                                          -0.20f, 2, 0.012f, rms_threshold, 900, 2.00),
 	          captions::TranscriptSuppressionReason::SlowShortDecode);
+}
+
+TEST(TranscriptTextTest, RiskScoreCombinesSegmentHistoryAndPassCredits)
+{
+	captions::TranscriptRiskInput repeated_filler;
+	repeated_filler.cleaned_text = "you";
+	repeated_filler.always_on = true;
+	repeated_filler.max_vad_probability = 0.20f;
+	repeated_filler.max_frame_peak = 0.018f;
+	repeated_filler.speech_peak_threshold = 0.040f;
+	repeated_filler.max_frame_rms = 0.004f;
+	repeated_filler.speech_rms_threshold = 0.014f;
+	repeated_filler.evidence_ms = 320;
+	repeated_filler.token_count = 1;
+	repeated_filler.prompt_chars = 180;
+	repeated_filler.recent_suppression_count = 2;
+	repeated_filler.recent_same_text_count = 3;
+	repeated_filler.speech_frame_ratio = 0.10f;
+
+	captions::TranscriptRiskResult repeated_result = captions::TranscriptRiskScore(repeated_filler);
+	EXPECT_TRUE(repeated_result.suppress);
+	EXPECT_GE(repeated_result.score, 5);
+	EXPECT_EQ(repeated_result.reason, captions::TranscriptSuppressionReason::CommonFiller);
+
+	captions::TranscriptRiskInput sustained_speech = repeated_filler;
+	sustained_speech.cleaned_text = "can you hear me clearly";
+	sustained_speech.max_vad_probability = 0.72f;
+	sustained_speech.max_frame_peak = 0.060f;
+	sustained_speech.max_frame_rms = 0.020f;
+	sustained_speech.evidence_ms = 1200;
+	sustained_speech.token_count = 5;
+	sustained_speech.prompt_chars = 0;
+	sustained_speech.recent_suppression_count = 0;
+	sustained_speech.recent_same_text_count = 1;
+	sustained_speech.speech_frame_ratio = 0.55f;
+
+	captions::TranscriptRiskResult speech_result = captions::TranscriptRiskScore(sustained_speech);
+	EXPECT_FALSE(speech_result.suppress);
+	EXPECT_EQ(speech_result.reason, captions::TranscriptSuppressionReason::None);
 }
 
 TEST(TranscriptTextTest, PromptContextRequiresAcceptedHighConfidenceText)

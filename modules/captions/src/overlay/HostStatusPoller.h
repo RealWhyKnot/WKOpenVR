@@ -73,6 +73,11 @@ struct HostStatusSnapshot
 	long long suppressed_repetitive = 0;
 	long long suppressed_low_confidence = 0;
 	long long suppressed_slow_short_decode = 0;
+	int last_segment_risk_score = 0;
+	std::string last_segment_risk_reason;
+	float last_segment_speech_frame_ratio = 0.0f;
+	float last_segment_possible_frame_ratio = 0.0f;
+	int prompt_context_quarantine_segments = 0;
 };
 
 // Polls %LocalAppDataLow%\WKOpenVR\captions\host_status.json.

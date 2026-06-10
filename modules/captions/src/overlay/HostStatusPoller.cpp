@@ -158,6 +158,13 @@ void HostStatusPoller::ReadFile()
 	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_low_confidence"));
 	s.suppressed_slow_short_decode =
 	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_slow_short_decode"));
+	s.last_segment_risk_score = openvr_pair::common::json::IntAt(root, "last_segment_risk_score");
+	s.last_segment_risk_reason = openvr_pair::common::json::StringAt(root, "last_segment_risk_reason");
+	s.last_segment_speech_frame_ratio =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_speech_frame_ratio"));
+	s.last_segment_possible_frame_ratio =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_possible_frame_ratio"));
+	s.prompt_context_quarantine_segments = openvr_pair::common::json::IntAt(root, "prompt_context_quarantine_segments");
 
 	snapshot_ = std::move(s);
 }

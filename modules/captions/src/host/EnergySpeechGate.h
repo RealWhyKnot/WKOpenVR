@@ -86,6 +86,35 @@ inline bool SpeechSegmentShouldTranscribe(size_t gatedSamples, bool alwaysOn, fl
 	return usableVadEvidence || sustainedEnergyEvidence;
 }
 
+inline float SpeechGateRatio(size_t numerator, size_t denominator)
+{
+	return denominator == 0 ? 0.0f : static_cast<float>(numerator) / static_cast<float>(denominator);
+}
+
+inline bool SpeechSegmentHasUsableShape(size_t totalFrames, size_t speechFrames, size_t possibleFrames,
+                                        size_t gatedSamples, bool alwaysOn, float maxVadProbability, float maxFramePeak,
+                                        float speechPeakThreshold, float maxFrameRms = 1.0f,
+                                        float speechRmsThreshold = 0.0f)
+{
+	if (!alwaysOn || totalFrames == 0) return true;
+
+	const bool strongVadEvidence = maxVadProbability >= 0.68f;
+	const bool strongEnergyEvidence = maxFramePeak >= std::max(0.08f, speechPeakThreshold * 2.0f) &&
+	                                  maxFrameRms >= std::max(0.022f, speechRmsThreshold * 1.45f);
+	if (strongVadEvidence || strongEnergyEvidence) return true;
+
+	const float speechFrameRatio = SpeechGateRatio(speechFrames, totalFrames);
+	const float possibleFrameRatio = SpeechGateRatio(possibleFrames, totalFrames);
+	if (gatedSamples < AlwaysOnWeakEvidenceSamples() && speechFrameRatio < 0.50f && possibleFrameRatio < 0.70f) {
+		return false;
+	}
+	if (gatedSamples < 16000 && speechFrameRatio < 0.25f && possibleFrameRatio < 0.45f) {
+		return false;
+	}
+
+	return true;
+}
+
 inline bool SpeechGateIsSpeech(float vadProbability, float framePeak, float frameRms)
 {
 	constexpr float kVadSpeechThreshold = 0.5f;

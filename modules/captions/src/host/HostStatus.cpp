@@ -215,6 +215,21 @@ void HostStatus::SetTranscriptSuppressionDiagnostics(const std::string& last_rea
 	suppressed_low_confidence_ = low_confidence;
 	suppressed_slow_short_decode_ = slow_short_decode;
 }
+void HostStatus::SetSegmentRiskDiagnostics(int risk_score, const std::string& risk_reason, float speech_frame_ratio,
+                                           float possible_frame_ratio, int prompt_quarantine_segments)
+{
+	if (risk_score < 0) risk_score = 0;
+	if (speech_frame_ratio < 0.0f) speech_frame_ratio = 0.0f;
+	if (speech_frame_ratio > 1.0f) speech_frame_ratio = 1.0f;
+	if (possible_frame_ratio < 0.0f) possible_frame_ratio = 0.0f;
+	if (possible_frame_ratio > 1.0f) possible_frame_ratio = 1.0f;
+	if (prompt_quarantine_segments < 0) prompt_quarantine_segments = 0;
+	last_segment_risk_score_ = risk_score;
+	last_segment_risk_reason_ = risk_reason;
+	last_segment_speech_frame_ratio_ = speech_frame_ratio;
+	last_segment_possible_frame_ratio_ = possible_frame_ratio;
+	prompt_context_quarantine_segments_ = prompt_quarantine_segments;
+}
 
 void HostStatus::MaybeFlush()
 {
@@ -283,6 +298,10 @@ void HostStatus::DoFlush()
 	         gate_speech_peak_threshold_);
 	char gate_speech_rms_threshold_buf[32];
 	snprintf(gate_speech_rms_threshold_buf, sizeof(gate_speech_rms_threshold_buf), "%.3f", gate_speech_rms_threshold_);
+	char speech_frame_ratio_buf[32];
+	snprintf(speech_frame_ratio_buf, sizeof(speech_frame_ratio_buf), "%.3f", last_segment_speech_frame_ratio_);
+	char possible_frame_ratio_buf[32];
+	snprintf(possible_frame_ratio_buf, sizeof(possible_frame_ratio_buf), "%.3f", last_segment_possible_frame_ratio_);
 
 	o << "  \"captions_completed\": " << captions_completed_ << ",\n";
 	o << "  \"packets_sent\": " << packets_sent_ << ",\n";
@@ -325,6 +344,11 @@ void HostStatus::DoFlush()
 	o << "  \"suppressed_repetitive\": " << suppressed_repetitive_ << ",\n";
 	o << "  \"suppressed_low_confidence\": " << suppressed_low_confidence_ << ",\n";
 	o << "  \"suppressed_slow_short_decode\": " << suppressed_slow_short_decode_ << ",\n";
+	o << "  \"last_segment_risk_score\": " << last_segment_risk_score_ << ",\n";
+	o << "  \"last_segment_risk_reason\": \"" << EscapeJson(last_segment_risk_reason_) << "\",\n";
+	o << "  \"last_segment_speech_frame_ratio\": " << speech_frame_ratio_buf << ",\n";
+	o << "  \"last_segment_possible_frame_ratio\": " << possible_frame_ratio_buf << ",\n";
+	o << "  \"prompt_context_quarantine_segments\": " << prompt_context_quarantine_segments_ << ",\n";
 	o << "  \"osc_messages_sent\": " << packets_sent_ << ",\n";
 	o << "  \"last_exit_code\": 0,\n";
 	o << "  \"last_restart_time\": \"\"\n";

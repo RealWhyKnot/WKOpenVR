@@ -261,44 +261,134 @@ inline const char* TranscriptSuppressionReasonName(TranscriptSuppressionReason r
 	}
 }
 
+struct TranscriptRiskInput
+{
+	std::string cleaned_text;
+	bool always_on = false;
+	float max_vad_probability = -1.0f;
+	float max_frame_peak = 0.0f;
+	float speech_peak_threshold = 0.0f;
+	float no_speech_probability = 0.0f;
+	float average_token_log_probability = 0.0f;
+	int token_count = 0;
+	float max_frame_rms = 1.0f;
+	float speech_rms_threshold = 0.0f;
+	long long evidence_ms = 0;
+	double decode_ratio = 0.0;
+	size_t prompt_chars = 0;
+	int recent_suppression_count = 0;
+	int recent_same_text_count = 0;
+	float speech_frame_ratio = -1.0f;
+};
+
+struct TranscriptRiskResult
+{
+	int score = 0;
+	int pass_credit = 0;
+	TranscriptSuppressionReason reason = TranscriptSuppressionReason::None;
+	bool suppress = false;
+};
+
+inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
+{
+	TranscriptRiskResult result;
+	if (!in.always_on || in.cleaned_text.empty()) return result;
+
+	const bool strong_audio = TranscriptHasStrongAudioEvidence(
+	    in.max_vad_probability, in.max_frame_peak, in.speech_peak_threshold, in.max_frame_rms, in.speech_rms_threshold);
+	const bool weak_audio = TranscriptHasWeakAudioEvidence(
+	    in.max_vad_probability, in.max_frame_peak, in.speech_peak_threshold, in.max_frame_rms, in.speech_rms_threshold);
+	const int effective_token_count = TranscriptEffectiveTokenCount(in.cleaned_text, in.token_count);
+	const bool short_text = effective_token_count > 0 && effective_token_count <= 4;
+	const bool very_short_evidence = in.evidence_ms > 0 && in.evidence_ms < 500;
+	const bool short_evidence = in.evidence_ms > 0 && in.evidence_ms < 700;
+	const bool filler = TranscriptLooksLikeCommonFiller(in.cleaned_text);
+
+	auto add_risk = [&](int points, TranscriptSuppressionReason reason) {
+		result.score += points;
+		if (result.reason == TranscriptSuppressionReason::None) {
+			result.reason = reason;
+		}
+	};
+
+	if (TranscriptLooksLikeCommonHallucination(in.cleaned_text) && !strong_audio) {
+		add_risk(6, TranscriptSuppressionReason::CommonHallucination);
+	}
+	if (filler && short_evidence) {
+		add_risk(3, TranscriptSuppressionReason::CommonFiller);
+	}
+	if (filler && !strong_audio) {
+		add_risk(2, TranscriptSuppressionReason::CommonFiller);
+	}
+	if (in.no_speech_probability >= 0.85f && !strong_audio) {
+		add_risk(2, TranscriptSuppressionReason::NoSpeechProbability);
+	}
+	if (weak_audio && in.no_speech_probability >= 0.65f) {
+		add_risk(2, TranscriptSuppressionReason::NoSpeechProbability);
+	}
+	if (short_text && !strong_audio && (weak_audio || very_short_evidence)) {
+		add_risk(5, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (in.token_count > 0 && in.average_token_log_probability < -1.35f && in.no_speech_probability >= 0.45f &&
+	    !strong_audio) {
+		add_risk(5, TranscriptSuppressionReason::LowConfidence);
+	}
+	if (TranscriptLooksRepetitive(in.cleaned_text) && !strong_audio) {
+		add_risk(5, TranscriptSuppressionReason::Repetitive);
+	}
+	if (short_text && in.decode_ratio >= 1.75 && !strong_audio) {
+		add_risk(5, TranscriptSuppressionReason::SlowShortDecode);
+	}
+	if (in.speech_frame_ratio >= 0.0f && in.speech_frame_ratio < 0.25f && in.evidence_ms > 0 && in.evidence_ms < 1000) {
+		add_risk(1, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (in.prompt_chars > 128 && short_text) {
+		add_risk(1, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (in.recent_suppression_count >= 2) {
+		add_risk(1, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (filler && in.recent_same_text_count >= 2) {
+		add_risk(2, TranscriptSuppressionReason::CommonFiller);
+	}
+
+	if (in.max_vad_probability >= 0.70f) {
+		result.pass_credit += 3;
+	}
+	if (in.speech_frame_ratio >= 0.0f && in.evidence_ms >= 900 && in.speech_frame_ratio >= 0.40f) {
+		result.pass_credit += 2;
+	}
+	if (strong_audio && in.evidence_ms >= 700) {
+		result.pass_credit += 2;
+	}
+
+	result.score = std::max(0, result.score - result.pass_credit);
+	result.suppress = result.score >= 5;
+	if (!result.suppress) {
+		result.reason = TranscriptSuppressionReason::None;
+	}
+	return result;
+}
+
 inline TranscriptSuppressionReason TranscriptConfidenceSuppressionReason(
     const std::string& cleanedText, bool alwaysOn, float maxVadProbability, float maxFramePeak,
     float speechPeakThreshold, float noSpeechProbability, float averageTokenLogProbability, int tokenCount,
     float maxFrameRms = 1.0f, float speechRmsThreshold = 0.0f, long long evidenceMs = 0, double decodeRatio = 0.0)
 {
-	if (!alwaysOn || cleanedText.empty()) return TranscriptSuppressionReason::None;
-
-	const bool strong_audio = TranscriptHasStrongAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
-	                                                           maxFrameRms, speechRmsThreshold);
-	const bool weak_audio = TranscriptHasWeakAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
-	                                                       maxFrameRms, speechRmsThreshold);
-	const int effective_token_count = TranscriptEffectiveTokenCount(cleanedText, tokenCount);
-	const bool short_text = effective_token_count > 0 && effective_token_count <= 4;
-	const bool very_short_evidence = evidenceMs > 0 && evidenceMs < 500;
-	const bool short_evidence = evidenceMs > 0 && evidenceMs < 700;
-
-	if (TranscriptLooksLikeCommonHallucination(cleanedText) && !strong_audio) {
-		return TranscriptSuppressionReason::CommonHallucination;
-	}
-	if (TranscriptLooksLikeCommonFiller(cleanedText) && (!strong_audio || short_evidence)) {
-		return TranscriptSuppressionReason::CommonFiller;
-	}
-	if (noSpeechProbability >= 0.85f && !strong_audio) return TranscriptSuppressionReason::NoSpeechProbability;
-	if (weak_audio && noSpeechProbability >= 0.65f) return TranscriptSuppressionReason::NoSpeechProbability;
-	if (short_text && !strong_audio && (weak_audio || very_short_evidence)) {
-		return TranscriptSuppressionReason::ShortWeakAudio;
-	}
-	if (tokenCount > 0 && averageTokenLogProbability < -1.35f && noSpeechProbability >= 0.45f && !strong_audio) {
-		return TranscriptSuppressionReason::LowConfidence;
-	}
-	if (TranscriptLooksRepetitive(cleanedText) && !strong_audio) {
-		return TranscriptSuppressionReason::Repetitive;
-	}
-	if (short_text && decodeRatio >= 1.75 && !strong_audio) {
-		return TranscriptSuppressionReason::SlowShortDecode;
-	}
-
-	return TranscriptSuppressionReason::None;
+	TranscriptRiskInput input;
+	input.cleaned_text = cleanedText;
+	input.always_on = alwaysOn;
+	input.max_vad_probability = maxVadProbability;
+	input.max_frame_peak = maxFramePeak;
+	input.speech_peak_threshold = speechPeakThreshold;
+	input.no_speech_probability = noSpeechProbability;
+	input.average_token_log_probability = averageTokenLogProbability;
+	input.token_count = tokenCount;
+	input.max_frame_rms = maxFrameRms;
+	input.speech_rms_threshold = speechRmsThreshold;
+	input.evidence_ms = evidenceMs;
+	input.decode_ratio = decodeRatio;
+	return TranscriptRiskScore(input).reason;
 }
 
 inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
