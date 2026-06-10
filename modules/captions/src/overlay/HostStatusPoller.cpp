@@ -102,6 +102,28 @@ void HostStatusPoller::ReadFile()
 	s.packets_sent = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "packets_sent"));
 	s.audio_level = static_cast<float>(openvr_pair::common::json::NumberAt(root, "audio_level"));
 	s.frames_captured = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "frames_captured"));
+	s.audio_queue_frames = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "audio_queue_frames"));
+	s.audio_queue_ms = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "audio_queue_ms"));
+	s.speech_model = openvr_pair::common::json::IntAt(root, "speech_model");
+	s.speech_model_name = openvr_pair::common::json::StringAt(root, "speech_model_name");
+	s.speech_model_loaded = openvr_pair::common::json::BoolAt(root, "speech_model_loaded");
+	s.speech_model_fallback = openvr_pair::common::json::BoolAt(root, "speech_model_fallback");
+	s.active_speech_model_path = openvr_pair::common::json::StringAt(root, "active_speech_model_path");
+	s.vad_model_loaded = openvr_pair::common::json::BoolAt(root, "vad_model_loaded");
+	s.vad_last_probability = static_cast<float>(openvr_pair::common::json::NumberAt(root, "vad_last_probability"));
+	s.vad_inference_failures =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "vad_inference_failures"));
+	s.vad_last_error = openvr_pair::common::json::StringAt(root, "vad_last_error");
+	s.last_segment_reason = openvr_pair::common::json::StringAt(root, "last_segment_reason");
+	s.last_segment_audio_ms =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "last_segment_audio_ms"));
+	s.last_segment_evidence_ms =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "last_segment_evidence_ms"));
+	s.last_transcribe_ms = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "last_transcribe_ms"));
+	s.last_segment_vad_probability =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_vad_probability"));
+	s.last_segment_peak = static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_peak"));
+	s.last_segment_threshold = static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_threshold"));
 
 	snapshot_ = std::move(s);
 }

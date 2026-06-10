@@ -9,9 +9,30 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <sstream>
 
 WhisperEngine::WhisperEngine() = default;
+
+namespace {
+long long SamplesToAudioMs(size_t samples)
+{
+	return static_cast<long long>((samples * 1000ULL) / 16000ULL);
+}
+
+long long ElapsedMs(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end)
+{
+	return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+}
+
+long long FileSizeBytes(const std::string& path)
+{
+	std::ifstream file(path, std::ios::binary | std::ios::ate);
+	if (!file) return -1;
+	return static_cast<long long>(file.tellg());
+}
+} // namespace
 
 WhisperEngine::~WhisperEngine()
 {
@@ -27,13 +48,18 @@ bool WhisperEngine::Load(const std::string& model_path, int n_threads, bool use_
 	whisper_context_params cparams = whisper_context_default_params();
 	cparams.use_gpu = use_gpu;
 
+	const auto load_start = std::chrono::steady_clock::now();
 	ctx_ = whisper_init_from_file_with_params(model_path.c_str(), cparams);
+	const long long load_ms = ElapsedMs(load_start, std::chrono::steady_clock::now());
 	if (!ctx_) {
-		TH_LOG("[whisper] failed to load model from '%s'", model_path.c_str());
+		TH_LOG("[whisper] failed to load model from '%s' load_ms=%lld", model_path.c_str(), load_ms);
 		return false;
 	}
 
-	TH_LOG("[whisper] model loaded from '%s' (gpu=%d threads=%d)", model_path.c_str(), (int)use_gpu, n_threads_);
+	const long long size_bytes = FileSizeBytes(model_path);
+	const double size_mb = size_bytes >= 0 ? static_cast<double>(size_bytes) / (1024.0 * 1024.0) : -1.0;
+	TH_LOG("[whisper] model loaded from '%s' (gpu=%d threads=%d load_ms=%lld size_mb=%.1f)", model_path.c_str(),
+	       (int)use_gpu, n_threads_, load_ms, size_mb);
 	return true;
 }
 
@@ -66,7 +92,8 @@ WhisperTranscriptResult WhisperEngine::TranscribeDetailed(const std::vector<floa
                                                           const WhisperDecodeOptions& options)
 {
 	WhisperTranscriptResult result;
-	if (!ctx_ || pcm16k.empty()) return {};
+	result.audio_ms = SamplesToAudioMs(pcm16k.size());
+	if (!ctx_ || pcm16k.empty()) return result;
 
 	whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
 	params.n_threads = n_threads_;
@@ -94,9 +121,12 @@ WhisperTranscriptResult WhisperEngine::TranscribeDetailed(const std::vector<floa
 	params.print_realtime = false;
 	params.print_timestamps = false;
 
+	const auto decode_start = std::chrono::steady_clock::now();
 	int rc = whisper_full(ctx_, params, pcm16k.data(), static_cast<int>(pcm16k.size()));
+	result.decode_ms = ElapsedMs(decode_start, std::chrono::steady_clock::now());
 	if (rc != 0) {
-		TH_LOG("[whisper] whisper_full returned %d", rc);
+		TH_LOG("[whisper] whisper_full returned %d audio_ms=%lld decode_ms=%lld", rc, result.audio_ms,
+		       result.decode_ms);
 		return result;
 	}
 

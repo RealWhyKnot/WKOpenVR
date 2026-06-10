@@ -33,6 +33,24 @@ struct HostStatusSnapshot
 	long long packets_sent = 0;
 	float audio_level = 0.0f;      // 0..1 input level (mic meter)
 	long long frames_captured = 0; // total frames delivered by the endpoint
+	long long audio_queue_frames = 0;
+	long long audio_queue_ms = 0;
+	int speech_model = 0;
+	std::string speech_model_name;
+	bool speech_model_loaded = false;
+	bool speech_model_fallback = false;
+	std::string active_speech_model_path;
+	bool vad_model_loaded = false;
+	float vad_last_probability = -1.0f;
+	long long vad_inference_failures = 0;
+	std::string vad_last_error;
+	std::string last_segment_reason;
+	long long last_segment_audio_ms = 0;
+	long long last_segment_evidence_ms = 0;
+	long long last_transcribe_ms = 0;
+	float last_segment_vad_probability = -1.0f;
+	float last_segment_peak = 0.0f;
+	float last_segment_threshold = 0.0f;
 };
 
 // Polls %LocalAppDataLow%\WKOpenVR\captions\host_status.json.

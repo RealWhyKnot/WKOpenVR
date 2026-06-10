@@ -18,6 +18,8 @@ struct WhisperTranscriptResult
 	float average_token_log_probability = 0.0f;
 	int token_count = 0;
 	int segment_count = 0;
+	long long audio_ms = 0;
+	long long decode_ms = 0;
 };
 
 struct WhisperDecodeOptions

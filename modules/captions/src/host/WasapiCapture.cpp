@@ -175,7 +175,9 @@ void WasapiCapture::CaptureLoop()
 			continue;
 		}
 
-		TH_LOG("[wasapi] capture started at %u Hz %u ch", (unsigned)nSampleRate, (unsigned)nChannels);
+		const std::string opened_device_name = DeviceName();
+		TH_LOG("[wasapi] capture started device='%s' rate=%u channels=%u format=%s bits=%u", opened_device_name.c_str(),
+		       (unsigned)nSampleRate, (unsigned)nChannels, isFloat ? "float" : "pcm", (unsigned)bitsPerSample);
 
 		// Per-tick decay so the level meter falls back toward silence between
 		// utterances and reaches 0 when the device stops delivering audio.
@@ -275,6 +277,7 @@ bool WasapiCapture::OpenSelectedDevice()
 	}
 
 	ComPtr<IMMDevice> device;
+	bool fell_back_to_default = false;
 	if (!wantId.empty()) {
 		int wn = MultiByteToWideChar(CP_UTF8, 0, wantId.c_str(), -1, nullptr, 0);
 		if (wn > 0) {
@@ -286,6 +289,7 @@ bool WasapiCapture::OpenSelectedDevice()
 				TH_LOG("[wasapi] selected device unavailable (id='%s'); falling back to system default",
 				       wantId.c_str());
 				device.Reset();
+				fell_back_to_default = true;
 			}
 		}
 	}
@@ -314,6 +318,8 @@ bool WasapiCapture::OpenSelectedDevice()
 			PropVariantClear(&pv);
 		}
 	}
+	TH_LOG("[wasapi] opened capture endpoint requested_id='%s' fallback=%d name='%s'",
+	       wantId.empty() ? "(system default)" : wantId.c_str(), fell_back_to_default ? 1 : 0, DeviceName().c_str());
 
 	hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&audio_client_));
 	return SUCCEEDED(hr);

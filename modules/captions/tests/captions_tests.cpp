@@ -149,6 +149,9 @@ TEST(CaptionsSpeechModelTest, NormalizesAndMapsModels)
 	             "ggml-large-v3-turbo-q5_0.bin");
 	EXPECT_STREQ(captions::CaptionsSpeechModelPackId(captions::kCaptionsSpeechModelHighAccuracy),
 	             "speech-large-v3-turbo");
+	EXPECT_STREQ(captions::CaptionsSpeechModelName(captions::kCaptionsSpeechModelBalanced), "balanced");
+	EXPECT_STREQ(captions::CaptionsSpeechModelName(captions::kCaptionsSpeechModelHighAccuracy), "high-accuracy");
+	EXPECT_STREQ(captions::CaptionsSpeechModelName(99), "balanced");
 }
 
 TEST(CaptionPreviewHistoryTest, AddsEachCompletedCaptionOnce)

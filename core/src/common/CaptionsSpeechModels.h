@@ -24,4 +24,9 @@ inline const char* CaptionsSpeechModelPackId(uint8_t model)
 	                                                                               : "speech-base";
 }
 
+inline const char* CaptionsSpeechModelName(uint8_t model)
+{
+	return NormalizeCaptionsSpeechModel(model) == kCaptionsSpeechModelHighAccuracy ? "high-accuracy" : "balanced";
+}
+
 } // namespace captions

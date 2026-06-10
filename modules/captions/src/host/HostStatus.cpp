@@ -109,6 +109,14 @@ void HostStatus::SetVadRuntimeAvailable(bool available) noexcept
 {
 	vad_runtime_available_ = available;
 }
+void HostStatus::SetVadDiagnostics(bool loaded, float last_probability, long long inference_failures,
+                                   const std::string& last_error)
+{
+	vad_model_loaded_ = loaded;
+	vad_last_probability_ = last_probability;
+	vad_inference_failures_ = inference_failures;
+	vad_last_error_ = last_error;
+}
 void HostStatus::SetTranslationRuntimeAvailable(bool available) noexcept
 {
 	translation_runtime_available_ = available;
@@ -138,6 +146,34 @@ void HostStatus::SetAudioLevel(float level) noexcept
 void HostStatus::SetFramesCaptured(long long frames) noexcept
 {
 	frames_captured_ = frames;
+}
+void HostStatus::SetAudioQueueDiagnostics(long long queued_frames, long long queued_audio_ms) noexcept
+{
+	if (queued_frames < 0) queued_frames = 0;
+	if (queued_audio_ms < 0) queued_audio_ms = 0;
+	audio_queue_frames_ = queued_frames;
+	audio_queue_ms_ = queued_audio_ms;
+}
+void HostStatus::SetSpeechModel(uint8_t model, const std::string& name, const std::string& active_path, bool loaded,
+                                bool fallback)
+{
+	speech_model_ = static_cast<int>(model);
+	speech_model_name_ = name;
+	active_speech_model_path_ = active_path;
+	speech_model_loaded_ = loaded;
+	speech_model_fallback_ = fallback;
+}
+void HostStatus::SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
+                                           long long decode_ms, float max_vad_probability, float max_peak,
+                                           float speech_peak_threshold)
+{
+	last_segment_reason_ = reason;
+	last_segment_audio_ms_ = audio_ms;
+	last_segment_evidence_ms_ = evidence_ms;
+	last_transcribe_ms_ = decode_ms;
+	last_segment_vad_probability_ = max_vad_probability;
+	last_segment_peak_ = max_peak;
+	last_segment_threshold_ = speech_peak_threshold;
 }
 
 void HostStatus::MaybeFlush()
@@ -179,11 +215,37 @@ void HostStatus::DoFlush()
 	o << "  \"active_translation_pair\": \"" << EscapeJson(active_translation_pair_) << "\",\n";
 	char level_buf[32];
 	snprintf(level_buf, sizeof(level_buf), "%.3f", audio_level_);
+	char vad_buf[32];
+	snprintf(vad_buf, sizeof(vad_buf), "%.3f", last_segment_vad_probability_);
+	char peak_buf[32];
+	snprintf(peak_buf, sizeof(peak_buf), "%.3f", last_segment_peak_);
+	char threshold_buf[32];
+	snprintf(threshold_buf, sizeof(threshold_buf), "%.3f", last_segment_threshold_);
+	char vad_prob_buf[32];
+	snprintf(vad_prob_buf, sizeof(vad_prob_buf), "%.3f", vad_last_probability_);
 
 	o << "  \"captions_completed\": " << captions_completed_ << ",\n";
 	o << "  \"packets_sent\": " << packets_sent_ << ",\n";
 	o << "  \"audio_level\": " << level_buf << ",\n";
 	o << "  \"frames_captured\": " << frames_captured_ << ",\n";
+	o << "  \"audio_queue_frames\": " << audio_queue_frames_ << ",\n";
+	o << "  \"audio_queue_ms\": " << audio_queue_ms_ << ",\n";
+	o << "  \"speech_model\": " << speech_model_ << ",\n";
+	o << "  \"speech_model_name\": \"" << EscapeJson(speech_model_name_) << "\",\n";
+	o << "  \"speech_model_loaded\": " << (speech_model_loaded_ ? "true" : "false") << ",\n";
+	o << "  \"speech_model_fallback\": " << (speech_model_fallback_ ? "true" : "false") << ",\n";
+	o << "  \"active_speech_model_path\": \"" << EscapeJson(active_speech_model_path_) << "\",\n";
+	o << "  \"vad_model_loaded\": " << (vad_model_loaded_ ? "true" : "false") << ",\n";
+	o << "  \"vad_last_probability\": " << vad_prob_buf << ",\n";
+	o << "  \"vad_inference_failures\": " << vad_inference_failures_ << ",\n";
+	o << "  \"vad_last_error\": \"" << EscapeJson(vad_last_error_) << "\",\n";
+	o << "  \"last_segment_reason\": \"" << EscapeJson(last_segment_reason_) << "\",\n";
+	o << "  \"last_segment_audio_ms\": " << last_segment_audio_ms_ << ",\n";
+	o << "  \"last_segment_evidence_ms\": " << last_segment_evidence_ms_ << ",\n";
+	o << "  \"last_transcribe_ms\": " << last_transcribe_ms_ << ",\n";
+	o << "  \"last_segment_vad_probability\": " << vad_buf << ",\n";
+	o << "  \"last_segment_peak\": " << peak_buf << ",\n";
+	o << "  \"last_segment_threshold\": " << threshold_buf << ",\n";
 	o << "  \"osc_messages_sent\": " << packets_sent_ << ",\n";
 	o << "  \"last_exit_code\": 0,\n";
 	o << "  \"last_restart_time\": \"\"\n";

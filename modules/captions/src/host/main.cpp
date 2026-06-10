@@ -210,6 +210,20 @@ static bool DirectoryExistsA(const std::string& path)
 	return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+static long long SamplesToAudioMs(size_t samples)
+{
+	return static_cast<long long>((samples * 1000ULL) / 16000ULL);
+}
+
+static size_t TotalAudioSamples(const std::vector<std::vector<float>>& frames)
+{
+	size_t total = 0;
+	for (const auto& frame : frames) {
+		total += frame.size();
+	}
+	return total;
+}
+
 static void EnsureDirectoryTreeA(const std::string& path)
 {
 	if (path.empty()) return;
@@ -877,12 +891,21 @@ try {
 	size_t speech_evidence_samples_since_open = 0;
 	float speech_max_vad_probability = -1.0f;
 	float speech_max_frame_peak = 0.0f;
+	float last_vad_probability = -1.0f;
 	captions::AdaptiveSpeechGate speech_gate;
 	captions::SpeechActivationWindow speech_activation;
 	std::deque<std::vector<float>> preroll_frames;
 	std::vector<float> speech_buf;
 	bool speech_buf_has_continuation_overlap = false;
 	std::string last_transcript_for_overlap;
+	uint8_t last_logged_speech_model = 255;
+	std::string last_logged_required_whisper_model_path;
+	std::string last_logged_active_whisper_model_path;
+	bool last_logged_whisper_loaded = false;
+	bool last_logged_model_fallback = false;
+	bool last_logged_required_exists = false;
+	bool last_logged_active_exists = false;
+	auto next_audio_backlog_log = std::chrono::steady_clock::time_point{};
 
 	TH_LOG("[startup] phase=initializing-audio-capture");
 	status.SetPhase("initializing-audio-capture");
@@ -953,6 +976,9 @@ try {
 			std::lock_guard<std::mutex> lk(audio_mutex);
 			frames.swap(audio_queue);
 		}
+		const size_t audio_queue_frames = frames.size();
+		const size_t audio_queue_samples = TotalAudioSamples(frames);
+		const long long audio_queue_ms = SamplesToAudioMs(audio_queue_samples);
 
 		HostConfig cfg;
 		{
@@ -960,6 +986,14 @@ try {
 			cfg = g_config;
 		}
 		UpdatePackStatus(status, cfg);
+		status.SetAudioQueueDiagnostics(static_cast<long long>(audio_queue_frames), audio_queue_ms);
+		if (audio_queue_ms >= 500 && loop_now >= next_audio_backlog_log) {
+			next_audio_backlog_log = loop_now + std::chrono::seconds(2);
+			TH_LOG("[audio] drained capture backlog frames=%zu samples=%zu audio_ms=%lld model=%s mode=%s state=%s",
+			       audio_queue_frames, audio_queue_samples, audio_queue_ms,
+			       captions::CaptionsSpeechModelName(cfg.speech_model), cfg.mode == 1 ? "always-on" : "ptt",
+			       in_speech ? "listening" : "idle");
+		}
 
 		if ((!vad || !vad->IsLoaded()) && SileroVad::RuntimeAvailable() && FileExistsA(cfg.silero_model_path) &&
 		    loop_now >= next_vad_load_attempt) {
@@ -982,6 +1016,7 @@ try {
 			whisper_prompt_lang_key = prompt_lang_key;
 			last_transcript_for_overlap.clear();
 		}
+		const std::string required_whisper_model_path = RequiredWhisperModelPath(cfg);
 		const std::string desired_whisper_model_path = ActiveWhisperModelPath(cfg);
 		if (whisper.IsLoaded() && desired_whisper_model_path != loaded_whisper_model_path) {
 			TH_LOG("[main] switching Whisper model: '%s' -> '%s'", loaded_whisper_model_path.c_str(),
@@ -1012,6 +1047,39 @@ try {
 		}
 		else if (whisper.IsLoaded()) {
 			whisper_load_failed = false;
+		}
+		const bool required_whisper_exists = FileExistsA(required_whisper_model_path);
+		const bool active_whisper_exists = FileExistsA(desired_whisper_model_path);
+		const bool model_fallback =
+		    !cfg.whisper_model_path_overridden && required_whisper_model_path != desired_whisper_model_path;
+		const std::string reported_whisper_model_path = whisper.IsLoaded() && !loaded_whisper_model_path.empty()
+		                                                    ? loaded_whisper_model_path
+		                                                    : desired_whisper_model_path;
+		status.SetSpeechModel(cfg.speech_model, captions::CaptionsSpeechModelName(cfg.speech_model),
+		                      reported_whisper_model_path, whisper.IsLoaded(), model_fallback);
+		if (cfg.speech_model != last_logged_speech_model ||
+		    required_whisper_model_path != last_logged_required_whisper_model_path ||
+		    desired_whisper_model_path != last_logged_active_whisper_model_path ||
+		    whisper.IsLoaded() != last_logged_whisper_loaded || model_fallback != last_logged_model_fallback ||
+		    required_whisper_exists != last_logged_required_exists ||
+		    active_whisper_exists != last_logged_active_exists) {
+			TH_LOG("[config] speech-model id=%u name=%s required='%s' required_exists=%d active='%s' active_exists=%d "
+			       "loaded=%d fallback=%d override=%d vad_loaded=%d vad_failures=%lld flags=%u mode=%s chatbox=%d "
+			       "src=%s tgt=%s",
+			       static_cast<unsigned>(cfg.speech_model), captions::CaptionsSpeechModelName(cfg.speech_model),
+			       required_whisper_model_path.c_str(), required_whisper_exists ? 1 : 0,
+			       desired_whisper_model_path.c_str(), active_whisper_exists ? 1 : 0, whisper.IsLoaded() ? 1 : 0,
+			       model_fallback ? 1 : 0, cfg.whisper_model_path_overridden ? 1 : 0, vad && vad->IsLoaded() ? 1 : 0,
+			       vad ? static_cast<long long>(vad->InferenceFailures()) : 0LL,
+			       static_cast<unsigned>(cfg.realtime_flags), cfg.mode == 1 ? "always-on" : "ptt",
+			       cfg.chatbox_enabled ? 1 : 0, cfg.source_lang.c_str(), cfg.target_lang.c_str());
+			last_logged_speech_model = cfg.speech_model;
+			last_logged_required_whisper_model_path = required_whisper_model_path;
+			last_logged_active_whisper_model_path = desired_whisper_model_path;
+			last_logged_whisper_loaded = whisper.IsLoaded();
+			last_logged_model_fallback = model_fallback;
+			last_logged_required_exists = required_whisper_exists;
+			last_logged_active_exists = active_whisper_exists;
 		}
 
 		// Load/unload translation model as packs appear, disappear, or the
@@ -1091,6 +1159,7 @@ try {
 
 		for (const auto& frame : frames) {
 			bool continue_after_transcribe = false;
+			const char* transcribe_reason = "unknown";
 
 			// VAD gate (PTT mode skips it). Silero is the primary gate; the
 			// frame peak is a conservative fallback for capture paths where the
@@ -1100,6 +1169,7 @@ try {
 				if (vad && vad->IsLoaded()) {
 					prob = vad->Feed(frame.data(), frame.size());
 				}
+				last_vad_probability = prob;
 				const float peak = captions::ComputeBufferPeak(frame.data(), frame.size());
 				const bool speech_frame = speech_gate.IsSpeech(prob, peak);
 				const bool possible_speech_frame = speech_gate.IsPossibleSpeech(prob, peak);
@@ -1107,8 +1177,10 @@ try {
 					speech_activation.Push(speech_frame, possible_speech_frame);
 				}
 				if (!in_speech && speech_activation.ShouldOpen()) {
+					const int activation_speech_frames = speech_activation.SpeechFrames();
+					const int activation_possible_frames = speech_activation.PossibleFrames();
 					const size_t activation_evidence_samples =
-					    static_cast<size_t>(speech_activation.PossibleFrames()) * frame.size();
+					    static_cast<size_t>(activation_possible_frames) * frame.size();
 					in_speech = true;
 					if (vad) vad->Reset();
 					speech_buf.clear();
@@ -1124,10 +1196,13 @@ try {
 					speech_activation.Reset();
 					status.SetState(HostStatus::State::Listening);
 					set_typing_indicator(true, cfg);
-					if (prob < 0.5f) {
-						TH_LOG("[vad] speech gate opened by input level peak=%.3f threshold=%.3f noise=%.3f prob=%.3f",
-						       peak, speech_gate.SpeechPeakThreshold(), speech_gate.AmbientPeak(), prob);
-					}
+					const char* open_reason = prob >= 0.5f ? "vad" : "input-level";
+					TH_LOG("[vad] speech gate opened reason=%s model=%s speech_frames=%d possible_frames=%d peak=%.3f "
+					       "threshold=%.3f noise=%.3f prob=%.3f evidence_ms=%lld preroll_frames=%zu",
+					       open_reason, captions::CaptionsSpeechModelName(cfg.speech_model), activation_speech_frames,
+					       activation_possible_frames, peak, speech_gate.SpeechPeakThreshold(),
+					       speech_gate.AmbientPeak(), prob, SamplesToAudioMs(activation_evidence_samples),
+					       preroll_frames.size());
 				}
 				if (speech_frame) {
 					if (in_speech) {
@@ -1141,6 +1216,7 @@ try {
 						speech_activation.Reset();
 						set_typing_indicator(false, cfg);
 						status.SetState(HostStatus::State::Transcribing);
+						transcribe_reason = "silence";
 						goto transcribe;
 					}
 				}
@@ -1158,6 +1234,7 @@ try {
 					if (speech_samples_since_open >= captions::AlwaysOnMaxSpeechSamples(extended_timing)) {
 						continue_after_transcribe = true;
 						status.SetState(HostStatus::State::Transcribing);
+						transcribe_reason = "max-duration";
 						goto transcribe;
 					}
 				}
@@ -1196,6 +1273,7 @@ try {
 					ptt_was_held = false;
 					set_typing_indicator(false, cfg);
 					status.SetState(HostStatus::State::Transcribing);
+					transcribe_reason = "ptt-release";
 					goto transcribe;
 				}
 			}
@@ -1205,8 +1283,18 @@ try {
 			const size_t segment_gate_samples = cfg.RealtimeEnabled(captions::kCaptionsRealtimeSpeechEvidenceGate)
 			                                        ? speech_evidence_samples_since_open
 			                                        : speech_samples_since_open;
+			const long long segment_audio_ms = SamplesToAudioMs(speech_buf.size());
+			const long long segment_evidence_ms = SamplesToAudioMs(segment_gate_samples);
 			if (!captions::SpeechSegmentShouldTranscribe(segment_gate_samples, always_on, speech_max_vad_probability,
 			                                             speech_max_frame_peak, speech_gate.SpeechPeakThreshold())) {
+				status.SetLastSegmentDiagnostics(transcribe_reason, segment_audio_ms, segment_evidence_ms, 0,
+				                                 speech_max_vad_probability, speech_max_frame_peak,
+				                                 speech_gate.SpeechPeakThreshold());
+				TH_LOG("[speech] dropped segment reason=%s model=%s audio_ms=%lld evidence_ms=%lld always_on=%d "
+				       "vad=%.3f peak=%.3f threshold=%.3f queue_ms=%lld",
+				       transcribe_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
+				       segment_evidence_ms, always_on ? 1 : 0, speech_max_vad_probability, speech_max_frame_peak,
+				       speech_gate.SpeechPeakThreshold(), audio_queue_ms);
 				in_speech = false;
 				speech_buf.clear();
 				speech_buf_has_continuation_overlap = false;
@@ -1233,16 +1321,26 @@ try {
 					continuation_overlap = captions::CopyTrailingSamples(
 					    segment_pcm, captions::AlwaysOnContinuationOverlapSamples(extended_timing));
 				}
+				TH_LOG("[speech] segment closed reason=%s model=%s audio_ms=%lld gate_ms=%lld raw_evidence_ms=%lld "
+				       "vad=%.3f peak=%.3f threshold=%.3f resume=%d overlap=%d queue_ms=%lld",
+				       transcribe_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
+				       segment_evidence_ms, SamplesToAudioMs(segment_speech_evidence_samples),
+				       segment_max_vad_probability, segment_max_frame_peak, segment_speech_peak_threshold,
+				       resume_after_transcribe ? 1 : 0, segment_had_continuation_overlap ? 1 : 0, audio_queue_ms);
 
 				std::string detected_lang;
 				std::string transcript;
 				WhisperTranscriptResult whisper_result;
+				bool prompt_context_enabled = false;
+				size_t prompt_chars = 0;
 				if (whisper.IsLoaded()) {
-					const bool prompt_context = cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext);
-					if (!prompt_context && !whisper_prompt.Text().empty()) {
+					prompt_context_enabled = cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext);
+					if (!prompt_context_enabled && !whisper_prompt.Text().empty()) {
 						whisper_prompt.Clear();
 					}
-					whisper.SetInitialPrompt(prompt_context ? whisper_prompt.Text() : "");
+					const std::string prompt_text = prompt_context_enabled ? whisper_prompt.Text() : std::string();
+					prompt_chars = prompt_text.size();
+					whisper.SetInitialPrompt(prompt_text);
 					WhisperDecodeOptions decode_options;
 					decode_options.use_no_speech_threshold =
 					    cfg.RealtimeEnabled(captions::kCaptionsRealtimeWhisperNoSpeechGate);
@@ -1283,10 +1381,20 @@ try {
 				speech_max_vad_probability = -1.0f;
 				speech_max_frame_peak = 0.0f;
 				status.SetLastTranscript(transcript);
-				TH_LOG("[main] transcript (%s nospeech=%.3f avglog=%.3f tokens=%d evidence=%zu): %s",
-				       detected_lang.c_str(), whisper_result.max_no_speech_probability,
-				       whisper_result.average_token_log_probability, whisper_result.token_count,
-				       segment_speech_evidence_samples, transcript.c_str());
+				status.SetLastSegmentDiagnostics(transcribe_reason, segment_audio_ms, segment_evidence_ms,
+				                                 whisper_result.decode_ms, segment_max_vad_probability,
+				                                 segment_max_frame_peak, segment_speech_peak_threshold);
+				const double decode_ratio =
+				    segment_audio_ms > 0 ? static_cast<double>(whisper_result.decode_ms) / segment_audio_ms : 0.0;
+				TH_LOG("[main] transcript model=%s active='%s' reason=%s lang=%s audio_ms=%lld evidence_ms=%lld "
+				       "decode_ms=%lld decode_ratio=%.2f prompt=%d prompt_chars=%zu nospeech=%.3f avglog=%.3f "
+				       "tokens=%d segments=%d queue_ms=%lld resume=%d overlap=%d text=%s",
+				       captions::CaptionsSpeechModelName(cfg.speech_model), reported_whisper_model_path.c_str(),
+				       transcribe_reason, detected_lang.c_str(), segment_audio_ms, segment_evidence_ms,
+				       whisper_result.decode_ms, decode_ratio, prompt_context_enabled ? 1 : 0, prompt_chars,
+				       whisper_result.max_no_speech_probability, whisper_result.average_token_log_probability,
+				       whisper_result.token_count, whisper_result.segment_count, audio_queue_ms,
+				       resume_after_transcribe ? 1 : 0, segment_had_continuation_overlap ? 1 : 0, transcript.c_str());
 
 				std::string publish_transcript = captions::CleanTranscriptForPublish(transcript);
 				const bool skip_non_speech = !transcript.empty() && publish_transcript.empty();
@@ -1304,9 +1412,14 @@ try {
 					const char* suppression_reason = skip_non_speech  ? "non-speech"
 					                                 : skip_no_speech ? "no-speech-probability"
 					                                                  : "low-confidence";
-					TH_LOG("[main] suppressed transcript as %s: raw='%s' vad=%.3f peak=%.3f nospeech=%.3f avglog=%.3f",
-					       suppression_reason, transcript.c_str(), segment_max_vad_probability, segment_max_frame_peak,
-					       whisper_result.max_no_speech_probability, whisper_result.average_token_log_probability);
+					TH_LOG("[main] suppressed transcript reason=%s model=%s audio_ms=%lld evidence_ms=%lld "
+					       "decode_ms=%lld vad=%.3f peak=%.3f threshold=%.3f nospeech=%.3f avglog=%.3f tokens=%d "
+					       "queue_ms=%lld raw='%s'",
+					       suppression_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
+					       segment_evidence_ms, whisper_result.decode_ms, segment_max_vad_probability,
+					       segment_max_frame_peak, segment_speech_peak_threshold,
+					       whisper_result.max_no_speech_probability, whisper_result.average_token_log_probability,
+					       whisper_result.token_count, audio_queue_ms, transcript.c_str());
 					publish_transcript.clear();
 					status.SetLastTranslation("");
 				}
@@ -1326,9 +1439,14 @@ try {
 				if (!publish_transcript.empty() && translation_requested) {
 					if (captions_engine.IsLoaded()) {
 						status.SetState(HostStatus::State::Translating);
+						const auto translation_start = std::chrono::steady_clock::now();
 						output = captions_engine.Translate(publish_transcript, effective_src_lang, cfg.target_lang);
+						const long long translation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+						                                     std::chrono::steady_clock::now() - translation_start)
+						                                     .count();
 						status.SetLastTranslation(output);
-						TH_LOG("[main] translation: %s", output.c_str());
+						TH_LOG("[main] translation src=%s tgt=%s ms=%lld text=%s", effective_src_lang.c_str(),
+						       cfg.target_lang.c_str(), translation_ms, output.c_str());
 					}
 					else {
 						output.clear();
@@ -1388,6 +1506,9 @@ try {
 		status.SetMicName(capture.DeviceName());
 		status.SetAudioLevel(capture.Level());
 		status.SetFramesCaptured(static_cast<long long>(capture.FramesCaptured()));
+		status.SetVadDiagnostics(vad && vad->IsLoaded(), last_vad_probability,
+		                         vad ? static_cast<long long>(vad->InferenceFailures()) : 0,
+		                         vad ? vad->LastError() : std::string());
 		status.MaybeFlush();
 
 		Sleep(10); // 10 ms main-loop cadence

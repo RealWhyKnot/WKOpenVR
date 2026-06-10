@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 // Writes a host_status.json file that the overlay polls to show live state.
@@ -29,6 +30,8 @@ public:
 	void SetPttStatus(bool available, bool registered, const std::string& app_key, const std::string& error);
 	void SetSpeechPackInstalled(bool installed) noexcept;
 	void SetVadRuntimeAvailable(bool available) noexcept;
+	void SetVadDiagnostics(bool loaded, float last_probability, long long inference_failures,
+	                       const std::string& last_error);
 	void SetTranslationRuntimeAvailable(bool available) noexcept;
 	void SetTranslationPackInstalled(bool installed) noexcept;
 	void SetActiveTranslationPair(const std::string& pair);
@@ -39,6 +42,12 @@ public:
 	// whether the selected microphone is actually delivering audio.
 	void SetAudioLevel(float level) noexcept;
 	void SetFramesCaptured(long long frames) noexcept;
+	void SetAudioQueueDiagnostics(long long queued_frames, long long queued_audio_ms) noexcept;
+	void SetSpeechModel(uint8_t model, const std::string& name, const std::string& active_path, bool loaded,
+	                    bool fallback);
+	void SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
+	                               long long decode_ms, float max_vad_probability, float max_peak,
+	                               float speech_peak_threshold);
 
 	// Write the JSON file to disk if at least 1 s has elapsed since the
 	// last write. Call periodically from the main loop.
@@ -61,6 +70,10 @@ private:
 	std::string ptt_error_;
 	bool speech_pack_installed_ = false;
 	bool vad_runtime_available_ = false;
+	bool vad_model_loaded_ = false;
+	float vad_last_probability_ = -1.0f;
+	long long vad_inference_failures_ = 0;
+	std::string vad_last_error_;
 	bool translation_runtime_available_ = false;
 	bool translation_pack_installed_ = false;
 	std::string active_translation_pair_;
@@ -68,6 +81,20 @@ private:
 	long long packets_sent_ = 0;
 	float audio_level_ = 0.0f;
 	long long frames_captured_ = 0;
+	long long audio_queue_frames_ = 0;
+	long long audio_queue_ms_ = 0;
+	int speech_model_ = 0;
+	std::string speech_model_name_;
+	std::string active_speech_model_path_;
+	bool speech_model_loaded_ = false;
+	bool speech_model_fallback_ = false;
+	std::string last_segment_reason_;
+	long long last_segment_audio_ms_ = 0;
+	long long last_segment_evidence_ms_ = 0;
+	long long last_transcribe_ms_ = 0;
+	float last_segment_vad_probability_ = -1.0f;
+	float last_segment_peak_ = 0.0f;
+	float last_segment_threshold_ = 0.0f;
 
 	void WritePath(const std::wstring& status_path);
 	void DoFlush();

@@ -33,6 +33,8 @@ public:
 	float Feed(const float* samples, size_t count);
 
 	bool IsLoaded() const noexcept { return session_ != nullptr; }
+	uint64_t InferenceFailures() const noexcept { return inference_failures_; }
+	const std::string& LastError() const noexcept { return last_error_; }
 
 	// Reset LSTM state (call at speech-end boundary).
 	void Reset();
@@ -48,6 +50,9 @@ private:
 	static constexpr int kStateSize = 2 * 1 * 64;
 	float h_[kStateSize] = {};
 	float c_[kStateSize] = {};
+	uint64_t inference_failures_ = 0;
+	std::string last_error_;
 
 	void ResetState();
+	void RecordInferenceFailure(const char* stage, const char* message);
 };

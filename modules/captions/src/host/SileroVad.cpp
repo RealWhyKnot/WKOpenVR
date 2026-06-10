@@ -114,10 +114,28 @@ void SileroVad::ResetState()
 	memset(c_, 0, sizeof(c_));
 }
 
+void SileroVad::RecordInferenceFailure(const char* stage, const char* message)
+{
+	++inference_failures_;
+	last_error_ = stage ? stage : "unknown";
+	if (message && message[0]) {
+		last_error_ += ": ";
+		last_error_ += message;
+	}
+	if (inference_failures_ <= 3 || (inference_failures_ % 100) == 0) {
+		TH_LOG("[vad] inference failure count=%llu stage=%s error=%s",
+		       static_cast<unsigned long long>(inference_failures_), stage ? stage : "unknown",
+		       message && message[0] ? message : "(none)");
+	}
+}
+
 float SileroVad::Feed(const float* samples, size_t count)
 {
 	if (!session_ || !ort_api_ || !mem_info_) return -1.f;
-	if (count < 512) return -1.f; // Silero VAD expects exactly 512 samples
+	if (count != 512) {
+		RecordInferenceFailure("input-size", count < 512 ? "short frame" : "long frame");
+		return -1.f;
+	}
 
 	OrtStatus* status = nullptr;
 
@@ -129,6 +147,7 @@ float SileroVad::Feed(const float* samples, size_t count)
 		                                                  input_shape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
 		                                                  &input_tensor);
 		if (status) {
+			RecordInferenceFailure("input-tensor", ort_api_->GetErrorMessage(status));
 			ort_api_->ReleaseStatus(status);
 			return -1.f;
 		}
@@ -137,16 +156,37 @@ float SileroVad::Feed(const float* samples, size_t count)
 		int64_t sr_val = 16000;
 		int64_t sr_shape[] = {1};
 		OrtValue* sr_tensor = nullptr;
-		ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, &sr_val, sizeof(int64_t), sr_shape, 1,
-		                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &sr_tensor);
+		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, &sr_val, sizeof(int64_t), sr_shape, 1,
+		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &sr_tensor);
+		if (status) {
+			RecordInferenceFailure("sample-rate-tensor", ort_api_->GetErrorMessage(status));
+			ort_api_->ReleaseStatus(status);
+			ort_api_->ReleaseValue(input_tensor);
+			return -1.f;
+		}
 
 		// h and c tensors: [2, 1, 64] float
 		int64_t hc_shape[] = {2, 1, 64};
 		OrtValue *h_tensor = nullptr, *c_tensor = nullptr;
-		ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, h_, kStateSize * sizeof(float), hc_shape, 3,
-		                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &h_tensor);
-		ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, c_, kStateSize * sizeof(float), hc_shape, 3,
-		                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &c_tensor);
+		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, h_, kStateSize * sizeof(float), hc_shape, 3,
+		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &h_tensor);
+		if (status) {
+			RecordInferenceFailure("h-state-tensor", ort_api_->GetErrorMessage(status));
+			ort_api_->ReleaseStatus(status);
+			ort_api_->ReleaseValue(input_tensor);
+			ort_api_->ReleaseValue(sr_tensor);
+			return -1.f;
+		}
+		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, c_, kStateSize * sizeof(float), hc_shape, 3,
+		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &c_tensor);
+		if (status) {
+			RecordInferenceFailure("c-state-tensor", ort_api_->GetErrorMessage(status));
+			ort_api_->ReleaseStatus(status);
+			ort_api_->ReleaseValue(input_tensor);
+			ort_api_->ReleaseValue(sr_tensor);
+			ort_api_->ReleaseValue(h_tensor);
+			return -1.f;
+		}
 
 		const OrtValue* inputs[] = {input_tensor, sr_tensor, h_tensor, c_tensor};
 		OrtValue* outputs[] = {nullptr, nullptr, nullptr};
@@ -157,17 +197,23 @@ float SileroVad::Feed(const float* samples, size_t count)
 		if (!status) {
 			// Extract output probability.
 			float* out_data = nullptr;
-			ort_api_->GetTensorMutableData(outputs[0], reinterpret_cast<void**>(&out_data));
+			if (!outputs[0]) {
+				RecordInferenceFailure("output", "missing probability tensor");
+			}
+			else {
+				ort_api_->GetTensorMutableData(outputs[0], reinterpret_cast<void**>(&out_data));
+			}
 			if (out_data) prob = out_data[0];
 
 			// Update LSTM state from hn/cn.
 			float *hn_data = nullptr, *cn_data = nullptr;
-			ort_api_->GetTensorMutableData(outputs[1], reinterpret_cast<void**>(&hn_data));
-			ort_api_->GetTensorMutableData(outputs[2], reinterpret_cast<void**>(&cn_data));
+			if (outputs[1]) ort_api_->GetTensorMutableData(outputs[1], reinterpret_cast<void**>(&hn_data));
+			if (outputs[2]) ort_api_->GetTensorMutableData(outputs[2], reinterpret_cast<void**>(&cn_data));
 			if (hn_data) memcpy(h_, hn_data, kStateSize * sizeof(float));
 			if (cn_data) memcpy(c_, cn_data, kStateSize * sizeof(float));
 		}
 		else {
+			RecordInferenceFailure("run", ort_api_->GetErrorMessage(status));
 			ort_api_->ReleaseStatus(status);
 		}
 

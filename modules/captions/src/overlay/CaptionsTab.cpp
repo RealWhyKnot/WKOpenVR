@@ -468,6 +468,19 @@ static void DrawStatusStrip(CaptionsPlugin& plugin, const captions::HostStatusSn
 
 		ImGui::Text("State: %s  |  Output: %s  |  Sent: %lld", StateLabel(snap.state),
 		            plugin.GetChatboxEnabled() ? "VRChat chatbox" : "local preview", snap.packets_sent);
+		if (!snap.speech_model_name.empty()) {
+			ImGui::TextWrapped("Speech: %s%s  |  Last segment: %lld ms decode / %lld ms audio (%s)  |  Queue: %lld ms",
+			                   snap.speech_model_name.c_str(), snap.speech_model_fallback ? " fallback" : "",
+			                   snap.last_transcribe_ms, snap.last_segment_audio_ms,
+			                   snap.last_segment_reason.empty() ? "none" : snap.last_segment_reason.c_str(),
+			                   snap.audio_queue_ms);
+			ImGui::Text("VAD: %s  |  Last probability: %.3f  |  Failures: %lld",
+			            snap.vad_model_loaded ? "loaded" : "not loaded", snap.vad_last_probability,
+			            snap.vad_inference_failures);
+			if (!snap.vad_last_error.empty()) {
+				DrawWaitingBanner(snap.vad_last_error.c_str());
+			}
+		}
 		if (!snap.phase.empty() && snap.phase != "running") {
 			ImGui::TextDisabled("Host phase: %s", snap.phase.c_str());
 		}
