@@ -52,6 +52,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dashboardinput:** Add safe overlay input path (f589f1e)
 - **calibration:** Gate headset offset correction (63dd0d7)
 - **updater:** Queue verified installer on SteamVR close (c5b6559)
+- **calibration:** Capture replay sample quality (1a42c1c)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -180,6 +181,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **overlay:** Stop module nav snapping back and fix end-arrow visibility (c31f965)
 - **overlay:** Hide auto-disabled module tabs (ca58931)
 - **dashboardinput:** Gate experimental runtime path (b21c061)
+- **captions:** Skip current runtime pack files (7ecd083)
 
 ---
 
