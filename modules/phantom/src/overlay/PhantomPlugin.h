@@ -30,6 +30,7 @@ private:
 	PhantomIPCClient ipc_;
 	std::string connectError_;
 	std::chrono::steady_clock::time_point nextConnectAttempt_{};
+	uint32_t connectFailureCount_ = 0;
 
 	// Read-side mapping of the per-device state shmem the driver publishes.
 	// Opened on first Tick where the driver is up; closed lazily on shutdown.

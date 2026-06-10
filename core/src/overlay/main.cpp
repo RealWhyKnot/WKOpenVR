@@ -39,8 +39,9 @@
 #endif
 
 #include <algorithm>
-#include <cstdio>
 #include <array>
+#include <cstdio>
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -181,6 +182,99 @@ private:
 	double lastSampleSeconds_ = 0.0;
 	bool haveLastFrame_ = false;
 	uint32_t lastFrameIndex_ = 0;
+};
+
+struct OverlayFrameTimings
+{
+	double frameGapMs = 0.0;
+	double perfTickMs = 0.0;
+	double toggleMs = 0.0;
+	double backendFrameMs = 0.0;
+	double vrTickMs = 0.0;
+	double compositorSampleMs = 0.0;
+	double pluginTickMs = 0.0;
+	double imguiBuildMs = 0.0;
+	double renderMs = 0.0;
+	double swapMs = 0.0;
+	double submitMs = 0.0;
+	double waitMs = 0.0;
+	double totalMs = 0.0;
+	const char* renderPath = "none";
+	const char* slowStage = "none";
+	double slowStageMs = 0.0;
+	const char* slowPlugin = "none";
+	double slowPluginMs = 0.0;
+	size_t installedPluginTicks = 0;
+	bool vrSurfaceVisible = false;
+	bool activeDashboardOverlay = false;
+	bool anyDashboardVisible = false;
+	bool safeOverlayVisible = false;
+	bool vrConnected = false;
+};
+
+void ObserveSlowStage(OverlayFrameTimings& timings, const char* name, double ms)
+{
+	if (ms > timings.slowStageMs) {
+		timings.slowStage = name;
+		timings.slowStageMs = ms;
+	}
+}
+
+class OverlayFrameHitchLogger
+{
+public:
+	double BeginFrame(OverlayFrameTimings& timings)
+	{
+		const double nowSeconds = glfwGetTime();
+		if (lastFrameStartSeconds_ > 0.0 && nowSeconds >= lastFrameStartSeconds_) {
+			timings.frameGapMs = (nowSeconds - lastFrameStartSeconds_) * 1000.0;
+		}
+		lastFrameStartSeconds_ = nowSeconds;
+		return nowSeconds;
+	}
+
+	void MaybeLog(const OverlayFrameTimings& timings)
+	{
+		const bool shouldLog = timings.frameGapMs >= kFrameGapWarnMs || timings.totalMs >= kFrameWorkWarnMs ||
+		                       timings.slowStageMs >= kStageWarnMs;
+		if (!shouldLog) return;
+
+		const double nowSeconds = glfwGetTime();
+		if (lastLogSeconds_ > 0.0 && nowSeconds >= lastLogSeconds_ &&
+		    nowSeconds - lastLogSeconds_ < kLogThrottleSeconds) {
+			++suppressedSinceLastLog_;
+			return;
+		}
+
+		openvr_pair::common::DiagnosticLog(
+		    "overlay",
+		    "frame_hitch frame_gap_ms=%.1f total_ms=%.1f slow_stage='%s' slow_stage_ms=%.1f "
+		    "perf_tick_ms=%.1f toggle_ms=%.1f backend_frame_ms=%.1f vr_tick_ms=%.1f "
+		    "compositor_sample_ms=%.1f plugin_tick_ms=%.1f imgui_build_ms=%.1f render_ms=%.1f "
+		    "swap_ms=%.1f submit_ms=%.1f wait_ms=%.1f render_path='%s' plugin_ticks=%zu "
+		    "slow_plugin='%s' slow_plugin_ms=%.1f vr_visible=%d dashboard_active=%d "
+		    "any_dashboard_visible=%d safe_visible=%d vr_connected=%d suppressed=%u",
+		    timings.frameGapMs, timings.totalMs, timings.slowStage, timings.slowStageMs, timings.perfTickMs,
+		    timings.toggleMs, timings.backendFrameMs, timings.vrTickMs, timings.compositorSampleMs,
+		    timings.pluginTickMs, timings.imguiBuildMs, timings.renderMs, timings.swapMs, timings.submitMs,
+		    timings.waitMs, timings.renderPath, timings.installedPluginTicks, timings.slowPlugin, timings.slowPluginMs,
+		    timings.vrSurfaceVisible ? 1 : 0, timings.activeDashboardOverlay ? 1 : 0,
+		    timings.anyDashboardVisible ? 1 : 0, timings.safeOverlayVisible ? 1 : 0, timings.vrConnected ? 1 : 0,
+		    suppressedSinceLastLog_);
+
+		suppressedSinceLastLog_ = 0;
+		lastLogSeconds_ = nowSeconds;
+	}
+
+private:
+	static constexpr double kFrameGapWarnMs = 250.0;
+	static constexpr double kFrameWorkWarnMs = 250.0;
+	static constexpr double kStageWarnMs = 75.0;
+	static constexpr double kLogThrottleSeconds = 1.0;
+
+	double lastFrameStartSeconds_ = 0.0;
+	double lastLogSeconds_ = 0.0;
+	uint32_t suppressedSinceLastLog_ = 0;
 };
 
 } // namespace
@@ -412,6 +506,7 @@ int main(int argc, char** argv)
 	std::string prevSafeOverlayStatus;
 	int prevPrimaryDashboardHand = 0;
 	CompositorTimingSampler compositorSampler;
+	OverlayFrameHitchLogger frameHitches;
 
 	// Resolve each plugin's ModuleId once; the per-frame Tick loop wraps
 	// every call in a perf section keyed by this id.
@@ -423,15 +518,27 @@ int main(int argc, char** argv)
 	}
 
 	while (!glfwWindowShouldClose(window) && !vrOverlay->QuitRequested()) {
+		OverlayFrameTimings frameTimings;
+		const double frameStartSeconds = frameHitches.BeginFrame(frameTimings);
+		double stageStartSeconds = glfwGetTime();
+
 		// Samples this process + the driver's perf segment at 1 Hz, updates
 		// the Modules-tab performance card data, and replaces the old
 		// process-only [perf] log lines.
 		openvr_pair::overlay::GetPerfStatsHub().Tick(glfwGetTime());
+		frameTimings.perfTickMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+		ObserveSlowStage(frameTimings, "perf_tick", frameTimings.perfTickMs);
 
+		stageStartSeconds = glfwGetTime();
 		context.TickToggles();
+		frameTimings.toggleMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+		ObserveSlowStage(frameTimings, "toggles", frameTimings.toggleMs);
 
+		stageStartSeconds = glfwGetTime();
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
+		frameTimings.backendFrameMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+		ObserveSlowStage(frameTimings, "backend_frame", frameTimings.backendFrameMs);
 
 		// Drain SteamVR overlay events AFTER ImGui_ImplGlfw_NewFrame
 		// so the VR mouse position wins over GLFW's desktop cursor
@@ -449,7 +556,10 @@ int main(int argc, char** argv)
 			context.dashboardInputSafeOverlayToggleRequested = false;
 			vrOverlay->RequestSafeOverlayToggle();
 		}
+		stageStartSeconds = glfwGetTime();
 		const bool activeDashboardOverlay = vrOverlay->TickFrame(kVrFboWidth, kVrFboHeight);
+		frameTimings.vrTickMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+		ObserveSlowStage(frameTimings, "vr_tick", frameTimings.vrTickMs);
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
 		const bool safeOverlayVisible = vrOverlay->SafeOverlayVisible();
 		const bool vrSurfaceVisible = activeDashboardOverlay || safeOverlayVisible;
@@ -461,8 +571,16 @@ int main(int argc, char** argv)
 		context.dashboardVisible = activeDashboardOverlay;
 		context.dashboardInputSafeOverlayVisible = safeOverlayVisible;
 		context.dashboardInputSafeOverlayStatus = vrOverlay->SafeOverlayStatus();
+		frameTimings.vrSurfaceVisible = vrSurfaceVisible;
+		frameTimings.activeDashboardOverlay = activeDashboardOverlay;
+		frameTimings.anyDashboardVisible = anyDashboardVisible;
+		frameTimings.safeOverlayVisible = safeOverlayVisible;
+		frameTimings.vrConnected = context.vrConnected;
 		if (context.vrConnected) {
+			stageStartSeconds = glfwGetTime();
 			compositorSampler.MaybeSample(glfwGetTime());
+			frameTimings.compositorSampleMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+			ObserveSlowStage(frameTimings, "compositor_sample", frameTimings.compositorSampleMs);
 		}
 		if (!haveVrState || activeDashboardOverlay != prevActiveDashboardOverlay ||
 		    anyDashboardVisible != prevAnyDashboardVisible || context.vrConnected != prevVrConnected ||
@@ -488,6 +606,7 @@ int main(int argc, char** argv)
 		for (size_t i = 0; i < plugins.size(); ++i) {
 			auto& plugin = plugins[i];
 			if (!plugin->IsInstalled(context)) continue;
+			stageStartSeconds = glfwGetTime();
 			if (pluginPerfIds[i]) {
 				openvr_pair::common::moduleperf::ScopedSection perfSection(*pluginPerfIds[i]);
 				plugin->Tick(context);
@@ -495,8 +614,17 @@ int main(int argc, char** argv)
 			else {
 				plugin->Tick(context);
 			}
+			const double pluginMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+			frameTimings.pluginTickMs += pluginMs;
+			++frameTimings.installedPluginTicks;
+			if (pluginMs > frameTimings.slowPluginMs) {
+				frameTimings.slowPlugin = plugin->Name();
+				frameTimings.slowPluginMs = pluginMs;
+			}
 		}
+		ObserveSlowStage(frameTimings, "plugin_ticks", frameTimings.pluginTickMs);
 
+		stageStartSeconds = glfwGetTime();
 		ImGuiIO& io = ImGui::GetIO();
 		if (vrSurfaceVisible) {
 			// VR render target is fixed-resolution; override what GLFW
@@ -518,6 +646,8 @@ int main(int argc, char** argv)
 
 		DrawShellWindow(context, plugins);
 		ImGui::Render();
+		frameTimings.imguiBuildMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+		ObserveSlowStage(frameTimings, "imgui_build", frameTimings.imguiBuildMs);
 
 		// Two render paths share one ImGui::GetDrawData() call: the
 		// content laid out above is rasterised into whichever FBO the
@@ -531,6 +661,8 @@ int main(int argc, char** argv)
 		glfwGetFramebufferSize(window, &fbw, &fbh);
 
 		if (vrSurfaceVisible) {
+			frameTimings.renderPath = "vr";
+			stageStartSeconds = glfwGetTime();
 			// VR path: render into the fixed-size FBO and submit. The
 			// desktop blit stretches because monitor users behind a VR
 			// session are not the primary audience here.
@@ -546,12 +678,26 @@ int main(int argc, char** argv)
 				glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 				glBlitFramebuffer(0, 0, kVrFboWidth, kVrFboHeight, 0, 0, fbw, fbh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 				glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+				frameTimings.renderMs += (glfwGetTime() - stageStartSeconds) * 1000.0;
+				ObserveSlowStage(frameTimings, "render", frameTimings.renderMs);
+				stageStartSeconds = glfwGetTime();
 				glfwSwapBuffers(window);
+				frameTimings.swapMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+				ObserveSlowStage(frameTimings, "swap_buffers", frameTimings.swapMs);
+			}
+			else {
+				frameTimings.renderMs += (glfwGetTime() - stageStartSeconds) * 1000.0;
+				ObserveSlowStage(frameTimings, "render", frameTimings.renderMs);
 			}
 
+			stageStartSeconds = glfwGetTime();
 			vrOverlay->SubmitTexture(vrTexture, kVrFboWidth, kVrFboHeight);
+			frameTimings.submitMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+			ObserveSlowStage(frameTimings, "submit_texture", frameTimings.submitMs);
 		}
 		else if (fbw > 0 && fbh > 0) {
+			frameTimings.renderPath = "desktop";
+			stageStartSeconds = glfwGetTime();
 			// Desktop path: keep the window FBO sized to the actual
 			// framebuffer so the 1:1 blit below preserves pixel sharpness
 			// and ImGui's layout (already taken at GLFW's DisplaySize)
@@ -571,7 +717,12 @@ int main(int argc, char** argv)
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 			glBlitFramebuffer(0, 0, fbw, fbh, 0, 0, fbw, fbh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+			frameTimings.renderMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+			ObserveSlowStage(frameTimings, "render", frameTimings.renderMs);
+			stageStartSeconds = glfwGetTime();
 			glfwSwapBuffers(window);
+			frameTimings.swapMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+			ObserveSlowStage(frameTimings, "swap_buffers", frameTimings.swapMs);
 		}
 
 		// Wait for input or a frame interval. Tighter cadence when
@@ -581,7 +732,12 @@ int main(int argc, char** argv)
 		constexpr double kDashboardFrameSeconds = 1.0 / 90.0;
 		constexpr double kIdleFrameSeconds = 1.0 / 30.0;
 		const double waitSeconds = vrSurfaceVisible ? kDashboardFrameSeconds : kIdleFrameSeconds;
+		stageStartSeconds = glfwGetTime();
 		glfwWaitEventsTimeout(waitSeconds);
+		frameTimings.waitMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+		ObserveSlowStage(frameTimings, "wait_events", frameTimings.waitMs);
+		frameTimings.totalMs = (glfwGetTime() - frameStartSeconds) * 1000.0;
+		frameHitches.MaybeLog(frameTimings);
 	}
 
 	openvr_pair::common::WriteRuntimeHealthSummary();

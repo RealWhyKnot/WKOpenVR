@@ -18,6 +18,14 @@ inline bool ShouldShowDriverError(bool vrConnected, bool hasDriverError)
 	return vrConnected && hasDriverError;
 }
 
+inline uint32_t DriverConnectRetryDelayMs(uint32_t consecutiveFailures)
+{
+	if (consecutiveFailures <= 1) return 1000;
+	if (consecutiveFailures == 2) return 2000;
+	if (consecutiveFailures == 3) return 4000;
+	return 8000;
+}
+
 // Display tone for diagnostics cells. Kept ImGui-free (no StatusTone / Theme
 // dependency) so this header stays usable from the unit-test target, which puts
 // modules/phantom/src/overlay on the include path but not core/src/overlay. The

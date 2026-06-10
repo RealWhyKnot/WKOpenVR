@@ -7,6 +7,7 @@
 #include "PhantomPlugin.h"
 
 #include "DeviceFilters.h"
+#include "DiagnosticsLog.h"
 #include "PhantomUiLogic.h"
 #include "Protocol.h"
 #include "ShellContext.h"
@@ -58,6 +59,7 @@ ui::StatusTone ToStatusTone(phantom::ui::PhantomTone t)
 void PhantomPlugin::OnStart(openvr_pair::overlay::ShellContext&)
 {
 	connectError_.clear();
+	connectFailureCount_ = 0;
 	seededDriver_ = false;
 }
 
@@ -71,6 +73,7 @@ void PhantomPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 		}
 		connectError_.clear();
 		nextConnectAttempt_ = {};
+		connectFailureCount_ = 0;
 		seededDriver_ = false;
 		return;
 	}
@@ -100,16 +103,21 @@ bool PhantomPlugin::ConnectIfNeeded()
 	if (nextConnectAttempt_.time_since_epoch().count() != 0 && now < nextConnectAttempt_) {
 		return false;
 	}
-	nextConnectAttempt_ = now + std::chrono::seconds(1);
 
 	try {
 		ipc_.Connect();
 		connectError_.clear();
 		nextConnectAttempt_ = {};
+		connectFailureCount_ = 0;
 		return true;
 	}
 	catch (const std::exception& e) {
 		connectError_ = e.what();
+		++connectFailureCount_;
+		const uint32_t retryDelayMs = phantom::ui::DriverConnectRetryDelayMs(connectFailureCount_);
+		nextConnectAttempt_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(retryDelayMs);
+		openvr_pair::common::DiagnosticLog("phantom", "driver_connect_retry failures=%u retry_ms=%u error='%s'",
+		                                   connectFailureCount_, retryDelayMs, connectError_.c_str());
 	}
 	return false;
 }

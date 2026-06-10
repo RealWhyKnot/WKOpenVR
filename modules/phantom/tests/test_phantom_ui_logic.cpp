@@ -24,6 +24,16 @@ TEST(PhantomUiLogic, ShowsDriverErrorsAfterSteamVrConnects)
 	EXPECT_FALSE(phantom::ui::ShouldShowDriverError(true, false));
 }
 
+TEST(PhantomUiLogic, DriverConnectRetryDelayBacksOffAndCaps)
+{
+	EXPECT_EQ(phantom::ui::DriverConnectRetryDelayMs(0), 1000u);
+	EXPECT_EQ(phantom::ui::DriverConnectRetryDelayMs(1), 1000u);
+	EXPECT_EQ(phantom::ui::DriverConnectRetryDelayMs(2), 2000u);
+	EXPECT_EQ(phantom::ui::DriverConnectRetryDelayMs(3), 4000u);
+	EXPECT_EQ(phantom::ui::DriverConnectRetryDelayMs(4), 8000u);
+	EXPECT_EQ(phantom::ui::DriverConnectRetryDelayMs(30), 8000u);
+}
+
 TEST(PhantomUiLogic, VirtualRoleTiersReflectRisk)
 {
 	EXPECT_EQ(phantom::ui::GetVirtualRoleTier(phantom::BodyRole::Waist), phantom::ui::VirtualRoleTier::Safer);
