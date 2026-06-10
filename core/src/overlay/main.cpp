@@ -408,8 +408,6 @@ int main(int argc, char** argv)
 	bool prevAnyDashboardVisible = false;
 	bool prevVrConnected = false;
 	bool prevSafeOverlayVisible = false;
-	bool prevSafeOverlayInputReady = false;
-	bool prevSafeOverlayGlobalPriorityEnabled = false;
 	std::string prevSafeOverlayStatus;
 	int prevPrimaryDashboardHand = 0;
 	openvr_pair::common::ProcessPerfSampler perfSampler;
@@ -443,6 +441,10 @@ int main(int argc, char** argv)
 		    dashboardInputEnabled,
 		    context.IsFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName));
 		vrOverlay->SetSafeOverlayEnabled(dashboardInputRuntimeEnabled);
+		if (context.dashboardInputSafeOverlayToggleRequested) {
+			context.dashboardInputSafeOverlayToggleRequested = false;
+			vrOverlay->RequestSafeOverlayToggle();
+		}
 		const bool activeDashboardOverlay = vrOverlay->TickFrame(kVrFboWidth, kVrFboHeight);
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
 		const bool safeOverlayVisible = vrOverlay->SafeOverlayVisible();
@@ -454,8 +456,6 @@ int main(int argc, char** argv)
 		context.primaryDashboardHand = vrOverlay->PrimaryDashboardHand();
 		context.dashboardVisible = activeDashboardOverlay;
 		context.dashboardInputSafeOverlayVisible = safeOverlayVisible;
-		context.dashboardInputSafeOverlayInputReady = vrOverlay->SafeOverlayInputReady();
-		context.dashboardInputSafeOverlayGlobalPriorityEnabled = vrOverlay->SafeOverlayGlobalPriorityEnabled();
 		context.dashboardInputSafeOverlayStatus = vrOverlay->SafeOverlayStatus();
 		if (context.vrConnected) {
 			compositorSampler.MaybeSample(glfwGetTime());
@@ -463,27 +463,20 @@ int main(int argc, char** argv)
 		if (!haveVrState || activeDashboardOverlay != prevActiveDashboardOverlay ||
 		    anyDashboardVisible != prevAnyDashboardVisible || context.vrConnected != prevVrConnected ||
 		    safeOverlayVisible != prevSafeOverlayVisible ||
-		    context.dashboardInputSafeOverlayInputReady != prevSafeOverlayInputReady ||
-		    context.dashboardInputSafeOverlayGlobalPriorityEnabled != prevSafeOverlayGlobalPriorityEnabled ||
 		    context.dashboardInputSafeOverlayStatus != prevSafeOverlayStatus ||
 		    context.primaryDashboardHand != prevPrimaryDashboardHand) {
 			openvr_pair::common::DiagnosticLog(
 			    "overlay",
 			    "vr_state active_dashboard_overlay=%d any_dashboard_visible=%d vr_connected=%d "
-			    "primary_dashboard_device=%u primary_dashboard_hand=%d safe_overlay_visible=%d "
-			    "safe_input_ready=%d safe_global_priority=%d safe_status='%s'",
+			    "primary_dashboard_device=%u primary_dashboard_hand=%d safe_overlay_visible=%d safe_status='%s'",
 			    activeDashboardOverlay ? 1 : 0, anyDashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0,
 			    context.primaryDashboardDevice, context.primaryDashboardHand, safeOverlayVisible ? 1 : 0,
-			    context.dashboardInputSafeOverlayInputReady ? 1 : 0,
-			    context.dashboardInputSafeOverlayGlobalPriorityEnabled ? 1 : 0,
 			    context.dashboardInputSafeOverlayStatus.c_str());
 			haveVrState = true;
 			prevActiveDashboardOverlay = activeDashboardOverlay;
 			prevAnyDashboardVisible = anyDashboardVisible;
 			prevVrConnected = context.vrConnected;
 			prevSafeOverlayVisible = safeOverlayVisible;
-			prevSafeOverlayInputReady = context.dashboardInputSafeOverlayInputReady;
-			prevSafeOverlayGlobalPriorityEnabled = context.dashboardInputSafeOverlayGlobalPriorityEnabled;
 			prevSafeOverlayStatus = context.dashboardInputSafeOverlayStatus;
 			prevPrimaryDashboardHand = context.primaryDashboardHand;
 		}

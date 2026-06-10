@@ -22,8 +22,7 @@ struct ShellContext
 	int primaryDashboardHand = 0;
 	bool dashboardVisible = false;
 	bool dashboardInputSafeOverlayVisible = false;
-	bool dashboardInputSafeOverlayInputReady = false;
-	bool dashboardInputSafeOverlayGlobalPriorityEnabled = false;
+	bool dashboardInputSafeOverlayToggleRequested = false;
 	std::string dashboardInputSafeOverlayStatus;
 	std::vector<std::string> moduleTabOrder;
 

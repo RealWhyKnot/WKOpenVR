@@ -230,28 +230,31 @@ void DashboardInputPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 			            : openvr_pair::overlay::ui::StatusTone::Idle,
 			        false);
 		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Input", [&] {
+		    openvr_pair::overlay::ui::SettingRow(table, "Status", [&] {
 			    const char* label = !runtimeEnabled ? "Disabled"
 			                        : context.dashboardInputSafeOverlayStatus.empty()
-			                            ? (context.dashboardInputSafeOverlayInputReady ? "Ready" : "Starting")
+			                            ? "Starting"
 			                            : context.dashboardInputSafeOverlayStatus.c_str();
 			    openvr_pair::overlay::ui::DrawStatusCell(label,
-			                                             runtimeEnabled && context.dashboardInputSafeOverlayInputReady
+			                                             runtimeEnabled && context.dashboardInputSafeOverlayVisible
 			                                                 ? openvr_pair::overlay::ui::StatusTone::Ok
 			                                                 : openvr_pair::overlay::ui::StatusTone::Idle,
 			                                             false);
 		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Global priority", [&] {
-			    openvr_pair::overlay::ui::DrawStatusCell(
-			        !runtimeEnabled
-			            ? "Disabled"
-			            : (context.dashboardInputSafeOverlayGlobalPriorityEnabled ? "Enabled" : "Unavailable"),
-			        runtimeEnabled && context.dashboardInputSafeOverlayGlobalPriorityEnabled
-			            ? openvr_pair::overlay::ui::StatusTone::Ok
-			            : openvr_pair::overlay::ui::StatusTone::Idle,
-			        false);
-		    });
 	    });
+
+	{
+		const bool canToggle = runtimeEnabled && context.vrConnected;
+		ImGui::BeginDisabled(!canToggle);
+		if (ImGui::Button(context.dashboardInputSafeOverlayVisible ? "Hide safe overlay" : "Show safe overlay")) {
+			context.dashboardInputSafeOverlayToggleRequested = true;
+		}
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+			ImGui::SetTooltip("Head-anchored panel driven by the SteamVR laser pointer.\n"
+			                  "Hides automatically while the dashboard is open.");
+		}
+	}
 
 	openvr_pair::overlay::ShellFooterStatus footer;
 	footer.driverConnected = ipc_.IsConnected();

@@ -32,9 +32,9 @@ public:
 
 	// Per-frame pump. Retries VR_Init on a 1-second cadence until
 	// SteamVR is up; creates the dashboard overlay once VR is
-	// connected; drains overlay events into ImGuiIO; pumps the safe
-	// overlay input path when DashboardInput is enabled. Returns true
-	// when the real SteamVR dashboard overlay is currently visible.
+	// connected; drains overlay events into ImGuiIO; applies the safe
+	// overlay visibility policy when DashboardInput is enabled. Returns
+	// true when the real SteamVR dashboard overlay is currently visible.
 	bool TickFrame(int overlayPixelWidth, int overlayPixelHeight);
 
 	// Hand the umbrella's offscreen FBO texture to the VR overlays.
@@ -48,6 +48,12 @@ public:
 
 	void SetSafeOverlayEnabled(bool enabled);
 
+	// User asked to show/hide the safe overlay (module tab button).
+	// The flip is applied by the visibility policy on the next
+	// TickFrame; the overlay auto-hides while the real dashboard is
+	// open regardless of the requested state.
+	void RequestSafeOverlayToggle();
+
 	// True once we have a live Overlay-mode VR session. The
 	// desktop window keeps working when this is false.
 	bool VrConnected() const { return vrReady_; }
@@ -55,50 +61,32 @@ public:
 	uint32_t PrimaryDashboardDevice() const { return primaryDashboardDevice_; }
 	int PrimaryDashboardHand() const { return primaryDashboardHand_; }
 	bool SafeOverlayVisible() const { return safeOverlayVisible_; }
-	bool SafeOverlayInputReady() const { return safeInputReady_; }
-	bool SafeOverlayGlobalPriorityEnabled() const { return safeGlobalPriorityEnabled_; }
 	const std::string& SafeOverlayStatus() const { return safeOverlayStatus_; }
 
 private:
 	bool TryInitVrStack();
 	void TryCreateOverlay();
-	void TryCreateSafeOverlay();
-	void TryInitSafeOverlayInput();
-	void TickSafeOverlayInput(int overlayPixelWidth, int overlayPixelHeight);
+	void TryCreateSafeOverlay(int overlayPixelWidth, int overlayPixelHeight);
+	void TickSafeOverlay(int overlayPixelWidth, int overlayPixelHeight);
 	void UpdateSafeOverlayVisibility(bool visible);
-	void PumpSafeOverlayPointerEvents(int width, int height);
 	void DrainOverlayEvents();
+	void DrainEventsForHandle(vr::VROverlayHandle_t handle);
 	void RefreshDashboardState();
+	void CleanupGlobalActionSetPrioritySetting();
 	bool IsActiveDashboardOverlay() const;
 
 	std::string ResolveIconPath() const;
-	std::string ResolveActionManifestPath() const;
 
 	vr::VROverlayHandle_t mainHandle_ = 0;
 	vr::VROverlayHandle_t thumbHandle_ = 0;
 	vr::VROverlayHandle_t safeHandle_ = 0;
-
-	vr::VRActionSetHandle_t safeToggleSet_ = vr::k_ulInvalidActionSetHandle;
-	vr::VRActionSetHandle_t safePointerSet_ = vr::k_ulInvalidActionSetHandle;
-	vr::VRActionHandle_t safeToggleAction_ = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t safePointerAction_ = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t safeClickAction_ = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t safeScrollAction_ = vr::k_ulInvalidActionHandle;
-	vr::VRInputValueHandle_t leftHandSource_ = vr::k_ulInvalidInputValueHandle;
-	vr::VRInputValueHandle_t rightHandSource_ = vr::k_ulInvalidInputValueHandle;
 
 	bool vrReady_ = false;
 	bool overlayCreated_ = false;
 	bool safeOverlayCreated_ = false;
 	bool safeOverlayFeatureEnabled_ = false;
 	bool safeOverlayVisible_ = false;
-	bool safeInputManifestLoaded_ = false;
-	bool safeInputReady_ = false;
-	bool safeGlobalPriorityEnabled_ = false;
-	bool safeLeftToggleDown_ = false;
-	bool safeRightToggleDown_ = false;
-	bool safeClickDown_ = false;
-	bool safeInputUnavailableLogged_ = false;
+	bool safeOverlayUserRequestedVisible_ = false;
 	bool quitRequested_ = false;
 	bool anyDashboardVisible_ = false;
 	uint32_t primaryDashboardDevice_ = vr::k_unTrackedDeviceIndexInvalid;

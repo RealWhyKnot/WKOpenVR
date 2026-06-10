@@ -1,30 +1,15 @@
 #pragma once
 
-#include <openvr.h>
-
-#include <cstdint>
-
 namespace openvr_pair::overlay {
 
-inline int32_t DashboardInputSafeOverlayPriority()
+// Pure visibility policy for the dashboardinput safe overlay. The overlay
+// is a user-summoned panel; while the real SteamVR dashboard is open the
+// main dashboard overlay already feeds the shared ImGui IO, so the safe
+// overlay yields to keep a single laser-event stream.
+inline bool DashboardInputSafeOverlayShouldBeVisible(bool featureEnabled, bool userRequestedVisible,
+                                                     bool dashboardVisible)
 {
-	return vr::k_nActionSetOverlayGlobalPriorityMin;
-}
-
-inline bool DashboardInputSafeOverlayToggleActive(bool featureEnabled, bool inputReady)
-{
-	return featureEnabled && inputReady;
-}
-
-inline bool DashboardInputSafeOverlayPointerActive(bool featureEnabled, bool inputReady, bool overlayVisible)
-{
-	return featureEnabled && inputReady && overlayVisible;
-}
-
-inline uint32_t DashboardInputSafeOverlayActionSetCount(bool featureEnabled, bool inputReady, bool overlayVisible)
-{
-	if (!DashboardInputSafeOverlayToggleActive(featureEnabled, inputReady)) return 0;
-	return DashboardInputSafeOverlayPointerActive(featureEnabled, inputReady, overlayVisible) ? 4u : 2u;
+	return featureEnabled && userRequestedVisible && !dashboardVisible;
 }
 
 } // namespace openvr_pair::overlay

@@ -271,18 +271,6 @@ jobs:
           if (-not (Test-Path "$artifacts/manifest.vrmanifest")) {
             throw "manifest.vrmanifest not found at $artifacts (build step copies it from core/src/overlay/)"
           }
-          $overlayInputResources = @(
-            'action_manifest.json',
-            'bindings_dashboardinput_knuckles.json',
-            'bindings_dashboardinput_touch.json',
-            'bindings_dashboardinput_vive.json',
-            'bindings_dashboardinput_generic.json'
-          )
-          foreach ($resource in $overlayInputResources) {
-            if (-not (Test-Path "$artifacts/$resource")) {
-              throw "$resource not found at $artifacts (build step copies it from core/src/overlay/)"
-            }
-          }
 
           # --- Assemble the driver tree into a staging directory ----------
           # The installer convention: the DLL is renamed driver_01wkopenvr.dll
@@ -431,11 +419,6 @@ jobs:
             'build/artifacts/Release/WKOpenVR.exe',
             'build/artifacts/Release/openvr_api.dll',
             'build/artifacts/Release/manifest.vrmanifest',
-            'build/artifacts/Release/action_manifest.json',
-            'build/artifacts/Release/bindings_dashboardinput_knuckles.json',
-            'build/artifacts/Release/bindings_dashboardinput_touch.json',
-            'build/artifacts/Release/bindings_dashboardinput_vive.json',
-            'build/artifacts/Release/bindings_dashboardinput_generic.json',
             'build/artifacts/Release/dashboard_icon.png',
             'build/artifacts/Release/boundary_icon.png',
             'build/artifacts/Release/resources/face-module-sync.ps1',

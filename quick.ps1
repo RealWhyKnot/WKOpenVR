@@ -634,13 +634,6 @@ $srcOpenVR = Join-Path $artifactsDir "openvr_api.dll"
 $srcManifest = Join-Path $artifactsDir "manifest.vrmanifest"
 $srcIcon = Join-Path $artifactsDir "dashboard_icon.png"
 $srcBoundaryIcon = Join-Path $artifactsDir "boundary_icon.png"
-$overlayInputResources = @(
-	"action_manifest.json",
-	"bindings_dashboardinput_knuckles.json",
-	"bindings_dashboardinput_touch.json",
-	"bindings_dashboardinput_vive.json",
-	"bindings_dashboardinput_generic.json"
-)
 
 $required = @(
 	@("WKOpenVR.exe", $srcExe),
@@ -665,9 +658,6 @@ $required = @(
 	@("questapp uninstaller", (Join-Path $overlayResourcesSource "questapp\uninstall-questapp.ps1")),
 	@("questapp companion apk", (Join-Path $overlayResourcesSource "questapp\WKOpenVRQuestCompanion.apk"))
 )
-foreach ($resource in $overlayInputResources) {
-	$required += ,@($resource, (Join-Path $artifactsDir $resource))
-}
 
 Write-Step "Checking artifacts"
 foreach ($item in $required) {
@@ -681,13 +671,6 @@ $overlayFiles = @(
 	[ordered]@{ Label = "dashboard_icon.png";   Source = $srcIcon;         Destination = (Join-Path $InstallDir "dashboard_icon.png") },
 	[ordered]@{ Label = "boundary_icon.png";    Source = $srcBoundaryIcon; Destination = (Join-Path $InstallDir "boundary_icon.png") }
 )
-foreach ($resource in $overlayInputResources) {
-	$overlayFiles += ,([ordered]@{
-		Label       = $resource
-		Source      = (Join-Path $artifactsDir $resource)
-		Destination = (Join-Path $InstallDir $resource)
-	})
-}
 
 $plan = [ordered]@{
 	InstallDir            = $InstallDir

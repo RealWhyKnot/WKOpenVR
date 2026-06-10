@@ -11,29 +11,23 @@ TEST(DashboardInputRuntimeGate, RequiresModuleAndRuntimeOptInFlags)
 	EXPECT_TRUE(openvr_pair::common::dashboardinput::RuntimeEnabled(true, true));
 }
 
-TEST(DashboardInputSafeOverlayLogic, UsesSteamVROverlayGlobalPriorityRange)
+TEST(DashboardInputSafeOverlayLogic, VisibleOnlyWhenEnabledAndRequested)
 {
-	EXPECT_GE(openvr_pair::overlay::DashboardInputSafeOverlayPriority(), vr::k_nActionSetOverlayGlobalPriorityMin);
-	EXPECT_LE(openvr_pair::overlay::DashboardInputSafeOverlayPriority(), vr::k_nActionSetOverlayGlobalPriorityMax);
+	EXPECT_TRUE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(true, true, false));
+	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(true, false, false));
+	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(false, true, false));
+	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(false, false, false));
 }
 
-TEST(DashboardInputSafeOverlayLogic, KeepsToggleActiveWhilePointerInputIsHidden)
+TEST(DashboardInputSafeOverlayLogic, YieldsWhileDashboardIsOpen)
 {
-	EXPECT_TRUE(openvr_pair::overlay::DashboardInputSafeOverlayToggleActive(true, true));
-	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayPointerActive(true, true, false));
-	EXPECT_EQ(2u, openvr_pair::overlay::DashboardInputSafeOverlayActionSetCount(true, true, false));
+	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(true, true, true));
+	// Returns as soon as the dashboard closes; the user request persists.
+	EXPECT_TRUE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(true, true, false));
 }
 
-TEST(DashboardInputSafeOverlayLogic, EnablesPointerInputOnlyForVisibleSafeOverlay)
+TEST(DashboardInputSafeOverlayLogic, DisabledFeatureIgnoresRequestAndDashboardState)
 {
-	EXPECT_TRUE(openvr_pair::overlay::DashboardInputSafeOverlayPointerActive(true, true, true));
-	EXPECT_EQ(4u, openvr_pair::overlay::DashboardInputSafeOverlayActionSetCount(true, true, true));
-}
-
-TEST(DashboardInputSafeOverlayLogic, DisablesAllActionSetsWhenModuleOrInputIsUnavailable)
-{
-	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayToggleActive(false, true));
-	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayToggleActive(true, false));
-	EXPECT_EQ(0u, openvr_pair::overlay::DashboardInputSafeOverlayActionSetCount(false, true, true));
-	EXPECT_EQ(0u, openvr_pair::overlay::DashboardInputSafeOverlayActionSetCount(true, false, true));
+	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(false, true, true));
+	EXPECT_FALSE(openvr_pair::overlay::DashboardInputSafeOverlayShouldBeVisible(false, true, false));
 }

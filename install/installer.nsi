@@ -207,11 +207,6 @@ Section "Install"
     ; in WKOpenVR can resolve it via GetModuleFileName + replace_filename
     ; on first launch and register the overlay with SteamVR for auto-start.
     File "${ARTIFACTS_BASEDIR}\manifest.vrmanifest"
-    File "${ARTIFACTS_BASEDIR}\action_manifest.json"
-    File "${ARTIFACTS_BASEDIR}\bindings_dashboardinput_knuckles.json"
-    File "${ARTIFACTS_BASEDIR}\bindings_dashboardinput_touch.json"
-    File "${ARTIFACTS_BASEDIR}\bindings_dashboardinput_vive.json"
-    File "${ARTIFACTS_BASEDIR}\bindings_dashboardinput_generic.json"
     File "${ARTIFACTS_BASEDIR}\dashboard_icon.png"
     File "${ARTIFACTS_BASEDIR}\boundary_icon.png"
     File "..\LICENSE"

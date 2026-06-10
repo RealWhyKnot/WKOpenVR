@@ -2,15 +2,13 @@
 
 #include "DashboardInputSafeOverlayLogic.h"
 #include "DiagnosticsLog.h"
+#include "Win32Paths.h"
 
 #include <imgui.h>
 
-#include <array>
-#include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
-#include <limits>
+#include <fstream>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -31,15 +29,6 @@ constexpr const char* kAppKey = "wk.wkopenvr";
 constexpr const char* kFriendlyName = "WKOpenVR";
 constexpr const char* kSafeOverlayKey = "wk.wkopenvr.dashboardinput.safe";
 constexpr const char* kSafeOverlayName = "WKOpenVR";
-
-constexpr const char* kSafeToggleActionSet = "/actions/dashboardinput_toggle";
-constexpr const char* kSafePointerActionSet = "/actions/dashboardinput_pointer";
-constexpr const char* kSafeToggleAction = "/actions/dashboardinput_toggle/in/toggle";
-constexpr const char* kSafePointerAction = "/actions/dashboardinput_pointer/in/pointer";
-constexpr const char* kSafeClickAction = "/actions/dashboardinput_pointer/in/left_click";
-constexpr const char* kSafeScrollAction = "/actions/dashboardinput_pointer/in/scroll";
-constexpr const char* kLeftHandSource = "/user/hand/left";
-constexpr const char* kRightHandSource = "/user/hand/right";
 
 // Width of the dashboard panel in metres. SC used 3.0; same value
 // renders comfortably at typical viewing distance.
@@ -65,7 +54,6 @@ constexpr double kInitRetrySeconds = 1.0;
 // rather than 5 -- closer to desktop scroll-wheel feel without overshooting
 // the page.
 constexpr float kScrollScale = 2.0f;
-constexpr float kSafeOverlayScrollScale = 2.0f;
 
 #ifdef _WIN32
 std::filesystem::path ExeDir()
@@ -108,25 +96,6 @@ vr::HmdMatrix34_t SafeOverlayHmdRelativeTransform()
 	return mat;
 }
 
-vr::VRActiveActionSet_t ActiveSet(vr::VRActionSetHandle_t actionSet, vr::VRInputValueHandle_t device)
-{
-	vr::VRActiveActionSet_t set{};
-	set.ulActionSet = actionSet;
-	set.ulRestrictedToDevice = device;
-	set.ulSecondaryActionSet = vr::k_ulInvalidActionSetHandle;
-	set.nPriority = DashboardInputSafeOverlayPriority();
-	return set;
-}
-
-struct SafeOverlayPointerHit
-{
-	bool hit = false;
-	float x = 0.0f;
-	float y = 0.0f;
-	float distance = 0.0f;
-	vr::VRInputValueHandle_t source = vr::k_ulInvalidInputValueHandle;
-};
-
 } // namespace
 
 VrOverlayHost::VrOverlayHost() = default;
@@ -157,14 +126,6 @@ std::string VrOverlayHost::ResolveIconPath() const
 	return p.string();
 }
 
-std::string VrOverlayHost::ResolveActionManifestPath() const
-{
-	std::filesystem::path p = ExeDir();
-	if (p.empty()) return {};
-	p /= "action_manifest.json";
-	return p.string();
-}
-
 void VrOverlayHost::SetSafeOverlayEnabled(bool enabled)
 {
 	if (safeOverlayFeatureEnabled_ == enabled) return;
@@ -172,14 +133,19 @@ void VrOverlayHost::SetSafeOverlayEnabled(bool enabled)
 	if (!enabled) {
 		UpdateSafeOverlayVisibility(false);
 		safeOverlayStatus_ = "disabled";
-		safeLeftToggleDown_ = false;
-		safeRightToggleDown_ = false;
-		safeClickDown_ = false;
+		safeOverlayUserRequestedVisible_ = false;
 	}
 	else {
-		safeOverlayStatus_ = safeInputReady_ ? "ready" : "starting";
+		safeOverlayStatus_ = safeOverlayCreated_ ? "ready" : "starting";
 	}
 	openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_feature_enabled enabled=%d", enabled ? 1 : 0);
+}
+
+void VrOverlayHost::RequestSafeOverlayToggle()
+{
+	safeOverlayUserRequestedVisible_ = !safeOverlayUserRequestedVisible_;
+	openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_toggle_requested visible=%d",
+	                                   safeOverlayUserRequestedVisible_ ? 1 : 0);
 }
 
 bool VrOverlayHost::TryInitVrStack()
@@ -233,7 +199,46 @@ bool VrOverlayHost::TryInitVrStack()
 
 	vrReady_ = true;
 	openvr_pair::common::DiagnosticLog("vr-overlay", "vr_init_overlay_ok");
+	CleanupGlobalActionSetPrioritySetting();
 	return true;
+}
+
+void VrOverlayHost::CleanupGlobalActionSetPrioritySetting()
+{
+	// Earlier dashboardinput builds force-enabled SteamVR's experimental
+	// "global input from overlays" setting and left it behind. The input
+	// path no longer uses action-set priority, so remove the key once if
+	// it is still set. The sentinel keeps this from re-running, so a user
+	// who later enables the setting for another overlay app keeps their
+	// choice.
+	const std::wstring root = openvr_pair::common::LocalAppDataLowPath();
+	if (root.empty()) return;
+	std::filesystem::path sentinel(root);
+	sentinel /= L"WKOpenVR";
+	sentinel /= L"dashboardinput_globalpriority_cleanup.flag";
+	std::error_code ec;
+	if (std::filesystem::exists(sentinel, ec)) return;
+
+	bool wasEnabled = false;
+	bool removed = false;
+	if (vr::VRSettings()) {
+		vr::EVRSettingsError settingsErr = vr::VRSettingsError_None;
+		wasEnabled = vr::VRSettings()->GetBool(vr::k_pch_SteamVR_Section,
+		                                       vr::k_pch_SteamVR_AllowGlobalActionSetPriority, &settingsErr);
+		if (settingsErr != vr::VRSettingsError_None) wasEnabled = false;
+		if (wasEnabled) {
+			settingsErr = vr::VRSettingsError_None;
+			vr::VRSettings()->RemoveKeyInSection(vr::k_pch_SteamVR_Section,
+			                                     vr::k_pch_SteamVR_AllowGlobalActionSetPriority, &settingsErr);
+			removed = settingsErr == vr::VRSettingsError_None;
+		}
+	}
+
+	std::filesystem::create_directories(sentinel.parent_path(), ec);
+	std::ofstream out(sentinel);
+	out << "cleanup=done\n";
+	openvr_pair::common::DiagnosticLog("vr-overlay", "global_priority_setting_cleanup was_enabled=%d removed=%d",
+	                                   wasEnabled ? 1 : 0, removed ? 1 : 0);
 }
 
 void VrOverlayHost::TryCreateOverlay()
@@ -281,7 +286,7 @@ void VrOverlayHost::TryCreateOverlay()
 	                                   kOverlayWidthMeters);
 }
 
-void VrOverlayHost::TryCreateSafeOverlay()
+void VrOverlayHost::TryCreateSafeOverlay(int overlayPixelWidth, int overlayPixelHeight)
 {
 	if (safeOverlayCreated_ || !vr::VROverlay()) return;
 
@@ -298,134 +303,33 @@ void VrOverlayHost::TryCreateSafeOverlay()
 		return;
 	}
 
+	// Input comes from the runtime laser mouse: Mouse input method plus
+	// MakeOverlaysInteractiveIfVisible activates the system laser whenever
+	// the overlay is shown, and the events arrive through
+	// PollNextOverlayEvent like the main dashboard overlay. No action
+	// manifest, no action-set priority, no reserved-button bindings.
 	vr::VROverlay()->SetOverlayWidthInMeters(safeHandle_, kOverlayWidthMeters);
-	vr::VROverlay()->SetOverlayInputMethod(safeHandle_, vr::VROverlayInputMethod_None);
+	vr::VROverlay()->SetOverlayInputMethod(safeHandle_, vr::VROverlayInputMethod_Mouse);
+	vr::VROverlay()->SetOverlayFlag(safeHandle_, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, true);
+	vr::VROverlay()->SetOverlayFlag(safeHandle_, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
 	vr::VROverlay()->SetOverlaySortOrder(safeHandle_, kSafeOverlaySortOrder);
 	const vr::HmdMatrix34_t transform = SafeOverlayHmdRelativeTransform();
 	vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(safeHandle_, vr::k_unTrackedDeviceIndex_Hmd, &transform);
+	if (overlayPixelWidth > 0 && overlayPixelHeight > 0) {
+		// Seed the mouse scale at creation so the first events already
+		// arrive in texture-pixel space; SubmitTexture refreshes it.
+		vr::HmdVector2_t mouseScale{};
+		mouseScale.v[0] = static_cast<float>(overlayPixelWidth);
+		mouseScale.v[1] = static_cast<float>(overlayPixelHeight);
+		vr::VROverlay()->SetOverlayMouseScale(safeHandle_, &mouseScale);
+	}
 
 	safeOverlayCreated_ = true;
+	if (safeOverlayFeatureEnabled_) safeOverlayStatus_ = "ready";
 	openvr_pair::common::DiagnosticLog(
 	    "vr-overlay", "safe_overlay_created handle=%llu width_m=%.2f hmd_relative_pos=(%.2f,%.2f,%.2f) sort=%u",
 	    (unsigned long long)safeHandle_, kOverlayWidthMeters, transform.m[0][3], transform.m[1][3], transform.m[2][3],
 	    kSafeOverlaySortOrder);
-}
-
-void VrOverlayHost::TryInitSafeOverlayInput()
-{
-	if (safeInputReady_ || !vr::VRInput()) return;
-
-	const std::string manifestPath = ResolveActionManifestPath();
-	if (manifestPath.empty() || !std::filesystem::exists(manifestPath)) {
-		safeOverlayStatus_ = "missing action manifest";
-		if (!safeInputUnavailableLogged_) {
-			openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_manifest_missing path='%s'",
-			                                   manifestPath.c_str());
-			safeInputUnavailableLogged_ = true;
-		}
-		return;
-	}
-
-	if (!safeInputManifestLoaded_) {
-		const vr::EVRInputError manifestErr = vr::VRInput()->SetActionManifestPath(manifestPath.c_str());
-		if (manifestErr != vr::VRInputError_None && manifestErr != vr::VRInputError_MismatchedActionManifest) {
-			safeOverlayStatus_ = "action manifest rejected";
-			openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_manifest_failed error=%d path='%s'",
-			                                   (int)manifestErr, manifestPath.c_str());
-			return;
-		}
-		safeInputManifestLoaded_ = true;
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_manifest_loaded error=%d path='%s'",
-		                                   (int)manifestErr, manifestPath.c_str());
-	}
-
-	const auto getSet = [](const char* path, vr::VRActionSetHandle_t& out) {
-		return vr::VRInput()->GetActionSetHandle(path, &out);
-	};
-	const auto getAction = [](const char* path, vr::VRActionHandle_t& out) {
-		return vr::VRInput()->GetActionHandle(path, &out);
-	};
-	const auto getSource = [](const char* path, vr::VRInputValueHandle_t& out) {
-		return vr::VRInput()->GetInputSourceHandle(path, &out);
-	};
-
-	vr::EVRInputError err = getSet(kSafeToggleActionSet, safeToggleSet_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "toggle set missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_toggle_set_failed error=%d", (int)err);
-		return;
-	}
-	err = getSet(kSafePointerActionSet, safePointerSet_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "pointer set missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_pointer_set_failed error=%d", (int)err);
-		return;
-	}
-	err = getAction(kSafeToggleAction, safeToggleAction_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "toggle action missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_toggle_action_failed error=%d", (int)err);
-		return;
-	}
-	err = getAction(kSafePointerAction, safePointerAction_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "pointer action missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_pointer_action_failed error=%d", (int)err);
-		return;
-	}
-	err = getAction(kSafeClickAction, safeClickAction_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "click action missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_click_action_failed error=%d", (int)err);
-		return;
-	}
-	err = getAction(kSafeScrollAction, safeScrollAction_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "scroll action missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_scroll_action_failed error=%d", (int)err);
-		return;
-	}
-	err = getSource(kLeftHandSource, leftHandSource_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "left hand missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_left_source_failed error=%d", (int)err);
-		return;
-	}
-	err = getSource(kRightHandSource, rightHandSource_);
-	if (err != vr::VRInputError_None) {
-		safeOverlayStatus_ = "right hand missing";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_get_right_source_failed error=%d", (int)err);
-		return;
-	}
-
-	if (vr::VRSettings()) {
-		vr::EVRSettingsError settingsErr = vr::VRSettingsError_None;
-		const bool alreadyEnabled = vr::VRSettings()->GetBool(
-		    vr::k_pch_SteamVR_Section, vr::k_pch_SteamVR_AllowGlobalActionSetPriority, &settingsErr);
-		if (settingsErr == vr::VRSettingsError_None && !alreadyEnabled) {
-			vr::VRSettings()->SetBool(vr::k_pch_SteamVR_Section, vr::k_pch_SteamVR_AllowGlobalActionSetPriority, true,
-			                          &settingsErr);
-		}
-		settingsErr = vr::VRSettingsError_None;
-		safeGlobalPriorityEnabled_ = vr::VRSettings()->GetBool(
-		    vr::k_pch_SteamVR_Section, vr::k_pch_SteamVR_AllowGlobalActionSetPriority, &settingsErr);
-		if (settingsErr != vr::VRSettingsError_None) {
-			safeGlobalPriorityEnabled_ = false;
-			openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_global_priority_read_failed error=%d",
-			                                   (int)settingsErr);
-		}
-	}
-
-	safeInputReady_ = true;
-	safeOverlayStatus_ = safeGlobalPriorityEnabled_ ? "ready" : "priority unavailable";
-	openvr_pair::common::DiagnosticLog(
-	    "vr-overlay",
-	    "safe_input_ready global_priority=%d toggle_set=%llu pointer_set=%llu toggle_action=%llu pointer_action=%llu "
-	    "click_action=%llu scroll_action=%llu left_source=%llu right_source=%llu",
-	    safeGlobalPriorityEnabled_ ? 1 : 0, (unsigned long long)safeToggleSet_, (unsigned long long)safePointerSet_,
-	    (unsigned long long)safeToggleAction_, (unsigned long long)safePointerAction_,
-	    (unsigned long long)safeClickAction_, (unsigned long long)safeScrollAction_,
-	    (unsigned long long)leftHandSource_, (unsigned long long)rightHandSource_);
 }
 
 bool VrOverlayHost::IsActiveDashboardOverlay() const
@@ -454,10 +358,11 @@ void VrOverlayHost::UpdateSafeOverlayVisibility(bool visible)
 	}
 	else {
 		err = vr::VROverlay()->HideOverlay(safeHandle_);
-		if (safeClickDown_ && ImGui::GetCurrentContext()) {
+		if (ImGui::GetCurrentContext()) {
+			// A laser click can be mid-press when the overlay hides;
+			// release so ImGui's button state can't get stuck down.
 			ImGui::GetIO().AddMouseButtonEvent(0, false);
 		}
-		safeClickDown_ = false;
 	}
 
 	if (err != vr::VROverlayError_None) {
@@ -469,158 +374,20 @@ void VrOverlayHost::UpdateSafeOverlayVisibility(bool visible)
 	}
 
 	safeOverlayVisible_ = visible;
-	safeOverlayStatus_ =
-	    visible ? "visible" : (safeOverlayFeatureEnabled_ ? (safeInputReady_ ? "ready" : "starting") : "disabled");
+	safeOverlayStatus_ = visible ? "visible" : (safeOverlayFeatureEnabled_ ? "ready" : "disabled");
 	openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_visible visible=%d", visible ? 1 : 0);
 }
 
-void VrOverlayHost::TickSafeOverlayInput(int overlayPixelWidth, int overlayPixelHeight)
+void VrOverlayHost::TickSafeOverlay(int overlayPixelWidth, int overlayPixelHeight)
 {
 	if (!safeOverlayFeatureEnabled_) {
 		UpdateSafeOverlayVisibility(false);
 		return;
 	}
 
-	TryCreateSafeOverlay();
-	TryInitSafeOverlayInput();
-	if (!safeInputReady_ || !vr::VRInput()) {
-		UpdateSafeOverlayVisibility(false);
-		return;
-	}
-
-	const bool activateToggle = DashboardInputSafeOverlayToggleActive(safeOverlayFeatureEnabled_, safeInputReady_);
-	const bool activatePointer =
-	    DashboardInputSafeOverlayPointerActive(safeOverlayFeatureEnabled_, safeInputReady_, safeOverlayVisible_);
-	const uint32_t expectedSetCount =
-	    DashboardInputSafeOverlayActionSetCount(safeOverlayFeatureEnabled_, safeInputReady_, safeOverlayVisible_);
-
-	std::array<vr::VRActiveActionSet_t, 4> sets{};
-	uint32_t setCount = 0;
-	if (activateToggle) {
-		sets[setCount++] = ActiveSet(safeToggleSet_, leftHandSource_);
-		sets[setCount++] = ActiveSet(safeToggleSet_, rightHandSource_);
-	}
-	if (activatePointer) {
-		sets[setCount++] = ActiveSet(safePointerSet_, leftHandSource_);
-		sets[setCount++] = ActiveSet(safePointerSet_, rightHandSource_);
-	}
-	if (setCount == 0) return;
-	if (setCount != expectedSetCount) {
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_set_count_mismatch expected=%u actual=%u",
-		                                   expectedSetCount, setCount);
-	}
-
-	const vr::EVRInputError updateErr =
-	    vr::VRInput()->UpdateActionState(sets.data(), sizeof(vr::VRActiveActionSet_t), setCount);
-	if (updateErr != vr::VRInputError_None) {
-		if (safeOverlayStatus_ != "action update failed") {
-			openvr_pair::common::DiagnosticLog("vr-overlay", "safe_input_update_failed error=%d", (int)updateErr);
-		}
-		safeOverlayStatus_ = "action update failed";
-		return;
-	}
-	if (!safeOverlayVisible_) safeOverlayStatus_ = safeGlobalPriorityEnabled_ ? "ready" : "priority unavailable";
-
-	auto readToggle = [&](vr::VRInputValueHandle_t source, bool& wasDown) {
-		vr::InputDigitalActionData_t data{};
-		const vr::EVRInputError err =
-		    vr::VRInput()->GetDigitalActionData(safeToggleAction_, &data, sizeof(data), source);
-		if (err != vr::VRInputError_None) {
-			wasDown = false;
-			return false;
-		}
-		const bool down = data.bActive && data.bState;
-		const bool pressed = down && !wasDown;
-		wasDown = down;
-		return pressed;
-	};
-
-	const bool leftTogglePressed = readToggle(leftHandSource_, safeLeftToggleDown_);
-	const bool rightTogglePressed = readToggle(rightHandSource_, safeRightToggleDown_);
-	const bool togglePressed = leftTogglePressed || rightTogglePressed;
-	if (togglePressed) {
-		UpdateSafeOverlayVisibility(!safeOverlayVisible_);
-	}
-
-	if (safeOverlayVisible_) {
-		PumpSafeOverlayPointerEvents(overlayPixelWidth, overlayPixelHeight);
-	}
-	else if (safeClickDown_ && ImGui::GetCurrentContext()) {
-		ImGui::GetIO().AddMouseButtonEvent(0, false);
-		safeClickDown_ = false;
-	}
-}
-
-void VrOverlayHost::PumpSafeOverlayPointerEvents(int width, int height)
-{
-	if (!safeOverlayCreated_ || !safeOverlayVisible_ || !vr::VRInput() || !vr::VROverlay()) return;
-	if (width <= 0 || height <= 0) return;
-
-	auto readHit = [&](vr::VRInputValueHandle_t source) {
-		SafeOverlayPointerHit hit{};
-		vr::InputPoseActionData_t pose{};
-		const vr::EVRInputError poseErr = vr::VRInput()->GetPoseActionDataRelativeToNow(
-		    safePointerAction_, vr::TrackingUniverseStanding, 0.0f, &pose, sizeof(pose), source);
-		if (poseErr != vr::VRInputError_None || !pose.bActive || !pose.pose.bPoseIsValid) return hit;
-
-		const vr::HmdMatrix34_t& m = pose.pose.mDeviceToAbsoluteTracking;
-		vr::VROverlayIntersectionParams_t params{};
-		params.eOrigin = vr::TrackingUniverseStanding;
-		params.vSource.v[0] = m.m[0][3];
-		params.vSource.v[1] = m.m[1][3];
-		params.vSource.v[2] = m.m[2][3];
-		params.vDirection.v[0] = -m.m[0][2];
-		params.vDirection.v[1] = -m.m[1][2];
-		params.vDirection.v[2] = -m.m[2][2];
-
-		vr::VROverlayIntersectionResults_t result{};
-		if (!vr::VROverlay()->ComputeOverlayIntersection(safeHandle_, &params, &result)) return hit;
-
-		hit.hit = true;
-		hit.x = result.vUVs.v[0] * static_cast<float>(width);
-		hit.y = (1.0f - result.vUVs.v[1]) * static_cast<float>(height);
-		hit.distance = result.fDistance;
-		hit.source = source;
-		return hit;
-	};
-
-	SafeOverlayPointerHit best = readHit(leftHandSource_);
-	const SafeOverlayPointerHit right = readHit(rightHandSource_);
-	if (right.hit && (!best.hit || right.distance < best.distance)) {
-		best = right;
-	}
-
-	ImGuiIO& io = ImGui::GetIO();
-	if (!best.hit) {
-		io.AddMousePosEvent(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-		if (safeClickDown_) {
-			io.AddMouseButtonEvent(0, false);
-			safeClickDown_ = false;
-		}
-		return;
-	}
-
-	io.AddMousePosEvent(best.x, best.y);
-
-	vr::InputDigitalActionData_t click{};
-	const vr::EVRInputError clickErr =
-	    vr::VRInput()->GetDigitalActionData(safeClickAction_, &click, sizeof(click), best.source);
-	const bool clickDown = clickErr == vr::VRInputError_None && click.bActive && click.bState;
-	if (clickDown != safeClickDown_) {
-		io.AddMouseButtonEvent(0, clickDown);
-		safeClickDown_ = clickDown;
-	}
-
-	vr::InputAnalogActionData_t scroll{};
-	const vr::EVRInputError scrollErr =
-	    vr::VRInput()->GetAnalogActionData(safeScrollAction_, &scroll, sizeof(scroll), best.source);
-	if (scrollErr == vr::VRInputError_None && scroll.bActive) {
-		const float wheelX = scroll.deltaX * kSafeOverlayScrollScale;
-		const float wheelY = scroll.deltaY * kSafeOverlayScrollScale;
-		if (std::abs(wheelX) > 0.0001f || std::abs(wheelY) > 0.0001f) {
-			io.AddMouseWheelEvent(wheelX, wheelY);
-		}
-	}
+	TryCreateSafeOverlay(overlayPixelWidth, overlayPixelHeight);
+	UpdateSafeOverlayVisibility(DashboardInputSafeOverlayShouldBeVisible(
+	    safeOverlayFeatureEnabled_, safeOverlayUserRequestedVisible_, anyDashboardVisible_));
 }
 
 void VrOverlayHost::RefreshDashboardState()
@@ -648,11 +415,16 @@ void VrOverlayHost::RefreshDashboardState()
 
 void VrOverlayHost::DrainOverlayEvents()
 {
-	if (!overlayCreated_ || !vr::VROverlay()) return;
+	if (!vr::VROverlay()) return;
+	if (overlayCreated_) DrainEventsForHandle(mainHandle_);
+	if (safeOverlayCreated_) DrainEventsForHandle(safeHandle_);
+}
 
+void VrOverlayHost::DrainEventsForHandle(vr::VROverlayHandle_t handle)
+{
 	ImGuiIO& io = ImGui::GetIO();
 	vr::VREvent_t ev{};
-	while (vr::VROverlay()->PollNextOverlayEvent(mainHandle_, &ev, sizeof(ev))) {
+	while (vr::VROverlay()->PollNextOverlayEvent(handle, &ev, sizeof(ev))) {
 		switch (ev.eventType) {
 			case vr::VREvent_MouseMove:
 				io.AddMousePosEvent(ev.data.mouse.x, ev.data.mouse.y);
@@ -698,9 +470,12 @@ bool VrOverlayHost::TickFrame(int overlayPixelWidth, int overlayPixelHeight)
 		}
 	}
 
-	// Stage 2: register the dashboard overlay (one-shot).
+	// Stage 2: register the dashboard overlay (one-shot), then refresh
+	// dashboard state BEFORE the safe-overlay policy so the auto-hide
+	// decision sees the current frame's visibility.
 	TryCreateOverlay();
-	TickSafeOverlayInput(overlayPixelWidth, overlayPixelHeight);
+	RefreshDashboardState();
+	TickSafeOverlay(overlayPixelWidth, overlayPixelHeight);
 
 	// Stage 3: drain OpenVR events into ImGui IO. Virtual-keyboard
 	// support is intentionally deferred -- replacing an active
@@ -708,7 +483,6 @@ bool VrOverlayHost::TickFrame(int overlayPixelWidth, int overlayPixelHeight)
 	// across the pin range and is best landed after the dashboard
 	// render path is verified end-to-end.
 	DrainOverlayEvents();
-	RefreshDashboardState();
 
 	return IsActiveDashboardOverlay();
 }
