@@ -258,6 +258,7 @@ set(HOST_SOURCES
     RouterPublisher.h
     SileroVad.cpp
     SileroVad.h
+    SileroVadModelContract.h
     Captions.cpp
     Captions.h
     ChatboxText.h

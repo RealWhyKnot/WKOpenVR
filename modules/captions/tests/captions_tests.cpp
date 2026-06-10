@@ -32,6 +32,7 @@
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsTabLogic.h"
 #include "EnergySpeechGate.h"
+#include "SileroVadModelContract.h"
 #include "TranscriptText.h"
 #include "WhisperPromptHistory.h"
 
@@ -152,6 +153,37 @@ TEST(CaptionsSpeechModelTest, NormalizesAndMapsModels)
 	EXPECT_STREQ(captions::CaptionsSpeechModelName(captions::kCaptionsSpeechModelBalanced), "balanced");
 	EXPECT_STREQ(captions::CaptionsSpeechModelName(captions::kCaptionsSpeechModelHighAccuracy), "high-accuracy");
 	EXPECT_STREQ(captions::CaptionsSpeechModelName(99), "balanced");
+}
+
+TEST(SileroVadModelContractTest, RecognizesMergedStateModel)
+{
+	const std::vector<std::string> inputs = {"input", "state", "sr"};
+	const std::vector<std::string> outputs = {"output", "stateN"};
+
+	const auto format = captions::ClassifySileroVadModelContract(inputs.size(), inputs, outputs.size(), outputs);
+	EXPECT_EQ(format, captions::SileroVadModelFormat::MergedState);
+	EXPECT_STREQ(captions::SileroVadModelFormatName(format), "merged-state");
+}
+
+TEST(SileroVadModelContractTest, RecognizesLegacyHcStateModel)
+{
+	const std::vector<std::string> inputs = {"sr", "input", "c", "h"};
+	const std::vector<std::string> outputs = {"cn", "output", "hn"};
+
+	const auto format = captions::ClassifySileroVadModelContract(inputs.size(), inputs, outputs.size(), outputs);
+	EXPECT_EQ(format, captions::SileroVadModelFormat::LegacyHcState);
+	EXPECT_STREQ(captions::SileroVadModelFormatName(format), "legacy-hc-state");
+}
+
+TEST(SileroVadModelContractTest, RejectsUnknownModelContract)
+{
+	const std::vector<std::string> inputs = {"input", "sr", "h"};
+	const std::vector<std::string> outputs = {"output", "hn"};
+
+	const auto format = captions::ClassifySileroVadModelContract(inputs.size(), inputs, outputs.size(), outputs);
+	EXPECT_EQ(format, captions::SileroVadModelFormat::Unknown);
+	EXPECT_STREQ(captions::SileroVadModelFormatName(format), "unknown");
+	EXPECT_EQ(captions::JoinSileroVadNodeNames(inputs), "input,sr,h");
 }
 
 TEST(CaptionPreviewHistoryTest, AddsEachCompletedCaptionOnce)

@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "SileroVadModelContract.h"
+
 // Forward-declare ORT types to avoid pulling in the full header here.
 struct OrtApi;
 struct OrtEnv;
@@ -45,11 +47,16 @@ private:
 	OrtSession* session_ = nullptr;
 	OrtMemoryInfo* mem_info_ = nullptr;
 
-	// Silero VAD v4 stateful tensors.
-	// h and c are [2, 1, 64] float; sr is [1] int64 = 16000.
-	static constexpr int kStateSize = 2 * 1 * 64;
-	float h_[kStateSize] = {};
-	float c_[kStateSize] = {};
+	captions::SileroVadModelFormat model_format_ = captions::SileroVadModelFormat::Unknown;
+
+	// Legacy Silero VAD state: h and c are [2, 1, 64].
+	static constexpr int kLegacyStateSize = 2 * 1 * 64;
+	float h_[kLegacyStateSize] = {};
+	float c_[kLegacyStateSize] = {};
+
+	// Current packaged Silero VAD state: state is [2, 1, 128].
+	static constexpr int kMergedStateSize = 2 * 1 * 128;
+	float state_[kMergedStateSize] = {};
 	uint64_t inference_failures_ = 0;
 	std::string last_error_;
 

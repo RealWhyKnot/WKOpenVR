@@ -2,7 +2,6 @@
 #include "SileroVad.h"
 #include "Logging.h"
 
-#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -22,9 +21,38 @@
 
 #ifdef HAVE_ORT
 
-// Silero VAD v4 input names (from the ONNX model's graph).
-static const char* kInputNames[] = {"input", "sr", "h", "c"};
-static const char* kOutputNames[] = {"output", "hn", "cn"};
+static const char* kLegacyInputNames[] = {"input", "sr", "h", "c"};
+static const char* kLegacyOutputNames[] = {"output", "hn", "cn"};
+static const char* kMergedInputNames[] = {"input", "state", "sr"};
+static const char* kMergedOutputNames[] = {"output", "stateN"};
+
+namespace {
+std::vector<std::string> SessionNodeNames(const OrtApi* api, OrtSession* session, bool inputs, size_t count)
+{
+	std::vector<std::string> names;
+	OrtAllocator* allocator = nullptr;
+	OrtStatus* status = api->GetAllocatorWithDefaultOptions(&allocator);
+	if (status) {
+		api->ReleaseStatus(status);
+		return names;
+	}
+	for (size_t i = 0; i < count; ++i) {
+		char* name = nullptr;
+		status = inputs ? api->SessionGetInputName(session, i, allocator, &name)
+		                : api->SessionGetOutputName(session, i, allocator, &name);
+		if (status) {
+			api->ReleaseStatus(status);
+			continue;
+		}
+		if (name) {
+			names.emplace_back(name);
+			api->AllocatorFree(allocator, name);
+		}
+	}
+	return names;
+}
+
+} // namespace
 
 SileroVad::SileroVad()
 {
@@ -98,8 +126,35 @@ bool SileroVad::Load(const std::string& model_path)
 		return false;
 	}
 
+	size_t input_count = 0;
+	size_t output_count = 0;
+	status = ort_api_->SessionGetInputCount(session_, &input_count);
+	if (status) {
+		TH_LOG("[vad] SessionGetInputCount failed: %s", ort_api_->GetErrorMessage(status));
+		ort_api_->ReleaseStatus(status);
+		return false;
+	}
+	status = ort_api_->SessionGetOutputCount(session_, &output_count);
+	if (status) {
+		TH_LOG("[vad] SessionGetOutputCount failed: %s", ort_api_->GetErrorMessage(status));
+		ort_api_->ReleaseStatus(status);
+		return false;
+	}
+	const std::vector<std::string> input_names = SessionNodeNames(ort_api_, session_, true, input_count);
+	const std::vector<std::string> output_names = SessionNodeNames(ort_api_, session_, false, output_count);
+	model_format_ = captions::ClassifySileroVadModelContract(input_count, input_names, output_count, output_names);
+	if (model_format_ == captions::SileroVadModelFormat::Unknown) {
+		TH_LOG("[vad] unsupported model contract inputs=%zu [%s] outputs=%zu [%s]", input_count,
+		       captions::JoinSileroVadNodeNames(input_names).c_str(), output_count,
+		       captions::JoinSileroVadNodeNames(output_names).c_str());
+		return false;
+	}
+
 	ResetState();
-	TH_LOG("[vad] model loaded from '%s'", model_path.c_str());
+	TH_LOG("[vad] model loaded from '%s' format=%s inputs=%zu [%s] outputs=%zu [%s]", model_path.c_str(),
+	       captions::SileroVadModelFormatName(model_format_), input_count,
+	       captions::JoinSileroVadNodeNames(input_names).c_str(), output_count,
+	       captions::JoinSileroVadNodeNames(output_names).c_str());
 	return true;
 }
 
@@ -112,6 +167,7 @@ void SileroVad::ResetState()
 {
 	memset(h_, 0, sizeof(h_));
 	memset(c_, 0, sizeof(c_));
+	memset(state_, 0, sizeof(state_));
 }
 
 void SileroVad::RecordInferenceFailure(const char* stage, const char* message)
@@ -136,39 +192,89 @@ float SileroVad::Feed(const float* samples, size_t count)
 		RecordInferenceFailure("input-size", count < 512 ? "short frame" : "long frame");
 		return -1.f;
 	}
+	if (model_format_ == captions::SileroVadModelFormat::Unknown) {
+		RecordInferenceFailure("model-format", "unknown model contract");
+		return -1.f;
+	}
 
 	OrtStatus* status = nullptr;
+	float prob = -1.f;
 
 	// input tensor: [1, 512] float
-	{
-		int64_t input_shape[] = {1, 512};
-		OrtValue* input_tensor = nullptr;
-		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, const_cast<float*>(samples), 512 * sizeof(float),
-		                                                  input_shape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-		                                                  &input_tensor);
-		if (status) {
-			RecordInferenceFailure("input-tensor", ort_api_->GetErrorMessage(status));
-			ort_api_->ReleaseStatus(status);
-			return -1.f;
-		}
+	int64_t input_shape[] = {1, 512};
+	OrtValue* input_tensor = nullptr;
+	status =
+	    ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, const_cast<float*>(samples), 512 * sizeof(float),
+	                                             input_shape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &input_tensor);
+	if (status) {
+		RecordInferenceFailure("input-tensor", ort_api_->GetErrorMessage(status));
+		ort_api_->ReleaseStatus(status);
+		return -1.f;
+	}
 
-		// sr tensor: [1] int64 = 16000
-		int64_t sr_val = 16000;
+	// sr tensor: Silero merged-state models use a scalar, legacy h/c models use [1].
+	int64_t sr_val = 16000;
+	OrtValue* sr_tensor = nullptr;
+	if (model_format_ == captions::SileroVadModelFormat::MergedState) {
+		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, &sr_val, sizeof(int64_t), nullptr, 0,
+		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &sr_tensor);
+	}
+	else {
 		int64_t sr_shape[] = {1};
-		OrtValue* sr_tensor = nullptr;
 		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, &sr_val, sizeof(int64_t), sr_shape, 1,
 		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &sr_tensor);
+	}
+	if (status) {
+		RecordInferenceFailure("sample-rate-tensor", ort_api_->GetErrorMessage(status));
+		ort_api_->ReleaseStatus(status);
+		ort_api_->ReleaseValue(input_tensor);
+		return -1.f;
+	}
+
+	if (model_format_ == captions::SileroVadModelFormat::MergedState) {
+		int64_t state_shape[] = {2, 1, 128};
+		OrtValue* state_tensor = nullptr;
+		status =
+		    ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, state_, kMergedStateSize * sizeof(float), state_shape,
+		                                             3, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &state_tensor);
 		if (status) {
-			RecordInferenceFailure("sample-rate-tensor", ort_api_->GetErrorMessage(status));
+			RecordInferenceFailure("state-tensor", ort_api_->GetErrorMessage(status));
 			ort_api_->ReleaseStatus(status);
 			ort_api_->ReleaseValue(input_tensor);
+			ort_api_->ReleaseValue(sr_tensor);
 			return -1.f;
 		}
 
-		// h and c tensors: [2, 1, 64] float
+		const OrtValue* inputs[] = {input_tensor, state_tensor, sr_tensor};
+		OrtValue* outputs[] = {nullptr, nullptr};
+		status = ort_api_->Run(session_, nullptr, kMergedInputNames, inputs, 3, kMergedOutputNames, 2, outputs);
+		if (!status) {
+			float* out_data = nullptr;
+			if (!outputs[0]) {
+				RecordInferenceFailure("output", "missing probability tensor");
+			}
+			else {
+				ort_api_->GetTensorMutableData(outputs[0], reinterpret_cast<void**>(&out_data));
+			}
+			if (out_data) prob = out_data[0];
+
+			float* state_data = nullptr;
+			if (outputs[1]) ort_api_->GetTensorMutableData(outputs[1], reinterpret_cast<void**>(&state_data));
+			if (state_data) memcpy(state_, state_data, kMergedStateSize * sizeof(float));
+		}
+		else {
+			RecordInferenceFailure("run", ort_api_->GetErrorMessage(status));
+			ort_api_->ReleaseStatus(status);
+		}
+
+		for (auto* v : outputs)
+			if (v) ort_api_->ReleaseValue(v);
+		ort_api_->ReleaseValue(state_tensor);
+	}
+	else {
 		int64_t hc_shape[] = {2, 1, 64};
 		OrtValue *h_tensor = nullptr, *c_tensor = nullptr;
-		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, h_, kStateSize * sizeof(float), hc_shape, 3,
+		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, h_, kLegacyStateSize * sizeof(float), hc_shape, 3,
 		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &h_tensor);
 		if (status) {
 			RecordInferenceFailure("h-state-tensor", ort_api_->GetErrorMessage(status));
@@ -177,7 +283,7 @@ float SileroVad::Feed(const float* samples, size_t count)
 			ort_api_->ReleaseValue(sr_tensor);
 			return -1.f;
 		}
-		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, c_, kStateSize * sizeof(float), hc_shape, 3,
+		status = ort_api_->CreateTensorWithDataAsOrtValue(mem_info_, c_, kLegacyStateSize * sizeof(float), hc_shape, 3,
 		                                                  ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &c_tensor);
 		if (status) {
 			RecordInferenceFailure("c-state-tensor", ort_api_->GetErrorMessage(status));
@@ -190,12 +296,9 @@ float SileroVad::Feed(const float* samples, size_t count)
 
 		const OrtValue* inputs[] = {input_tensor, sr_tensor, h_tensor, c_tensor};
 		OrtValue* outputs[] = {nullptr, nullptr, nullptr};
+		status = ort_api_->Run(session_, nullptr, kLegacyInputNames, inputs, 4, kLegacyOutputNames, 3, outputs);
 
-		status = ort_api_->Run(session_, nullptr, kInputNames, inputs, 4, kOutputNames, 3, outputs);
-
-		float prob = -1.f;
 		if (!status) {
-			// Extract output probability.
 			float* out_data = nullptr;
 			if (!outputs[0]) {
 				RecordInferenceFailure("output", "missing probability tensor");
@@ -209,8 +312,8 @@ float SileroVad::Feed(const float* samples, size_t count)
 			float *hn_data = nullptr, *cn_data = nullptr;
 			if (outputs[1]) ort_api_->GetTensorMutableData(outputs[1], reinterpret_cast<void**>(&hn_data));
 			if (outputs[2]) ort_api_->GetTensorMutableData(outputs[2], reinterpret_cast<void**>(&cn_data));
-			if (hn_data) memcpy(h_, hn_data, kStateSize * sizeof(float));
-			if (cn_data) memcpy(c_, cn_data, kStateSize * sizeof(float));
+			if (hn_data) memcpy(h_, hn_data, kLegacyStateSize * sizeof(float));
+			if (cn_data) memcpy(c_, cn_data, kLegacyStateSize * sizeof(float));
 		}
 		else {
 			RecordInferenceFailure("run", ort_api_->GetErrorMessage(status));
@@ -219,13 +322,14 @@ float SileroVad::Feed(const float* samples, size_t count)
 
 		for (auto* v : outputs)
 			if (v) ort_api_->ReleaseValue(v);
-		ort_api_->ReleaseValue(input_tensor);
-		ort_api_->ReleaseValue(sr_tensor);
 		ort_api_->ReleaseValue(h_tensor);
 		ort_api_->ReleaseValue(c_tensor);
-
-		return prob;
 	}
+
+	ort_api_->ReleaseValue(input_tensor);
+	ort_api_->ReleaseValue(sr_tensor);
+	if (prob >= 0.0f) last_error_.clear();
+	return prob;
 }
 
 #else // !HAVE_ORT
