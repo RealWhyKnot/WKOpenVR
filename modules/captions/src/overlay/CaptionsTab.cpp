@@ -32,9 +32,13 @@ static std::vector<captions::AudioInputDevice> s_devices;
 static bool s_devices_loaded = false;
 
 // "No audio reaching the host" tracking: remember the last frame counter and
-// when it last advanced so the warning only fires after a sustained stall.
+// when it last advanced so warnings only fire after sustained stalls/silence.
 static long long s_last_frames = -1;
 static std::chrono::steady_clock::time_point s_last_frames_change{};
+static std::chrono::steady_clock::time_point s_last_audible_input{};
+static bool s_audio_health_initialized = false;
+static int s_audio_health_host_pid = 0;
+static std::string s_audio_health_mic_name;
 
 // ---------------------------------------------------------------------------
 // Diagnostics: read last N lines from the newest captions log file.
@@ -325,7 +329,7 @@ static void DrawSetup(CaptionsPlugin& plugin, const captions::HostStatusSnapshot
 }
 
 // Microphone picker: "System default" plus each active capture endpoint.
-static void DrawMicPicker(CaptionsPlugin& plugin)
+static void DrawMicPicker(CaptionsPlugin& plugin, const captions::HostStatusSnapshot& snap)
 {
 	using namespace openvr_pair::overlay::ui;
 	const std::string& current = plugin.GetInputDevice();
@@ -337,6 +341,9 @@ static void DrawMicPicker(CaptionsPlugin& plugin)
 
 	// Resolve a friendly label for the current selection.
 	std::string label = "System default";
+	if (current.empty() && snap.valid && !snap.mic_name.empty()) {
+		label = "System default (" + snap.mic_name + ")";
+	}
 	if (!current.empty()) {
 		label = current; // fall back to the raw id if the device is gone
 		for (const auto& d : s_devices) {
@@ -465,16 +472,41 @@ static void DrawStatusStrip(CaptionsPlugin& plugin, const captions::HostStatusSn
 			ImGui::TextDisabled("Host phase: %s", snap.phase.c_str());
 		}
 
-		// No-audio warning: the endpoint has delivered no new frames for a while.
+		// No-audio warnings: one path catches endpoints that stop delivering
+		// frames, the other catches endpoints that deliver only silence.
 		auto now = std::chrono::steady_clock::now();
-		if (snap.frames_captured != s_last_frames) {
+		const bool resetAudioHealth = !s_audio_health_initialized || s_audio_health_host_pid != snap.host_pid ||
+		                              s_audio_health_mic_name != snap.mic_name;
+		if (resetAudioHealth) {
+			s_audio_health_initialized = true;
+			s_audio_health_host_pid = snap.host_pid;
+			s_audio_health_mic_name = snap.mic_name;
 			s_last_frames = snap.frames_captured;
 			s_last_frames_change = now;
+			s_last_audible_input = now;
+		}
+
+		const bool framesAdvanced = snap.frames_captured != s_last_frames;
+		if (framesAdvanced) {
+			s_last_frames = snap.frames_captured;
+			s_last_frames_change = now;
+		}
+		constexpr float kAudibleInputThreshold = 0.005f;
+		if (snap.audio_level >= kAudibleInputThreshold) {
+			s_last_audible_input = now;
 		}
 		double since = std::chrono::duration<double>(now - s_last_frames_change).count();
 		if (ShouldWarnNoAudio(snap.valid, since)) {
 			DrawWaitingBanner("No audio is reaching the captions host from this device. Pick a different "
 			                  "microphone under \"Input\" below, or check that it is active and receiving sound.");
+		}
+		else {
+			double sinceAudible = std::chrono::duration<double>(now - s_last_audible_input).count();
+			const bool framesArriving = since < 3.0;
+			if (ShouldWarnSilentInput(snap.valid, framesArriving, sinceAudible)) {
+				DrawWaitingBanner("No microphone level has been detected recently. If you are speaking, pick a "
+				                  "different microphone under \"Input\" below or check the Windows input route.");
+			}
 		}
 
 		if (plugin.GetMode() == 0 && !snap.ptt_registered) {
@@ -617,7 +649,7 @@ void DrawCaptionsTab(CaptionsPlugin& plugin)
 	// -----------------------------------------------------------------------
 	ImGui::Separator();
 	DrawSectionHeading("Input");
-	DrawMicPicker(plugin);
+	DrawMicPicker(plugin, snap);
 
 	{
 		static const char* kSrcLangs[] = {"auto", "en", "zh", "ja", "ko", "ru", "de", "fr", "es", "pt"};

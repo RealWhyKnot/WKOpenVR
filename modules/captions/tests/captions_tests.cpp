@@ -789,3 +789,17 @@ TEST(NoAudioWarningTest, FiresOnlyAfterSustainedStallWithLiveHost)
 	EXPECT_TRUE(ShouldWarnNoAudio(true, 3.0));
 	EXPECT_TRUE(ShouldWarnNoAudio(true, 30.0));
 }
+
+TEST(NoAudioWarningTest, SilentInputWarningRequiresLiveFramesAndGrace)
+{
+	using namespace captions::ui;
+	// Host down: never warn.
+	EXPECT_FALSE(ShouldWarnSilentInput(false, true, 30.0));
+	// Frames are not arriving: the frame-stall warning owns that case.
+	EXPECT_FALSE(ShouldWarnSilentInput(true, false, 30.0));
+	// Frames are arriving, but the silence window has not elapsed.
+	EXPECT_FALSE(ShouldWarnSilentInput(true, true, 5.0));
+	// Frames are arriving and the input meter has stayed silent.
+	EXPECT_TRUE(ShouldWarnSilentInput(true, true, 10.0));
+	EXPECT_TRUE(ShouldWarnSilentInput(true, true, 30.0));
+}

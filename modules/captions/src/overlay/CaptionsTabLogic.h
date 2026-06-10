@@ -55,14 +55,21 @@ inline bool TranslationUninstallEnabled(const captions::HostStatusSnapshot& snap
 	return !busy && !packId.empty() && TranslationInstalled(snap, packId);
 }
 
-// The "no audio reaching the host" warning. frames_captured advances whenever
-// the endpoint delivers packets (even silent ones), so a counter that has not
-// moved for a few seconds means the selected device is delivering nothing --
-// the classic silent/idle virtual-cable case. A short grace period avoids
-// flashing the warning while a slow device spins up.
+// The "no audio reaching the host" warning. A counter that has not moved for a
+// few seconds means the selected device is delivering nothing at all. A short
+// grace period avoids flashing the warning while a slow device spins up.
 inline bool ShouldWarnNoAudio(bool hostValid, double secondsSinceFramesAdvanced, double thresholdSec = 3.0)
 {
 	return hostValid && secondsSinceFramesAdvanced >= thresholdSec;
+}
+
+// Some virtual devices keep delivering silent frames forever, so the frame
+// counter alone is not enough. Warn only after frames are actively arriving but
+// the input meter has stayed below the audible threshold for a longer window.
+inline bool ShouldWarnSilentInput(bool hostValid, bool framesArriving, double secondsSinceAudibleInput,
+                                  double thresholdSec = 10.0)
+{
+	return hostValid && framesArriving && secondsSinceAudibleInput >= thresholdSec;
 }
 
 } // namespace captions::ui
