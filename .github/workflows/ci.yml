@@ -126,11 +126,13 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Cache build directory
+      - name: Restore build directory cache
+        id: build-cache
         # CMake handles incremental builds natively; restoring build/ cuts the
-        # cold MSVC pass when a change touches only a few files. Falls back to
-        # the most recent build on a hash miss.
-        uses: actions/cache@v5
+        # cold MSVC pass when a change touches only a few files. Keep save as a
+        # separate best-effort step so cache archive failures cannot fail CI
+        # after build/tests already passed.
+        uses: actions/cache/restore@v5
         with:
           path: build
           key: build-vs2026-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', 'core/src/**/*.cpp', 'core/src/**/*.h', 'modules/**/*.cpp', 'modules/**/*.h', 'modules/**/*.cs', '.gitmodules', 'version.txt') }}
@@ -185,13 +187,15 @@ jobs:
         run: |
           $stage = "stage"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          foreach ($name in @("WKOpenVR.exe", "driver_wkopenvr.dll")) {
-              $src = "build/artifacts/Release/$name"
-              if (Test-Path $src) {
-                  Copy-Item -Path $src -Destination $stage
-              } else {
-                  Write-Host "::warning::$name not found at $src. Skipping."
+          $artifacts = @(
+            @{ Name = "WKOpenVR.exe"; Source = "build/artifacts/Release/WKOpenVR.exe" },
+            @{ Name = "driver_wkopenvr.dll"; Source = "build/driver_wkopenvr/bin/win64/driver_wkopenvr.dll" }
+          )
+          foreach ($artifact in $artifacts) {
+              if (-not (Test-Path -LiteralPath $artifact.Source)) {
+                  throw "$($artifact.Name) not found at $($artifact.Source)"
               }
+              Copy-Item -LiteralPath $artifact.Source -Destination (Join-Path $stage $artifact.Name)
           }
 
       - name: Upload artifacts
@@ -201,3 +205,11 @@ jobs:
           path: stage
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Save build directory cache
+        if: success() && steps.build-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: build
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
