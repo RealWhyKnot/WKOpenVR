@@ -867,6 +867,7 @@ TEST(TranscriptTextTest, RiskScoreCombinesSegmentHistoryAndPassCredits)
 	repeated_filler.speech_peak_threshold = 0.040f;
 	repeated_filler.max_frame_rms = 0.004f;
 	repeated_filler.speech_rms_threshold = 0.014f;
+	repeated_filler.audio_ms = 1800;
 	repeated_filler.evidence_ms = 320;
 	repeated_filler.token_count = 1;
 	repeated_filler.prompt_chars = 180;
@@ -884,6 +885,7 @@ TEST(TranscriptTextTest, RiskScoreCombinesSegmentHistoryAndPassCredits)
 	sustained_speech.max_vad_probability = 0.72f;
 	sustained_speech.max_frame_peak = 0.060f;
 	sustained_speech.max_frame_rms = 0.020f;
+	sustained_speech.audio_ms = 1800;
 	sustained_speech.evidence_ms = 1200;
 	sustained_speech.token_count = 5;
 	sustained_speech.prompt_chars = 0;
@@ -926,10 +928,45 @@ TEST(TranscriptTextTest, AcousticRiskOnlyHardensWeakShortFiller)
 	EXPECT_EQ(strong_result.reason, captions::TranscriptSuppressionReason::None);
 }
 
+TEST(TranscriptTextTest, SparseEvidenceRatioHardensShortDecode)
+{
+	captions::TranscriptRiskInput sparse_filler;
+	sparse_filler.cleaned_text = "okay";
+	sparse_filler.always_on = true;
+	sparse_filler.max_vad_probability = 0.20f;
+	sparse_filler.max_frame_peak = 0.030f;
+	sparse_filler.speech_peak_threshold = 0.040f;
+	sparse_filler.max_frame_rms = 0.006f;
+	sparse_filler.speech_rms_threshold = 0.014f;
+	sparse_filler.audio_ms = 1900;
+	sparse_filler.evidence_ms = 420;
+	sparse_filler.token_count = 1;
+	sparse_filler.speech_frame_ratio = 0.20f;
+
+	captions::TranscriptRiskResult sparse_result = captions::TranscriptRiskScore(sparse_filler);
+	EXPECT_TRUE(sparse_result.suppress);
+	EXPECT_EQ(sparse_result.reason, captions::TranscriptSuppressionReason::CommonFiller);
+
+	captions::TranscriptRiskInput sustained = sparse_filler;
+	sustained.cleaned_text = "okay I can hear you now";
+	sustained.max_vad_probability = 0.50f;
+	sustained.max_frame_peak = 0.052f;
+	sustained.max_frame_rms = 0.016f;
+	sustained.audio_ms = 1900;
+	sustained.evidence_ms = 1000;
+	sustained.token_count = 6;
+	sustained.speech_frame_ratio = 0.45f;
+
+	captions::TranscriptRiskResult sustained_result = captions::TranscriptRiskScore(sustained);
+	EXPECT_FALSE(sustained_result.suppress);
+	EXPECT_EQ(sustained_result.reason, captions::TranscriptSuppressionReason::None);
+}
+
 TEST(TranscriptTextTest, PromptContextDecodeDisabledForRiskyAlwaysOnSegments)
 {
 	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 420, 320, 0.20f, 0.20f, 0.10f, 0));
 	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 900, 900, 0.20f, 0.20f, 0.10f, 0));
+	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 1900, 420, 0.70f, 0.55f, 0.10f, 0));
 	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 1400, 1200, 0.70f, 0.55f, 0.60f, 0));
 	EXPECT_FALSE(captions::TranscriptShouldUsePromptContextForDecode(true, 1800, 1500, 0.80f, 0.60f, 0.10f, 2));
 

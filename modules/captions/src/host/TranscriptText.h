@@ -273,6 +273,7 @@ struct TranscriptRiskInput
 	int token_count = 0;
 	float max_frame_rms = 1.0f;
 	float speech_rms_threshold = 0.0f;
+	long long audio_ms = 0;
 	long long evidence_ms = 0;
 	double decode_ratio = 0.0;
 	size_t prompt_chars = 0;
@@ -306,6 +307,10 @@ inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
 	const bool short_text = effective_token_count > 0 && effective_token_count <= 4;
 	const bool very_short_evidence = in.evidence_ms > 0 && in.evidence_ms < 500;
 	const bool short_evidence = in.evidence_ms > 0 && in.evidence_ms < 700;
+	const bool has_evidence_audio_ratio = in.audio_ms > 0 && in.evidence_ms > 0;
+	const float evidence_audio_ratio =
+	    has_evidence_audio_ratio ? static_cast<float>(static_cast<double>(in.evidence_ms) / in.audio_ms) : 1.0f;
+	const bool sparse_audio_evidence = has_evidence_audio_ratio && in.audio_ms >= 700 && evidence_audio_ratio < 0.25f;
 	const bool filler = TranscriptLooksLikeCommonFiller(in.cleaned_text);
 	const bool poor_acoustic_shape =
 	    in.acoustic_artifact_risk >= 0.55f ||
@@ -336,6 +341,12 @@ inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
 	}
 	if (short_text && !strong_audio && (weak_audio || very_short_evidence)) {
 		add_risk(5, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (short_text && !strong_audio && sparse_audio_evidence) {
+		add_risk(3, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (filler && !strong_audio && has_evidence_audio_ratio && in.audio_ms >= 500 && evidence_audio_ratio < 0.40f) {
+		add_risk(2, TranscriptSuppressionReason::CommonFiller);
 	}
 	if (short_text && !strong_audio && poor_acoustic_shape) {
 		add_risk(2, TranscriptSuppressionReason::ShortWeakAudio);
@@ -377,6 +388,9 @@ inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
 	}
 	if (strong_audio && in.evidence_ms >= 700) {
 		result.pass_credit += 2;
+	}
+	if (has_evidence_audio_ratio && evidence_audio_ratio >= 0.45f && in.evidence_ms >= 700) {
+		result.pass_credit += 1;
 	}
 	if (in.speech_band_ratio >= 0.40f && in.acoustic_artifact_risk < 0.35f && in.evidence_ms >= 700) {
 		result.pass_credit += 1;
@@ -432,6 +446,9 @@ inline bool TranscriptShouldUsePromptContextForDecode(bool alwaysOn, long long a
 	if (promptQuarantineSegments > 0) return false;
 	if (audioMs > 0 && audioMs < 700) return false;
 	if (evidenceMs > 0 && evidenceMs < 500) return false;
+	const float evidence_audio_ratio =
+	    (audioMs > 0 && evidenceMs > 0) ? static_cast<float>(static_cast<double>(evidenceMs) / audioMs) : 1.0f;
+	if (audioMs >= 700 && evidence_audio_ratio < 0.25f) return false;
 	if (acousticArtifactRisk >= 0.55f) return false;
 	if (speechFrameRatio >= 0.0f && speechFrameRatio < 0.25f && evidenceMs > 0 && evidenceMs < 1000) return false;
 

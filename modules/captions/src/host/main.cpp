@@ -1693,6 +1693,7 @@ try {
 				risk_input.token_count = whisper_result.token_count;
 				risk_input.max_frame_rms = segment_max_frame_rms;
 				risk_input.speech_rms_threshold = segment_speech_rms_threshold;
+				risk_input.audio_ms = segment_audio_ms;
 				risk_input.evidence_ms = segment_evidence_ms;
 				risk_input.decode_ratio = decode_ratio;
 				risk_input.prompt_chars = prompt_chars;
