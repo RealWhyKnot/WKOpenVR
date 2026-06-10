@@ -23,6 +23,7 @@ add_executable(ui_core_tests
 target_include_directories(ui_core_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common
 	${CMAKE_SOURCE_DIR}/core/src/overlay
+	${CMAKE_SOURCE_DIR}/modules/dashboardinput/src/overlay
 	${CMAKE_SOURCE_DIR}/lib
 	${CMAKE_SOURCE_DIR}/lib/openvr/headers
 	${CMAKE_SOURCE_DIR}/lib/imgui)

@@ -48,6 +48,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Persist and infer the avatar parameter allowlist (6c84959)
 - **captions:** Add audio input device picker and live level meter (a0f4ebf)
 - **phantom:** Restyle overlay tabs and fix the diagnostics table (0a5eec2)
+- **calibration:** Expand shadow quality diagnostics (d91727d)
+- **dashboardinput:** Add safe overlay input path (f589f1e)
+- **calibration:** Gate headset offset correction (63dd0d7)
+- **updater:** Queue verified installer on SteamVR close (c5b6559)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -173,6 +177,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Carry prompt context across chunks (d538c01)
 - **captions:** Adapt always-on speech segmentation (636f443)
 - **captions:** Recover always-on speech detection (11f391f)
+- **overlay:** Stop module nav snapping back and fix end-arrow visibility (c31f965)
+- **overlay:** Hide auto-disabled module tabs (ca58931)
+- **dashboardinput:** Gate experimental runtime path (b21c061)
 
 ---
 

@@ -70,6 +70,8 @@ InstallDir "$PROGRAMFILES64\WKOpenVR"
 InstallDirRegKey HKLM "Software\WKOpenVR\Main" ""
 RequestExecutionLevel admin
 ShowInstDetails show
+CRCCheck force
+SetOverwrite on
 
 VIProductVersion "${VERSION}"
 VIAddVersionKey /LANG=1033 "ProductName" "WKOpenVR"
@@ -120,6 +122,17 @@ Var skipSteamVrRegistration
         Abort
 !macroend
 !define CheckProcessNotRunning "!insertmacro CheckProcessNotRunning"
+
+; --------------------------------------------------------------------------
+; RequireInstalledFile -- aborts if a critical output file is missing after
+; extraction. This catches write failures before registry state is updated.
+; --------------------------------------------------------------------------
+!macro RequireInstalledFile Path Label
+    IfFileExists "${Path}" +3
+        MessageBox MB_OK|MB_ICONSTOP "${Label} was not installed. The upgrade did not finish."
+        Abort
+!macroend
+!define RequireInstalledFile "!insertmacro RequireInstalledFile"
 
 ; Shared body for TrimNewlines. NSIS keeps install and uninstall functions in
 ; separate namespaces ("un." prefix), so each section needs its own copy of
@@ -175,6 +188,17 @@ Section "Install"
     !insertmacro ResolveRuntimePath
 
     ReadEnvStr $skipSteamVrRegistration "WKOPENVR_SKIP_STEAMVR_REGISTRATION"
+
+    ; Remove owned resource folders that can contain stale files from an older
+    ; version. Feature enable flags are kept, except for dev-only/retired public
+    ; flags that should not survive a public installer upgrade.
+    RMDir /r "$INSTDIR\resources"
+    RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\facetracking\host"
+    RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\captions\host"
+    RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\translator"
+    RMDir /r "$vrRuntimePath\drivers\01wkopenvr\resources\phantom"
+    Delete "$vrRuntimePath\drivers\01wkopenvr\resources\enable_phantom.flag"
+    Delete "$vrRuntimePath\drivers\01wkopenvr\resources\enable_translator.flag"
 
     SetOutPath "$INSTDIR"
     File /oname=WKOpenVR.exe "${ARTIFACTS_BASEDIR}\WKOpenVR.exe"
@@ -322,6 +346,13 @@ Section "Install"
         FileClose $0
         DetailPrint "Enabled feature: Captions"
     !endif
+
+    ${RequireInstalledFile} "$INSTDIR\WKOpenVR.exe" "WKOpenVR.exe"
+    ${RequireInstalledFile} "$INSTDIR\openvr_api.dll" "openvr_api.dll"
+    ${RequireInstalledFile} "$INSTDIR\manifest.vrmanifest" "manifest.vrmanifest"
+    ${RequireInstalledFile} "$vrRuntimePath\drivers\01wkopenvr\driver.vrdrivermanifest" "driver.vrdrivermanifest"
+    ${RequireInstalledFile} "$vrRuntimePath\drivers\01wkopenvr\resources\driver.vrresources" "driver.vrresources"
+    ${RequireInstalledFile} "$vrRuntimePath\drivers\01wkopenvr\bin\win64\driver_01wkopenvr.dll" "driver_01wkopenvr.dll"
 
     WriteRegStr HKLM "Software\WKOpenVR\Main" "" "$INSTDIR"
     WriteRegStr HKLM "Software\WKOpenVR\Driver" "" "$vrRuntimePath"

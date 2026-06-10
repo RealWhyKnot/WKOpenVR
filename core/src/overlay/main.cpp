@@ -1,4 +1,5 @@
 #include "BuildChannel.h"
+#include "DashboardInputRuntimeGate.h"
 #include "DebugLogging.h"
 #include "DiagnosticsLog.h"
 #include "FeaturePlugin.h"
@@ -438,7 +439,10 @@ int main(int argc, char** argv)
 		// fire and GLFW's position is used unchanged.
 		const bool dashboardInputEnabled = context.IsFlagPresent(
 		    openvr_pair::common::modules::FlagFileName(openvr_pair::common::modules::ModuleId::DashboardInput));
-		vrOverlay->SetSafeOverlayEnabled(dashboardInputEnabled);
+		const bool dashboardInputRuntimeEnabled = openvr_pair::common::dashboardinput::RuntimeEnabled(
+		    dashboardInputEnabled,
+		    context.IsFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName));
+		vrOverlay->SetSafeOverlayEnabled(dashboardInputRuntimeEnabled);
 		const bool activeDashboardOverlay = vrOverlay->TickFrame(kVrFboWidth, kVrFboHeight);
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
 		const bool safeOverlayVisible = vrOverlay->SafeOverlayVisible();
@@ -576,11 +580,22 @@ int main(int argc, char** argv)
 	}
 
 	openvr_pair::common::WriteRuntimeHealthSummary();
+	const bool steamVrQuitRequested = vrOverlay->QuitRequested();
 	vrOverlay.reset();
 
 	for (auto it = plugins.rbegin(); it != plugins.rend(); ++it) {
 		openvr_pair::common::DiagnosticLog("overlay", "plugin_shutdown name='%s'", (*it)->Name());
 		(*it)->OnShutdown(context);
+	}
+	if (steamVrQuitRequested) {
+		const UpdateInstallState install = openvr_pair::overlay::GetUpdateNoticeState().install;
+		if (install.queuedForSteamVrExit && install.phase == UpdateInstallPhase::Ready) {
+			std::string updateLaunchError;
+			if (!openvr_pair::overlay::LaunchQueuedUpdateAfterProcessExit(GetCurrentProcessId(), &updateLaunchError)) {
+				openvr_pair::common::DiagnosticLog("updater", "launch_after_steamvr_close_failed error='%s'",
+				                                   updateLaunchError.c_str());
+			}
+		}
 	}
 	openvr_pair::common::DiagnosticLog("overlay", "shutdown");
 

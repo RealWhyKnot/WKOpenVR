@@ -1,6 +1,15 @@
 #include <gtest/gtest.h>
 
+#include "DashboardInputRuntimeGate.h"
 #include "DashboardInputSafeOverlayLogic.h"
+
+TEST(DashboardInputRuntimeGate, RequiresModuleAndRuntimeOptInFlags)
+{
+	EXPECT_FALSE(openvr_pair::common::dashboardinput::RuntimeEnabled(false, false));
+	EXPECT_FALSE(openvr_pair::common::dashboardinput::RuntimeEnabled(true, false));
+	EXPECT_FALSE(openvr_pair::common::dashboardinput::RuntimeEnabled(false, true));
+	EXPECT_TRUE(openvr_pair::common::dashboardinput::RuntimeEnabled(true, true));
+}
 
 TEST(DashboardInputSafeOverlayLogic, UsesSteamVROverlayGlobalPriorityRange)
 {

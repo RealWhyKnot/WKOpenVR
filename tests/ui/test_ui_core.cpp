@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
 #include "FeaturePlugin.h"
+#include "DashboardInputPlugin.h"
 #include "ShellFooter.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
+#include "UpdateNoticeLogic.h"
 #include "UiCore.h"
 #include "UiControls.h"
 
@@ -75,6 +77,13 @@ TEST(FeaturePlugin, ChannelHelpersRouteReleaseAndDevelopmentModules)
 	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::DevTools));
 }
 
+TEST(FeaturePlugin, DashboardInputIsADevelopmentModule)
+{
+	EXPECT_EQ(openvr_pair::overlay::FeaturePluginChannel::Development, DashboardInputPlugin::kPluginChannel);
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInModulesTab(DashboardInputPlugin::kPluginChannel));
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInDevModuleList(DashboardInputPlugin::kPluginChannel));
+}
+
 TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
 {
 	EXPECT_TRUE(
@@ -109,6 +118,14 @@ TEST(ShellUiLogic, FeaturePickerSelectionKeepsTopNavStable)
 	selection = openvr_pair::overlay::ResolveFeaturePickerSelection(false, "missing.flag", "", "", none);
 	EXPECT_TRUE(selection.flag.empty());
 	EXPECT_FALSE(selection.applyDesktopDefault);
+}
+
+TEST(ShellUiLogic, FeatureContentTabsRequireEffectiveEnabledModule)
+{
+	EXPECT_TRUE(openvr_pair::overlay::ShouldShowFeatureContentTab(true, false, false));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowFeatureContentTab(false, false, false));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowFeatureContentTab(true, true, false));
+	EXPECT_FALSE(openvr_pair::overlay::ShouldShowFeatureContentTab(true, false, true));
 }
 
 TEST(ShellUiLogic, ModuleTabOrderParsesAndSerializesValidFlags)
@@ -355,4 +372,38 @@ TEST(UiSharedFormatting, ByteCountsAndFileAgesUseCompactLabels)
 	const uint64_t now = 1000000000ull;
 	EXPECT_EQ("10s ago", FormatFileAgeFromFileTime(now - 100000000ull, now));
 	EXPECT_EQ("in the future", FormatFileAgeFromFileTime(now + 1, now));
+}
+
+TEST(UpdateNoticeLogic, NormalizesGitHubAssetDigests)
+{
+	const std::string sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+	EXPECT_EQ(sha, openvr_pair::overlay::NormalizeSha256Digest("sha256:" + sha));
+	EXPECT_EQ(sha, openvr_pair::overlay::NormalizeSha256Digest(
+	                   "SHA256:0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"));
+	EXPECT_EQ("", openvr_pair::overlay::NormalizeSha256Digest("sha256:not-a-valid-hash"));
+}
+
+TEST(UpdateNoticeLogic, ReleaseBodyShaMustMatchDigest)
+{
+	const std::string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+	const std::string other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+	EXPECT_TRUE(openvr_pair::overlay::ReleaseBodySha256Matches("SHA256: " + sha + "\n", "sha256:" + sha));
+	EXPECT_FALSE(openvr_pair::overlay::ReleaseBodySha256Matches("SHA256: " + other + "\n", sha));
+	EXPECT_FALSE(openvr_pair::overlay::ReleaseBodySha256Matches("No hash here", sha));
+}
+
+TEST(UpdateNoticeLogic, ReleaseAssetUrlMustMatchExpectedRepoTagAndAsset)
+{
+	const std::string asset = openvr_pair::overlay::ExpectedInstallerAssetName("Smoothing", "2026.6.9.0");
+	EXPECT_EQ("WKOpenVR-Smoothing-v2026.6.9.0-Setup.exe", asset);
+
+	EXPECT_TRUE(openvr_pair::overlay::IsTrustedGitHubReleaseAssetUrl(
+	    "https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/download/v2026.6.9.0/" + asset,
+	    "WKOpenVR-Smoothing", "v2026.6.9.0", asset));
+	EXPECT_FALSE(openvr_pair::overlay::IsTrustedGitHubReleaseAssetUrl(
+	    "https://example.com/RealWhyKnot/WKOpenVR-Smoothing/releases/download/v2026.6.9.0/" + asset,
+	    "WKOpenVR-Smoothing", "v2026.6.9.0", asset));
+	EXPECT_FALSE(openvr_pair::overlay::IsTrustedGitHubReleaseAssetUrl(
+	    "https://github.com/RealWhyKnot/WKOpenVR-Captions/releases/download/v2026.6.9.0/" + asset, "WKOpenVR-Smoothing",
+	    "v2026.6.9.0", asset));
 }

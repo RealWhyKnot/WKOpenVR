@@ -19,7 +19,7 @@ concurrency:
 jobs:
   tidy:
     name: clang-tidy (full)
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 60
 
     steps:
@@ -58,9 +58,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build/lint-tidy
-          key: tidy-build-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
+          key: tidy-build-vs2026-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: |
-            tidy-build-${{ runner.os }}-
+            tidy-build-vs2026-${{ runner.os }}-
 
       - name: Install LLVM tools
         # The runner image ships its own LLVM, so pin the exact version CI uses

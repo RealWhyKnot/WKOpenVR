@@ -3,8 +3,11 @@
 Releases are tag-driven and fully automated. Pushing a `v*` tag triggers
 [release.yml](workflows/release.yml), which builds the shared WKOpenVR
 binary and driver DLL, packages the local artifacts, tests the shared
-installer round trip, builds one `*-Setup.exe` per active public module,
-and publishes those installers to the module repositories.
+installer round trip, builds one `*-Setup.exe` per selected public module,
+and publishes those installers to the module repositories. Stable tags
+publish every active public module. Beta tags publish only modules whose
+module files or shared release inputs changed since that module's latest
+release.
 
 The WKOpenVR source repository is not the end-user release surface. End
 users install from the module repositories:
@@ -22,15 +25,23 @@ tags use the previous stable tag as the base, so beta release notes since
 the last stable are included when the stable release is published. Beta and
 dev tags use the nearest previous tag.
 
+[nightly-beta.yml](workflows/nightly-beta.yml) runs once per night and can
+also be started manually. It checks the latest published release in each
+module repository, compares that tag to the source tree, and pushes a new
+`vYYYY.M.D.N-beta` tag only when at least one module has releasable changes.
+That tag starts the normal release workflow.
+
 ## Tag shapes
 
 | Form | When | Example |
 |---|---|---|
 | `vYYYY.M.D.N` | Release. `.N` is the release iteration for that calendar day, starting at 0. | `v2026.5.6.0` |
+| `vYYYY.M.D.N-beta` | Nightly or manual prerelease. `.N` is the beta iteration for that calendar day, starting at 0. | `v2026.5.6.0-beta` |
 | `vYYYY.M.D.N-XXXX` | Dev. `.N` is local build count; `XXXX` is a 4-hex UID. Rare on the release stream. | `v2026.5.6.0-A1B2` |
 
-[build.ps1](../build.ps1) validates the shape and fails fast on
-malformed tags.
+Beta tags must use exactly the `-beta` suffix. If another prerelease is
+needed on the same day, increment `.N` instead of adding a numbered beta
+suffix.
 
 ## Module release body
 
@@ -111,9 +122,11 @@ The scrub list lives in
 ## Required secrets
 
 `MODULE_RELEASE_TOKEN` must have release-write access to the seven module
-repositories. The repository `GITHUB_TOKEN` is still used for checkout and
-the signed changelog promote-back commit, but it cannot publish releases in
-sibling repositories.
+repositories and contents-write access to the source repository for pushing
+nightly beta tags. The repository `GITHUB_TOKEN` is still used for checkout
+and the signed changelog promote-back commit, but it cannot publish releases
+in sibling repositories and tag pushes made with it do not start the tag
+release workflow.
 
 ## Promote-back to main
 
@@ -129,6 +142,7 @@ server-side with GitHub's bot key, so it lands as verified=true.
 | `Non-ASCII characters in release body after normalisation` | Amend the offending commit subject, force-push the tag at the new SHA. Or add the char to `$asciiSubs`. |
 | `Voice or internal-only-vocabulary patterns in release body` | Amend the offending commit subject. Or `[skip changelog]` it if unavoidable. |
 | `MODULE_RELEASE_TOKEN secret is required` | Add or refresh the token with release-write access to the module repositories. |
+| `Beta tag did not select any module installers` | Check that the tag follows `vYYYY.M.D.N-beta` and that the module repositories have reachable previous release tags. |
 | `createCommitOnBranch returned GraphQL errors` | Usually a stale `expectedHeadOid`. Release itself is fine; re-run the promote step or re-run the workflow. |
 
 ## Updating the workflow

@@ -35,7 +35,7 @@ concurrency:
 jobs:
   release:
     name: Build and publish release
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 45
 
     steps:
@@ -56,7 +56,10 @@ jobs:
         # (missing hyphen) no longer matches by accident.
         run: |
           $tag = '${{ github.ref_name }}'
-          $isBeta = $tag -match '^v[\d.]+-beta'
+          $isBeta = $tag -match '^v\d{4}\.\d+\.\d+\.\d+-beta$'
+          if ($tag -match '-beta' -and -not $isBeta) {
+            throw "Beta tags must match vYYYY.M.D.N-beta."
+          }
           "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
       - name: Validate workflow / script PowerShell syntax
@@ -70,10 +73,24 @@ jobs:
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-NightlyBetaPlan.ps1
 
       - name: Test release notes generator
         shell: pwsh
         run: ./.github/scripts/Test-GenerateReleaseNotes.ps1
+
+      - name: Plan beta module releases
+        id: beta_plan
+        if: ${{ steps.beta.outputs.is_beta == 'true' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "MODULE_RELEASE_TOKEN secret is required to plan beta module releases."
+          }
+          git fetch --tags --force
+          ./.github/scripts/Get-NightlyBetaPlan.ps1 -Tag '${{ github.ref_name }}'
 
       - name: Promote Unreleased -> tagged section
         shell: pwsh
@@ -107,9 +124,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build
-          key: build-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', 'core/src/**/*.cpp', 'core/src/**/*.h', 'modules/**/*.cpp', 'modules/**/*.h', 'modules/**/*.cs', '.gitmodules', 'version.txt') }}
+          key: build-vs2026-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', 'core/src/**/*.cpp', 'core/src/**/*.h', 'modules/**/*.cpp', 'modules/**/*.h', 'modules/**/*.cs', '.gitmodules', 'version.txt') }}
           restore-keys: |
-            build-${{ runner.os }}-
+            build-vs2026-${{ runner.os }}-
 
       - name: Cache NuGet packages
         # FaceModuleHost's dotnet publish restores NuGet packages on every
@@ -182,7 +199,7 @@ jobs:
         # The minhook submodule declares cmake_minimum_required(2.8.12) which
         # CMake 4.x rejects. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 lets us configure
         # without forking. -Wno-dev silences developer-mode warnings from minhook.
-        run: cmake -G "Visual Studio 17 2022" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
+        run: cmake -G "Visual Studio 18 2026" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
 
       - name: Build
         shell: pwsh
@@ -512,11 +529,25 @@ jobs:
         shell: pwsh
         env:
           TAG_NAME: ${{ github.ref_name }}
+          IS_BETA: ${{ steps.beta.outputs.is_beta }}
+          BETA_FEATURES: ${{ steps.beta_plan.outputs.features_csv }}
         run: |
           $version = $env:TAG_NAME -replace '^v', ''
           $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
           if (-not (Test-Path $makensis)) { $makensis = "C:\Program Files\NSIS\makensis.exe" }
           if (-not (Test-Path $makensis)) { throw "makensis.exe not found." }
+          $selectedFeatures = New-Object System.Collections.Generic.List[string]
+          if ($env:IS_BETA -eq 'true') {
+            if ([string]::IsNullOrWhiteSpace($env:BETA_FEATURES)) {
+              throw "Beta tag did not select any module installers."
+            }
+            foreach ($entry in $env:BETA_FEATURES.Split(',')) {
+              $name = $entry.Trim()
+              if (-not [string]::IsNullOrWhiteSpace($name)) {
+                [void] $selectedFeatures.Add($name)
+              }
+            }
+          }
           # Same disabled-in-release filter the zip step uses, so a feature
           # marked unstable doesn't get a per-feature installer either.
           $allFeatures = @(
@@ -532,6 +563,10 @@ jobs:
             $marker = "modules/$($_.Slug)/disabled-in-release.flag"
             if (Test-Path -LiteralPath $marker) {
               Write-Host "Skipping per-feature installer for $($_.Name) ($marker present)"
+              return $false
+            }
+            if ($selectedFeatures.Count -gt 0 -and -not $selectedFeatures.Contains($_.Name)) {
+              Write-Host "Skipping per-feature installer for $($_.Name) (unchanged for beta tag)"
               return $false
             }
             return $true
@@ -642,6 +677,28 @@ jobs:
             Write-Host "Publishing $($file.Name) to $($item.Repo) ($($file.Length) bytes) sha256=$hash"
             gh release create $tag --repo $item.Repo --target main --title $tag --notes-file $notesPath @extra $installerPath
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed for $($item.Repo)" }
+
+            $expectedDigest = "sha256:$($hash.ToLowerInvariant())"
+            $assetDigest = $null
+            for ($attempt = 1; $attempt -le 6; $attempt++) {
+              $releaseJson = gh api "repos/$($item.Repo)/releases/tags/$tag" 2>$null
+              if ($LASTEXITCODE -eq 0 -and $releaseJson) {
+                $release = $releaseJson | ConvertFrom-Json
+                $asset = $release.assets | Where-Object { $_.name -eq $file.Name } | Select-Object -First 1
+                if ($asset -and $asset.digest) {
+                  $assetDigest = [string]$asset.digest
+                  break
+                }
+              }
+              Start-Sleep -Seconds 2
+            }
+            if ([string]::IsNullOrWhiteSpace($assetDigest)) {
+              throw "GitHub did not report a digest for $($file.Name) on $($item.Repo)."
+            }
+            if ($assetDigest.ToLowerInvariant() -ne $expectedDigest) {
+              throw "Uploaded asset digest mismatch for $($file.Name): expected $expectedDigest got $assetDigest"
+            }
+            Write-Host "Verified uploaded asset digest: $assetDigest"
             $published++
           }
 

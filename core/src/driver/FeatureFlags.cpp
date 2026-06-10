@@ -4,6 +4,8 @@
 #include <windows.h>
 
 #include "FeatureFlags.h"
+
+#include "DashboardInputRuntimeGate.h"
 #include "Logging.h"
 #include "ModuleRegistry.h"
 #include "ModuleSafety.h"
@@ -142,6 +144,8 @@ uint32_t DetectFeatureFlags()
 	const bool calOn = ModuleFlagFileExists(dir, calibration);
 	const bool smoOn = ModuleFlagFileExists(dir, smoothing);
 	const bool dashOn = ModuleFlagFileExists(dir, dashboardInput);
+	const bool dashRuntimeOptIn =
+	    FlagFileExists(dir, openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileNameWide);
 	const bool ihOn = ModuleFlagFileExists(dir, inputHealth);
 	const bool ftOn = ModuleFlagFileExists(dir, faceTracking);
 	const bool orOn = ModuleFlagFileExists(dir, oscRouter);
@@ -154,7 +158,7 @@ uint32_t DetectFeatureFlags()
 
 	bool calSafe = calOn;
 	bool smoSafe = smoOn;
-	bool dashSafe = dashOn;
+	bool dashSafe = openvr_pair::common::dashboardinput::RuntimeEnabled(dashOn, dashRuntimeOptIn);
 	bool ihSafe = ihOn;
 	bool ftSafe = ftOn;
 	bool capSafe = capOn;
@@ -178,6 +182,9 @@ uint32_t DetectFeatureFlags()
 		ftSafe = false;
 		capSafe = false;
 	}
+	if (dashOn && !dashRuntimeOptIn) {
+		LOG("DetectFeatureFlags: dashboardinput flag present but runtime opt-in flag is missing");
+	}
 
 	uint32_t flags = ComposeFeatureFlags(calSafe, smoSafe, dashSafe, ihSafe, ftSafe, orSafe, capSafe, phSafe);
 	const bool orEffective = (flags & kFeatureOscRouter) != 0;
@@ -188,11 +195,12 @@ uint32_t DetectFeatureFlags()
 	// %ls expects wide string on MSVC's CRT. Cap the printed length so a
 	// pathological install path doesn't blow the log line.
 	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d/%d smoothing=%d/%d dashboardinput=%d/%d "
+	    "dashboardinput_runtime=%d "
 	    "inputhealth=%d/%d facetracking=%d/%d oscrouter_flag=%d/%d oscrouter_effective=%d captions=%d/%d "
 	    "phantom=%d/%d (mask=0x%x)",
-	    dir.c_str(), (int)calOn, (int)calSafe, (int)smoOn, (int)smoSafe, (int)dashOn, (int)dashSafe, (int)ihOn,
-	    (int)ihSafe, (int)ftOn, (int)ftSafe, (int)orOn, (int)orSafe, (int)orEffective, (int)capOn, (int)capSafe,
-	    (int)phOn, (int)phSafe, (unsigned)flags);
+	    dir.c_str(), (int)calOn, (int)calSafe, (int)smoOn, (int)smoSafe, (int)dashOn, (int)dashSafe,
+	    (int)dashRuntimeOptIn, (int)ihOn, (int)ihSafe, (int)ftOn, (int)ftSafe, (int)orOn, (int)orSafe, (int)orEffective,
+	    (int)capOn, (int)capSafe, (int)phOn, (int)phSafe, (unsigned)flags);
 	return flags;
 }
 
