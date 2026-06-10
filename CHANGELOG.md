@@ -186,6 +186,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dashboardinput:** Avoid global overlay actions (ca7c3ae)
 - **captions:** Detect silent input devices (5780671)
 - **captions:** Expose speech pipeline diagnostics (ee9f6d8)
+- **captions:** Tighten dynamic speech gate (8c5d93d)
 
 ---
 
