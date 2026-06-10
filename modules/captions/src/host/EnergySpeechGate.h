@@ -63,14 +63,27 @@ inline bool SpeechBufferLongEnough(size_t gatedSamples, bool alwaysOn)
 }
 
 inline bool SpeechSegmentShouldTranscribe(size_t gatedSamples, bool alwaysOn, float maxVadProbability,
-                                          float maxFramePeak, float speechPeakThreshold)
+                                          float maxFramePeak, float speechPeakThreshold, float maxFrameRms = 1.0f,
+                                          float speechRmsThreshold = 0.0f)
 {
 	if (!alwaysOn) return gatedSamples >= PushToTalkMinSpeechSamples();
-	if (gatedSamples >= AlwaysOnMinSpeechSamples()) return true;
+	const bool hasSpeechEvidence = maxVadProbability >= 0.45f || (maxFramePeak >= speechPeakThreshold &&
+	                                                              maxFrameRms >= std::max(0.010f, speechRmsThreshold));
+	if (gatedSamples >= AlwaysOnMinSpeechSamples()) return hasSpeechEvidence;
 	if (gatedSamples < AlwaysOnShortSpeechSamples()) return false;
 
 	const float strongPeakThreshold = std::max(0.07f, speechPeakThreshold * 2.0f);
-	return maxVadProbability >= 0.70f || maxFramePeak >= strongPeakThreshold;
+	const float strongRmsThreshold = std::max(0.018f, speechRmsThreshold * 1.35f);
+	return maxVadProbability >= 0.70f || (maxFramePeak >= strongPeakThreshold && maxFrameRms >= strongRmsThreshold);
+}
+
+inline bool SpeechGateIsSpeech(float vadProbability, float framePeak, float frameRms)
+{
+	constexpr float kVadSpeechThreshold = 0.5f;
+	constexpr float kEnergySpeechThreshold = 0.08f;
+	constexpr float kEnergySpeechRmsThreshold = 0.018f;
+	return vadProbability >= kVadSpeechThreshold ||
+	       (framePeak >= kEnergySpeechThreshold && frameRms >= kEnergySpeechRmsThreshold);
 }
 
 inline bool SpeechGateIsSpeech(float vadProbability, float framePeak)
@@ -78,6 +91,15 @@ inline bool SpeechGateIsSpeech(float vadProbability, float framePeak)
 	constexpr float kVadSpeechThreshold = 0.5f;
 	constexpr float kEnergySpeechThreshold = 0.08f;
 	return vadProbability >= kVadSpeechThreshold || framePeak >= kEnergySpeechThreshold;
+}
+
+inline bool SpeechGateIsSilence(float vadProbability, float framePeak, float frameRms)
+{
+	constexpr float kVadSilenceThreshold = 0.35f;
+	constexpr float kEnergySilenceThreshold = 0.025f;
+	constexpr float kEnergySilenceRmsThreshold = 0.012f;
+	return vadProbability < kVadSilenceThreshold && framePeak <= kEnergySilenceThreshold &&
+	       frameRms <= kEnergySilenceRmsThreshold;
 }
 
 inline bool SpeechGateIsSilence(float vadProbability, float framePeak)
@@ -92,40 +114,78 @@ class AdaptiveSpeechGate
 public:
 	bool IsSpeech(float vadProbability, float framePeak) const
 	{
+		return IsSpeech(vadProbability, framePeak, framePeak);
+	}
+
+	bool IsSpeech(float vadProbability, float framePeak, float frameRms) const
+	{
 		if (vadProbability >= 0.5f) return true;
-		if (framePeak >= SpeechPeakThreshold()) return true;
-		return vadProbability >= 0.32f && framePeak >= SoftSpeechPeakThreshold();
+		if (HasSpeechEnergy(framePeak, frameRms)) return true;
+		return vadProbability >= 0.32f && HasPossibleSpeechEnergy(framePeak, frameRms);
 	}
 
 	bool IsSilence(float vadProbability, float framePeak) const
 	{
-		return vadProbability < 0.35f && framePeak <= SilencePeakThreshold();
+		return IsSilence(vadProbability, framePeak, framePeak);
+	}
+
+	bool IsSilence(float vadProbability, float framePeak, float frameRms) const
+	{
+		return vadProbability < 0.35f && framePeak <= SilencePeakThreshold() && frameRms <= SilenceRmsThreshold();
 	}
 
 	bool IsPossibleSpeech(float vadProbability, float framePeak) const
 	{
-		if (IsSpeech(vadProbability, framePeak)) return true;
-		if (vadProbability >= 0.20f) return true;
-		return framePeak >= PossibleSpeechPeakThreshold();
+		return IsPossibleSpeech(vadProbability, framePeak, framePeak);
 	}
 
-	void ObserveAmbient(float framePeak)
+	bool IsPossibleSpeech(float vadProbability, float framePeak, float frameRms) const
+	{
+		if (IsSpeech(vadProbability, framePeak, frameRms)) return true;
+		if (vadProbability >= 0.20f && HasPossibleSpeechEnergy(framePeak, frameRms)) return true;
+		return HasPossibleSpeechEnergy(framePeak, frameRms);
+	}
+
+	void ObserveAmbient(float framePeak) { ObserveAmbient(framePeak, framePeak * 0.5f); }
+
+	void ObserveAmbient(float framePeak, float frameRms)
 	{
 		framePeak = Clamp(framePeak, 0.0f, 1.0f);
+		frameRms = Clamp(frameRms, 0.0f, 1.0f);
 		const float alpha = (framePeak > ambient_peak_) ? 0.015f : 0.08f;
 		ambient_peak_ += (framePeak - ambient_peak_) * alpha;
 		ambient_peak_ = Clamp(ambient_peak_, 0.001f, 0.25f);
+		const float rmsAlpha = (frameRms > ambient_rms_) ? 0.020f : 0.10f;
+		ambient_rms_ += (frameRms - ambient_rms_) * rmsAlpha;
+		ambient_rms_ = Clamp(ambient_rms_, 0.0005f, 0.18f);
+	}
+
+	bool ObserveRejectedSegment(float maxVadProbability, float maxFramePeak, float maxFrameRms)
+	{
+		if (maxVadProbability >= 0.45f) return false;
+		ObserveAmbient(maxFramePeak, maxFrameRms);
+		return true;
 	}
 
 	float AmbientPeak() const { return ambient_peak_; }
+	float AmbientRms() const { return ambient_rms_; }
 
-	float SpeechPeakThreshold() const { return Clamp((ambient_peak_ * 2.5f) + 0.012f, 0.022f, 0.10f); }
+	float SpeechPeakThreshold() const { return Clamp((ambient_peak_ * 3.6f) + 0.018f, 0.028f, 0.14f); }
 
-	float SoftSpeechPeakThreshold() const { return SpeechPeakThreshold() * 0.72f; }
+	float SpeechRmsThreshold() const { return Clamp((ambient_rms_ * 3.2f) + 0.006f, 0.010f, 0.065f); }
+
+	float SoftSpeechPeakThreshold() const { return SpeechPeakThreshold() * 0.70f; }
+
+	float SoftSpeechRmsThreshold() const { return SpeechRmsThreshold() * 0.72f; }
 
 	float PossibleSpeechPeakThreshold() const
 	{
-		return std::max(SilencePeakThreshold() * 1.25f, SpeechPeakThreshold() * 0.55f);
+		return std::max(SilencePeakThreshold() * 1.40f, SpeechPeakThreshold() * 0.62f);
+	}
+
+	float PossibleSpeechRmsThreshold() const
+	{
+		return std::max(SilenceRmsThreshold() * 1.35f, SpeechRmsThreshold() * 0.62f);
 	}
 
 	float SilencePeakThreshold() const
@@ -134,10 +194,32 @@ public:
 		return Clamp(threshold, 0.014f, SpeechPeakThreshold() * 0.70f);
 	}
 
+	float SilenceRmsThreshold() const
+	{
+		const float threshold = (ambient_rms_ * 1.7f) + 0.003f;
+		return Clamp(threshold, 0.006f, SpeechRmsThreshold() * 0.72f);
+	}
+
 private:
 	static float Clamp(float value, float lo, float hi) { return std::max(lo, std::min(value, hi)); }
 
+	bool HasSpeechEnergy(float framePeak, float frameRms) const
+	{
+		const bool absolute = framePeak >= SpeechPeakThreshold() && frameRms >= SpeechRmsThreshold();
+		const bool relative =
+		    framePeak >= (ambient_peak_ * 4.0f + 0.012f) && frameRms >= (ambient_rms_ * 3.0f + 0.004f);
+		const bool strongPeakWithBody =
+		    framePeak >= SpeechPeakThreshold() * 1.6f && frameRms >= SpeechRmsThreshold() * 0.82f;
+		return absolute || relative || strongPeakWithBody;
+	}
+
+	bool HasPossibleSpeechEnergy(float framePeak, float frameRms) const
+	{
+		return framePeak >= PossibleSpeechPeakThreshold() && frameRms >= PossibleSpeechRmsThreshold();
+	}
+
 	float ambient_peak_ = 0.004f;
+	float ambient_rms_ = 0.0015f;
 };
 
 class SpeechActivationWindow

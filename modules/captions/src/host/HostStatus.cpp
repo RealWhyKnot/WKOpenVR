@@ -154,6 +154,16 @@ void HostStatus::SetAudioQueueDiagnostics(long long queued_frames, long long que
 	audio_queue_frames_ = queued_frames;
 	audio_queue_ms_ = queued_audio_ms;
 }
+void HostStatus::SetSpeechGateDiagnostics(float last_peak, float last_rms, float ambient_peak, float ambient_rms,
+                                          float speech_peak_threshold, float speech_rms_threshold) noexcept
+{
+	gate_last_peak_ = last_peak;
+	gate_last_rms_ = last_rms;
+	gate_ambient_peak_ = ambient_peak;
+	gate_ambient_rms_ = ambient_rms;
+	gate_speech_peak_threshold_ = speech_peak_threshold;
+	gate_speech_rms_threshold_ = speech_rms_threshold;
+}
 void HostStatus::SetSpeechModel(uint8_t model, const std::string& name, const std::string& active_path, bool loaded,
                                 bool fallback)
 {
@@ -165,7 +175,7 @@ void HostStatus::SetSpeechModel(uint8_t model, const std::string& name, const st
 }
 void HostStatus::SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
                                            long long decode_ms, float max_vad_probability, float max_peak,
-                                           float speech_peak_threshold)
+                                           float speech_peak_threshold, float max_rms, float speech_rms_threshold)
 {
 	last_segment_reason_ = reason;
 	last_segment_audio_ms_ = audio_ms;
@@ -174,6 +184,8 @@ void HostStatus::SetLastSegmentDiagnostics(const std::string& reason, long long 
 	last_segment_vad_probability_ = max_vad_probability;
 	last_segment_peak_ = max_peak;
 	last_segment_threshold_ = speech_peak_threshold;
+	last_segment_rms_ = max_rms;
+	last_segment_rms_threshold_ = speech_rms_threshold;
 }
 
 void HostStatus::MaybeFlush()
@@ -221,8 +233,25 @@ void HostStatus::DoFlush()
 	snprintf(peak_buf, sizeof(peak_buf), "%.3f", last_segment_peak_);
 	char threshold_buf[32];
 	snprintf(threshold_buf, sizeof(threshold_buf), "%.3f", last_segment_threshold_);
+	char rms_buf[32];
+	snprintf(rms_buf, sizeof(rms_buf), "%.3f", last_segment_rms_);
+	char rms_threshold_buf[32];
+	snprintf(rms_threshold_buf, sizeof(rms_threshold_buf), "%.3f", last_segment_rms_threshold_);
 	char vad_prob_buf[32];
 	snprintf(vad_prob_buf, sizeof(vad_prob_buf), "%.3f", vad_last_probability_);
+	char gate_last_peak_buf[32];
+	snprintf(gate_last_peak_buf, sizeof(gate_last_peak_buf), "%.3f", gate_last_peak_);
+	char gate_last_rms_buf[32];
+	snprintf(gate_last_rms_buf, sizeof(gate_last_rms_buf), "%.3f", gate_last_rms_);
+	char gate_ambient_peak_buf[32];
+	snprintf(gate_ambient_peak_buf, sizeof(gate_ambient_peak_buf), "%.3f", gate_ambient_peak_);
+	char gate_ambient_rms_buf[32];
+	snprintf(gate_ambient_rms_buf, sizeof(gate_ambient_rms_buf), "%.3f", gate_ambient_rms_);
+	char gate_speech_peak_threshold_buf[32];
+	snprintf(gate_speech_peak_threshold_buf, sizeof(gate_speech_peak_threshold_buf), "%.3f",
+	         gate_speech_peak_threshold_);
+	char gate_speech_rms_threshold_buf[32];
+	snprintf(gate_speech_rms_threshold_buf, sizeof(gate_speech_rms_threshold_buf), "%.3f", gate_speech_rms_threshold_);
 
 	o << "  \"captions_completed\": " << captions_completed_ << ",\n";
 	o << "  \"packets_sent\": " << packets_sent_ << ",\n";
@@ -230,6 +259,12 @@ void HostStatus::DoFlush()
 	o << "  \"frames_captured\": " << frames_captured_ << ",\n";
 	o << "  \"audio_queue_frames\": " << audio_queue_frames_ << ",\n";
 	o << "  \"audio_queue_ms\": " << audio_queue_ms_ << ",\n";
+	o << "  \"gate_last_peak\": " << gate_last_peak_buf << ",\n";
+	o << "  \"gate_last_rms\": " << gate_last_rms_buf << ",\n";
+	o << "  \"gate_ambient_peak\": " << gate_ambient_peak_buf << ",\n";
+	o << "  \"gate_ambient_rms\": " << gate_ambient_rms_buf << ",\n";
+	o << "  \"gate_speech_peak_threshold\": " << gate_speech_peak_threshold_buf << ",\n";
+	o << "  \"gate_speech_rms_threshold\": " << gate_speech_rms_threshold_buf << ",\n";
 	o << "  \"speech_model\": " << speech_model_ << ",\n";
 	o << "  \"speech_model_name\": \"" << EscapeJson(speech_model_name_) << "\",\n";
 	o << "  \"speech_model_loaded\": " << (speech_model_loaded_ ? "true" : "false") << ",\n";
@@ -246,6 +281,8 @@ void HostStatus::DoFlush()
 	o << "  \"last_segment_vad_probability\": " << vad_buf << ",\n";
 	o << "  \"last_segment_peak\": " << peak_buf << ",\n";
 	o << "  \"last_segment_threshold\": " << threshold_buf << ",\n";
+	o << "  \"last_segment_rms\": " << rms_buf << ",\n";
+	o << "  \"last_segment_rms_threshold\": " << rms_threshold_buf << ",\n";
 	o << "  \"osc_messages_sent\": " << packets_sent_ << ",\n";
 	o << "  \"last_exit_code\": 0,\n";
 	o << "  \"last_restart_time\": \"\"\n";

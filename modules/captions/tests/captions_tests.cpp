@@ -431,6 +431,15 @@ TEST(AudioLevelTest, PeakIsMaxAbsAndClamped)
 	EXPECT_FLOAT_EQ(captions::ComputeBufferPeak(hot, 2), 1.0f); // clamped to 1.0
 }
 
+TEST(AudioLevelTest, RmsMeasuresSignalBodyAndClamps)
+{
+	float samples[] = {0.0f, 0.0f, 1.0f, -1.0f};
+	EXPECT_NEAR(captions::ComputeBufferRms(samples, 4), 0.7071f, 0.0001f);
+
+	float hot[] = {2.0f, -2.0f};
+	EXPECT_FLOAT_EQ(captions::ComputeBufferRms(hot, 2), 1.0f);
+}
+
 TEST(AudioLevelTest, DecayRisesInstantlyAndFallsSlowly)
 {
 	// Louder peak takes over immediately.
@@ -450,6 +459,8 @@ TEST(EnergySpeechGateTest, InputLevelFallbackOpensGate)
 	EXPECT_FALSE(captions::SpeechGateIsSpeech(-1.0f, 0.079f));
 	EXPECT_TRUE(captions::SpeechGateIsSpeech(-1.0f, 0.08f));
 	EXPECT_TRUE(captions::SpeechGateIsSpeech(0.1f, 0.2f));
+	EXPECT_FALSE(captions::SpeechGateIsSpeech(-1.0f, 0.2f, 0.004f));
+	EXPECT_TRUE(captions::SpeechGateIsSpeech(-1.0f, 0.2f, 0.030f));
 }
 
 TEST(EnergySpeechGateTest, SilenceRequiresBothLowVadAndLowLevel)
@@ -458,6 +469,7 @@ TEST(EnergySpeechGateTest, SilenceRequiresBothLowVadAndLowLevel)
 	EXPECT_TRUE(captions::SpeechGateIsSilence(0.2f, 0.025f));
 	EXPECT_FALSE(captions::SpeechGateIsSilence(0.4f, 0.0f));
 	EXPECT_FALSE(captions::SpeechGateIsSilence(0.1f, 0.026f));
+	EXPECT_FALSE(captions::SpeechGateIsSilence(0.1f, 0.010f, 0.020f));
 }
 
 TEST(EnergySpeechGateTest, AlwaysOnUsesLongerMinimumThanPushToTalk)
@@ -489,65 +501,98 @@ TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
 {
 	const size_t short_samples = captions::AlwaysOnShortSpeechSamples();
 	const float threshold = 0.04f;
+	const float rms_threshold = 0.014f;
 
-	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(short_samples - 1, true, 0.99f, 1.0f, threshold));
-	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.05f, threshold));
-	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.71f, 0.05f, threshold));
-	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.09f, threshold));
+	EXPECT_FALSE(
+	    captions::SpeechSegmentShouldTranscribe(short_samples - 1, true, 0.99f, 1.0f, threshold, 1.0f, rms_threshold));
+	EXPECT_FALSE(
+	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.05f, threshold, 0.020f, rms_threshold));
 	EXPECT_TRUE(
-	    captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, 0.0f, threshold));
+	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.71f, 0.05f, threshold, 0.002f, rms_threshold));
+	EXPECT_FALSE(
+	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.09f, threshold, 0.004f, rms_threshold));
+	EXPECT_TRUE(
+	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.09f, threshold, 0.030f, rms_threshold));
+	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, 0.0f,
+	                                                     threshold, 0.0f, rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, threshold,
+	                                                    threshold, rms_threshold, rms_threshold));
 }
 
 TEST(EnergySpeechGateTest, AdaptiveGateOpensQuietSpeechInQuietRoom)
 {
 	captions::AdaptiveSpeechGate gate;
 	for (int i = 0; i < 120; ++i) {
-		gate.ObserveAmbient(0.002f);
+		gate.ObserveAmbient(0.002f, 0.001f);
 	}
 
 	EXPECT_LT(gate.SpeechPeakThreshold(), 0.08f);
-	EXPECT_TRUE(gate.IsSpeech(-1.0f, 0.03f));
-	EXPECT_FALSE(gate.IsSilence(-1.0f, 0.03f));
+	EXPECT_LT(gate.SpeechRmsThreshold(), 0.02f);
+	EXPECT_TRUE(gate.IsSpeech(-1.0f, 0.03f, 0.012f));
+	EXPECT_FALSE(gate.IsSpeech(-1.0f, 0.03f, 0.003f));
+	EXPECT_FALSE(gate.IsSilence(-1.0f, 0.03f, 0.012f));
 }
 
 TEST(EnergySpeechGateTest, AdaptiveGateRaisesThresholdInNoisyRoom)
 {
 	captions::AdaptiveSpeechGate gate;
 	for (int i = 0; i < 240; ++i) {
-		gate.ObserveAmbient(0.04f);
+		gate.ObserveAmbient(0.04f, 0.02f);
 	}
 
 	EXPECT_GT(gate.AmbientPeak(), 0.03f);
 	EXPECT_GT(gate.SpeechPeakThreshold(), 0.08f);
-	EXPECT_FALSE(gate.IsSpeech(-1.0f, 0.06f));
-	EXPECT_TRUE(gate.IsSpeech(-1.0f, 0.11f));
+	EXPECT_GT(gate.SpeechRmsThreshold(), 0.05f);
+	EXPECT_FALSE(gate.IsSpeech(-1.0f, 0.11f, 0.03f));
+	EXPECT_TRUE(gate.IsSpeech(-1.0f, 0.16f, 0.08f));
+}
+
+TEST(EnergySpeechGateTest, RejectedLowVadSegmentsAdaptAmbientNoise)
+{
+	captions::AdaptiveSpeechGate gate;
+	const float noise_peak = 0.070f;
+	const float noise_rms = 0.025f;
+
+	EXPECT_TRUE(gate.IsSpeech(-1.0f, noise_peak, noise_rms));
+	for (int i = 0; i < 40; ++i) {
+		EXPECT_TRUE(gate.ObserveRejectedSegment(-1.0f, noise_peak, noise_rms));
+	}
+
+	EXPECT_GT(gate.AmbientPeak(), 0.02f);
+	EXPECT_GT(gate.AmbientRms(), 0.01f);
+	EXPECT_FALSE(gate.IsSpeech(-1.0f, noise_peak, noise_rms));
+	EXPECT_FALSE(gate.ObserveRejectedSegment(0.50f, noise_peak, noise_rms));
 }
 
 TEST(EnergySpeechGateTest, AdaptiveGateStillTrustsVad)
 {
 	captions::AdaptiveSpeechGate gate;
 	for (int i = 0; i < 240; ++i) {
-		gate.ObserveAmbient(0.04f);
+		gate.ObserveAmbient(0.04f, 0.02f);
 	}
 
 	EXPECT_TRUE(gate.IsSpeech(0.50f, 0.0f));
-	EXPECT_TRUE(gate.IsSpeech(0.35f, gate.SoftSpeechPeakThreshold()));
-	EXPECT_FALSE(gate.IsSpeech(0.31f, gate.SoftSpeechPeakThreshold()));
+	EXPECT_TRUE(gate.IsSpeech(0.35f, gate.PossibleSpeechPeakThreshold(), gate.PossibleSpeechRmsThreshold()));
+	EXPECT_FALSE(gate.IsSpeech(0.31f, gate.PossibleSpeechPeakThreshold(), gate.PossibleSpeechRmsThreshold()));
 }
 
 TEST(EnergySpeechGateTest, PossibleSpeechSitsBetweenSilenceAndOpen)
 {
 	captions::AdaptiveSpeechGate gate;
 	for (int i = 0; i < 120; ++i) {
-		gate.ObserveAmbient(0.002f);
+		gate.ObserveAmbient(0.002f, 0.001f);
 	}
 
 	const float possible = gate.PossibleSpeechPeakThreshold();
+	const float possible_rms = gate.PossibleSpeechRmsThreshold();
 	EXPECT_LT(possible, gate.SpeechPeakThreshold());
 	EXPECT_GT(possible, gate.SilencePeakThreshold());
-	EXPECT_FALSE(gate.IsSpeech(-1.0f, possible));
-	EXPECT_TRUE(gate.IsPossibleSpeech(-1.0f, possible));
-	EXPECT_FALSE(gate.IsSilence(-1.0f, possible));
+	EXPECT_LT(possible_rms, gate.SpeechRmsThreshold());
+	EXPECT_GT(possible_rms, gate.SilenceRmsThreshold());
+	EXPECT_FALSE(gate.IsSpeech(-1.0f, possible, possible_rms));
+	EXPECT_TRUE(gate.IsPossibleSpeech(-1.0f, possible, possible_rms));
+	EXPECT_FALSE(gate.IsSilence(-1.0f, possible, possible_rms));
+	EXPECT_FALSE(gate.IsPossibleSpeech(-1.0f, possible * 2.0f, possible_rms * 0.25f));
 }
 
 TEST(EnergySpeechGateTest, ActivationWindowAllowsJitterySpeechFrames)
@@ -652,6 +697,10 @@ TEST(TranscriptTextTest, ConfidenceSuppressionRequiresWeakAudioOrBadDecode)
 	    captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.70f, 0.01f, 0.04f, 0.90f, -0.20f, 4));
 	EXPECT_FALSE(
 	    captions::TranscriptShouldSuppressByConfidence("hello there", false, 0.10f, 0.01f, 0.04f, 0.90f, -2.00f, 4));
+	EXPECT_TRUE(captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.10f, 0.12f, 0.04f, 0.90f, -0.20f,
+	                                                           4, 0.004f, 0.014f));
+	EXPECT_FALSE(captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.10f, 0.12f, 0.04f, 0.90f, -0.20f,
+	                                                            4, 0.030f, 0.014f));
 }
 
 TEST(TranscriptTextTest, NoSpeechProbabilityUsesWhisperThresholds)

@@ -35,6 +35,12 @@ struct HostStatusSnapshot
 	long long frames_captured = 0; // total frames delivered by the endpoint
 	long long audio_queue_frames = 0;
 	long long audio_queue_ms = 0;
+	float gate_last_peak = 0.0f;
+	float gate_last_rms = 0.0f;
+	float gate_ambient_peak = 0.0f;
+	float gate_ambient_rms = 0.0f;
+	float gate_speech_peak_threshold = 0.0f;
+	float gate_speech_rms_threshold = 0.0f;
 	int speech_model = 0;
 	std::string speech_model_name;
 	bool speech_model_loaded = false;
@@ -51,6 +57,8 @@ struct HostStatusSnapshot
 	float last_segment_vad_probability = -1.0f;
 	float last_segment_peak = 0.0f;
 	float last_segment_threshold = 0.0f;
+	float last_segment_rms = 0.0f;
+	float last_segment_rms_threshold = 0.0f;
 };
 
 // Polls %LocalAppDataLow%\WKOpenVR\captions\host_status.json.

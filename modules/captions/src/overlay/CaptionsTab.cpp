@@ -474,6 +474,11 @@ static void DrawStatusStrip(CaptionsPlugin& plugin, const captions::HostStatusSn
 			                   snap.last_transcribe_ms, snap.last_segment_audio_ms,
 			                   snap.last_segment_reason.empty() ? "none" : snap.last_segment_reason.c_str(),
 			                   snap.audio_queue_ms);
+			ImGui::Text("Gate now: peak %.3f / %.3f  |  rms %.3f / %.3f  |  noise %.3f / %.3f", snap.gate_last_peak,
+			            snap.gate_speech_peak_threshold, snap.gate_last_rms, snap.gate_speech_rms_threshold,
+			            snap.gate_ambient_peak, snap.gate_ambient_rms);
+			ImGui::Text("Last gate: peak %.3f / %.3f  |  rms %.3f / %.3f", snap.last_segment_peak,
+			            snap.last_segment_threshold, snap.last_segment_rms, snap.last_segment_rms_threshold);
 			ImGui::Text("VAD: %s  |  Last probability: %.3f  |  Failures: %lld",
 			            snap.vad_model_loaded ? "loaded" : "not loaded", snap.vad_last_probability,
 			            snap.vad_inference_failures);

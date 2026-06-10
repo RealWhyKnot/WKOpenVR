@@ -22,6 +22,19 @@ inline float ComputeBufferPeak(const float* data, std::size_t n)
 	return peak;
 }
 
+inline float ComputeBufferRms(const float* data, std::size_t n)
+{
+	if (!data || n == 0) return 0.0f;
+	double sum = 0.0;
+	for (std::size_t i = 0; i < n; ++i) {
+		const double s = static_cast<double>(data[i]);
+		sum += s * s;
+	}
+	float rms = static_cast<float>(std::sqrt(sum / static_cast<double>(n)));
+	if (rms > 1.0f) rms = 1.0f;
+	return rms;
+}
+
 // Smooth the displayed level: jump up to a louder peak immediately (so the
 // meter is responsive to speech onset) but decay slowly toward silence (so the
 // meter does not flicker between words). `decay` is the fraction of the old

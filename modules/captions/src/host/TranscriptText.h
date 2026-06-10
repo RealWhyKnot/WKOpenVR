@@ -176,14 +176,18 @@ inline bool TranscriptLooksRepetitive(const std::string& text)
 	return false;
 }
 
-inline bool TranscriptHasStrongAudioEvidence(float maxVadProbability, float maxFramePeak, float speechPeakThreshold)
+inline bool TranscriptHasStrongAudioEvidence(float maxVadProbability, float maxFramePeak, float speechPeakThreshold,
+                                             float maxFrameRms = 1.0f, float speechRmsThreshold = 0.0f)
 {
-	return maxVadProbability >= 0.55f || maxFramePeak >= std::max(0.045f, speechPeakThreshold * 1.35f);
+	return maxVadProbability >= 0.55f || (maxFramePeak >= std::max(0.045f, speechPeakThreshold * 1.35f) &&
+	                                      maxFrameRms >= std::max(0.012f, speechRmsThreshold));
 }
 
-inline bool TranscriptHasWeakAudioEvidence(float maxVadProbability, float maxFramePeak, float speechPeakThreshold)
+inline bool TranscriptHasWeakAudioEvidence(float maxVadProbability, float maxFramePeak, float speechPeakThreshold,
+                                           float maxFrameRms = 1.0f, float speechRmsThreshold = 0.0f)
 {
-	return maxVadProbability < 0.38f && maxFramePeak < std::max(0.032f, speechPeakThreshold * 1.10f);
+	return maxVadProbability < 0.38f && (maxFramePeak < std::max(0.032f, speechPeakThreshold * 1.10f) ||
+	                                     maxFrameRms < std::max(0.008f, speechRmsThreshold * 0.80f));
 }
 
 inline float TranscriptNoSpeechProbabilityThreshold()
@@ -207,12 +211,15 @@ inline bool TranscriptShouldSuppressByNoSpeechProbability(const std::string& cle
 inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
                                                  float maxFramePeak, float speechPeakThreshold,
                                                  float noSpeechProbability, float averageTokenLogProbability,
-                                                 int tokenCount)
+                                                 int tokenCount, float maxFrameRms = 1.0f,
+                                                 float speechRmsThreshold = 0.0f)
 {
 	if (!alwaysOn || cleanedText.empty()) return false;
 
-	const bool strong_audio = TranscriptHasStrongAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold);
-	const bool weak_audio = TranscriptHasWeakAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold);
+	const bool strong_audio = TranscriptHasStrongAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
+	                                                           maxFrameRms, speechRmsThreshold);
+	const bool weak_audio = TranscriptHasWeakAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
+	                                                       maxFrameRms, speechRmsThreshold);
 
 	if (TranscriptLooksLikeCommonHallucination(cleanedText) && !strong_audio) return true;
 	if (noSpeechProbability >= 0.85f && !strong_audio) return true;

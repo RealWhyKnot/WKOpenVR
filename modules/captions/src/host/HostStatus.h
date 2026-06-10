@@ -43,11 +43,13 @@ public:
 	void SetAudioLevel(float level) noexcept;
 	void SetFramesCaptured(long long frames) noexcept;
 	void SetAudioQueueDiagnostics(long long queued_frames, long long queued_audio_ms) noexcept;
+	void SetSpeechGateDiagnostics(float last_peak, float last_rms, float ambient_peak, float ambient_rms,
+	                              float speech_peak_threshold, float speech_rms_threshold) noexcept;
 	void SetSpeechModel(uint8_t model, const std::string& name, const std::string& active_path, bool loaded,
 	                    bool fallback);
 	void SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
 	                               long long decode_ms, float max_vad_probability, float max_peak,
-	                               float speech_peak_threshold);
+	                               float speech_peak_threshold, float max_rms, float speech_rms_threshold);
 
 	// Write the JSON file to disk if at least 1 s has elapsed since the
 	// last write. Call periodically from the main loop.
@@ -83,6 +85,12 @@ private:
 	long long frames_captured_ = 0;
 	long long audio_queue_frames_ = 0;
 	long long audio_queue_ms_ = 0;
+	float gate_last_peak_ = 0.0f;
+	float gate_last_rms_ = 0.0f;
+	float gate_ambient_peak_ = 0.0f;
+	float gate_ambient_rms_ = 0.0f;
+	float gate_speech_peak_threshold_ = 0.0f;
+	float gate_speech_rms_threshold_ = 0.0f;
 	int speech_model_ = 0;
 	std::string speech_model_name_;
 	std::string active_speech_model_path_;
@@ -95,6 +103,8 @@ private:
 	float last_segment_vad_probability_ = -1.0f;
 	float last_segment_peak_ = 0.0f;
 	float last_segment_threshold_ = 0.0f;
+	float last_segment_rms_ = 0.0f;
+	float last_segment_rms_threshold_ = 0.0f;
 
 	void WritePath(const std::wstring& status_path);
 	void DoFlush();

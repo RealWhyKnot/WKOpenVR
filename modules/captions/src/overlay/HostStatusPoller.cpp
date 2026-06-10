@@ -104,6 +104,14 @@ void HostStatusPoller::ReadFile()
 	s.frames_captured = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "frames_captured"));
 	s.audio_queue_frames = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "audio_queue_frames"));
 	s.audio_queue_ms = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "audio_queue_ms"));
+	s.gate_last_peak = static_cast<float>(openvr_pair::common::json::NumberAt(root, "gate_last_peak"));
+	s.gate_last_rms = static_cast<float>(openvr_pair::common::json::NumberAt(root, "gate_last_rms"));
+	s.gate_ambient_peak = static_cast<float>(openvr_pair::common::json::NumberAt(root, "gate_ambient_peak"));
+	s.gate_ambient_rms = static_cast<float>(openvr_pair::common::json::NumberAt(root, "gate_ambient_rms"));
+	s.gate_speech_peak_threshold =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "gate_speech_peak_threshold"));
+	s.gate_speech_rms_threshold =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "gate_speech_rms_threshold"));
 	s.speech_model = openvr_pair::common::json::IntAt(root, "speech_model");
 	s.speech_model_name = openvr_pair::common::json::StringAt(root, "speech_model_name");
 	s.speech_model_loaded = openvr_pair::common::json::BoolAt(root, "speech_model_loaded");
@@ -124,6 +132,9 @@ void HostStatusPoller::ReadFile()
 	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_vad_probability"));
 	s.last_segment_peak = static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_peak"));
 	s.last_segment_threshold = static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_threshold"));
+	s.last_segment_rms = static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_rms"));
+	s.last_segment_rms_threshold =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_rms_threshold"));
 
 	snapshot_ = std::move(s);
 }
