@@ -228,7 +228,7 @@ std::wstring BackupVrSettings(const std::wstring& vrSettingsPath)
 	wchar_t stamp[32] = {};
 	swprintf(stamp, std::size(stamp), L"%04u%02u%02u-%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
 	         st.wSecond);
-	const std::wstring backup = vrSettingsPath + L".wkopenvr-safe-mode-" + stamp + L".bak";
+	std::wstring backup = vrSettingsPath + L".wkopenvr-safe-mode-" + stamp + L".bak";
 	if (!CopyFileW(vrSettingsPath.c_str(), backup.c_str(), FALSE)) {
 		Log("backup of '%ls' failed err=%lu", vrSettingsPath.c_str(), GetLastError());
 		return {};

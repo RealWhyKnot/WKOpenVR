@@ -304,13 +304,13 @@ const AvatarShapeTuningMetadata* FindMetadataForAvatar(const FacetrackingProfile
 std::string AvatarDisplayName(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata)
 {
 	if (metadata) {
-		const std::string custom = TrimAsciiCopy(metadata->custom_name);
+		std::string custom = TrimAsciiCopy(metadata->custom_name);
 		if (!custom.empty()) return custom;
-		const std::string automatic = TrimAsciiCopy(metadata->auto_name);
+		std::string automatic = TrimAsciiCopy(metadata->auto_name);
 		if (!automatic.empty()) return automatic;
 	}
 
-	const std::string key = NormalizeAvatarShapeTuningKey(avatarKey);
+	std::string key = NormalizeAvatarShapeTuningKey(avatarKey);
 	if (key == kDefaultAvatarShapeTuningKey) return "Default profile";
 	if (key.rfind("avtr_", 0) == 0) {
 		const size_t firstDash = key.find('-', 5);

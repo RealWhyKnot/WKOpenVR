@@ -6,7 +6,7 @@ name: Nightly clang-tidy
 # keeps full static-analysis coverage without putting it on the per-commit path.
 on:
   schedule:
-    - cron: '17 8 * * *'
+    - cron: '30 5 * * *'
   workflow_dispatch:
 
 permissions:

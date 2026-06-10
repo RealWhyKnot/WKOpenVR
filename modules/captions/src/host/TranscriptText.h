@@ -248,10 +248,10 @@ inline std::string RemoveOverlappingTranscriptPrefix(const std::string& previous
 
 	for (int overlap = max_overlap; overlap >= 2; --overlap) {
 		bool match = true;
-		const int prev_start = static_cast<int>(prev_words.size()) - overlap;
+		const size_t prev_start = prev_words.size() - static_cast<size_t>(overlap);
 		for (int i = 0; i < overlap; ++i) {
-			if (prev_words[static_cast<size_t>(prev_start + i)].normalized !=
-			    cur_words[static_cast<size_t>(i)].normalized) {
+			const size_t offset = static_cast<size_t>(i);
+			if (prev_words[prev_start + offset].normalized != cur_words[offset].normalized) {
 				match = false;
 				break;
 			}

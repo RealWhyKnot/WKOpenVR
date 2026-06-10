@@ -2,7 +2,7 @@ name: Nightly Beta Releases
 
 on:
   schedule:
-    - cron: '35 8 * * *'
+    - cron: '30 5 * * *'
   workflow_dispatch:
 
 permissions:

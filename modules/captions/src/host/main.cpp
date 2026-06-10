@@ -432,7 +432,7 @@ static std::string ActiveWhisperModelPath(const HostConfig& cfg)
 {
 	if (cfg.whisper_model_path_overridden) return cfg.whisper_model_path;
 
-	const std::string selected = DefaultWhisperModelPath(cfg.speech_model);
+	std::string selected = DefaultWhisperModelPath(cfg.speech_model);
 	if (FileExistsA(selected)) return selected;
 
 	if (cfg.speech_model == captions::kCaptionsSpeechModelHighAccuracy) {
