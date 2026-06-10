@@ -184,6 +184,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dashboardinput:** Gate experimental runtime path (b21c061)
 - **captions:** Skip current runtime pack files (7ecd083)
 - **dashboardinput:** Avoid global overlay actions (ca7c3ae)
+- **captions:** Detect silent input devices (5780671)
 
 ---
 
