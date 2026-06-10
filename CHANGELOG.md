@@ -185,6 +185,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Skip current runtime pack files (7ecd083)
 - **dashboardinput:** Avoid global overlay actions (ca7c3ae)
 - **captions:** Detect silent input devices (5780671)
+- **captions:** Expose speech pipeline diagnostics (ee9f6d8)
 
 ---
 
