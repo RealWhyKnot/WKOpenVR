@@ -279,6 +279,10 @@ struct TranscriptRiskInput
 	int recent_suppression_count = 0;
 	int recent_same_text_count = 0;
 	float speech_frame_ratio = -1.0f;
+	float acoustic_artifact_risk = 0.0f;
+	float speech_band_ratio = -1.0f;
+	float zero_crossing_rate = -1.0f;
+	float clipping_ratio = 0.0f;
 };
 
 struct TranscriptRiskResult
@@ -303,6 +307,10 @@ inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
 	const bool very_short_evidence = in.evidence_ms > 0 && in.evidence_ms < 500;
 	const bool short_evidence = in.evidence_ms > 0 && in.evidence_ms < 700;
 	const bool filler = TranscriptLooksLikeCommonFiller(in.cleaned_text);
+	const bool poor_acoustic_shape =
+	    in.acoustic_artifact_risk >= 0.55f ||
+	    (in.speech_band_ratio >= 0.0f && in.speech_band_ratio < 0.24f && in.evidence_ms > 0 && in.evidence_ms < 1000) ||
+	    in.clipping_ratio > 0.04f;
 
 	auto add_risk = [&](int points, TranscriptSuppressionReason reason) {
 		result.score += points;
@@ -328,6 +336,15 @@ inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
 	}
 	if (short_text && !strong_audio && (weak_audio || very_short_evidence)) {
 		add_risk(5, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (short_text && !strong_audio && poor_acoustic_shape) {
+		add_risk(2, TranscriptSuppressionReason::ShortWeakAudio);
+	}
+	if (filler && !strong_audio && in.acoustic_artifact_risk >= 0.45f) {
+		add_risk(1, TranscriptSuppressionReason::CommonFiller);
+	}
+	if (short_text && very_short_evidence && !strong_audio && in.acoustic_artifact_risk >= 0.35f) {
+		add_risk(1, TranscriptSuppressionReason::ShortWeakAudio);
 	}
 	if (in.token_count > 0 && in.average_token_log_probability < -1.35f && in.no_speech_probability >= 0.45f &&
 	    !strong_audio) {
@@ -360,6 +377,9 @@ inline TranscriptRiskResult TranscriptRiskScore(const TranscriptRiskInput& in)
 	}
 	if (strong_audio && in.evidence_ms >= 700) {
 		result.pass_credit += 2;
+	}
+	if (in.speech_band_ratio >= 0.40f && in.acoustic_artifact_risk < 0.35f && in.evidence_ms >= 700) {
+		result.pass_credit += 1;
 	}
 
 	result.score = std::max(0, result.score - result.pass_credit);

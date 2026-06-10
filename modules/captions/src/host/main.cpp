@@ -892,6 +892,11 @@ try {
 	size_t speech_frames_since_open = 0;
 	size_t possible_frames_since_open = 0;
 	size_t total_frames_since_open = 0;
+	size_t speech_feature_frames_since_open = 0;
+	double speech_sum_acoustic_artifact_risk = 0.0;
+	double speech_sum_speech_band_ratio = 0.0;
+	double speech_sum_zero_crossing_rate = 0.0;
+	double speech_sum_clipping_ratio = 0.0;
 	float speech_max_vad_probability = -1.0f;
 	float speech_max_frame_peak = 0.0f;
 	float speech_max_frame_rms = 0.0f;
@@ -922,6 +927,10 @@ try {
 	std::string last_segment_risk_reason;
 	float last_segment_speech_frame_ratio = 0.0f;
 	float last_segment_possible_frame_ratio = 0.0f;
+	float last_segment_acoustic_artifact_risk = 0.0f;
+	float last_segment_speech_band_ratio = 0.0f;
+	float last_segment_zero_crossing_rate = 0.0f;
+	float last_segment_clipping_ratio = 0.0f;
 	long long suppressed_transcripts = 0;
 	long long suppressed_non_speech = 0;
 	long long suppressed_no_speech_probability = 0;
@@ -988,9 +997,27 @@ try {
 		       prompt_context_quarantine_segments);
 	};
 	auto publish_segment_risk_status = [&]() {
-		status.SetSegmentRiskDiagnostics(last_segment_risk_score, last_segment_risk_reason,
-		                                 last_segment_speech_frame_ratio, last_segment_possible_frame_ratio,
-		                                 prompt_context_quarantine_segments);
+		status.SetSegmentRiskDiagnostics(
+		    last_segment_risk_score, last_segment_risk_reason, last_segment_speech_frame_ratio,
+		    last_segment_possible_frame_ratio, last_segment_acoustic_artifact_risk, last_segment_speech_band_ratio,
+		    last_segment_zero_crossing_rate, last_segment_clipping_ratio, prompt_context_quarantine_segments);
+	};
+	auto reset_speech_feature_stats = [&]() {
+		speech_feature_frames_since_open = 0;
+		speech_sum_acoustic_artifact_risk = 0.0;
+		speech_sum_speech_band_ratio = 0.0;
+		speech_sum_zero_crossing_rate = 0.0;
+		speech_sum_clipping_ratio = 0.0;
+	};
+	auto observe_speech_features = [&](const captions::AudioFrameFeatures& features) {
+		++speech_feature_frames_since_open;
+		speech_sum_acoustic_artifact_risk += features.artifact_risk;
+		speech_sum_speech_band_ratio += features.speech_band_ratio;
+		speech_sum_zero_crossing_rate += features.zero_crossing_rate;
+		speech_sum_clipping_ratio += features.clipping_ratio;
+	};
+	auto segment_feature_average = [](double sum, size_t frames) -> float {
+		return frames > 0 ? static_cast<float>(sum / static_cast<double>(frames)) : 0.0f;
 	};
 	publish_suppression_status();
 	status.SetPromptContextLength(whisper_prompt.Text().size());
@@ -1063,6 +1090,22 @@ try {
 				       audio_input_file_present ? 1 : 0);
 				capture.SetDevice(selected_audio_device_id);
 				clear_prompt_context("device-change");
+				in_speech = false;
+				ptt_was_held = false;
+				silence_count = 0;
+				speech_activation.Reset();
+				speech_samples_since_open = 0;
+				speech_evidence_samples_since_open = 0;
+				speech_frames_since_open = 0;
+				possible_frames_since_open = 0;
+				total_frames_since_open = 0;
+				reset_speech_feature_stats();
+				speech_max_vad_probability = -1.0f;
+				speech_max_frame_peak = 0.0f;
+				speech_max_frame_rms = 0.0f;
+				preroll_frames.clear();
+				speech_buf.clear();
+				speech_buf_has_continuation_overlap = false;
 				prompt_context_quarantine_segments = 0;
 				suppression_streak = 0;
 				accepted_filler_streak = 0;
@@ -1262,6 +1305,7 @@ try {
 			speech_frames_since_open = 0;
 			possible_frames_since_open = 0;
 			total_frames_since_open = 0;
+			reset_speech_feature_stats();
 			speech_max_vad_probability = -1.0f;
 			speech_max_frame_peak = 0.0f;
 			speech_max_frame_rms = 0.0f;
@@ -1285,8 +1329,10 @@ try {
 					prob = vad->Feed(frame.data(), frame.size());
 				}
 				last_vad_probability = prob;
-				const float peak = captions::ComputeBufferPeak(frame.data(), frame.size());
-				const float rms = captions::ComputeBufferRms(frame.data(), frame.size());
+				const captions::AudioFrameFeatures frame_features =
+				    captions::ComputeAudioFrameFeatures(frame.data(), frame.size());
+				const float peak = frame_features.peak;
+				const float rms = frame_features.rms;
 				gate_last_frame_peak = peak;
 				gate_last_frame_rms = rms;
 				const bool speech_frame = speech_gate.IsSpeech(prob, peak, rms);
@@ -1308,6 +1354,7 @@ try {
 					speech_frames_since_open = 0;
 					possible_frames_since_open = 0;
 					total_frames_since_open = 0;
+					reset_speech_feature_stats();
 					speech_max_vad_probability = -1.0f;
 					speech_max_frame_peak = 0.0f;
 					speech_max_frame_rms = 0.0f;
@@ -1357,6 +1404,7 @@ try {
 					if (possible_speech_frame) {
 						++possible_frames_since_open;
 					}
+					observe_speech_features(frame_features);
 					speech_max_vad_probability = std::max(speech_max_vad_probability, prob);
 					speech_max_frame_peak = std::max(speech_max_frame_peak, peak);
 					speech_max_frame_rms = std::max(speech_max_frame_rms, rms);
@@ -1391,6 +1439,7 @@ try {
 						speech_frames_since_open = 0;
 						possible_frames_since_open = 0;
 						total_frames_since_open = 0;
+						reset_speech_feature_stats();
 						speech_max_vad_probability = -1.0f;
 						speech_max_frame_peak = 0.0f;
 						speech_max_frame_rms = 0.0f;
@@ -1403,10 +1452,13 @@ try {
 					++speech_frames_since_open;
 					++possible_frames_since_open;
 					++total_frames_since_open;
-					const float peak = captions::ComputeBufferPeak(frame.data(), frame.size());
-					const float rms = captions::ComputeBufferRms(frame.data(), frame.size());
+					const captions::AudioFrameFeatures frame_features =
+					    captions::ComputeAudioFrameFeatures(frame.data(), frame.size());
+					const float peak = frame_features.peak;
+					const float rms = frame_features.rms;
 					gate_last_frame_peak = peak;
 					gate_last_frame_rms = rms;
+					observe_speech_features(frame_features);
 					speech_max_frame_peak = std::max(speech_max_frame_peak, peak);
 					speech_max_frame_rms = std::max(speech_max_frame_rms, rms);
 					ptt_was_held = true;
@@ -1436,6 +1488,15 @@ try {
 			    captions::SpeechGateRatio(segment_speech_frames, segment_total_frames);
 			const float segment_possible_frame_ratio =
 			    captions::SpeechGateRatio(segment_possible_frames, segment_total_frames);
+			const size_t segment_feature_frames = speech_feature_frames_since_open;
+			const float segment_acoustic_artifact_risk =
+			    segment_feature_average(speech_sum_acoustic_artifact_risk, segment_feature_frames);
+			const float segment_speech_band_ratio =
+			    segment_feature_average(speech_sum_speech_band_ratio, segment_feature_frames);
+			const float segment_zero_crossing_rate =
+			    segment_feature_average(speech_sum_zero_crossing_rate, segment_feature_frames);
+			const float segment_clipping_ratio =
+			    segment_feature_average(speech_sum_clipping_ratio, segment_feature_frames);
 			const bool segment_has_enough_evidence = captions::SpeechSegmentShouldTranscribe(
 			    segment_gate_samples, always_on, speech_max_vad_probability, speech_max_frame_peak,
 			    current_speech_peak_threshold, speech_max_frame_rms, current_speech_rms_threshold);
@@ -1452,6 +1513,10 @@ try {
 				last_segment_risk_reason = segment_has_usable_shape ? "" : "speech-shape";
 				last_segment_speech_frame_ratio = segment_speech_frame_ratio;
 				last_segment_possible_frame_ratio = segment_possible_frame_ratio;
+				last_segment_acoustic_artifact_risk = segment_acoustic_artifact_risk;
+				last_segment_speech_band_ratio = segment_speech_band_ratio;
+				last_segment_zero_crossing_rate = segment_zero_crossing_rate;
+				last_segment_clipping_ratio = segment_clipping_ratio;
 				publish_segment_risk_status();
 				status.SetLastSegmentDiagnostics(drop_reason, segment_audio_ms, segment_evidence_ms, 0,
 				                                 speech_max_vad_probability, speech_max_frame_peak,
@@ -1460,12 +1525,14 @@ try {
 				TH_LOG("[speech] dropped segment reason=%s model=%s audio_ms=%lld evidence_ms=%lld always_on=%d "
 				       "vad=%.3f peak=%.3f peak_threshold=%.3f rms=%.3f rms_threshold=%.3f frames=%zu "
 				       "speech_frames=%zu possible_frames=%zu speech_ratio=%.3f possible_ratio=%.3f "
-				       "adapted_noise=%d queue_ms=%lld",
+				       "acoustic_risk=%.3f speech_band=%.3f zcr=%.3f clipping=%.3f adapted_noise=%d queue_ms=%lld",
 				       drop_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
 				       segment_evidence_ms, always_on ? 1 : 0, speech_max_vad_probability, speech_max_frame_peak,
 				       current_speech_peak_threshold, speech_max_frame_rms, current_speech_rms_threshold,
 				       segment_total_frames, segment_speech_frames, segment_possible_frames, segment_speech_frame_ratio,
-				       segment_possible_frame_ratio, adapted_rejected_noise ? 1 : 0, audio_queue_ms);
+				       segment_possible_frame_ratio, segment_acoustic_artifact_risk, segment_speech_band_ratio,
+				       segment_zero_crossing_rate, segment_clipping_ratio, adapted_rejected_noise ? 1 : 0,
+				       audio_queue_ms);
 				in_speech = false;
 				speech_buf.clear();
 				speech_buf_has_continuation_overlap = false;
@@ -1474,6 +1541,7 @@ try {
 				speech_frames_since_open = 0;
 				possible_frames_since_open = 0;
 				total_frames_since_open = 0;
+				reset_speech_feature_stats();
 				silence_count = 0;
 				speech_activation.Reset();
 				speech_max_vad_probability = -1.0f;
@@ -1504,14 +1572,15 @@ try {
 				TH_LOG("[speech] segment closed reason=%s model=%s audio_ms=%lld gate_ms=%lld raw_evidence_ms=%lld "
 				       "vad=%.3f peak=%.3f peak_threshold=%.3f rms=%.3f rms_threshold=%.3f frames=%zu "
 				       "speech_frames=%zu possible_frames=%zu speech_ratio=%.3f possible_ratio=%.3f resume=%d "
-				       "overlap=%d queue_ms=%lld",
+				       "overlap=%d acoustic_risk=%.3f speech_band=%.3f zcr=%.3f clipping=%.3f queue_ms=%lld",
 				       transcribe_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
 				       segment_evidence_ms, SamplesToAudioMs(segment_speech_evidence_samples),
 				       segment_max_vad_probability, segment_max_frame_peak, segment_speech_peak_threshold,
 				       segment_max_frame_rms, segment_speech_rms_threshold, segment_frame_count,
 				       segment_speech_frame_count, segment_possible_frame_count, segment_speech_frame_ratio,
 				       segment_possible_frame_ratio, resume_after_transcribe ? 1 : 0,
-				       segment_had_continuation_overlap ? 1 : 0, audio_queue_ms);
+				       segment_had_continuation_overlap ? 1 : 0, segment_acoustic_artifact_risk,
+				       segment_speech_band_ratio, segment_zero_crossing_rate, segment_clipping_ratio, audio_queue_ms);
 
 				std::string detected_lang;
 				std::string transcript;
@@ -1566,6 +1635,7 @@ try {
 				speech_frames_since_open = 0;
 				possible_frames_since_open = 0;
 				total_frames_since_open = 0;
+				reset_speech_feature_stats();
 				silence_count = 0;
 				speech_activation.Reset();
 				speech_max_vad_probability = -1.0f;
@@ -1581,7 +1651,7 @@ try {
 				       "decode_ms=%lld decode_ratio=%.2f prompt=%d prompt_chars=%zu prompt_quarantine=%d "
 				       "nospeech=%.3f avglog=%.3f tokens=%d segments=%d peak=%.3f peak_threshold=%.3f rms=%.3f "
 				       "rms_threshold=%.3f speech_ratio=%.3f possible_ratio=%.3f queue_ms=%lld resume=%d overlap=%d "
-				       "text=%s",
+				       "acoustic_risk=%.3f speech_band=%.3f zcr=%.3f clipping=%.3f text=%s",
 				       captions::CaptionsSpeechModelName(cfg.speech_model), reported_whisper_model_path.c_str(),
 				       transcribe_reason, detected_lang.c_str(), segment_audio_ms, segment_evidence_ms,
 				       whisper_result.decode_ms, decode_ratio, prompt_context_enabled ? 1 : 0, prompt_chars,
@@ -1590,7 +1660,9 @@ try {
 				       whisper_result.segment_count, segment_max_frame_peak, segment_speech_peak_threshold,
 				       segment_max_frame_rms, segment_speech_rms_threshold, segment_speech_frame_ratio,
 				       segment_possible_frame_ratio, audio_queue_ms, resume_after_transcribe ? 1 : 0,
-				       segment_had_continuation_overlap ? 1 : 0, transcript.c_str());
+				       segment_had_continuation_overlap ? 1 : 0, segment_acoustic_artifact_risk,
+				       segment_speech_band_ratio, segment_zero_crossing_rate, segment_clipping_ratio,
+				       transcript.c_str());
 
 				std::string publish_transcript = captions::CleanTranscriptForPublish(transcript);
 				const std::string normalized_publish_transcript = captions::TranscriptLowerWords(publish_transcript);
@@ -1621,6 +1693,10 @@ try {
 				risk_input.recent_suppression_count = suppression_streak;
 				risk_input.recent_same_text_count = candidate_same_text_count;
 				risk_input.speech_frame_ratio = segment_speech_frame_ratio;
+				risk_input.acoustic_artifact_risk = segment_acoustic_artifact_risk;
+				risk_input.speech_band_ratio = segment_speech_band_ratio;
+				risk_input.zero_crossing_rate = segment_zero_crossing_rate;
+				risk_input.clipping_ratio = segment_clipping_ratio;
 				const captions::TranscriptRiskResult risk_result =
 				    cfg.RealtimeEnabled(captions::kCaptionsRealtimeConfidenceFilter)
 				        ? captions::TranscriptRiskScore(risk_input)
@@ -1633,6 +1709,10 @@ try {
 				                               : captions::TranscriptSuppressionReasonName(risk_result.reason);
 				last_segment_speech_frame_ratio = segment_speech_frame_ratio;
 				last_segment_possible_frame_ratio = segment_possible_frame_ratio;
+				last_segment_acoustic_artifact_risk = segment_acoustic_artifact_risk;
+				last_segment_speech_band_ratio = segment_speech_band_ratio;
+				last_segment_zero_crossing_rate = segment_zero_crossing_rate;
+				last_segment_clipping_ratio = segment_clipping_ratio;
 				publish_segment_risk_status();
 				if (skip_non_speech || skip_no_speech || skip_confidence) {
 					const bool adapted_rejected_noise =
@@ -1658,14 +1738,16 @@ try {
 					TH_LOG("[main] suppressed transcript reason=%s model=%s audio_ms=%lld evidence_ms=%lld "
 					       "decode_ms=%lld vad=%.3f peak=%.3f peak_threshold=%.3f rms=%.3f rms_threshold=%.3f "
 					       "nospeech=%.3f avglog=%.3f tokens=%d risk_score=%d same_text=%d streak=%d "
-					       "prompt_quarantine=%d adapted_noise=%d queue_ms=%lld raw='%s'",
+					       "prompt_quarantine=%d acoustic_risk=%.3f speech_band=%.3f zcr=%.3f clipping=%.3f "
+					       "adapted_noise=%d queue_ms=%lld raw='%s'",
 					       suppression_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
 					       segment_evidence_ms, whisper_result.decode_ms, segment_max_vad_probability,
 					       segment_max_frame_peak, segment_speech_peak_threshold, segment_max_frame_rms,
 					       segment_speech_rms_threshold, whisper_result.max_no_speech_probability,
 					       whisper_result.average_token_log_probability, whisper_result.token_count, risk_result.score,
 					       candidate_same_text_count, suppression_streak, prompt_context_quarantine_segments,
-					       adapted_rejected_noise ? 1 : 0, audio_queue_ms, transcript.c_str());
+					       segment_acoustic_artifact_risk, segment_speech_band_ratio, segment_zero_crossing_rate,
+					       segment_clipping_ratio, adapted_rejected_noise ? 1 : 0, audio_queue_ms, transcript.c_str());
 					publish_transcript.clear();
 					status.SetLastTranscript("");
 					status.SetLastTranslation("");

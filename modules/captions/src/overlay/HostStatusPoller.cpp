@@ -164,6 +164,14 @@ void HostStatusPoller::ReadFile()
 	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_speech_frame_ratio"));
 	s.last_segment_possible_frame_ratio =
 	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_possible_frame_ratio"));
+	s.last_segment_acoustic_risk =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_acoustic_risk"));
+	s.last_segment_speech_band_ratio =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_speech_band_ratio"));
+	s.last_segment_zero_crossing_rate =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_zero_crossing_rate"));
+	s.last_segment_clipping_ratio =
+	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_clipping_ratio"));
 	s.prompt_context_quarantine_segments = openvr_pair::common::json::IntAt(root, "prompt_context_quarantine_segments");
 
 	snapshot_ = std::move(s);

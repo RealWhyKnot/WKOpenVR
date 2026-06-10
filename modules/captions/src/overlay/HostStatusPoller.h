@@ -77,6 +77,10 @@ struct HostStatusSnapshot
 	std::string last_segment_risk_reason;
 	float last_segment_speech_frame_ratio = 0.0f;
 	float last_segment_possible_frame_ratio = 0.0f;
+	float last_segment_acoustic_risk = 0.0f;
+	float last_segment_speech_band_ratio = 0.0f;
+	float last_segment_zero_crossing_rate = 0.0f;
+	float last_segment_clipping_ratio = 0.0f;
 	int prompt_context_quarantine_segments = 0;
 };
 

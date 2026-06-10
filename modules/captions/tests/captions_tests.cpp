@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -480,6 +481,48 @@ TEST(AudioLevelTest, DecayRisesInstantlyAndFallsSlowly)
 	EXPECT_FLOAT_EQ(captions::DecayLevel(1.0f, 0.0f, 0.85f), 0.85f);
 }
 
+TEST(AudioLevelTest, FrameFeaturesTrackBandShape)
+{
+	constexpr float sample_rate = 16000.0f;
+	constexpr float pi = 3.14159265358979323846f;
+	std::vector<float> low(1600);
+	std::vector<float> mid(1600);
+	for (size_t i = 0; i < low.size(); ++i) {
+		const float t = static_cast<float>(i) / sample_rate;
+		low[i] = 0.25f * std::sin(2.0f * pi * 60.0f * t);
+		mid[i] = 0.25f * std::sin(2.0f * pi * 1000.0f * t);
+	}
+
+	const captions::AudioFrameFeatures low_features =
+	    captions::ComputeAudioFrameFeatures(low.data(), low.size(), sample_rate);
+	const captions::AudioFrameFeatures mid_features =
+	    captions::ComputeAudioFrameFeatures(mid.data(), mid.size(), sample_rate);
+
+	EXPECT_GT(low_features.low_band_ratio, mid_features.low_band_ratio);
+	EXPECT_GT(mid_features.speech_band_ratio, mid_features.low_band_ratio);
+	EXPECT_GT(mid_features.speech_band_ratio, mid_features.high_band_ratio);
+	EXPECT_GT(mid_features.speech_band_ratio, 0.35f);
+}
+
+TEST(AudioLevelTest, FrameFeaturesDetectHighFrequencyAndClippingArtifacts)
+{
+	std::vector<float> alternating(480);
+	for (size_t i = 0; i < alternating.size(); ++i) {
+		alternating[i] = (i % 2 == 0) ? 0.20f : -0.20f;
+	}
+
+	const captions::AudioFrameFeatures high_features =
+	    captions::ComputeAudioFrameFeatures(alternating.data(), alternating.size());
+	EXPECT_GT(high_features.zero_crossing_rate, 0.90f);
+	EXPECT_GT(high_features.artifact_risk, 0.25f);
+
+	std::vector<float> clipped(480, 0.99f);
+	const captions::AudioFrameFeatures clipped_features =
+	    captions::ComputeAudioFrameFeatures(clipped.data(), clipped.size());
+	EXPECT_GT(clipped_features.clipping_ratio, 0.90f);
+	EXPECT_GT(clipped_features.artifact_risk, 0.40f);
+}
+
 TEST(EnergySpeechGateTest, SileroSpeechProbabilityOpensGate)
 {
 	EXPECT_TRUE(captions::SpeechGateIsSpeech(0.5f, 0.0f));
@@ -851,6 +894,36 @@ TEST(TranscriptTextTest, RiskScoreCombinesSegmentHistoryAndPassCredits)
 	captions::TranscriptRiskResult speech_result = captions::TranscriptRiskScore(sustained_speech);
 	EXPECT_FALSE(speech_result.suppress);
 	EXPECT_EQ(speech_result.reason, captions::TranscriptSuppressionReason::None);
+}
+
+TEST(TranscriptTextTest, AcousticRiskOnlyHardensWeakShortFiller)
+{
+	captions::TranscriptRiskInput weak_filler;
+	weak_filler.cleaned_text = "you";
+	weak_filler.always_on = true;
+	weak_filler.max_vad_probability = 0.20f;
+	weak_filler.max_frame_peak = 0.020f;
+	weak_filler.speech_peak_threshold = 0.040f;
+	weak_filler.max_frame_rms = 0.004f;
+	weak_filler.speech_rms_threshold = 0.014f;
+	weak_filler.evidence_ms = 900;
+	weak_filler.token_count = 1;
+	weak_filler.acoustic_artifact_risk = 0.65f;
+	weak_filler.speech_band_ratio = 0.15f;
+	weak_filler.zero_crossing_rate = 0.65f;
+
+	captions::TranscriptRiskResult weak_result = captions::TranscriptRiskScore(weak_filler);
+	EXPECT_TRUE(weak_result.suppress);
+	EXPECT_EQ(weak_result.reason, captions::TranscriptSuppressionReason::CommonFiller);
+
+	captions::TranscriptRiskInput strong_short = weak_filler;
+	strong_short.max_vad_probability = 0.88f;
+	strong_short.max_frame_peak = 0.060f;
+	strong_short.max_frame_rms = 0.020f;
+
+	captions::TranscriptRiskResult strong_result = captions::TranscriptRiskScore(strong_short);
+	EXPECT_FALSE(strong_result.suppress);
+	EXPECT_EQ(strong_result.reason, captions::TranscriptSuppressionReason::None);
 }
 
 TEST(TranscriptTextTest, PromptContextRequiresAcceptedHighConfidenceText)

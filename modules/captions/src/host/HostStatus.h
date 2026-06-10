@@ -59,7 +59,8 @@ public:
 	                                         long long common_filler, long long short_weak_audio, long long repetitive,
 	                                         long long low_confidence, long long slow_short_decode);
 	void SetSegmentRiskDiagnostics(int risk_score, const std::string& risk_reason, float speech_frame_ratio,
-	                               float possible_frame_ratio, int prompt_quarantine_segments);
+	                               float possible_frame_ratio, float acoustic_artifact_risk, float speech_band_ratio,
+	                               float zero_crossing_rate, float clipping_ratio, int prompt_quarantine_segments);
 
 	// Write the JSON file to disk if at least 1 s has elapsed since the
 	// last write. Call periodically from the main loop.
@@ -133,6 +134,10 @@ private:
 	std::string last_segment_risk_reason_;
 	float last_segment_speech_frame_ratio_ = 0.0f;
 	float last_segment_possible_frame_ratio_ = 0.0f;
+	float last_segment_acoustic_artifact_risk_ = 0.0f;
+	float last_segment_speech_band_ratio_ = 0.0f;
+	float last_segment_zero_crossing_rate_ = 0.0f;
+	float last_segment_clipping_ratio_ = 0.0f;
 	int prompt_context_quarantine_segments_ = 0;
 
 	void WritePath(const std::wstring& status_path);
