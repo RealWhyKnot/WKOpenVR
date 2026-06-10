@@ -818,7 +818,7 @@ try {
 	status.Flush();
 	// Load Whisper.
 	WhisperEngine whisper;
-	captions::WhisperPromptHistory whisper_prompt;
+	captions::WhisperPromptHistory whisper_prompt(192);
 	std::string whisper_prompt_lang_key;
 	std::string loaded_whisper_model_path;
 	bool whisper_load_attempted = false;
@@ -909,6 +909,68 @@ try {
 	bool last_logged_required_exists = false;
 	bool last_logged_active_exists = false;
 	auto next_audio_backlog_log = std::chrono::steady_clock::time_point{};
+	bool prompt_context_cleared_for_backlog = false;
+	int suppression_streak = 0;
+	int accepted_filler_streak = 0;
+	long long suppressed_transcripts = 0;
+	long long suppressed_non_speech = 0;
+	long long suppressed_no_speech_probability = 0;
+	long long suppressed_common_hallucination = 0;
+	long long suppressed_common_filler = 0;
+	long long suppressed_short_weak_audio = 0;
+	long long suppressed_repetitive = 0;
+	long long suppressed_low_confidence = 0;
+	long long suppressed_slow_short_decode = 0;
+	std::string last_suppression_reason;
+	auto publish_suppression_status = [&]() {
+		status.SetTranscriptSuppressionDiagnostics(
+		    last_suppression_reason, suppressed_transcripts, suppressed_non_speech, suppressed_no_speech_probability,
+		    suppressed_common_hallucination, suppressed_common_filler, suppressed_short_weak_audio,
+		    suppressed_repetitive, suppressed_low_confidence, suppressed_slow_short_decode);
+	};
+	auto record_suppression = [&](const char* reason) {
+		last_suppression_reason = reason ? reason : "";
+		++suppressed_transcripts;
+		if (last_suppression_reason == "non-speech") {
+			++suppressed_non_speech;
+		}
+		else if (last_suppression_reason == "no-speech-probability") {
+			++suppressed_no_speech_probability;
+		}
+		else if (last_suppression_reason == "common-hallucination") {
+			++suppressed_common_hallucination;
+		}
+		else if (last_suppression_reason == "common-filler") {
+			++suppressed_common_filler;
+		}
+		else if (last_suppression_reason == "short-weak-audio") {
+			++suppressed_short_weak_audio;
+		}
+		else if (last_suppression_reason == "repetitive") {
+			++suppressed_repetitive;
+		}
+		else if (last_suppression_reason == "low-confidence") {
+			++suppressed_low_confidence;
+		}
+		else if (last_suppression_reason == "slow-short-decode") {
+			++suppressed_slow_short_decode;
+		}
+		publish_suppression_status();
+	};
+	auto clear_prompt_context = [&](const char* reason) {
+		const size_t old_chars = whisper_prompt.Text().size();
+		const bool had_overlap = !last_transcript_for_overlap.empty();
+		whisper_prompt.Clear();
+		whisper.SetInitialPrompt("");
+		last_transcript_for_overlap.clear();
+		status.SetPromptContextLength(0);
+		if (old_chars > 0 || had_overlap) {
+			TH_LOG("[main] cleared prompt context reason=%s old_chars=%zu overlap=%d", reason ? reason : "unknown",
+			       old_chars, had_overlap ? 1 : 0);
+		}
+	};
+	publish_suppression_status();
+	status.SetPromptContextLength(whisper_prompt.Text().size());
 
 	TH_LOG("[startup] phase=initializing-audio-capture");
 	status.SetPhase("initializing-audio-capture");
@@ -924,15 +986,17 @@ try {
 	const std::wstring captions_dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"captions", true);
 	const std::wstring audio_input_path = captions_dir.empty() ? std::wstring() : captions_dir + L"\\audio_input.txt";
 	int64_t audio_input_mtime = audio_input_path.empty() ? 0 : openvr_pair::common::FileLastWriteTime(audio_input_path);
+	bool audio_input_file_present = audio_input_mtime != 0;
+	std::string selected_audio_device_id;
 	auto next_device_check = std::chrono::steady_clock::now();
 
 	WasapiCapture capture;
 	{
-		std::string initial_device = captions::ReadCaptionsInputDeviceId(captions_dir);
-		if (!initial_device.empty()) {
-			TH_LOG("[main] using saved capture device id='%s'", initial_device.c_str());
+		selected_audio_device_id = captions::ReadCaptionsInputDeviceId(captions_dir);
+		if (!selected_audio_device_id.empty()) {
+			TH_LOG("[main] using saved capture device id='%s'", selected_audio_device_id.c_str());
 		}
-		capture.SetDevice(initial_device);
+		capture.SetDevice(selected_audio_device_id);
 	}
 	bool cap_ok = capture.Start([&](const float* pcm, size_t n) {
 		std::lock_guard<std::mutex> lk(audio_mutex);
@@ -942,7 +1006,11 @@ try {
 	if (!cap_ok) TH_LOG("[main] WASAPI capture start failed");
 
 	status.SetMicName(capture.DeviceName());
+	status.SetInputDeviceDiagnostics(!selected_audio_device_id.empty(), audio_input_file_present, capture.DeviceName());
 	status.SetState(HostStatus::State::Idle);
+	TH_LOG("[main] capture device effective mode=%s audio_input_present=%d name='%s'",
+	       selected_audio_device_id.empty() ? "system-default" : "explicit", audio_input_file_present ? 1 : 0,
+	       capture.DeviceName().c_str());
 
 	TH_LOG("[startup] phase=running");
 	status.SetPhase("running");
@@ -963,10 +1031,16 @@ try {
 			int64_t mt = openvr_pair::common::FileLastWriteTime(audio_input_path);
 			if (mt != audio_input_mtime) {
 				audio_input_mtime = mt;
-				std::string id = captions::ReadCaptionsInputDeviceId(captions_dir);
-				TH_LOG("[main] capture device file changed; selecting id='%s'",
-				       id.empty() ? "(system default)" : id.c_str());
-				capture.SetDevice(id);
+				audio_input_file_present = mt != 0;
+				selected_audio_device_id = captions::ReadCaptionsInputDeviceId(captions_dir);
+				TH_LOG("[main] capture device file changed; selecting mode=%s id='%s' audio_input_present=%d",
+				       selected_audio_device_id.empty() ? "system-default" : "explicit",
+				       selected_audio_device_id.empty() ? "(system default)" : selected_audio_device_id.c_str(),
+				       audio_input_file_present ? 1 : 0);
+				capture.SetDevice(selected_audio_device_id);
+				clear_prompt_context("device-change");
+				suppression_streak = 0;
+				accepted_filler_streak = 0;
 			}
 		}
 
@@ -990,6 +1064,15 @@ try {
 		}
 		UpdatePackStatus(status, cfg);
 		status.SetAudioQueueDiagnostics(static_cast<long long>(audio_queue_frames), audio_queue_ms);
+		if (audio_queue_ms >= 2000) {
+			if (!prompt_context_cleared_for_backlog) {
+				clear_prompt_context("audio-backlog");
+				prompt_context_cleared_for_backlog = true;
+			}
+		}
+		else if (audio_queue_ms < 500) {
+			prompt_context_cleared_for_backlog = false;
+		}
 		if (audio_queue_ms >= 500 && loop_now >= next_audio_backlog_log) {
 			next_audio_backlog_log = loop_now + std::chrono::seconds(2);
 			TH_LOG("[audio] drained capture backlog frames=%zu samples=%zu audio_ms=%lld model=%s mode=%s state=%s",
@@ -1014,10 +1097,8 @@ try {
 		whisper.SetLanguage(cfg.source_lang == "auto" ? "" : cfg.source_lang);
 		const std::string prompt_lang_key = cfg.source_lang.empty() ? "auto" : cfg.source_lang;
 		if (prompt_lang_key != whisper_prompt_lang_key) {
-			whisper_prompt.Clear();
-			whisper.SetInitialPrompt("");
+			clear_prompt_context("language-change");
 			whisper_prompt_lang_key = prompt_lang_key;
-			last_transcript_for_overlap.clear();
 		}
 		const std::string required_whisper_model_path = RequiredWhisperModelPath(cfg);
 		const std::string desired_whisper_model_path = ActiveWhisperModelPath(cfg);
@@ -1026,9 +1107,7 @@ try {
 			       desired_whisper_model_path.c_str());
 			whisper.Unload();
 			loaded_whisper_model_path.clear();
-			whisper_prompt.Clear();
-			whisper.SetInitialPrompt("");
-			last_transcript_for_overlap.clear();
+			clear_prompt_context("model-change");
 			whisper_load_attempted = false;
 			whisper_load_failed = false;
 			next_whisper_load_attempt = loop_now;
@@ -1412,7 +1491,6 @@ try {
 				speech_max_vad_probability = -1.0f;
 				speech_max_frame_peak = 0.0f;
 				speech_max_frame_rms = 0.0f;
-				status.SetLastTranscript(transcript);
 				status.SetLastSegmentDiagnostics(transcribe_reason, segment_audio_ms, segment_evidence_ms,
 				                                 whisper_result.decode_ms, segment_max_vad_probability,
 				                                 segment_max_frame_peak, segment_speech_peak_threshold,
@@ -1438,38 +1516,74 @@ try {
 				                            captions::TranscriptShouldSuppressByNoSpeechProbability(
 				                                publish_transcript, always_on, whisper_result.max_no_speech_probability,
 				                                whisper_result.average_token_log_probability);
+				const captions::TranscriptSuppressionReason confidence_suppression_reason =
+				    cfg.RealtimeEnabled(captions::kCaptionsRealtimeConfidenceFilter)
+				        ? captions::TranscriptConfidenceSuppressionReason(
+				              publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
+				              segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
+				              whisper_result.average_token_log_probability, whisper_result.token_count,
+				              segment_max_frame_rms, segment_speech_rms_threshold, segment_evidence_ms, decode_ratio)
+				        : captions::TranscriptSuppressionReason::None;
 				const bool skip_confidence =
-				    cfg.RealtimeEnabled(captions::kCaptionsRealtimeConfidenceFilter) &&
-				    captions::TranscriptShouldSuppressByConfidence(
-				        publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
-				        segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
-				        whisper_result.average_token_log_probability, whisper_result.token_count, segment_max_frame_rms,
-				        segment_speech_rms_threshold);
+				    confidence_suppression_reason != captions::TranscriptSuppressionReason::None;
 				if (skip_non_speech || skip_no_speech || skip_confidence) {
 					const bool adapted_rejected_noise =
 					    always_on && speech_gate.ObserveRejectedSegment(segment_max_vad_probability,
 					                                                    segment_max_frame_peak, segment_max_frame_rms);
-					const char* suppression_reason = skip_non_speech  ? "non-speech"
-					                                 : skip_no_speech ? "no-speech-probability"
-					                                                  : "low-confidence";
+					const char* suppression_reason =
+					    skip_non_speech  ? "non-speech"
+					    : skip_no_speech ? "no-speech-probability"
+					                     : captions::TranscriptSuppressionReasonName(confidence_suppression_reason);
+					++suppression_streak;
+					accepted_filler_streak = 0;
+					record_suppression(suppression_reason);
+					clear_prompt_context("suppressed-transcript");
 					TH_LOG("[main] suppressed transcript reason=%s model=%s audio_ms=%lld evidence_ms=%lld "
 					       "decode_ms=%lld vad=%.3f peak=%.3f peak_threshold=%.3f rms=%.3f rms_threshold=%.3f "
-					       "nospeech=%.3f avglog=%.3f tokens=%d adapted_noise=%d queue_ms=%lld raw='%s'",
+					       "nospeech=%.3f avglog=%.3f tokens=%d streak=%d adapted_noise=%d queue_ms=%lld raw='%s'",
 					       suppression_reason, captions::CaptionsSpeechModelName(cfg.speech_model), segment_audio_ms,
 					       segment_evidence_ms, whisper_result.decode_ms, segment_max_vad_probability,
 					       segment_max_frame_peak, segment_speech_peak_threshold, segment_max_frame_rms,
 					       segment_speech_rms_threshold, whisper_result.max_no_speech_probability,
-					       whisper_result.average_token_log_probability, whisper_result.token_count,
+					       whisper_result.average_token_log_probability, whisper_result.token_count, suppression_streak,
 					       adapted_rejected_noise ? 1 : 0, audio_queue_ms, transcript.c_str());
 					publish_transcript.clear();
+					status.SetLastTranscript("");
 					status.SetLastTranslation("");
 				}
 				else if (!publish_transcript.empty()) {
-					if (cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext)) {
+					status.SetLastTranscript(publish_transcript);
+					suppression_streak = 0;
+					bool cleared_overlap_for_filler = false;
+					const bool prompt_context_accepted =
+					    cfg.RealtimeEnabled(captions::kCaptionsRealtimePromptContext) &&
+					    captions::TranscriptShouldUpdatePromptContext(
+					        publish_transcript, always_on, segment_max_vad_probability, segment_max_frame_peak,
+					        segment_speech_peak_threshold, whisper_result.max_no_speech_probability,
+					        whisper_result.average_token_log_probability, whisper_result.token_count,
+					        segment_max_frame_rms, segment_speech_rms_threshold, segment_evidence_ms);
+					if (prompt_context_accepted) {
 						whisper_prompt.Observe(publish_transcript);
 					}
-					last_transcript_for_overlap = publish_transcript;
+					if (captions::TranscriptLooksLikeCommonFiller(publish_transcript)) {
+						++accepted_filler_streak;
+						if (accepted_filler_streak >= 2) {
+							clear_prompt_context("repeated-filler");
+							cleared_overlap_for_filler = true;
+						}
+					}
+					else {
+						accepted_filler_streak = 0;
+					}
+					if (!cleared_overlap_for_filler) {
+						last_transcript_for_overlap = publish_transcript;
+					}
 				}
+				else {
+					status.SetLastTranscript("");
+					accepted_filler_streak = 0;
+				}
+				status.SetPromptContextLength(whisper_prompt.Text().size());
 
 				// Translation step.
 				std::string output = publish_transcript;
@@ -1497,7 +1611,7 @@ try {
 						       effective_src_lang.c_str(), cfg.target_lang.c_str());
 					}
 				}
-				else if (!translation_requested) {
+				else if (publish_transcript.empty() || !translation_requested) {
 					status.SetLastTranslation("");
 				}
 
@@ -1545,6 +1659,8 @@ try {
 		}
 
 		status.SetMicName(capture.DeviceName());
+		status.SetInputDeviceDiagnostics(!selected_audio_device_id.empty(), audio_input_file_present,
+		                                 capture.DeviceName());
 		status.SetAudioLevel(capture.Level());
 		status.SetFramesCaptured(static_cast<long long>(capture.FramesCaptured()));
 		status.SetSpeechGateDiagnostics(gate_last_frame_peak, gate_last_frame_rms, speech_gate.AmbientPeak(),
@@ -1553,6 +1669,7 @@ try {
 		status.SetVadDiagnostics(vad && vad->IsLoaded(), last_vad_probability,
 		                         vad ? static_cast<long long>(vad->InferenceFailures()) : 0,
 		                         vad ? vad->LastError() : std::string());
+		status.SetPromptContextLength(whisper_prompt.Text().size());
 		status.MaybeFlush();
 
 		Sleep(10); // 10 ms main-loop cadence

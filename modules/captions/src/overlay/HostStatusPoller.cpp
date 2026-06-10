@@ -86,6 +86,9 @@ void HostStatusPoller::ReadFile()
 	s.state = openvr_pair::common::json::IntAt(root, "state");
 	s.phase = openvr_pair::common::json::StringAt(root, "phase");
 	s.mic_name = openvr_pair::common::json::StringAt(root, "mic_name");
+	s.input_device_selection_mode = openvr_pair::common::json::StringAt(root, "input_device_selection_mode");
+	s.audio_input_file_present = openvr_pair::common::json::BoolAt(root, "audio_input_file_present");
+	s.effective_input_device_name = openvr_pair::common::json::StringAt(root, "effective_input_device_name");
 	s.last_transcript = openvr_pair::common::json::StringAt(root, "last_transcript");
 	s.last_translation = openvr_pair::common::json::StringAt(root, "last_translation");
 	s.last_error = openvr_pair::common::json::StringAt(root, "last_error");
@@ -135,6 +138,26 @@ void HostStatusPoller::ReadFile()
 	s.last_segment_rms = static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_rms"));
 	s.last_segment_rms_threshold =
 	    static_cast<float>(openvr_pair::common::json::NumberAt(root, "last_segment_rms_threshold"));
+	s.prompt_context_chars = static_cast<long long>(openvr_pair::common::json::NumberAt(root, "prompt_context_chars"));
+	s.last_suppression_reason = openvr_pair::common::json::StringAt(root, "last_suppression_reason");
+	s.suppressed_transcripts =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_transcripts"));
+	s.suppressed_non_speech =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_non_speech"));
+	s.suppressed_no_speech_probability =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_no_speech_probability"));
+	s.suppressed_common_hallucination =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_common_hallucination"));
+	s.suppressed_common_filler =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_common_filler"));
+	s.suppressed_short_weak_audio =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_short_weak_audio"));
+	s.suppressed_repetitive =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_repetitive"));
+	s.suppressed_low_confidence =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_low_confidence"));
+	s.suppressed_slow_short_decode =
+	    static_cast<long long>(openvr_pair::common::json::NumberAt(root, "suppressed_slow_short_decode"));
 
 	snapshot_ = std::move(s);
 }

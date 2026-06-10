@@ -112,6 +112,18 @@ inline bool TranscriptLooksLikeCommonHallucination(const std::string& text)
 	return false;
 }
 
+inline bool TranscriptLooksLikeCommonFiller(const std::string& text)
+{
+	const std::string normalized = TranscriptLowerWords(text);
+	static constexpr std::array<const char*, 19> kPhrases = {"you", "hmm", "hmmm", "hm",    "mm",  "mmm",    "mm hmm",
+	                                                         "mhm", "um",  "umm",  "uh",    "uhh", "uh huh", "yeah",
+	                                                         "yep", "ok",  "okay", "right", "oh"};
+	for (const char* phrase : kPhrases) {
+		if (normalized == phrase) return true;
+	}
+	return false;
+}
+
 struct TranscriptWordSpan
 {
 	std::string normalized;
@@ -140,6 +152,12 @@ inline std::vector<TranscriptWordSpan> TranscriptWords(const std::string& text)
 		if (!span.normalized.empty()) words.push_back(span);
 	}
 	return words;
+}
+
+inline int TranscriptEffectiveTokenCount(const std::string& text, int tokenCount)
+{
+	if (tokenCount > 0) return tokenCount;
+	return static_cast<int>(TranscriptWords(text).size());
 }
 
 inline bool TranscriptLooksRepetitive(const std::string& text)
@@ -208,31 +226,115 @@ inline bool TranscriptShouldSuppressByNoSpeechProbability(const std::string& cle
 	       averageTokenLogProbability < TranscriptNoSpeechAverageLogProbabilityThreshold();
 }
 
-inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
-                                                 float maxFramePeak, float speechPeakThreshold,
-                                                 float noSpeechProbability, float averageTokenLogProbability,
-                                                 int tokenCount, float maxFrameRms = 1.0f,
-                                                 float speechRmsThreshold = 0.0f)
+enum class TranscriptSuppressionReason
 {
-	if (!alwaysOn || cleanedText.empty()) return false;
+	None,
+	CommonHallucination,
+	CommonFiller,
+	NoSpeechProbability,
+	ShortWeakAudio,
+	Repetitive,
+	LowConfidence,
+	SlowShortDecode,
+};
+
+inline const char* TranscriptSuppressionReasonName(TranscriptSuppressionReason reason)
+{
+	switch (reason) {
+		case TranscriptSuppressionReason::CommonHallucination:
+			return "common-hallucination";
+		case TranscriptSuppressionReason::CommonFiller:
+			return "common-filler";
+		case TranscriptSuppressionReason::NoSpeechProbability:
+			return "no-speech-probability";
+		case TranscriptSuppressionReason::ShortWeakAudio:
+			return "short-weak-audio";
+		case TranscriptSuppressionReason::Repetitive:
+			return "repetitive";
+		case TranscriptSuppressionReason::LowConfidence:
+			return "low-confidence";
+		case TranscriptSuppressionReason::SlowShortDecode:
+			return "slow-short-decode";
+		case TranscriptSuppressionReason::None:
+		default:
+			return "";
+	}
+}
+
+inline TranscriptSuppressionReason TranscriptConfidenceSuppressionReason(
+    const std::string& cleanedText, bool alwaysOn, float maxVadProbability, float maxFramePeak,
+    float speechPeakThreshold, float noSpeechProbability, float averageTokenLogProbability, int tokenCount,
+    float maxFrameRms = 1.0f, float speechRmsThreshold = 0.0f, long long evidenceMs = 0, double decodeRatio = 0.0)
+{
+	if (!alwaysOn || cleanedText.empty()) return TranscriptSuppressionReason::None;
 
 	const bool strong_audio = TranscriptHasStrongAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
 	                                                           maxFrameRms, speechRmsThreshold);
 	const bool weak_audio = TranscriptHasWeakAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
 	                                                       maxFrameRms, speechRmsThreshold);
+	const int effective_token_count = TranscriptEffectiveTokenCount(cleanedText, tokenCount);
+	const bool short_text = effective_token_count > 0 && effective_token_count <= 4;
+	const bool very_short_evidence = evidenceMs > 0 && evidenceMs < 500;
+	const bool short_evidence = evidenceMs > 0 && evidenceMs < 700;
 
-	if (TranscriptLooksLikeCommonHallucination(cleanedText) && !strong_audio) return true;
-	if (noSpeechProbability >= 0.85f && !strong_audio) return true;
-	if (weak_audio && noSpeechProbability >= 0.65f) return true;
+	if (TranscriptLooksLikeCommonHallucination(cleanedText) && !strong_audio) {
+		return TranscriptSuppressionReason::CommonHallucination;
+	}
+	if (TranscriptLooksLikeCommonFiller(cleanedText) && (!strong_audio || short_evidence)) {
+		return TranscriptSuppressionReason::CommonFiller;
+	}
+	if (noSpeechProbability >= 0.85f && !strong_audio) return TranscriptSuppressionReason::NoSpeechProbability;
+	if (weak_audio && noSpeechProbability >= 0.65f) return TranscriptSuppressionReason::NoSpeechProbability;
+	if (short_text && !strong_audio && (weak_audio || very_short_evidence)) {
+		return TranscriptSuppressionReason::ShortWeakAudio;
+	}
 	if (tokenCount > 0 && averageTokenLogProbability < -1.35f && noSpeechProbability >= 0.45f && !strong_audio) {
-		return true;
+		return TranscriptSuppressionReason::LowConfidence;
 	}
-	if (TranscriptLooksRepetitive(cleanedText) && tokenCount > 0 && averageTokenLogProbability < -0.85f &&
-	    !strong_audio) {
-		return true;
+	if (TranscriptLooksRepetitive(cleanedText) && !strong_audio) {
+		return TranscriptSuppressionReason::Repetitive;
+	}
+	if (short_text && decodeRatio >= 1.75 && !strong_audio) {
+		return TranscriptSuppressionReason::SlowShortDecode;
 	}
 
-	return false;
+	return TranscriptSuppressionReason::None;
+}
+
+inline bool TranscriptShouldSuppressByConfidence(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
+                                                 float maxFramePeak, float speechPeakThreshold,
+                                                 float noSpeechProbability, float averageTokenLogProbability,
+                                                 int tokenCount, float maxFrameRms = 1.0f,
+                                                 float speechRmsThreshold = 0.0f, long long evidenceMs = 0,
+                                                 double decodeRatio = 0.0)
+{
+	return TranscriptConfidenceSuppressionReason(cleanedText, alwaysOn, maxVadProbability, maxFramePeak,
+	                                             speechPeakThreshold, noSpeechProbability, averageTokenLogProbability,
+	                                             tokenCount, maxFrameRms, speechRmsThreshold, evidenceMs,
+	                                             decodeRatio) != TranscriptSuppressionReason::None;
+}
+
+inline bool TranscriptShouldUpdatePromptContext(const std::string& cleanedText, bool alwaysOn, float maxVadProbability,
+                                                float maxFramePeak, float speechPeakThreshold,
+                                                float noSpeechProbability, float averageTokenLogProbability,
+                                                int tokenCount, float maxFrameRms = 1.0f,
+                                                float speechRmsThreshold = 0.0f, long long evidenceMs = 0)
+{
+	if (cleanedText.empty()) return false;
+	if (!alwaysOn) return true;
+
+	const bool strong_audio = TranscriptHasStrongAudioEvidence(maxVadProbability, maxFramePeak, speechPeakThreshold,
+	                                                           maxFrameRms, speechRmsThreshold);
+	const int effective_token_count = TranscriptEffectiveTokenCount(cleanedText, tokenCount);
+	if (TranscriptLooksLikeCommonHallucination(cleanedText)) return false;
+	if (TranscriptLooksLikeCommonFiller(cleanedText) && effective_token_count <= 3) return false;
+	if (TranscriptLooksRepetitive(cleanedText)) return false;
+	if (averageTokenLogProbability < -1.05f) return false;
+	if (noSpeechProbability >= 0.55f && averageTokenLogProbability < -0.50f) return false;
+	if (evidenceMs > 0 && evidenceMs < 500 && !strong_audio) return false;
+	if (effective_token_count > 0 && effective_token_count <= 2 && !strong_audio) return false;
+
+	return true;
 }
 
 inline std::string TrimTranscriptLeadingSeparators(const std::string& text, size_t start)

@@ -17,6 +17,9 @@ struct HostStatusSnapshot
 	int state = 0; // HostStatus::State int value
 	std::string phase;
 	std::string mic_name;
+	std::string input_device_selection_mode;
+	bool audio_input_file_present = false;
+	std::string effective_input_device_name;
 	std::string last_transcript;
 	std::string last_translation;
 	std::string last_error;
@@ -59,6 +62,17 @@ struct HostStatusSnapshot
 	float last_segment_threshold = 0.0f;
 	float last_segment_rms = 0.0f;
 	float last_segment_rms_threshold = 0.0f;
+	long long prompt_context_chars = 0;
+	std::string last_suppression_reason;
+	long long suppressed_transcripts = 0;
+	long long suppressed_non_speech = 0;
+	long long suppressed_no_speech_probability = 0;
+	long long suppressed_common_hallucination = 0;
+	long long suppressed_common_filler = 0;
+	long long suppressed_short_weak_audio = 0;
+	long long suppressed_repetitive = 0;
+	long long suppressed_low_confidence = 0;
+	long long suppressed_slow_short_decode = 0;
 };
 
 // Polls %LocalAppDataLow%\WKOpenVR\captions\host_status.json.

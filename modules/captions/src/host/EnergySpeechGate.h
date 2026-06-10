@@ -42,6 +42,11 @@ inline size_t AlwaysOnShortSpeechSamples()
 	return 1600; // 100 ms of confident gated speech
 }
 
+inline size_t AlwaysOnWeakEvidenceSamples()
+{
+	return 8000; // 500 ms of gated speech
+}
+
 inline size_t AlwaysOnMaxSpeechSamples(bool extendedTiming = true)
 {
 	return extendedTiming ? 80000 : 128000; // 5 s or 8 s max before flushing a continuous segment
@@ -67,14 +72,18 @@ inline bool SpeechSegmentShouldTranscribe(size_t gatedSamples, bool alwaysOn, fl
                                           float speechRmsThreshold = 0.0f)
 {
 	if (!alwaysOn) return gatedSamples >= PushToTalkMinSpeechSamples();
-	const bool hasSpeechEvidence = maxVadProbability >= 0.45f || (maxFramePeak >= speechPeakThreshold &&
-	                                                              maxFrameRms >= std::max(0.010f, speechRmsThreshold));
-	if (gatedSamples >= AlwaysOnMinSpeechSamples()) return hasSpeechEvidence;
 	if (gatedSamples < AlwaysOnShortSpeechSamples()) return false;
 
-	const float strongPeakThreshold = std::max(0.07f, speechPeakThreshold * 2.0f);
-	const float strongRmsThreshold = std::max(0.018f, speechRmsThreshold * 1.35f);
-	return maxVadProbability >= 0.70f || (maxFramePeak >= strongPeakThreshold && maxFrameRms >= strongRmsThreshold);
+	const bool strongVadEvidence = maxVadProbability >= 0.68f;
+	const bool usableVadEvidence = maxVadProbability >= 0.50f;
+	const bool strongEnergyEvidence = maxFramePeak >= std::max(0.08f, speechPeakThreshold * 2.0f) &&
+	                                  maxFrameRms >= std::max(0.022f, speechRmsThreshold * 1.45f);
+	const bool sustainedEnergyEvidence = maxFramePeak >= std::max(0.050f, speechPeakThreshold * 1.35f) &&
+	                                     maxFrameRms >= std::max(0.014f, speechRmsThreshold);
+
+	if (gatedSamples < AlwaysOnWeakEvidenceSamples()) return strongVadEvidence || strongEnergyEvidence;
+
+	return usableVadEvidence || sustainedEnergyEvidence;
 }
 
 inline bool SpeechGateIsSpeech(float vadProbability, float framePeak, float frameRms)

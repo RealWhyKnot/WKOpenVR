@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -27,6 +28,8 @@ public:
 	void SetLastTranslation(const std::string& t);
 	void SetLastError(const std::string& e);
 	void SetPhase(const std::string& phase);
+	void SetInputDeviceDiagnostics(bool explicit_selection, bool audio_input_file_present,
+	                               const std::string& effective_name);
 	void SetPttStatus(bool available, bool registered, const std::string& app_key, const std::string& error);
 	void SetSpeechPackInstalled(bool installed) noexcept;
 	void SetVadRuntimeAvailable(bool available) noexcept;
@@ -50,6 +53,11 @@ public:
 	void SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
 	                               long long decode_ms, float max_vad_probability, float max_peak,
 	                               float speech_peak_threshold, float max_rms, float speech_rms_threshold);
+	void SetPromptContextLength(size_t chars) noexcept;
+	void SetTranscriptSuppressionDiagnostics(const std::string& last_reason, long long total, long long non_speech,
+	                                         long long no_speech_probability, long long common_hallucination,
+	                                         long long common_filler, long long short_weak_audio, long long repetitive,
+	                                         long long low_confidence, long long slow_short_decode);
 
 	// Write the JSON file to disk if at least 1 s has elapsed since the
 	// last write. Call periodically from the main loop.
@@ -66,6 +74,9 @@ private:
 	std::string last_translation_;
 	std::string last_error_;
 	std::string phase_ = "starting";
+	std::string input_device_selection_mode_ = "system-default";
+	bool audio_input_file_present_ = false;
+	std::string effective_input_device_name_;
 	bool ptt_available_ = false;
 	bool ptt_registered_ = false;
 	std::string ptt_app_key_;
@@ -105,6 +116,17 @@ private:
 	float last_segment_threshold_ = 0.0f;
 	float last_segment_rms_ = 0.0f;
 	float last_segment_rms_threshold_ = 0.0f;
+	long long prompt_context_chars_ = 0;
+	std::string last_suppression_reason_;
+	long long suppressed_transcripts_ = 0;
+	long long suppressed_non_speech_ = 0;
+	long long suppressed_no_speech_probability_ = 0;
+	long long suppressed_common_hallucination_ = 0;
+	long long suppressed_common_filler_ = 0;
+	long long suppressed_short_weak_audio_ = 0;
+	long long suppressed_repetitive_ = 0;
+	long long suppressed_low_confidence_ = 0;
+	long long suppressed_slow_short_decode_ = 0;
 
 	void WritePath(const std::wstring& status_path);
 	void DoFlush();

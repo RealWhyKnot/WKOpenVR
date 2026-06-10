@@ -517,6 +517,7 @@ TEST(EnergySpeechGateTest, AlwaysOnKeepsShortPrerollAndModerateSilenceTail)
 {
 	EXPECT_EQ(captions::AlwaysOnPrerollFrames(), 32);
 	EXPECT_EQ(captions::AlwaysOnSilenceFrames(), 32);
+	EXPECT_EQ(captions::AlwaysOnWeakEvidenceSamples(), 8000u);
 	EXPECT_EQ(captions::AlwaysOnMaxSpeechSamples(), 80000u);
 	EXPECT_EQ(captions::AlwaysOnContinuationOverlapSamples(), 9600u);
 }
@@ -532,6 +533,7 @@ TEST(EnergySpeechGateTest, AlwaysOnCanUseLegacyTiming)
 TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
 {
 	const size_t short_samples = captions::AlwaysOnShortSpeechSamples();
+	const size_t sustained_samples = captions::AlwaysOnWeakEvidenceSamples();
 	const float threshold = 0.04f;
 	const float rms_threshold = 0.014f;
 
@@ -540,15 +542,19 @@ TEST(EnergySpeechGateTest, ShortAlwaysOnSegmentNeedsConfidence)
 	EXPECT_FALSE(
 	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.05f, threshold, 0.020f, rms_threshold));
 	EXPECT_TRUE(
-	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.71f, 0.05f, threshold, 0.002f, rms_threshold));
+	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.70f, 0.05f, threshold, 0.002f, rms_threshold));
 	EXPECT_FALSE(
 	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.09f, threshold, 0.004f, rms_threshold));
 	EXPECT_TRUE(
 	    captions::SpeechSegmentShouldTranscribe(short_samples, true, 0.30f, 0.09f, threshold, 0.030f, rms_threshold));
 	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, 0.0f,
 	                                                     threshold, 0.0f, rms_threshold));
-	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, threshold,
-	                                                    threshold, rms_threshold, rms_threshold));
+	EXPECT_FALSE(captions::SpeechSegmentShouldTranscribe(captions::AlwaysOnMinSpeechSamples(), true, 0.0f, threshold,
+	                                                     threshold, rms_threshold, rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(sustained_samples, true, 0.0f, 0.055f, threshold, 0.014f,
+	                                                    rms_threshold));
+	EXPECT_TRUE(captions::SpeechSegmentShouldTranscribe(sustained_samples, true, 0.55f, 0.020f, threshold, 0.004f,
+	                                                    rms_threshold));
 }
 
 TEST(EnergySpeechGateTest, AdaptiveGateOpensQuietSpeechInQuietRoom)
@@ -712,6 +718,17 @@ TEST(TranscriptTextTest, DetectsCommonLowConfidenceHallucinations)
 	EXPECT_FALSE(captions::TranscriptLooksLikeCommonHallucination("I was watching the mirror."));
 }
 
+TEST(TranscriptTextTest, DetectsCommonShortFillers)
+{
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonFiller("you"));
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonFiller("Hmm."));
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonFiller("mm-hmm"));
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonFiller("uh"));
+	EXPECT_TRUE(captions::TranscriptLooksLikeCommonFiller("okay"));
+	EXPECT_FALSE(captions::TranscriptLooksLikeCommonFiller("you should check this"));
+	EXPECT_FALSE(captions::TranscriptLooksLikeCommonFiller("I am okay with that"));
+}
+
 TEST(TranscriptTextTest, DetectsOnlyLikelyDecodeRepetition)
 {
 	EXPECT_TRUE(captions::TranscriptLooksRepetitive("hello world hello world hello world"));
@@ -733,6 +750,69 @@ TEST(TranscriptTextTest, ConfidenceSuppressionRequiresWeakAudioOrBadDecode)
 	                                                           4, 0.004f, 0.014f));
 	EXPECT_FALSE(captions::TranscriptShouldSuppressByConfidence("hello there", true, 0.10f, 0.12f, 0.04f, 0.90f, -0.20f,
 	                                                            4, 0.030f, 0.014f));
+}
+
+TEST(TranscriptTextTest, SuppressesWeakFillerButKeepsStrongShortSpeech)
+{
+	const float threshold = 0.04f;
+	const float rms_threshold = 0.014f;
+
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("you", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.004f, rms_threshold, 320, 0.50),
+	          captions::TranscriptSuppressionReason::CommonFiller);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("hmm", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.004f, rms_threshold, 320, 0.50),
+	          captions::TranscriptSuppressionReason::CommonFiller);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("mm hmm", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 2,
+	                                                          0.004f, rms_threshold, 320, 0.50),
+	          captions::TranscriptSuppressionReason::CommonFiller);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("um", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.004f, rms_threshold, 320, 0.50),
+	          captions::TranscriptSuppressionReason::CommonFiller);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("uh", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.004f, rms_threshold, 320, 0.50),
+	          captions::TranscriptSuppressionReason::CommonFiller);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("you", true, 0.75f, 0.020f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.004f, rms_threshold, 900, 0.50),
+	          captions::TranscriptSuppressionReason::None);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("ok", true, 0.10f, 0.10f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.030f, rms_threshold, 900, 0.50),
+	          captions::TranscriptSuppressionReason::None);
+}
+
+TEST(TranscriptTextTest, SuppressesShortWeakAndRepetitiveDecodeOutput)
+{
+	const float threshold = 0.04f;
+	const float rms_threshold = 0.014f;
+
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("hello", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 1,
+	                                                          0.004f, rms_threshold, 320, 0.40),
+	          captions::TranscriptSuppressionReason::ShortWeakAudio);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("hello world hello world hello world", true, 0.10f,
+	                                                          0.018f, threshold, 0.0f, -0.20f, 6, 0.004f, rms_threshold,
+	                                                          1200, 0.40),
+	          captions::TranscriptSuppressionReason::Repetitive);
+	EXPECT_EQ(captions::TranscriptConfidenceSuppressionReason("hello there", true, 0.10f, 0.045f, threshold, 0.0f,
+	                                                          -0.20f, 2, 0.012f, rms_threshold, 900, 2.00),
+	          captions::TranscriptSuppressionReason::SlowShortDecode);
+}
+
+TEST(TranscriptTextTest, PromptContextRequiresAcceptedHighConfidenceText)
+{
+	const float threshold = 0.04f;
+	const float rms_threshold = 0.014f;
+
+	EXPECT_FALSE(captions::TranscriptShouldUpdatePromptContext("you", true, 0.75f, 0.020f, threshold, 0.0f, -0.20f, 1,
+	                                                           0.004f, rms_threshold, 900));
+	EXPECT_FALSE(captions::TranscriptShouldUpdatePromptContext("hello", true, 0.10f, 0.018f, threshold, 0.0f, -0.20f, 1,
+	                                                           0.004f, rms_threshold, 320));
+	EXPECT_FALSE(captions::TranscriptShouldUpdatePromptContext("hello world hello world hello world", true, 0.10f,
+	                                                           0.018f, threshold, 0.0f, -0.20f, 6, 0.004f,
+	                                                           rms_threshold, 1200));
+	EXPECT_TRUE(captions::TranscriptShouldUpdatePromptContext("can you hear me clearly", true, 0.70f, 0.030f, threshold,
+	                                                          0.0f, -0.20f, 5, 0.012f, rms_threshold, 900));
+	EXPECT_TRUE(captions::TranscriptShouldUpdatePromptContext("you", false, 0.10f, 0.018f, threshold, 0.90f, -2.00f, 1,
+	                                                          0.004f, rms_threshold, 100));
 }
 
 TEST(TranscriptTextTest, NoSpeechProbabilityUsesWhisperThresholds)

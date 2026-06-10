@@ -94,6 +94,13 @@ void HostStatus::SetPhase(const std::string& phase)
 {
 	phase_ = phase;
 }
+void HostStatus::SetInputDeviceDiagnostics(bool explicit_selection, bool audio_input_file_present,
+                                           const std::string& effective_name)
+{
+	input_device_selection_mode_ = explicit_selection ? "explicit" : "system-default";
+	audio_input_file_present_ = audio_input_file_present;
+	effective_input_device_name_ = effective_name;
+}
 void HostStatus::SetPttStatus(bool available, bool registered, const std::string& app_key, const std::string& error)
 {
 	ptt_available_ = available;
@@ -187,6 +194,27 @@ void HostStatus::SetLastSegmentDiagnostics(const std::string& reason, long long 
 	last_segment_rms_ = max_rms;
 	last_segment_rms_threshold_ = speech_rms_threshold;
 }
+void HostStatus::SetPromptContextLength(size_t chars) noexcept
+{
+	prompt_context_chars_ = static_cast<long long>(chars);
+}
+void HostStatus::SetTranscriptSuppressionDiagnostics(const std::string& last_reason, long long total,
+                                                     long long non_speech, long long no_speech_probability,
+                                                     long long common_hallucination, long long common_filler,
+                                                     long long short_weak_audio, long long repetitive,
+                                                     long long low_confidence, long long slow_short_decode)
+{
+	last_suppression_reason_ = last_reason;
+	suppressed_transcripts_ = total;
+	suppressed_non_speech_ = non_speech;
+	suppressed_no_speech_probability_ = no_speech_probability;
+	suppressed_common_hallucination_ = common_hallucination;
+	suppressed_common_filler_ = common_filler;
+	suppressed_short_weak_audio_ = short_weak_audio;
+	suppressed_repetitive_ = repetitive;
+	suppressed_low_confidence_ = low_confidence;
+	suppressed_slow_short_decode_ = slow_short_decode;
+}
 
 void HostStatus::MaybeFlush()
 {
@@ -213,6 +241,9 @@ void HostStatus::DoFlush()
 	o << "  \"state\": " << (int)state_ << ",\n";
 	o << "  \"phase\": \"" << EscapeJson(phase_) << "\",\n";
 	o << "  \"mic_name\": \"" << EscapeJson(mic_name_) << "\",\n";
+	o << "  \"input_device_selection_mode\": \"" << EscapeJson(input_device_selection_mode_) << "\",\n";
+	o << "  \"audio_input_file_present\": " << (audio_input_file_present_ ? "true" : "false") << ",\n";
+	o << "  \"effective_input_device_name\": \"" << EscapeJson(effective_input_device_name_) << "\",\n";
 	o << "  \"last_transcript\": \"" << EscapeJson(last_transcript_) << "\",\n";
 	o << "  \"last_translation\": \"" << EscapeJson(last_translation_) << "\",\n";
 	o << "  \"last_error\": \"" << EscapeJson(last_error_) << "\",\n";
@@ -283,6 +314,17 @@ void HostStatus::DoFlush()
 	o << "  \"last_segment_threshold\": " << threshold_buf << ",\n";
 	o << "  \"last_segment_rms\": " << rms_buf << ",\n";
 	o << "  \"last_segment_rms_threshold\": " << rms_threshold_buf << ",\n";
+	o << "  \"prompt_context_chars\": " << prompt_context_chars_ << ",\n";
+	o << "  \"last_suppression_reason\": \"" << EscapeJson(last_suppression_reason_) << "\",\n";
+	o << "  \"suppressed_transcripts\": " << suppressed_transcripts_ << ",\n";
+	o << "  \"suppressed_non_speech\": " << suppressed_non_speech_ << ",\n";
+	o << "  \"suppressed_no_speech_probability\": " << suppressed_no_speech_probability_ << ",\n";
+	o << "  \"suppressed_common_hallucination\": " << suppressed_common_hallucination_ << ",\n";
+	o << "  \"suppressed_common_filler\": " << suppressed_common_filler_ << ",\n";
+	o << "  \"suppressed_short_weak_audio\": " << suppressed_short_weak_audio_ << ",\n";
+	o << "  \"suppressed_repetitive\": " << suppressed_repetitive_ << ",\n";
+	o << "  \"suppressed_low_confidence\": " << suppressed_low_confidence_ << ",\n";
+	o << "  \"suppressed_slow_short_decode\": " << suppressed_slow_short_decode_ << ",\n";
 	o << "  \"osc_messages_sent\": " << packets_sent_ << ",\n";
 	o << "  \"last_exit_code\": 0,\n";
 	o << "  \"last_restart_time\": \"\"\n";
