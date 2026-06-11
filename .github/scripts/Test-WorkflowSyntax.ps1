@@ -80,12 +80,20 @@ $workflowDir = Join-Path $Root '.github/workflows'
 if (Test-Path -LiteralPath $workflowDir) {
     $ghaPattern = [regex]'\$\{\{[^}]*\}\}'
     $retiredReleaseSecret = 'MODULE_RELEASE_TOKEN'
+    $nightlyBetaWorkflow = Join-Path $workflowDir 'nightly-beta.yml'
 
     Get-ChildItem -LiteralPath $workflowDir -Filter '*.yml' | ForEach-Object {
         $wfPath  = $_.FullName
         $retiredSecretMatches = Select-String -LiteralPath $wfPath -SimpleMatch $retiredReleaseSecret
         foreach ($match in $retiredSecretMatches) {
             $errors.Add("$wfPath (line $($match.LineNumber)): $retiredReleaseSecret is not a configured repository secret; use MIRROR_RELEASE_TOKEN.") | Out-Null
+        }
+
+        if ([string]::Equals($wfPath, $nightlyBetaWorkflow, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $workflowText = Get-Content -LiteralPath $wfPath -Raw
+            if ($workflowText -match 'git push \$remote' -and $workflowText -notmatch 'persist-credentials:\s*false') {
+                $errors.Add("${wfPath}: checkout must set persist-credentials: false before pushing the beta tag with MIRROR_RELEASE_TOKEN.") | Out-Null
+            }
         }
 
         $lines   = Get-Content -LiteralPath $wfPath
