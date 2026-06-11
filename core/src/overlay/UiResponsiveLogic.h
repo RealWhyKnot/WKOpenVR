@@ -30,4 +30,21 @@ inline bool FlowShouldWrap(float prevItemRightEdge, float nextItemWidth, float r
 	return (prevItemRightEdge + spacing + nextItemWidth) > rightEdge;
 }
 
+// Is the desktop window actually showing pixels to the user? A minimized window
+// reports a 0x0 framebuffer on Windows, but check the iconified flag too so the
+// caller never builds a UI frame for a window nobody can see.
+inline bool ComputeDesktopVisible(int framebufferWidth, int framebufferHeight, bool iconified)
+{
+	return framebufferWidth > 0 && framebufferHeight > 0 && !iconified;
+}
+
+// The overlay only needs to rebuild and rasterise its ImGui frame when a surface
+// can actually be seen: either the in-VR dashboard overlay is up, or the desktop
+// window is visible. When both are false the loop runs its background heartbeat
+// (VR tick, plugin ticks, perf sampling) and skips the per-frame UI rebuild.
+inline bool ShouldRenderUi(bool vrSurfaceVisible, bool desktopVisible)
+{
+	return vrSurfaceVisible || desktopVisible;
+}
+
 } // namespace openvr_pair::overlay::ui

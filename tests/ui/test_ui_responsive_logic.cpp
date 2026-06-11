@@ -37,3 +37,26 @@ TEST(FlowWrap, WrapsOnlyWhenItemCrossesBoundary)
 	// Item ends at 370, next is 50 wide: 370 + 8 + 50 = 428 > 400 -> wraps.
 	EXPECT_TRUE(ui::FlowShouldWrap(370.0f, 50.0f, rightEdge, spacing));
 }
+
+TEST(DesktopVisible, NeedsPixelsAndNotMinimized)
+{
+	// A normal window with a real framebuffer and not iconified shows pixels.
+	EXPECT_TRUE(ui::ComputeDesktopVisible(1200, 780, false));
+	// Minimized reports a real size on some shells but is not visible.
+	EXPECT_FALSE(ui::ComputeDesktopVisible(1200, 780, true));
+	// A 0x0 framebuffer (minimized on Windows) is not visible either way.
+	EXPECT_FALSE(ui::ComputeDesktopVisible(0, 0, false));
+	EXPECT_FALSE(ui::ComputeDesktopVisible(0, 780, false));
+	EXPECT_FALSE(ui::ComputeDesktopVisible(1200, 0, false));
+}
+
+TEST(ShouldRenderUi, RendersWhenAnySurfaceIsVisible)
+{
+	// In-VR overlay up: render regardless of the desktop window state.
+	EXPECT_TRUE(ui::ShouldRenderUi(true, false));
+	EXPECT_TRUE(ui::ShouldRenderUi(true, true));
+	// No VR surface but the desktop window is showing: still render.
+	EXPECT_TRUE(ui::ShouldRenderUi(false, true));
+	// Background case -- dashboard closed and window minimized: skip the build.
+	EXPECT_FALSE(ui::ShouldRenderUi(false, false));
+}

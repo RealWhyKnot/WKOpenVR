@@ -13,6 +13,7 @@
 #include "ShellUi.h"
 #include "Theme.h"
 #include "UiHelpers.h"
+#include "UiResponsiveLogic.h"
 #include "UpdateNotice.h"
 #include "VrOverlayHost.h"
 
@@ -508,6 +509,13 @@ int main(int argc, char** argv)
 	CompositorTimingSampler compositorSampler;
 	OverlayFrameHitchLogger frameHitches;
 
+	// Tracks whether the previous iteration built a UI frame. The two backend
+	// NewFrame calls happen above TickFrame (for VR-mouse ordering) before this
+	// frame's visibility is known, so they key off the prior decision; the
+	// ImGui::NewFrame/Render pair below only runs when that backend frame did,
+	// keeping the begin/end pair balanced. Starts true so the first frame paints.
+	bool renderUiPrev = true;
+
 	// Resolve each plugin's ModuleId once; the per-frame Tick loop wraps
 	// every call in a perf section keyed by this id.
 	std::vector<std::optional<openvr_pair::common::modules::ModuleId>> pluginPerfIds;
@@ -535,8 +543,13 @@ int main(int argc, char** argv)
 		ObserveSlowStage(frameTimings, "toggles", frameTimings.toggleMs);
 
 		stageStartSeconds = glfwGetTime();
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
+		// Only when the prior frame was visible: a hidden overlay skips the
+		// whole NewFrame/Render pair, so starting a backend frame here would
+		// leave it unbalanced. The ordering above TickFrame is preserved.
+		if (renderUiPrev) {
+			ImGui_ImplOpenGL3_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+		}
 		frameTimings.backendFrameMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
 		ObserveSlowStage(frameTimings, "backend_frame", frameTimings.backendFrameMs);
 
@@ -624,6 +637,21 @@ int main(int argc, char** argv)
 		}
 		ObserveSlowStage(frameTimings, "plugin_ticks", frameTimings.pluginTickMs);
 
+		// Decide whether anyone can see the overlay this frame: the in-VR
+		// surface is up, or the desktop window is showing pixels (not
+		// minimized / zero-sized). When neither holds, skip the ImGui rebuild
+		// and rasterise below -- the loop still runs its background heartbeat
+		// above and waits at the idle cadence. buildThisFrame also requires the
+		// prior frame to have been visible, so the backend NewFrame (gated the
+		// same way above) stays paired with the ImGui::NewFrame/Render below.
+		int fbw = 0;
+		int fbh = 0;
+		glfwGetFramebufferSize(window, &fbw, &fbh);
+		const bool iconified = glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0;
+		const bool desktopVisible = ui::ComputeDesktopVisible(fbw, fbh, iconified);
+		const bool renderUi = ui::ShouldRenderUi(vrSurfaceVisible, desktopVisible);
+		const bool buildThisFrame = renderUi && renderUiPrev;
+
 		stageStartSeconds = glfwGetTime();
 		ImGuiIO& io = ImGui::GetIO();
 		if (vrSurfaceVisible) {
@@ -642,12 +670,14 @@ int main(int argc, char** argv)
 			io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
 		}
 
-		ImGui::NewFrame();
+		if (buildThisFrame) {
+			ImGui::NewFrame();
 
-		DrawShellWindow(context, plugins);
-		ImGui::Render();
-		frameTimings.imguiBuildMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
-		ObserveSlowStage(frameTimings, "imgui_build", frameTimings.imguiBuildMs);
+			DrawShellWindow(context, plugins);
+			ImGui::Render();
+			frameTimings.imguiBuildMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
+			ObserveSlowStage(frameTimings, "imgui_build", frameTimings.imguiBuildMs);
+		}
 
 		// Two render paths share one ImGui::GetDrawData() call: the
 		// content laid out above is rasterised into whichever FBO the
@@ -656,11 +686,7 @@ int main(int argc, char** argv)
 		// the ImGui rectangle.
 		const ImVec4 clearCol = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
 
-		int fbw = 0;
-		int fbh = 0;
-		glfwGetFramebufferSize(window, &fbw, &fbh);
-
-		if (vrSurfaceVisible) {
+		if (buildThisFrame && vrSurfaceVisible) {
 			frameTimings.renderPath = "vr";
 			stageStartSeconds = glfwGetTime();
 			// VR path: render into the fixed-size FBO and submit. The
@@ -695,7 +721,7 @@ int main(int argc, char** argv)
 			frameTimings.submitMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
 			ObserveSlowStage(frameTimings, "submit_texture", frameTimings.submitMs);
 		}
-		else if (fbw > 0 && fbh > 0) {
+		else if (buildThisFrame && fbw > 0 && fbh > 0) {
 			frameTimings.renderPath = "desktop";
 			stageStartSeconds = glfwGetTime();
 			// Desktop path: keep the window FBO sized to the actual
@@ -738,6 +764,10 @@ int main(int argc, char** argv)
 		ObserveSlowStage(frameTimings, "wait_events", frameTimings.waitMs);
 		frameTimings.totalMs = (glfwGetTime() - frameStartSeconds) * 1000.0;
 		frameHitches.MaybeLog(frameTimings);
+
+		// Carry this frame's visibility so next iteration's backend NewFrame
+		// (above TickFrame, before renderUi is known) matches the build below.
+		renderUiPrev = renderUi;
 	}
 
 	openvr_pair::common::WriteRuntimeHealthSummary();
