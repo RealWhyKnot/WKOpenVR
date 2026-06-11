@@ -84,10 +84,10 @@ jobs:
         if: ${{ steps.beta.outputs.is_beta == 'true' }}
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            throw "MODULE_RELEASE_TOKEN secret is required to plan beta module releases."
+            throw "MIRROR_RELEASE_TOKEN secret is required to plan beta module releases."
           }
           git fetch --tags --force
           ./.github/scripts/Get-NightlyBetaPlan.ps1 -Tag '${{ github.ref_name }}'
@@ -581,7 +581,7 @@ jobs:
       - name: Publish module releases
         id: publish
         env:
-          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN }}
           # Per-feature installer paths. A disabled-in-release module output
           # is empty here; the loop filters those entries out so gh release
           # create never sees an empty positional arg.
@@ -595,7 +595,7 @@ jobs:
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            throw "MODULE_RELEASE_TOKEN secret is required to publish module releases."
+            throw "MIRROR_RELEASE_TOKEN secret is required to publish module releases."
           }
 
           $tag = "${{ github.ref_name }}"
@@ -796,12 +796,12 @@ jobs:
         # available for inspection after a failed run.
         if: failure()
         env:
-          GH_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            Write-Host "::warning::MODULE_RELEASE_TOKEN secret is unavailable; skipping module release cleanup."
+            Write-Host "::warning::MIRROR_RELEASE_TOKEN secret is unavailable; skipping module release cleanup."
             $global:LASTEXITCODE = 0
             return
           }

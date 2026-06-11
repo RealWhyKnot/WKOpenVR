@@ -79,9 +79,15 @@ if (Test-Path -LiteralPath $scriptDir) {
 $workflowDir = Join-Path $Root '.github/workflows'
 if (Test-Path -LiteralPath $workflowDir) {
     $ghaPattern = [regex]'\$\{\{[^}]*\}\}'
+    $retiredReleaseSecret = 'MODULE_RELEASE_TOKEN'
 
     Get-ChildItem -LiteralPath $workflowDir -Filter '*.yml' | ForEach-Object {
         $wfPath  = $_.FullName
+        $retiredSecretMatches = Select-String -LiteralPath $wfPath -SimpleMatch $retiredReleaseSecret
+        foreach ($match in $retiredSecretMatches) {
+            $errors.Add("$wfPath (line $($match.LineNumber)): $retiredReleaseSecret is not a configured repository secret; use MIRROR_RELEASE_TOKEN.") | Out-Null
+        }
+
         $lines   = Get-Content -LiteralPath $wfPath
         $stepName    = '<unnamed>'
         $isPwsh      = $false
