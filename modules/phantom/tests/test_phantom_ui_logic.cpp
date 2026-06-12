@@ -127,3 +127,38 @@ TEST(PhantomUiLogic, SolverModeToneSeparatesMeasuredFromInferred)
 	EXPECT_EQ(phantom::ui::SolverModeTone(5), phantom::ui::PhantomTone::Warn);
 	EXPECT_EQ(phantom::ui::SolverModeTone(6), phantom::ui::PhantomTone::Error);
 }
+
+TEST(PhantomUiLogic, AutoSaveDetectedRoleGatesOnConfidenceAndState)
+{
+	using phantom::BodyRole;
+	const float kThreshold = 0.70f;
+
+	// Clean, confident, new detection with auto-save on -> persist.
+	EXPECT_TRUE(
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::None, 0.80f, kThreshold));
+
+	// Below the confidence bar -> do not persist.
+	EXPECT_FALSE(
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::None, 0.50f, kThreshold));
+
+	// Auto-save disabled -> never persists, even when confident.
+	EXPECT_FALSE(
+	    phantom::ui::ShouldAutoSaveDetectedRole(false, true, BodyRole::Waist, BodyRole::None, 0.95f, kThreshold));
+
+	// Torn snapshot read -> hold off until a stable read.
+	EXPECT_FALSE(
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, false, BodyRole::Waist, BodyRole::None, 0.95f, kThreshold));
+
+	// Already saved as that role -> nothing to do.
+	EXPECT_FALSE(
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::Waist, 0.95f, kThreshold));
+
+	// No detection -> nothing to persist.
+	EXPECT_FALSE(
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::None, BodyRole::None, 0.95f, kThreshold));
+
+	// A confident detection that disagrees with the saved role still persists
+	// (the newer, stronger reading wins).
+	EXPECT_TRUE(phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::LeftFoot, BodyRole::RightFoot, 0.85f,
+	                                                    kThreshold));
+}

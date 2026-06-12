@@ -33,7 +33,13 @@ struct PhantomDeviceState
 	// True if the user opted this device in for dropout bridging. Drives the
 	// badge colour ("watched" vs "ignored").
 	uint8_t opted_in;
-	uint8_t _pad[2];
+
+	// Passive role inference output for this physical tracker: the BodyRole the
+	// motion-based inference currently believes it sits on, and whether that
+	// belief has been auto-applied to the live role. inferred_confidence (below)
+	// carries the strength. inferred_role == None when there is no estimate yet.
+	uint8_t inferred_role;    // BodyRole
+	uint8_t inferred_applied; // 1 if the driver auto-adopted this role
 
 	// Cumulative count of dropout events on this device since session start.
 	// A "dropout event" is a REAL -> BLEND_OUT transition.
@@ -53,6 +59,10 @@ struct PhantomDeviceState
 
 	static constexpr uint32_t kMaxSerialLen = 64;
 	char serial[kMaxSerialLen];
+
+	// Confidence in [0,1] backing inferred_role. Appended after serial[] to
+	// keep the older fixed prefix byte-stable.
+	float inferred_confidence;
 };
 
 struct PhantomRoleCompletionState
@@ -89,7 +99,7 @@ static_assert(sizeof(PhantomStateShmemLayout) < 8192,
               "PhantomStateShmemLayout must fit comfortably in a single 4 KB page family");
 
 constexpr uint32_t kPhantomStateShmemMagic = 0x54534850; // 'PHST' little-endian
-constexpr uint32_t kPhantomStateShmemVersion = 2;
+constexpr uint32_t kPhantomStateShmemVersion = 3;        // v3 adds passive role inference fields
 
 // Thin RAII wrapper around the named-shmem mapping. Driver calls Create,
 // overlay calls Open; both call Close on shutdown.

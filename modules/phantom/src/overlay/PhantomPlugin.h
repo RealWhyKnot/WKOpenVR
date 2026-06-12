@@ -51,6 +51,7 @@ private:
 	void DrawDiagnosticsTab();
 	void DrawAdvancedTab();
 	void DrawCalibrationTab();
+	void DrawAutoDetectPanel();
 	void DrawAbsentTab();
 
 	bool ConnectIfNeeded();

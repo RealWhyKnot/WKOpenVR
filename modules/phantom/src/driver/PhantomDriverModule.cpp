@@ -16,6 +16,7 @@
 #include "DebugLogging.h"
 #include "DropoutState.h"
 #include "IkFallback.h"
+#include "PassiveRoleInference.h"
 #include "PoseHistory.h"
 #include "RoleCatalog.h"
 #include "VirtualTrackerManager.h"
@@ -26,12 +27,14 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace phantom {
 
@@ -159,6 +162,33 @@ vr::DriverPose_t PoseFromBodyCompletion(const vr::DriverPose_t& base, const Body
 	return out;
 }
 
+// Project the HMD orientation onto the horizontal plane and return its right
+// and forward unit vectors as {x,z} pairs. Lets the passive role inference
+// reason about left/right and front/back without re-deriving heading per
+// sample. Returns false when the head is looking near-vertically and the
+// horizontal projection is too small to trust.
+bool HmdHorizontalAxes(const vr::HmdQuaternion_t& q, double right_xz[2], double fwd_xz[2])
+{
+	const double w = q.w, x = q.x, y = q.y, z = q.z;
+	// Rotated basis columns (world) for local +X (right) and local -Z (forward).
+	double rx = 1.0 - 2.0 * (y * y + z * z);
+	double rz = 2.0 * (x * z - w * y);
+	double fx = -2.0 * (x * z + w * y);
+	double fz = -(1.0 - 2.0 * (x * x + y * y));
+
+	const double rlen = std::sqrt(rx * rx + rz * rz);
+	const double flen = std::sqrt(fx * fx + fz * fz);
+	if (rlen < 0.1 || flen < 0.1) {
+		return false;
+	}
+
+	right_xz[0] = rx / rlen;
+	right_xz[1] = rz / rlen;
+	fwd_xz[0] = fx / flen;
+	fwd_xz[1] = fz / flen;
+	return true;
+}
+
 struct CompletionDiagSummary
 {
 	uint32_t valid_roles = 0;
@@ -220,6 +250,15 @@ struct DeviceSlot
 	// emits a pose (synth or passthrough).
 	vr::DriverPose_t last_published{};
 	bool last_published_valid = false;
+
+	// Passive role inference: a running motion-feature accumulator for generic
+	// trackers and the latest inference output for this device. inferred_role
+	// is what the motion suggests; inferred_applied is set once the driver has
+	// auto-adopted it as the live role for a device the user never tagged.
+	RoleInferenceAccumulator infer_accum;
+	BodyRole inferred_role = BodyRole::None;
+	float inferred_confidence = 0.0f;
+	bool inferred_applied = false;
 };
 
 class PhantomModule final : public DriverModule
@@ -249,6 +288,8 @@ private:
 	void UpdateBodyCompletion(int64_t now_qpc);
 	bool TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const;
 	void RefreshVirtualRoleBlocksLocked();
+	void AccumulateInferenceSample(DeviceSlot& s);
+	void MaybeRunInference(int64_t now_qpc);
 	void PublishStateSnapshot();
 
 	LadderTimings timings_ = LadderTimings::Defaults();
@@ -268,6 +309,15 @@ private:
 	// OnRealPoseObserved for the device flagged is_hmd.
 	vr::DriverPose_t last_hmd_pose_{};
 	bool last_hmd_valid_ = false;
+
+	// Passive role inference cadence + policy. Inference runs about once a
+	// second over the accumulated motion features; a role is auto-adopted only
+	// for a device the user never tagged and only above the apply threshold,
+	// which is stricter than the report threshold so the visible estimate can
+	// appear before anything changes behaviour.
+	InferenceParams infer_params_{};
+	int64_t last_inference_qpc_ = 0;
+	float infer_apply_threshold_ = 0.60f;
 
 	IkFallback ik_fallback_;
 	BodyCompletionSolver body_solver_;
@@ -479,6 +529,85 @@ bool PhantomModule::TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth
 	return true;
 }
 
+void PhantomModule::AccumulateInferenceSample(DeviceSlot& s)
+{
+	if (!last_hmd_valid_) return;
+	if (s.device_class != vr::TrackedDeviceClass_GenericTracker) return;
+	if (!s.last_observed_valid) return;
+
+	double right[2];
+	double fwd[2];
+	if (!HmdHorizontalAxes(last_hmd_pose_.qRotation, right, fwd)) return;
+
+	const double hmd_pos[3] = {last_hmd_pose_.vecPosition[0], last_hmd_pose_.vecPosition[1],
+	                           last_hmd_pose_.vecPosition[2]};
+	const double trk_pos[3] = {s.last_observed.vecPosition[0], s.last_observed.vecPosition[1],
+	                           s.last_observed.vecPosition[2]};
+	s.infer_accum.AddSample(hmd_pos, right, fwd, trk_pos);
+}
+
+void PhantomModule::MaybeRunInference(int64_t now_qpc)
+{
+	if (qpc_freq_ <= 0) return;
+	// Run about once a second; cheap relative to per-pose work.
+	if (last_inference_qpc_ != 0 && (now_qpc - last_inference_qpc_) < qpc_freq_) return;
+	last_inference_qpc_ = now_qpc;
+
+	constexpr uint32_t kMinInferSamples = 180; // ~2 s at tracker rate before a guess
+
+	std::vector<TrackerMotionFeatures> feats;
+	std::vector<uint32_t> slot_index;
+	feats.reserve(8);
+	slot_index.reserve(8);
+	for (uint32_t i = 0; i < slots_.size(); ++i) {
+		auto& s = slots_[i];
+		if (s.device_class != vr::TrackedDeviceClass_GenericTracker) continue;
+		if (s.serial.empty()) continue;
+		const auto f = s.infer_accum.Compute();
+		if (!f.has_data || f.sample_count < kMinInferSamples) continue;
+		feats.push_back(f);
+		slot_index.push_back(i);
+	}
+
+	if (feats.empty()) return;
+
+	// Candidate set is every real-world extra-tracker role; the assignment keeps
+	// it one-to-one and leaves any unmatched tracker as None.
+	static const std::vector<BodyRole> kCandidates = {BodyRole::Waist,     BodyRole::Chest,     BodyRole::LeftFoot,
+	                                                  BodyRole::RightFoot, BodyRole::LeftKnee,  BodyRole::RightKnee,
+	                                                  BodyRole::LeftElbow, BodyRole::RightElbow};
+
+	const auto result = InferRoles(feats, kCandidates, infer_params_);
+
+	std::lock_guard<std::mutex> lk(state_mutex_);
+	bool applied_any = false;
+	for (size_t k = 0; k < result.size(); ++k) {
+		auto& s = slots_[slot_index[k]];
+		s.inferred_role = result[k].role;
+		s.inferred_confidence = result[k].confidence;
+
+		// Auto-adopt only for a device the user never tagged and that has no
+		// live role yet, and only above the (stricter) apply threshold.
+		const bool user_tagged = role_by_serial_hash_.count(s.serial_hash) != 0;
+		if (!user_tagged && s.role == BodyRole::None && result[k].role != BodyRole::None &&
+		    result[k].confidence >= infer_apply_threshold_) {
+			s.role = result[k].role;
+			s.inferred_applied = true;
+			s.ladder.SetIkAvailable(true);
+			applied_any = true;
+			LOG("[phantom][infer] auto-adopted role=%s serial_hash=0x%016llx conf=%.2f samples=%u",
+			    BodyRoleToKey(result[k].role), static_cast<unsigned long long>(s.serial_hash), result[k].confidence,
+			    feats[k].sample_count);
+		}
+
+		// Fade old samples so the features keep following the user's setup.
+		s.infer_accum.Decay(0.8);
+	}
+	if (applied_any) {
+		RefreshVirtualRoleBlocksLocked();
+	}
+}
+
 bool PhantomModule::Init(DriverModuleContext& context)
 {
 	context_ = context;
@@ -665,6 +794,9 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 		last_hmd_pose_ = pose;
 		last_hmd_valid_ = true;
 		UpdateBodyCompletion(qpc_ns);
+		// Passive role inference runs on the HMD cadence (throttled to ~1 Hz
+		// internally) so it always has the freshest head pose to reason against.
+		MaybeRunInference(qpc_ns);
 		// Drive virtual trackers off the HMD pose cadence. Each HMD update
 		// produces one completion frame; the manager only publishes roles
 		// whose confidence passes the policy threshold. Dropout bridging has
@@ -674,6 +806,11 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 		if (PhantomVirtualTrackersShouldRun(virtual_trackers_.EnabledCount())) {
 			virtual_trackers_.Tick(last_hmd_pose_, last_body_completion_, body_calibration_.virtual_min_confidence);
 		}
+	}
+	else {
+		// Generic trackers feed the passive role-inference accumulator so the
+		// driver can learn which tracker sits on which body point from motion.
+		AccumulateInferenceSample(s);
 	}
 }
 
@@ -797,6 +934,9 @@ void PhantomModule::PublishStateSnapshot()
 
 		dst.state = static_cast<uint8_t>(s.ladder.state());
 		dst.opted_in = s.opted_in ? 1u : 0u;
+		dst.inferred_role = static_cast<uint8_t>(s.inferred_role);
+		dst.inferred_applied = s.inferred_applied ? 1u : 0u;
+		dst.inferred_confidence = s.inferred_confidence;
 		dst.dropout_count = s.ladder.dropout_count();
 		dst.dropout_age_ms = s.ladder.dropout_age_ms(now_qpc, freq);
 		dst.longest_dropout_ms = s.ladder.longest_dropout_ms();

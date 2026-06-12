@@ -156,6 +156,21 @@ inline VirtualRoleReadiness EvaluateVirtualRoleReadiness(bool solverCalibrated, 
 	return {true, nullptr};
 }
 
+// Whether the overlay should persist a passive role detection as the saved
+// device_role this frame. The driver already applies confident detections to
+// the live pose; this gates only the on-disk mapping so it survives a restart.
+// Persist only when auto-save is on, the snapshot read was stable (untorn),
+// the detection names a real role that differs from what is already saved, and
+// the confidence clears the bar.
+inline bool ShouldAutoSaveDetectedRole(bool autoAcceptEnabled, bool snapshotStable, phantom::BodyRole detectedRole,
+                                       phantom::BodyRole savedRole, float confidence, float threshold)
+{
+	if (!autoAcceptEnabled || !snapshotStable) return false;
+	if (detectedRole == phantom::BodyRole::None) return false;
+	if (detectedRole == savedRole) return false;
+	return confidence >= threshold;
+}
+
 enum class DropoutTimingPreset
 {
 	Conservative,

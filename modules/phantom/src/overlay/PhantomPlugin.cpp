@@ -868,12 +868,130 @@ void PhantomPlugin::CaptureTPose()
 	lastCalibrationSummary_ = tmp;
 }
 
+void PhantomPlugin::DrawAutoDetectPanel()
+{
+	ui::DrawPanel("Automatic role detection", [&] {
+		ui::DrawTextWrapped("Move around normally for a few seconds. The driver watches each tracker's "
+		                    "height and motion relative to your headset and works out which body point "
+		                    "it sits on. Confident detections are applied live; with auto-save on they "
+		                    "also persist so the mapping is remembered next session.");
+		ImGui::Spacing();
+
+		if (ImGui::Checkbox("Save confident detections automatically", &cfg_.auto_accept_roles)) {
+			SavePhantomConfig(cfg_);
+		}
+		ui::TooltipForLastItem("When on, a detection above ~70% confidence is written to the saved "
+		                       "tracker mapping without pressing Accept.");
+		ImGui::Spacing();
+
+		if (!stateShmemReady_ || !stateShmem_.layout()) {
+			ui::DrawEmptyState("Driver state not yet available. Start SteamVR with the Phantom feature on.");
+			return;
+		}
+		const auto* layout = stateShmem_.layout();
+		if (layout->magic != phantom::kPhantomStateShmemMagic ||
+		    layout->version != phantom::kPhantomStateShmemVersion) {
+			ui::DrawErrorBanner("Driver mismatch",
+			                    "Driver state version differs; reinstall so the driver and overlay match.");
+			return;
+		}
+
+		ui::TableScope table("PhantomAutoDetect", 4,
+		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
+		if (!table) return;
+		ui::SetupStretchColumn("Tracker", 1.6f);
+		ui::SetupStretchColumn("Detected role", 1.1f);
+		ui::SetupStretchColumn("Confidence", 1.3f);
+		ui::SetupFixedColumn("", 84.0f);
+		ImGui::TableHeadersRow();
+
+		constexpr float kAutoAcceptConfidence = 0.70f;
+		int shown = 0;
+		for (uint32_t i = 0; i < layout->device_count; ++i) {
+			const auto& d = layout->devices[i];
+			if (d.serial_len == 0) continue;
+
+			// Epoch-stable read of the inference fields so an auto-save never
+			// fires on a torn snapshot.
+			const uint32_t epochBefore = d.epoch;
+			MemoryBarrier();
+			const auto inferredRole = static_cast<phantom::BodyRole>(d.inferred_role);
+			const float conf = d.inferred_confidence;
+			const bool applied = d.inferred_applied != 0;
+			const std::string serial(d.serial, d.serial_len);
+			MemoryBarrier();
+			const bool stable = (epochBefore == d.epoch) && ((epochBefore & 1u) == 0u);
+
+			const auto cfgIt = cfg_.device_role.find(serial);
+			const phantom::BodyRole cfgRole =
+			    (cfgIt != cfg_.device_role.end()) ? cfgIt->second : phantom::BodyRole::None;
+
+			// Only surface devices the inference cares about: either it has an
+			// estimate, or the user already mapped this tracker.
+			if (inferredRole == phantom::BodyRole::None && conf <= 0.0f && cfgRole == phantom::BodyRole::None) {
+				continue;
+			}
+			++shown;
+
+			ImGui::PushID(("auto_" + serial).c_str());
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(serial.c_str());
+			if (cfgRole != phantom::BodyRole::None) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("(saved: %s)", phantom::BodyRoleLabel(cfgRole));
+			}
+
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(phantom::BodyRoleLabel(inferredRole));
+			if (applied) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("(live)");
+			}
+
+			ImGui::TableSetColumnIndex(2);
+			char pct[16];
+			std::snprintf(pct, sizeof(pct), "%d%%", static_cast<int>(std::clamp(conf, 0.0f, 1.0f) * 100.0f + 0.5f));
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			ImGui::ProgressBar(std::clamp(conf, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0.0f), pct);
+
+			ImGui::TableSetColumnIndex(3);
+			const bool acceptable = inferredRole != phantom::BodyRole::None && inferredRole != cfgRole;
+			ImGui::BeginDisabled(!acceptable);
+			if (ImGui::Button("Accept")) {
+				cfg_.device_role[serial] = inferredRole;
+				SendDeviceRole(serial, inferredRole);
+				SavePhantomConfig(cfg_);
+			}
+			ImGui::EndDisabled();
+			ImGui::PopID();
+
+			// Auto-save confident detections. The driver has already applied
+			// them live; this only writes the persistent mapping once.
+			if (phantom::ui::ShouldAutoSaveDetectedRole(cfg_.auto_accept_roles, stable, inferredRole, cfgRole, conf,
+			                                            kAutoAcceptConfidence)) {
+				cfg_.device_role[serial] = inferredRole;
+				SendDeviceRole(serial, inferredRole);
+				SavePhantomConfig(cfg_);
+			}
+		}
+
+		if (shown == 0) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ui::DrawEmptyState("Detecting... move around so the driver can see each tracker.");
+		}
+	});
+}
+
 void PhantomPlugin::DrawCalibrationTab()
 {
 	ImGui::Spacing();
-	ui::DrawTextWrapped("Capture neutral standing first for headset/controller body completion. "
-	                    "Assign physical trackers below only when a real tracker should anchor "
-	                    "or disambiguate a body role.");
+	DrawAutoDetectPanel();
+	ImGui::Spacing();
+	ui::DrawTextWrapped("Automatic detection above is the main path. The controls below are optional: "
+	                    "capture neutral standing for headset/controller body completion, or assign a "
+	                    "tracker by hand to override or seed a detection.");
 	ImGui::Spacing();
 
 	ui::DrawPanel("Neutral standing", [&] {

@@ -71,6 +71,12 @@ struct PhantomConfig
 	// device already holds" check.
 	std::unordered_map<std::string, phantom::BodyRole> device_role;
 
+	// When true, a high-confidence passive role detection from the driver is
+	// saved as the persistent device_role automatically (so the mapping sticks
+	// across sessions without the user pressing Accept). The driver already
+	// applies confident detections live; this only controls persistence.
+	bool auto_accept_roles = true;
+
 	// Phase 1.5: per-body-role HMD-relative offset captured during the
 	// T-pose wizard. Keyed by BodyRole. Roles absent from the map are
 	// treated as uncalibrated and the driver falls back to dead reckoning.
