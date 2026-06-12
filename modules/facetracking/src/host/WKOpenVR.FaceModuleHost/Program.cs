@@ -4,6 +4,14 @@ using WKOpenVR.FaceModuleHost.Logging;
 using WKOpenVR.FaceModuleHost.Workers;
 using WKOpenVR.FaceTracking.Registry;
 
+// Offline subcommand: compare two recorded face-replay JSONL files (e.g. a real
+// headset capture vs the synthetic module) and print a divergence report. Runs
+// without touching the singleton mutex, IPC, or shmem so it can be used any time.
+if (args.Length >= 1 && (args[0] == "compare-face-replays" || args[0] == "--compare-face-replays"))
+{
+    return RunCompareFaceReplays(args);
+}
+
 var opts = HostOptions.FromArgs(args);
 var cts = new CancellationTokenSource();
 CancellationToken ct = cts.Token;
@@ -199,6 +207,42 @@ logger.Info("Shutdown complete.");
 logger.Flush();
 logger.Dispose();
 return 0;
+
+// Load two face-replay recordings and print how the candidate diverges from the
+// reference. Reference is the first path (trusted source), candidate is the second.
+static int RunCompareFaceReplays(string[] args)
+{
+    var positional = new List<string>();
+    int top = 16;
+    for (int i = 1; i < args.Length; i++)
+    {
+        if (args[i] == "--top" && i + 1 < args.Length && int.TryParse(args[++i], out int parsedTop))
+        {
+            top = Math.Max(1, parsedTop);
+        }
+        else
+        {
+            positional.Add(args[i]);
+        }
+    }
+
+    if (positional.Count < 2)
+    {
+        Console.Error.WriteLine(
+            "usage: WKOpenVR.FaceModuleHost compare-face-replays <reference.jsonl> <candidate.jsonl> [--top N]");
+        Console.Error.WriteLine(
+            "  reference = trusted capture (e.g. Virtual Desktop), candidate = synthetic module output");
+        return 2;
+    }
+
+    FaceFrameReplayPlayer.Recording reference = FaceFrameReplayPlayer.Load(positional[0]);
+    FaceFrameReplayPlayer.Recording candidate = FaceFrameReplayPlayer.Load(positional[1]);
+    FaceFrameReplayComparer.Comparison cmp = FaceFrameReplayComparer.Compare(
+        reference, candidate, new FaceFrameReplayComparer.Options { TopCount = top });
+    Console.Out.Write(FaceFrameReplayComparer.FormatReport(cmp));
+    Console.Out.Flush();
+    return cmp.Ok ? 0 : 1;
+}
 
 // Publish the host's current state + a heartbeat into the shmem header
 // every 100 ms. The driver compares the heartbeat against the publish-

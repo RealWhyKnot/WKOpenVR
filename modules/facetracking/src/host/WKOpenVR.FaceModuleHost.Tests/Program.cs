@@ -14,6 +14,8 @@ await Run("parses face replay options", ParsesFaceReplayOptions);
 await Run("debug logging enables face replay by default", DebugLoggingEnablesFaceReplayByDefault);
 await Run("explicit face replay disable overrides debug logging", ExplicitFaceReplayDisableOverridesDebugLogging);
 await Run("records face replay frame", RecordsFaceReplayFrame);
+await Run("parses face replay jsonl", ParsesFaceReplayJsonl);
+await Run("compares face replay recordings", ComparesFaceReplayRecordings);
 
 if (failures.Count > 0)
 {
@@ -209,6 +211,92 @@ static Task RecordsFaceReplayFrame()
     Require(Math.Abs(jaw - 0.42f) < 0.001f, "jaw value missing");
     Require(root.GetProperty("top").EnumerateArray().Any(e => e.GetProperty("name").GetString() == "JawOpen"), "top shapes missing JawOpen");
     return Task.CompletedTask;
+}
+
+static Task ParsesFaceReplayJsonl()
+{
+    string[] lines =
+    [
+        """{"type":"header","schema":1,"shapeOrder":"x","shapeCount":3,"shapeNames":["A","B","C"],"maxHz":30}""",
+        "this line is not valid json",
+        """{"type":"frame","timeMs":1.0,"frameNumber":1,"moduleUuid":"u","moduleName":"M","flags":{"eye":true,"expression":true,"head":false},"expressions":[0.1,0.9,0.0],"eye":{"leftOpenness":0.5},"head":{"yaw":2.0}}""",
+    ];
+
+    FaceFrameReplayPlayer.Recording rec = FaceFrameReplayPlayer.ParseLines(lines, "test");
+    Require(rec.Ok, $"parse failed: {rec.Error}");
+    Require(rec.ShapeCount == 3, $"wrong shape count {rec.ShapeCount}");
+    Require(rec.ShapeNames.Length == 3 && rec.ShapeNames[1] == "B", "shape names not parsed");
+    Require(rec.Frames.Count == 1, $"expected 1 frame (malformed line skipped), got {rec.Frames.Count}");
+    Require(rec.Frames[0].ModuleName == "M", "module name not parsed");
+    Require(Math.Abs(rec.Frames[0].Expressions[1] - 0.9f) < 0.001f, "expression value not parsed");
+    Require(rec.Frames[0].ExpressionValid, "expression flag not parsed");
+    Require(rec.PrimaryModuleName == "M", "primary module not derived");
+    return Task.CompletedTask;
+}
+
+static Task ComparesFaceReplayRecordings()
+{
+    using var fixture = new TempFixture();
+    string refPath = Path.Combine(fixture.Root, "ref.jsonl");
+    string candPath = Path.Combine(fixture.Root, "cand.jsonl");
+
+    // Reference: jaw opens and closes, mouth-closed stays quiet.
+    WriteReplay(refPath, frame =>
+    {
+        var expr = new float[FaceFrameReplayRecorder.ShapeCount];
+        expr[22] = (frame % 2 == 0) ? 0.8f : 0.1f; // JawOpen varies
+        expr[29] = 0.0f;                            // MouthClosed quiet
+        return expr;
+    });
+
+    // Candidate: mouth pinned closed, jaw never opens (the broken-lips symptom).
+    WriteReplay(candPath, _ =>
+    {
+        var expr = new float[FaceFrameReplayRecorder.ShapeCount];
+        expr[22] = 0.0f;
+        expr[29] = 1.0f; // MouthClosed stuck at 1.0
+        return expr;
+    });
+
+    FaceFrameReplayPlayer.Recording reference = FaceFrameReplayPlayer.Load(refPath);
+    FaceFrameReplayPlayer.Recording candidate = FaceFrameReplayPlayer.Load(candPath);
+    Require(reference.Ok, $"reference load failed: {reference.Error}");
+    Require(candidate.Ok, $"candidate load failed: {candidate.Error}");
+    Require(reference.Frames.Count == 10, $"expected 10 reference frames, got {reference.Frames.Count}");
+    Require(reference.ShapeCount == FaceFrameReplayRecorder.ShapeCount, "wrong shape count from header");
+
+    FaceFrameReplayComparer.Comparison cmp = FaceFrameReplayComparer.Compare(reference, candidate);
+    Require(cmp.Ok, $"compare failed: {cmp.Error}");
+    Require(cmp.StuckInCandidate.Any(d => d.Name == "MouthClosed"), "MouthClosed should be flagged stuck in candidate");
+    Require(!cmp.StuckInCandidate.Any(d => d.Name == "JawOpen"), "JawOpen should not be flagged stuck");
+    Require(cmp.TopDivergences.Any(d => d.Name == "MouthClosed"), "MouthClosed should be a top divergence");
+    Require(cmp.TopDivergences.Any(d => d.Name == "JawOpen"), "JawOpen should be a top divergence");
+
+    string report = FaceFrameReplayComparer.FormatReport(cmp);
+    Require(report.Contains("MouthClosed", StringComparison.Ordinal), "report should mention MouthClosed");
+    return Task.CompletedTask;
+}
+
+static void WriteReplay(string path, Func<int, float[]> shapeFactory)
+{
+    using var recorder = new FaceFrameReplayRecorder(path, maxHz: 0);
+    var eye = new EyeFrameSink { LeftOpenness = 0.5f, RightOpenness = 0.5f };
+    var head = new HeadFrameSink { IsValid = true };
+    for (int i = 0; i < 10; i++)
+    {
+        recorder.RecordFrame(
+            "module-uuid",
+            "Test Module",
+            0x1234u,
+            frameNumber: i,
+            shapeFactory(i),
+            eye,
+            head,
+            eyeValid: true,
+            expressionValid: true,
+            validExpressionSignals: 88,
+            validEyeSignals: 8);
+    }
 }
 
 static string[] MakeAddresses(string prefix, int count)
