@@ -8,6 +8,7 @@
 
 #include "ActionBindings.h"
 #include "Captions.h"
+#include "CaptionsChatboxPacing.h"
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsOutputPolicy.h"
 #include "CaptionsRealtimeFlags.h"
@@ -337,6 +338,7 @@ struct HostConfig
 	uint16_t chatbox_port = 9000;
 	bool chatbox_enabled = false;
 	bool notify_sound = false;
+	int chatbox_split_delay_ms = captions::kCaptionsChatboxSplitDelayDefaultMs;
 	bool transcript_logging = false;
 	int mode = 0; // 0=PTT, 1=always-on
 	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
@@ -432,6 +434,12 @@ static void DispatchControlMessage(char* buf, DWORD got)
 			g_config.notify_sound = (val != "0");
 		else if (key == "chatbox")
 			g_config.chatbox_enabled = (val != "0");
+		else if (key == "splitdelay") {
+			int parsed = 0;
+			if (TryParseInt(val, parsed)) {
+				g_config.chatbox_split_delay_ms = captions::NormalizeCaptionsChatboxSplitDelayMs(parsed);
+			}
+		}
 		else if (key == "log")
 			g_config.transcript_logging = (val != "0");
 		else if (key == "flags") {
@@ -978,8 +986,8 @@ try {
 		typing_indicator_active = active;
 	};
 
-	// Chatbox pacer (1.2 s minimum gap).
-	ChatboxPacer pacer(1.2);
+	// Chatbox pacer.
+	ChatboxPacer pacer(captions::kCaptionsChatboxSplitDelayDefaultMs / 1000.0);
 
 	// VAD state machine.
 	int silence_count = 0;
@@ -1229,6 +1237,10 @@ try {
 		{
 			std::lock_guard<std::mutex> lk(g_config_mutex);
 			cfg = g_config;
+		}
+		pacer.SetMinGapSec(captions::NormalizeCaptionsChatboxSplitDelayMs(cfg.chatbox_split_delay_ms) / 1000.0);
+		if (!captions::ShouldDrainQueuedChatbox(cfg.chatbox_enabled)) {
+			pacer.Clear();
 		}
 		UpdatePackStatus(status, cfg);
 		status.SetAudioQueueDiagnostics(static_cast<long long>(audio_queue_frames), audio_queue_ms);

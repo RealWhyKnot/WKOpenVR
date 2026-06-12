@@ -1,5 +1,6 @@
 #include "CaptionsTab.h"
 #include "AudioInputDevices.h"
+#include "CaptionsChatboxPacing.h"
 #include "CaptionsPlugin.h"
 #include "CaptionsTabLogic.h"
 #include "HostStatusPoller.h"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -430,6 +432,15 @@ static void DrawCaptionBehavior(CaptionsPlugin& plugin)
 	DrawRealtimeOption(
 	    plugin, "Split long chatbox messages", captions::kCaptionsRealtimeChatboxSplitting,
 	    "Sends long captions as multiple paced messages instead of allowing VRChat output to be cut off.");
+	float delay_sec = static_cast<float>(plugin.GetChatboxSplitDelayMs()) / 1000.0f;
+	if (SliderFloatWithTooltip("Queued message delay", &delay_sec, captions::kCaptionsChatboxSplitDelayMinMs / 1000.0f,
+	                           captions::kCaptionsChatboxSplitDelayMaxMs / 1000.0f, "%.1f s",
+	                           "Minimum wait before sending the next queued chatbox message.\n"
+	                           "Applies to split long captions and any chatbox backlog.")) {
+		const int delay_ms = static_cast<int>(std::lround(delay_sec * 1000.0f));
+		plugin.SetChatboxSplitDelayMs(delay_ms);
+		plugin.PushConfigToDriver();
+	}
 }
 
 static void DrawPrivatePreview(CaptionsPlugin& plugin)

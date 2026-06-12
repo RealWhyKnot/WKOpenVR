@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -54,6 +55,77 @@ TEST(ChatboxPacerTest, MinimumGapEnforced)
 	EXPECT_FALSE(pacer.Dequeue(e2));
 }
 
+TEST(ChatboxPacerTest, ConfigurableGapUsesElapsedTime)
+{
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point t0 = Clock::time_point{} + std::chrono::seconds(10);
+	ChatboxPacer pacer(1.2);
+
+	pacer.Enqueue("first", true, false);
+	pacer.Enqueue("second", true, false);
+
+	ChatboxPacer::Entry entry;
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0));
+	EXPECT_EQ(entry.text, "first");
+
+	EXPECT_FALSE(pacer.DequeueAt(entry, t0 + std::chrono::milliseconds(1199)));
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0 + std::chrono::milliseconds(1200)));
+	EXPECT_EQ(entry.text, "second");
+}
+
+TEST(ChatboxPacerTest, RuntimeGapUpdateAppliesToPendingEntries)
+{
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point t0 = Clock::time_point{} + std::chrono::seconds(10);
+	ChatboxPacer pacer(1.2);
+
+	pacer.Enqueue("first", true, false);
+	pacer.Enqueue("second", true, false);
+
+	ChatboxPacer::Entry entry;
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0));
+	pacer.SetMinGapSec(0.25);
+
+	EXPECT_FALSE(pacer.DequeueAt(entry, t0 + std::chrono::milliseconds(249)));
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0 + std::chrono::milliseconds(250)));
+	EXPECT_EQ(entry.text, "second");
+}
+
+TEST(ChatboxPacerTest, ZeroGapDrainsQueuedMessagesAtSameTimestamp)
+{
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point t0 = Clock::time_point{} + std::chrono::seconds(10);
+	ChatboxPacer pacer(0.0);
+
+	pacer.Enqueue("first", true, false);
+	pacer.Enqueue("second", true, false);
+
+	ChatboxPacer::Entry entry;
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0));
+	EXPECT_EQ(entry.text, "first");
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0));
+	EXPECT_EQ(entry.text, "second");
+}
+
+TEST(ChatboxPacerTest, ClearDropsQueueAndResetsFirstSend)
+{
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point t0 = Clock::time_point{} + std::chrono::seconds(10);
+	ChatboxPacer pacer(1.2);
+
+	pacer.Enqueue("first", true, false);
+	pacer.Enqueue("stale", true, false);
+
+	ChatboxPacer::Entry entry;
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0));
+	pacer.Clear();
+	EXPECT_EQ(pacer.QueueSize(), 0u);
+
+	pacer.Enqueue("fresh", true, false);
+	ASSERT_TRUE(pacer.DequeueAt(entry, t0));
+	EXPECT_EQ(entry.text, "fresh");
+}
+
 TEST(ChatboxPacerTest, DropOldestWhenFull)
 {
 	ChatboxPacer pacer(1000.0); // effectively infinite gap
@@ -65,6 +137,14 @@ TEST(ChatboxPacerTest, DropOldestWhenFull)
 
 	// The oldest (msg0) should have been dropped; queue holds kQueueCap entries.
 	EXPECT_EQ(pacer.QueueSize(), 16u);
+}
+
+TEST(CaptionsChatboxPacingTest, SplitDelayClamp)
+{
+	EXPECT_EQ(captions::NormalizeCaptionsChatboxSplitDelayMs(-1), captions::kCaptionsChatboxSplitDelayMinMs);
+	EXPECT_EQ(captions::NormalizeCaptionsChatboxSplitDelayMs(500), 500);
+	EXPECT_EQ(captions::NormalizeCaptionsChatboxSplitDelayMs(captions::kCaptionsChatboxSplitDelayMaxMs + 1),
+	          captions::kCaptionsChatboxSplitDelayMaxMs);
 }
 
 TEST(CaptionsOutputPolicyTest, ChatboxPublishRequiresToggleAndText)
@@ -87,6 +167,7 @@ TEST(CaptionsProtocolTest, ZeroedConfigDoesNotPublishToChatbox)
 	EXPECT_EQ(cfg.chatbox_enabled, 0);
 	EXPECT_EQ(cfg.realtime_flags, 0);
 	EXPECT_EQ(cfg.speech_model, 0);
+	EXPECT_EQ(cfg.chatbox_split_delay_ms, 0);
 }
 
 TEST(CaptionsRealtimeFlagsTest, DefaultsEnableRealtimeOptions)
@@ -116,6 +197,7 @@ TEST(CaptionsRealtimeFlagsTest, DefaultsEnableRealtimeOptions)
 	EXPECT_TRUE(cfg.sidecar_enabled);
 	EXPECT_EQ(cfg.realtime_flags, captions::kCaptionsRealtimeDefaultFlags);
 	EXPECT_EQ(cfg.speech_model, captions::kCaptionsSpeechModelBalanced);
+	EXPECT_EQ(cfg.chatbox_split_delay_ms, captions::kCaptionsChatboxSplitDelayDefaultMs);
 }
 
 TEST(CaptionsRealtimeFlagsTest, SetClearsIndividualOptions)

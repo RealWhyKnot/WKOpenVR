@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CaptionsRealtimeFlags.h"
+#include "CaptionsChatboxPacing.h"
 #include "CaptionsSpeechModels.h"
 
 #include <cstdint>
@@ -24,6 +25,7 @@ struct CaptionsConfig
 	bool chatbox_enabled = false;
 	std::string chatbox_address = "/chatbox/input";
 	bool notify_sound = false;
+	int chatbox_split_delay_ms = captions::kCaptionsChatboxSplitDelayDefaultMs;
 	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
 	uint8_t speech_model = captions::kCaptionsSpeechModelBalanced;
 

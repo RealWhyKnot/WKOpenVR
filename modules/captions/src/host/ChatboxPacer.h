@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CaptionsChatboxPacing.h"
+
 #include <chrono>
 #include <deque>
 #include <string>
@@ -17,15 +19,19 @@ public:
 		bool notify;
 	};
 
-	explicit ChatboxPacer(double min_gap_sec = 1.2);
+	explicit ChatboxPacer(double min_gap_sec = captions::kCaptionsChatboxSplitDelayDefaultMs / 1000.0);
+	void SetMinGapSec(double min_gap_sec) noexcept;
+	double MinGapSec() const noexcept { return min_gap_sec_; }
 
 	// Push a new chatbox message into the queue. If the queue is full, the
 	// oldest pending entry is evicted (not the current message).
 	void Enqueue(const std::string& text, bool send_immediate, bool notify);
+	void Clear() noexcept;
 
 	// Returns true and writes the next entry to `out` if the minimum gap has
 	// elapsed and the queue is non-empty. Otherwise returns false.
 	bool Dequeue(Entry& out);
+	bool DequeueAt(Entry& out, std::chrono::steady_clock::time_point now);
 
 	bool IsEmpty() const noexcept { return queue_.empty(); }
 	size_t QueueSize() const noexcept { return queue_.size(); }

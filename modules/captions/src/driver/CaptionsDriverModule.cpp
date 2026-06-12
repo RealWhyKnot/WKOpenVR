@@ -2,6 +2,7 @@
 #include "HostSupervisor.h"
 #include "Logging.h"
 
+#include "CaptionsChatboxPacing.h"
 #include "DriverModule.h"
 #include "FeatureFlags.h"
 #include "ModuleRegistry.h"
@@ -128,6 +129,7 @@ public:
 		}
 
 		supervisor_ = std::make_unique<HostSupervisor>(host_path);
+		config_.chatbox_split_delay_ms = static_cast<uint16_t>(captions::kCaptionsChatboxSplitDelayDefaultMs);
 		config_.master_enabled = ReadSavedSidecarEnabled() ? 1 : 0;
 		TR_LOG_DRV("[module] saved captions sidecar setting: %s", config_.master_enabled ? "enabled" : "disabled");
 		if (config_.master_enabled) {
@@ -260,7 +262,8 @@ private:
 		       ",mode=" + std::to_string((int)config.mode) + ",addr=" + config.chatbox_address +
 		       ",port=" + std::to_string((int)config.chatbox_port) +
 		       ",notify=" + std::to_string((int)config.notify_sound) +
-		       ",chatbox=" + std::to_string((int)config.chatbox_enabled) +
+		       ",chatbox=" + std::to_string((int)config.chatbox_enabled) + ",splitdelay=" +
+		       std::to_string((int)captions::NormalizeCaptionsChatboxSplitDelayMs(config.chatbox_split_delay_ms)) +
 		       ",log=" + std::to_string((int)config.transcript_logging) +
 		       ",flags=" + std::to_string((int)config.realtime_flags) +
 		       ",model=" + std::to_string((int)config.speech_model) + "\n";

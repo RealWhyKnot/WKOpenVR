@@ -566,6 +566,9 @@ struct CaptionsConfig
 	// Target chatbox OSC port (default 9000).
 	uint16_t chatbox_port;
 
+	// Minimum gap between queued chatbox sends, used for split long messages.
+	uint16_t chatbox_split_delay_ms;
+
 	// Source language code ("auto" = whisper auto-detect).
 	char source_lang[CAPTIONS_LANG_LEN];
 

@@ -108,6 +108,7 @@ CaptionsPlugin::CaptionsPlugin()
 	chatbox_enabled_ = loaded.chatbox_enabled;
 	chatbox_address_ = loaded.chatbox_address;
 	notify_sound_ = loaded.notify_sound;
+	chatbox_split_delay_ms_ = captions::NormalizeCaptionsChatboxSplitDelayMs(loaded.chatbox_split_delay_ms);
 	realtime_flags_ = loaded.realtime_flags;
 	speech_model_ = loaded.speech_model;
 	input_device_ = loaded.input_device;
@@ -127,6 +128,7 @@ void CaptionsPlugin::Persist()
 	cfg.chatbox_enabled = chatbox_enabled_;
 	cfg.chatbox_address = chatbox_address_;
 	cfg.notify_sound = notify_sound_;
+	cfg.chatbox_split_delay_ms = captions::NormalizeCaptionsChatboxSplitDelayMs(chatbox_split_delay_ms_);
 	cfg.realtime_flags = realtime_flags_;
 	cfg.speech_model = speech_model_;
 	cfg.input_device = input_device_;
@@ -171,6 +173,11 @@ void CaptionsPlugin::SetChatboxAddress(const std::string& s)
 void CaptionsPlugin::SetNotifySound(bool v)
 {
 	notify_sound_ = v;
+	Persist();
+}
+void CaptionsPlugin::SetChatboxSplitDelayMs(int ms)
+{
+	chatbox_split_delay_ms_ = captions::NormalizeCaptionsChatboxSplitDelayMs(ms);
 	Persist();
 }
 void CaptionsPlugin::SetRealtimeOption(uint8_t flag, bool enabled)
@@ -260,6 +267,8 @@ void CaptionsPlugin::PushConfigToDriver()
 		cfg.chatbox_enabled = chatbox_enabled_ ? 1 : 0;
 		cfg.realtime_flags = realtime_flags_;
 		cfg.speech_model = speech_model_;
+		cfg.chatbox_split_delay_ms =
+		    static_cast<uint16_t>(captions::NormalizeCaptionsChatboxSplitDelayMs(chatbox_split_delay_ms_));
 		cfg.chatbox_port = 9000;
 
 		std::snprintf(cfg.source_lang, sizeof(cfg.source_lang), "%s", source_lang_.c_str());

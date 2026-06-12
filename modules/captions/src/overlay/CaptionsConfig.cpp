@@ -75,6 +75,9 @@ CaptionsConfig LoadCaptionsConfig()
 		else if (strcmp(key, "notify_sound") == 0) {
 			cfg.notify_sound = (atoi(val) != 0);
 		}
+		else if (strcmp(key, "chatbox_split_delay_ms") == 0) {
+			cfg.chatbox_split_delay_ms = captions::NormalizeCaptionsChatboxSplitDelayMs(atoi(val));
+		}
 		else if (strcmp(key, "realtime_flags") == 0) {
 			int n = atoi(val);
 			if (n < 0) n = 0;
@@ -112,6 +115,7 @@ void SaveCaptionsConfig(const CaptionsConfig& cfg)
 	appendf("chatbox_enabled=%d\n", cfg.chatbox_enabled ? 1 : 0);
 	appendf("chatbox_address=%s\n", cfg.chatbox_address.c_str());
 	appendf("notify_sound=%d\n", cfg.notify_sound ? 1 : 0);
+	appendf("chatbox_split_delay_ms=%d\n", captions::NormalizeCaptionsChatboxSplitDelayMs(cfg.chatbox_split_delay_ms));
 	appendf("realtime_flags=%u\n", static_cast<unsigned>(cfg.realtime_flags));
 	appendf("speech_model=%u\n", static_cast<unsigned>(cfg.speech_model));
 	appendf("input_device=%s\n", cfg.input_device.c_str());

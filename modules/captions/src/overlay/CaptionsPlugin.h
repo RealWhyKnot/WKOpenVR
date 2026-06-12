@@ -2,6 +2,7 @@
 
 #include "FeaturePlugin.h"
 #include "CaptionPreviewHistory.h"
+#include "CaptionsChatboxPacing.h"
 #include "CaptionsRealtimeFlags.h"
 #include "HostStatusPoller.h"
 #include "Protocol.h"
@@ -66,6 +67,7 @@ public:
 	bool GetChatboxEnabled() const { return chatbox_enabled_; }
 	const std::string& GetChatboxAddress() const { return chatbox_address_; }
 	bool GetNotifySound() const { return notify_sound_; }
+	int GetChatboxSplitDelayMs() const { return chatbox_split_delay_ms_; }
 	const std::string& GetInputDevice() const { return input_device_; }
 	bool GetRealtimeOption(uint8_t flag) const { return captions::CaptionsRealtimeFlagEnabled(realtime_flags_, flag); }
 	bool GetRealtimeOptionMask(uint8_t mask) const
@@ -81,6 +83,7 @@ public:
 	void SetChatboxEnabled(bool v);
 	void SetChatboxAddress(const std::string& s);
 	void SetNotifySound(bool v);
+	void SetChatboxSplitDelayMs(int ms);
 	void SetRealtimeOption(uint8_t flag, bool enabled);
 	void SetRealtimeOptionMask(uint8_t mask, bool enabled);
 	void SetSpeechModel(uint8_t model);
@@ -104,6 +107,7 @@ private:
 	bool chatbox_enabled_ = false;
 	std::string chatbox_address_ = "/chatbox/input";
 	bool notify_sound_ = false;
+	int chatbox_split_delay_ms_ = captions::kCaptionsChatboxSplitDelayDefaultMs;
 	uint8_t realtime_flags_ = captions::kCaptionsRealtimeDefaultFlags;
 	uint8_t speech_model_ = captions::kCaptionsSpeechModelBalanced;
 	std::string input_device_ = ""; // capture endpoint id; empty = system default
