@@ -120,6 +120,9 @@ void HostStatusPoller::ReadFile()
 	s.speech_model_loaded = openvr_pair::common::json::BoolAt(root, "speech_model_loaded");
 	s.speech_model_fallback = openvr_pair::common::json::BoolAt(root, "speech_model_fallback");
 	s.active_speech_model_path = openvr_pair::common::json::StringAt(root, "active_speech_model_path");
+	s.compute_backend = openvr_pair::common::json::StringAt(root, "compute_backend");
+	if (s.compute_backend.empty()) s.compute_backend = "CPU";
+	s.compute_backend_gpu = openvr_pair::common::json::BoolAt(root, "compute_backend_gpu");
 	s.vad_model_loaded = openvr_pair::common::json::BoolAt(root, "vad_model_loaded");
 	s.vad_last_probability = static_cast<float>(openvr_pair::common::json::NumberAt(root, "vad_last_probability"));
 	s.vad_inference_failures =

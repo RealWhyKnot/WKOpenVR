@@ -6,6 +6,10 @@
 // The CMakeLists links whisper.lib / whisper.dll.
 #include <whisper.h>
 
+#if defined(WKOPENVR_CAPTIONS_VULKAN_ENABLED)
+#include <ggml-vulkan.h>
+#endif
+
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -56,10 +60,26 @@ bool WhisperEngine::Load(const std::string& model_path, int n_threads, bool use_
 		return false;
 	}
 
+	// Record the compute backend that ended up active. The caller only passes
+	// use_gpu=true after a guarded device probe found at least one GPU, so the
+	// Vulkan instance is already initialized here and querying it is safe.
+	backend_info_ = WhisperBackendInfo{};
+	backend_info_.gpu_requested = use_gpu;
+	backend_info_.gpu_active = false;
+	backend_info_.device_name = "CPU";
+#if defined(WKOPENVR_CAPTIONS_VULKAN_ENABLED)
+	if (use_gpu) {
+		char vk_desc[256] = {};
+		ggml_backend_vk_get_device_description(0, vk_desc, sizeof(vk_desc));
+		backend_info_.gpu_active = true;
+		backend_info_.device_name = vk_desc[0] ? (std::string("Vulkan: ") + vk_desc) : std::string("Vulkan");
+	}
+#endif
+
 	const long long size_bytes = FileSizeBytes(model_path);
 	const double size_mb = size_bytes >= 0 ? static_cast<double>(size_bytes) / (1024.0 * 1024.0) : -1.0;
-	TH_LOG("[whisper] model loaded from '%s' (gpu=%d threads=%d load_ms=%lld size_mb=%.1f)", model_path.c_str(),
-	       (int)use_gpu, n_threads_, load_ms, size_mb);
+	TH_LOG("[whisper] model loaded from '%s' (gpu=%d backend=%s threads=%d load_ms=%lld size_mb=%.1f)",
+	       model_path.c_str(), (int)use_gpu, backend_info_.device_name.c_str(), n_threads_, load_ms, size_mb);
 	return true;
 }
 
@@ -69,6 +89,7 @@ void WhisperEngine::Unload()
 		whisper_free(ctx_);
 		ctx_ = nullptr;
 	}
+	backend_info_ = WhisperBackendInfo{};
 }
 
 void WhisperEngine::SetLanguage(const std::string& lang)

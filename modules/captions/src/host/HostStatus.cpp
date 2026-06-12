@@ -180,6 +180,11 @@ void HostStatus::SetSpeechModel(uint8_t model, const std::string& name, const st
 	speech_model_loaded_ = loaded;
 	speech_model_fallback_ = fallback;
 }
+void HostStatus::SetComputeBackend(const std::string& name, bool gpu_active)
+{
+	compute_backend_ = name.empty() ? std::string("CPU") : name;
+	compute_backend_gpu_ = gpu_active;
+}
 void HostStatus::SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
                                            long long decode_ms, float max_vad_probability, float max_peak,
                                            float speech_peak_threshold, float max_rms, float speech_rms_threshold)
@@ -342,6 +347,8 @@ void HostStatus::DoFlush()
 	o << "  \"speech_model_loaded\": " << (speech_model_loaded_ ? "true" : "false") << ",\n";
 	o << "  \"speech_model_fallback\": " << (speech_model_fallback_ ? "true" : "false") << ",\n";
 	o << "  \"active_speech_model_path\": \"" << EscapeJson(active_speech_model_path_) << "\",\n";
+	o << "  \"compute_backend\": \"" << EscapeJson(compute_backend_) << "\",\n";
+	o << "  \"compute_backend_gpu\": " << (compute_backend_gpu_ ? "true" : "false") << ",\n";
 	o << "  \"vad_model_loaded\": " << (vad_model_loaded_ ? "true" : "false") << ",\n";
 	o << "  \"vad_last_probability\": " << vad_prob_buf << ",\n";
 	o << "  \"vad_inference_failures\": " << vad_inference_failures_ << ",\n";

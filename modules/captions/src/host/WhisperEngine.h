@@ -29,6 +29,16 @@ struct WhisperDecodeOptions
 	bool suppress_non_speech_tokens = true;
 };
 
+// Which compute backend the loaded model is actually running on. Surfaced to
+// the overlay (via host_status.json) so the user can see GPU vs CPU and tell at
+// a glance whether high-accuracy speech is being accelerated.
+struct WhisperBackendInfo
+{
+	bool gpu_requested = false;      // use_gpu was passed to Load()
+	bool gpu_active = false;         // a GPU backend was actually selected
+	std::string device_name = "CPU"; // e.g. "Vulkan: NVIDIA GeForce RTX 4070" or "CPU"
+};
+
 // Wrapper around whisper.cpp.
 //
 // Loads a ggml model file at Load() time. Transcribe() accepts a buffer of
@@ -46,6 +56,9 @@ public:
 	void Unload();
 
 	bool IsLoaded() const noexcept { return ctx_ != nullptr; }
+
+	// Describes the compute backend selected at the last successful Load().
+	const WhisperBackendInfo& BackendInfo() const noexcept { return backend_info_; }
 
 	// Set source language. "auto" = whisper auto-detect (adds ~50-100 ms).
 	void SetLanguage(const std::string& lang);
@@ -65,4 +78,5 @@ private:
 	std::string language_hint_; // "" -> "auto"
 	std::string initial_prompt_;
 	int n_threads_ = 4;
+	WhisperBackendInfo backend_info_;
 };

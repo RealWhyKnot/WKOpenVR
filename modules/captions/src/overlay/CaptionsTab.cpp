@@ -30,6 +30,9 @@ static bool s_consent_pending = false;
 // Capture-device list, refreshed when the picker combo is opened.
 static std::vector<captions::AudioInputDevice> s_devices;
 static bool s_devices_loaded = false;
+// Throttle re-enumeration while the combo is open: COM endpoint enumeration is
+// expensive and runs on the render thread.
+static std::chrono::steady_clock::time_point s_last_device_enum{};
 
 // "No audio reaching the host" tracking: remember the last frame counter and
 // when it last advanced so warnings only fire after sustained stalls/silence.
@@ -39,6 +42,16 @@ static std::chrono::steady_clock::time_point s_last_audible_input{};
 static bool s_audio_health_initialized = false;
 static int s_audio_health_host_pid = 0;
 static std::string s_audio_health_mic_name;
+
+// Smoothed decode-ratio (decode time / audio time) for the "slower than
+// real-time" warning. Reset when the host process or active speech model
+// changes so a model switch starts from a clean average.
+static double s_decode_ratio_ema = 0.0;
+static bool s_decode_ratio_initialized = false;
+static int s_decode_ratio_host_pid = 0;
+static int s_decode_ratio_model = -1;
+static long long s_decode_ratio_last_audio_ms = -1;
+static long long s_decode_ratio_last_decode_ms = -1;
 
 // ---------------------------------------------------------------------------
 // Diagnostics: read last N lines from the newest captions log file.
@@ -355,8 +368,14 @@ static void DrawMicPicker(CaptionsPlugin& plugin, const captions::HostStatusSnap
 	}
 
 	if (ImGui::BeginCombo("Microphone", label.c_str())) {
-		// Re-enumerate while open so hot-plugged devices appear.
-		s_devices = captions::EnumerateCaptureDevices();
+		// Re-enumerate while open so hot-plugged devices appear, but throttle to
+		// ~1 Hz -- doing the COM enumeration every frame while the dropdown is
+		// open hitches the render thread (and therefore the desktop window).
+		auto now = std::chrono::steady_clock::now();
+		if (now - s_last_device_enum >= std::chrono::seconds(1)) {
+			s_devices = captions::EnumerateCaptureDevices();
+			s_last_device_enum = now;
+		}
 
 		bool defSel = current.empty();
 		if (ImGui::Selectable("System default", defSel)) {
@@ -486,6 +505,46 @@ static void DrawStatusStrip(CaptionsPlugin& plugin, const captions::HostStatusSn
 				DrawWaitingBanner(snap.vad_last_error.c_str());
 			}
 		}
+
+		// Compute backend + decode pace. The decode ratio is the direct readout
+		// of whether high-accuracy speech is keeping up with real time; surface
+		// it (and a warning) so a slow/CPU configuration is self-evident without
+		// digging through the host log.
+		ImGui::Text("Compute: %s", snap.compute_backend.empty() ? "CPU" : snap.compute_backend.c_str());
+
+		const bool resetDecode = !s_decode_ratio_initialized || s_decode_ratio_host_pid != snap.host_pid ||
+		                         s_decode_ratio_model != snap.speech_model;
+		if (resetDecode) {
+			s_decode_ratio_initialized = true;
+			s_decode_ratio_host_pid = snap.host_pid;
+			s_decode_ratio_model = snap.speech_model;
+			s_decode_ratio_ema = 0.0;
+			s_decode_ratio_last_audio_ms = -1;
+			s_decode_ratio_last_decode_ms = -1;
+		}
+		const bool newSegment = snap.last_segment_audio_ms != s_decode_ratio_last_audio_ms ||
+		                        snap.last_transcribe_ms != s_decode_ratio_last_decode_ms;
+		if (newSegment && snap.last_segment_audio_ms > 0) {
+			s_decode_ratio_last_audio_ms = snap.last_segment_audio_ms;
+			s_decode_ratio_last_decode_ms = snap.last_transcribe_ms;
+			const double segmentRatio = captions::ui::DecodeRatio(snap);
+			s_decode_ratio_ema =
+			    s_decode_ratio_ema > 0.0 ? (0.6 * s_decode_ratio_ema + 0.4 * segmentRatio) : segmentRatio;
+		}
+		if (s_decode_ratio_ema > 0.0) {
+			ImGui::Text("Decode pace (avg): %.2fx real-time", s_decode_ratio_ema);
+			if (captions::ui::ShouldWarnSlowDecode(s_decode_ratio_ema)) {
+				if (snap.compute_backend_gpu) {
+					DrawWaitingBanner("GPU speech recognition is not keeping up with real time. Try the Balanced "
+					                  "speech model for lower latency.");
+				}
+				else {
+					DrawWaitingBanner("Speech recognition is running slower than real time on the CPU. Enable GPU "
+					                  "acceleration or switch to the Balanced speech model under \"Setup\".");
+				}
+			}
+		}
+
 		if (!snap.phase.empty() && snap.phase != "running") {
 			ImGui::TextDisabled("Host phase: %s", snap.phase.c_str());
 		}

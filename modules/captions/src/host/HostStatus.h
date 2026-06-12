@@ -50,6 +50,8 @@ public:
 	                              float speech_peak_threshold, float speech_rms_threshold) noexcept;
 	void SetSpeechModel(uint8_t model, const std::string& name, const std::string& active_path, bool loaded,
 	                    bool fallback);
+	// Compute backend the speech model is running on (e.g. "Vulkan: <gpu>" or "CPU").
+	void SetComputeBackend(const std::string& name, bool gpu_active);
 	void SetLastSegmentDiagnostics(const std::string& reason, long long audio_ms, long long evidence_ms,
 	                               long long decode_ms, float max_vad_probability, float max_peak,
 	                               float speech_peak_threshold, float max_rms, float speech_rms_threshold);
@@ -110,6 +112,8 @@ private:
 	std::string active_speech_model_path_;
 	bool speech_model_loaded_ = false;
 	bool speech_model_fallback_ = false;
+	std::string compute_backend_ = "CPU";
+	bool compute_backend_gpu_ = false;
 	std::string last_segment_reason_;
 	long long last_segment_audio_ms_ = 0;
 	long long last_segment_evidence_ms_ = 0;

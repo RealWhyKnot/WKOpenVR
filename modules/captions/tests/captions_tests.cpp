@@ -32,6 +32,7 @@
 #include "AudioLevel.h"
 #include "CaptionsAudioInputFile.h"
 #include "CaptionsTabLogic.h"
+#include "CaptionsThreadPlan.h"
 #include "EnergySpeechGate.h"
 #include "SileroVadModelContract.h"
 #include "TranscriptText.h"
@@ -1144,4 +1145,59 @@ TEST(NoAudioWarningTest, SilentInputWarningRequiresLiveFramesAndGrace)
 	// Frames are arriving and the input meter has stayed silent.
 	EXPECT_TRUE(ShouldWarnSilentInput(true, true, 10.0));
 	EXPECT_TRUE(ShouldWarnSilentInput(true, true, 30.0));
+}
+
+// ---------------------------------------------------------------------------
+// Whisper CPU thread selection (reserve cores for desktop + overlay)
+// ---------------------------------------------------------------------------
+
+TEST(WhisperThreadPlanTest, ReservesCoresAndClampsToRange)
+{
+	using captions::SelectWhisperThreadCount;
+	// Unknown core count falls back to a safe default (>= floor).
+	EXPECT_EQ(SelectWhisperThreadCount(0), 2);
+	// Small machines never drop below the floor of 2.
+	EXPECT_EQ(SelectWhisperThreadCount(1), 2);
+	EXPECT_EQ(SelectWhisperThreadCount(2), 2);
+	EXPECT_EQ(SelectWhisperThreadCount(4), 2);
+	// Reserve two logical cores for the desktop + overlay.
+	EXPECT_EQ(SelectWhisperThreadCount(8), 6);
+	// Cap so whisper's flat CPU scaling does not hog every core.
+	EXPECT_EQ(SelectWhisperThreadCount(16), 8);
+	EXPECT_EQ(SelectWhisperThreadCount(32), 8);
+}
+
+// ---------------------------------------------------------------------------
+// Decode pace (decode time vs audio time) + slow-decode warning
+// ---------------------------------------------------------------------------
+
+TEST(DecodePaceTest, RatioIsZeroUntilFirstSegment)
+{
+	captions::HostStatusSnapshot snap;
+	snap.last_segment_audio_ms = 0; // nothing decoded yet
+	snap.last_transcribe_ms = 0;
+	EXPECT_DOUBLE_EQ(captions::ui::DecodeRatio(snap), 0.0);
+	EXPECT_FALSE(captions::ui::ShouldWarnSlowDecode(captions::ui::DecodeRatio(snap)));
+}
+
+TEST(DecodePaceTest, RatioReflectsDecodeVersusAudio)
+{
+	captions::HostStatusSnapshot snap;
+	snap.last_segment_audio_ms = 2000;
+	// Faster than real time: 800 ms decode for 2000 ms of audio.
+	snap.last_transcribe_ms = 800;
+	EXPECT_DOUBLE_EQ(captions::ui::DecodeRatio(snap), 0.4);
+	EXPECT_FALSE(captions::ui::ShouldWarnSlowDecode(captions::ui::DecodeRatio(snap)));
+	// Slower than real time: 3000 ms decode for 2000 ms of audio.
+	snap.last_transcribe_ms = 3000;
+	EXPECT_DOUBLE_EQ(captions::ui::DecodeRatio(snap), 1.5);
+	EXPECT_TRUE(captions::ui::ShouldWarnSlowDecode(captions::ui::DecodeRatio(snap)));
+}
+
+TEST(DecodePaceTest, WarningBoundaryIsStrictlyAboveRealTime)
+{
+	using captions::ui::ShouldWarnSlowDecode;
+	EXPECT_FALSE(ShouldWarnSlowDecode(1.0)); // exactly real time is acceptable
+	EXPECT_FALSE(ShouldWarnSlowDecode(0.99));
+	EXPECT_TRUE(ShouldWarnSlowDecode(1.01));
 }

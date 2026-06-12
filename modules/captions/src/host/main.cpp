@@ -12,6 +12,7 @@
 #include "CaptionsOutputPolicy.h"
 #include "CaptionsRealtimeFlags.h"
 #include "CaptionsSpeechModels.h"
+#include "CaptionsThreadPlan.h"
 #include "ChatboxText.h"
 #include "ChatboxPacer.h"
 #include "AudioLevel.h"
@@ -30,6 +31,10 @@
 #include "Win32Text.h"
 
 #include <openvr.h>
+
+#if defined(WKOPENVR_CAPTIONS_VULKAN_ENABLED)
+#include <vulkan/vulkan.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -139,6 +144,62 @@ static void ProbeDll(const wchar_t* dll_name)
 		DWORD err = GetLastError();
 		TH_LOG("[captions-host] dll-probe: %ls -> MISSING (err=%lu)", dll_name, (unsigned long)err);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Crash-proof Vulkan device probe.
+//
+// ggml-vulkan v1.7.4 enumerates devices the moment whisper requests GPU, and on
+// that path it THROWS when no Vulkan loader/ICD is present and calls
+// GGML_ABORT() -- terminating the process -- when the loader is present but
+// reports zero physical devices. So we must NOT blindly hand whisper use_gpu=true.
+// This probe makes the decision first with the plain Vulkan C API (which only
+// returns VkResult codes, never throws) under an SEH guard (broken drivers can
+// still raise access violations). whisper is only allowed near the GPU when this
+// returns > 0.
+// ---------------------------------------------------------------------------
+
+#if defined(WKOPENVR_CAPTIONS_VULKAN_ENABLED)
+static int SafeVulkanDeviceCountSeh()
+{
+	// No C++ objects with destructors in this function: SEH __try requires it.
+	int count = 0;
+	__try {
+		VkApplicationInfo app{};
+		app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+		app.pApplicationName = "WKOpenVR.CaptionsHost";
+		app.apiVersion = VK_API_VERSION_1_0;
+
+		VkInstanceCreateInfo ci{};
+		ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+		ci.pApplicationInfo = &app;
+
+		VkInstance instance = VK_NULL_HANDLE;
+		if (vkCreateInstance(&ci, nullptr, &instance) != VK_SUCCESS || instance == VK_NULL_HANDLE) {
+			return 0;
+		}
+		uint32_t n = 0;
+		VkResult r = vkEnumeratePhysicalDevices(instance, &n, nullptr);
+		if (r != VK_SUCCESS && r != VK_INCOMPLETE) n = 0;
+		count = static_cast<int>(n);
+		vkDestroyInstance(instance, nullptr);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		count = 0;
+	}
+	return count;
+}
+#endif
+
+// Number of usable Vulkan GPUs, or 0 when the backend is not compiled in or no
+// safe device is found. Never throws, never aborts.
+static int SafeVulkanDeviceCount()
+{
+#if defined(WKOPENVR_CAPTIONS_VULKAN_ENABLED)
+	return SafeVulkanDeviceCountSeh();
+#else
+	return 0;
+#endif
 }
 
 static bool FileExistsA(const std::string& path);
@@ -280,6 +341,7 @@ struct HostConfig
 	int mode = 0; // 0=PTT, 1=always-on
 	uint8_t realtime_flags = captions::kCaptionsRealtimeDefaultFlags;
 	uint8_t speech_model = captions::kCaptionsSpeechModelBalanced;
+	bool prefer_gpu = true; // request GPU decode when a usable device exists; --no-gpu forces CPU
 
 	// Paths: resolved once at startup. Overrideable via command-line.
 	std::string whisper_model_path;
@@ -598,6 +660,18 @@ try {
 
 	AddCaptionsRuntimeSearchPath();
 
+	// The host is a background sidecar. Run it below normal priority so a CPU
+	// speech decode (which spins up several whisper worker threads) can never
+	// starve the Windows desktop compositor or the overlay render thread. This
+	// is the safety net that keeps the desktop smooth even on the CPU-fallback
+	// path; the GPU path is barely affected since the GPU does the work.
+	if (SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS)) {
+		TH_LOG("[startup] process priority = BELOW_NORMAL");
+	}
+	else {
+		TH_LOG("[startup] SetPriorityClass(BELOW_NORMAL) failed err=%lu", (unsigned long)GetLastError());
+	}
+
 	// Probe native dependencies before any inference library call.
 	// These log lines are the first thing to read when the host fails to start.
 	TH_LOG("[captions-host] startup-phase=dll-probe");
@@ -609,6 +683,11 @@ try {
 	ProbeDll(L"nvcuda.dll");
 #else
 	TH_LOG("[captions-host] dll-probe: CUDA backend disabled in this build");
+#endif
+#if defined(WKOPENVR_CAPTIONS_VULKAN_ENABLED)
+	ProbeDll(L"vulkan-1.dll");
+#else
+	TH_LOG("[captions-host] dll-probe: Vulkan backend disabled in this build");
 #endif
 	ProbeDll(L"onnxruntime.dll");
 	ProbeDll(L"ctranslate2.dll");
@@ -664,10 +743,27 @@ try {
 				g_config.silero_model_path = argv[i + 1];
 				++i;
 			}
+			else if (strcmp(argv[i], "--no-gpu") == 0 || strcmp(argv[i], "--force-cpu") == 0) {
+				g_config.prefer_gpu = false;
+			}
 		}
 	}
 
+	// Decide the whisper compute backend once, up front, with the crash-proof
+	// Vulkan probe. GPU is requested only when a usable device exists and the
+	// user has not forced CPU via --no-gpu.
+	const int vulkan_device_count = SafeVulkanDeviceCount();
+	const int whisper_threads = captions::ResolveWhisperThreadCount();
+	bool whisper_use_gpu;
+	{
+		std::lock_guard<std::mutex> lk(g_config_mutex);
+		whisper_use_gpu = (vulkan_device_count > 0) && g_config.prefer_gpu;
+	}
+	TH_LOG("[startup] compute backend=%s vulkan_devices=%d threads=%d", whisper_use_gpu ? "Vulkan" : "CPU",
+	       vulkan_device_count, whisper_threads);
+
 	HostStatus status(status_path_override);
+	status.SetComputeBackend(whisper_use_gpu ? "Vulkan" : "CPU", whisper_use_gpu);
 	status.SetPhase("config-loaded");
 	{
 		std::lock_guard<std::mutex> lk(g_config_mutex);
@@ -689,7 +785,8 @@ try {
 	if (self_test) {
 		status.SetPhase("self-test-complete");
 		status.Flush();
-		TH_LOG("[startup] self-test complete");
+		TH_LOG("[startup] self-test complete compute=%s vulkan_devices=%d threads=%d",
+		       whisper_use_gpu ? "Vulkan" : "CPU", vulkan_device_count, whisper_threads);
 		CaptionsHostFlushLog();
 		return 0;
 	}
@@ -832,13 +929,14 @@ try {
 		}
 		if (FileExistsA(model_path)) {
 			whisper_load_attempted = true;
-			if (!whisper.Load(model_path)) {
+			if (!whisper.Load(model_path, whisper_threads, whisper_use_gpu)) {
 				whisper_load_failed = true;
 				next_whisper_load_attempt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 				TH_LOG("[main] Whisper model load failed; path='%s'", model_path.c_str());
 			}
 			else {
 				loaded_whisper_model_path = model_path;
+				status.SetComputeBackend(whisper.BackendInfo().device_name, whisper.BackendInfo().gpu_active);
 			}
 		}
 		else {
@@ -1186,13 +1284,14 @@ try {
 		}
 		if (!whisper.IsLoaded() && FileExistsA(desired_whisper_model_path) && loop_now >= next_whisper_load_attempt) {
 			whisper_load_attempted = true;
-			whisper_load_failed = !whisper.Load(desired_whisper_model_path);
+			whisper_load_failed = !whisper.Load(desired_whisper_model_path, whisper_threads, whisper_use_gpu);
 			if (whisper_load_failed) {
 				next_whisper_load_attempt = loop_now + std::chrono::seconds(5);
 				status.SetLastError("Whisper model failed to load.");
 			}
 			else {
 				loaded_whisper_model_path = desired_whisper_model_path;
+				status.SetComputeBackend(whisper.BackendInfo().device_name, whisper.BackendInfo().gpu_active);
 			}
 		}
 		else if (!whisper.IsLoaded() && FileExistsA(desired_whisper_model_path) && whisper_load_attempted &&

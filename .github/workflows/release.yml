@@ -195,11 +195,30 @@ jobs:
           "@
           }
 
+      - name: Install Vulkan SDK
+        # The captions speech host links whisper.cpp's Vulkan backend for GPU
+        # (vendor-neutral) speech recognition. ggml-vulkan compiles GLSL compute
+        # shaders at build time via glslc, which ships with the Vulkan SDK, so the
+        # SDK is a build-host dependency. Runtime needs only the system vulkan-1.dll.
+        shell: pwsh
+        run: |
+          $ver = "1.3.296.0"
+          $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe"
+          $installer = Join-Path $env:RUNNER_TEMP "VulkanSDK-Installer.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $p = Start-Process -FilePath $installer -ArgumentList @("--accept-licenses","--default-answer","--confirm-command","install") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Vulkan SDK install failed (exit $($p.ExitCode))" }
+          $sdk = "C:\VulkanSDK\$ver"
+          if (-not (Test-Path (Join-Path $sdk "Bin\glslc.exe"))) { throw "glslc not found under $sdk after install" }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          (Join-Path $sdk "Bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       - name: Configure
         # The minhook submodule declares cmake_minimum_required(2.8.12) which
         # CMake 4.x rejects. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 lets us configure
         # without forking. -Wno-dev silences developer-mode warnings from minhook.
-        run: cmake -G "Visual Studio 18 2026" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
+        # WKOPENVR_CAPTIONS_VULKAN=ON ships GPU-accelerated speech recognition.
+        run: cmake -G "Visual Studio 18 2026" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_CAPTIONS_VULKAN=ON -DWKOPENVR_RELEASE_BUILD=ON -Wno-dev
 
       - name: Build
         shell: pwsh

@@ -34,9 +34,28 @@ include(FetchContent)
 # WHISPER_CUDA: off by default; set -DWKOPENVR_CAPTIONS_CUDA=ON to enable.
 option(WKOPENVR_CAPTIONS_CUDA "Build whisper.cpp with CUDA backend" OFF)
 
+# WHISPER_VULKAN: off by default; set -DWKOPENVR_CAPTIONS_VULKAN=ON to enable.
+# Vendor-neutral GPU acceleration (NVIDIA/AMD/Intel) via the system Vulkan
+# loader; only the build host needs the Vulkan SDK (headers + glslc shader
+# compiler). Runtime needs the system vulkan-1.dll, present with any GPU driver.
+option(WKOPENVR_CAPTIONS_VULKAN "Build whisper.cpp with Vulkan backend (vendor-neutral GPU)" OFF)
+
 set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GGML_CUDA ${WKOPENVR_CAPTIONS_CUDA} CACHE BOOL "" FORCE)
+set(GGML_VULKAN ${WKOPENVR_CAPTIONS_VULKAN} CACHE BOOL "" FORCE)
+
+# Fail early with an actionable message if the SDK is missing, rather than
+# letting ggml-vulkan's own find_package(... REQUIRED) error deep in the tree.
+if(WKOPENVR_CAPTIONS_VULKAN)
+    find_package(Vulkan COMPONENTS glslc QUIET)
+    if(NOT Vulkan_FOUND OR NOT Vulkan_glslc_FOUND)
+        message(FATAL_ERROR
+            "WKOPENVR_CAPTIONS_VULKAN=ON requires the Vulkan SDK (headers + glslc). "
+            "Install https://vulkan.lunarg.com so VULKAN_SDK is set and glslc is on PATH, "
+            "or build with -DWKOPENVR_CAPTIONS_VULKAN=OFF.")
+    endif()
+endif()
 
 # Enable whisper.cpp/ggml ccache integration when a compiler cache was found.
 # WKOPENVR_COMPILER_LAUNCHER is set by the root CMakeLists; leave it empty when
@@ -281,6 +300,10 @@ if(WKOPENVR_CAPTIONS_CUDA)
     target_compile_definitions(WKOpenVRCaptionsHost PRIVATE
         WKOPENVR_CAPTIONS_CUDA_ENABLED=1)
 endif()
+if(WKOPENVR_CAPTIONS_VULKAN)
+    target_compile_definitions(WKOpenVRCaptionsHost PRIVATE
+        WKOPENVR_CAPTIONS_VULKAN_ENABLED=1)
+endif()
 
 target_compile_features(WKOpenVRCaptionsHost PRIVATE cxx_std_17)
 
@@ -323,6 +346,14 @@ target_link_libraries(WKOpenVRCaptionsHost PRIVATE
     shell32
     winhttp
     mmdevapi)
+
+# Link the Vulkan loader for the host's own device pre-probe (the guarded
+# vkEnumeratePhysicalDevices in main.cpp). ggml links it transitively too, but
+# the host calls Vulkan directly to decide whether GPU is safe to request.
+if(WKOPENVR_CAPTIONS_VULKAN)
+    target_include_directories(WKOpenVRCaptionsHost PRIVATE ${Vulkan_INCLUDE_DIRS})
+    target_link_libraries(WKOpenVRCaptionsHost PRIVATE Vulkan::Vulkan)
+endif()
 
 # ONNX Runtime.
 if(HAVE_ORT)

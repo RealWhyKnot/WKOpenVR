@@ -17,6 +17,11 @@ param(
 	# CPU-only unless this switch or WKOPENVR_CAPTIONS_CUDA=ON is explicit.
 	[switch]$CaptionsCuda,
 
+	# Opt-in for the Vulkan whisper backend (vendor-neutral GPU). Requires the
+	# Vulkan SDK on the build host. Enabled by this switch or
+	# WKOPENVR_CAPTIONS_VULKAN=ON; release.yml turns it on for shipped builds.
+	[switch]$CaptionsVulkan,
+
 	# Optional CMake target names for focused iteration, for example
 	# spacecal_tests. Full build verification and packaging run only when no
 	# explicit target is supplied.
@@ -314,6 +319,10 @@ if (-not $SkipConfigure) {
 	if ($CaptionsCuda -or $env:WKOPENVR_CAPTIONS_CUDA -eq "ON") {
 		$captionsCudaValue = "ON"
 	}
+	$captionsVulkanValue = "OFF"
+	if ($CaptionsVulkan -or $env:WKOPENVR_CAPTIONS_VULKAN -eq "ON") {
+		$captionsVulkanValue = "ON"
+	}
 	$releaseBuildValue = if ($Release) { "ON" } else { "OFF" }
 	$configureArgs = @(
 		"-S", ".",
@@ -321,6 +330,7 @@ if (-not $SkipConfigure) {
 		"-A", "x64",
 		"-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
 		"-DWKOPENVR_CAPTIONS_CUDA=$captionsCudaValue",
+		"-DWKOPENVR_CAPTIONS_VULKAN=$captionsVulkanValue",
 		"-DWKOPENVR_RELEASE_BUILD=$releaseBuildValue",
 		"-Wno-dev"
 	)

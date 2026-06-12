@@ -72,4 +72,24 @@ inline bool ShouldWarnSilentInput(bool hostValid, bool framesArriving, double se
 	return hostValid && framesArriving && secondsSinceAudibleInput >= thresholdSec;
 }
 
+// How long the host took to decode the last segment relative to the segment's
+// audio duration. 1.0 means decode took exactly as long as the speech; > 1.0
+// means recognition is falling behind real time (text trails the speaker and,
+// on the CPU path, the host saturates cores). Returns 0 when no segment has been
+// decoded yet (audio_ms == 0).
+inline double DecodeRatio(const captions::HostStatusSnapshot& snap)
+{
+	return snap.last_segment_audio_ms > 0
+	           ? static_cast<double>(snap.last_transcribe_ms) / static_cast<double>(snap.last_segment_audio_ms)
+	           : 0.0;
+}
+
+// Warn when smoothed decode time exceeds the segment's audio time: speech
+// recognition is not keeping up with real time. Applies on both GPU and CPU; the
+// caller varies the guidance text by backend.
+inline bool ShouldWarnSlowDecode(double smoothedDecodeRatio)
+{
+	return smoothedDecodeRatio > 1.0;
+}
+
 } // namespace captions::ui

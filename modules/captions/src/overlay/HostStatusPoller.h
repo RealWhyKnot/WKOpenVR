@@ -49,6 +49,8 @@ struct HostStatusSnapshot
 	bool speech_model_loaded = false;
 	bool speech_model_fallback = false;
 	std::string active_speech_model_path;
+	std::string compute_backend = "CPU"; // e.g. "Vulkan: <gpu>" or "CPU"
+	bool compute_backend_gpu = false;
 	bool vad_model_loaded = false;
 	float vad_last_probability = -1.0f;
 	long long vad_inference_failures = 0;
