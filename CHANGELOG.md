@@ -56,6 +56,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **runtime:** Add module perf and sidecar liveness (677b1c9)
 - **calibration:** V4 recording schema for offline locked-snap A/B (4496359)
 - **calibration:** Experimental drift-fighting toggles for continuous cal (cc04df1)
+- **captions:** Vulkan GPU speech path with CPU-priority safety net (120735a)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
