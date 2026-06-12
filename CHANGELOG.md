@@ -87,6 +87,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Use shared SetCellToneBg for diagnostics cells (2061df8)
 - **facetracking:** Adopt shared tab bar and table components (f904a86)
 - **oscrouter:** Draw tables and status text via shared UI library (356bf84)
+- **overlay:** Skip UI rebuild when no surface is visible (82e033a)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -188,6 +189,12 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Expose speech pipeline diagnostics (ee9f6d8)
 - **captions:** Tighten dynamic speech gate (8c5d93d)
 - **captions:** Support packaged Silero VAD model (5936b86)
+- **overlay:** Log slow frame stages (2f66671)
+- **captions:** Score sparse segment evidence (c3e5a94)
+- **captions:** Avoid prompt context on risky decodes (5c5df25)
+- **captions:** Add acoustic segment risk signals (b75e24e)
+- **captions:** Score risky always-on segments (2fd139b)
+- **captions:** Harden always-on transcript filtering (0383cc9)
 
 ---
 
