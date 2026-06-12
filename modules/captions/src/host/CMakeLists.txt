@@ -34,11 +34,12 @@ include(FetchContent)
 # WHISPER_CUDA: off by default; set -DWKOPENVR_CAPTIONS_CUDA=ON to enable.
 option(WKOPENVR_CAPTIONS_CUDA "Build whisper.cpp with CUDA backend" OFF)
 
-# WHISPER_VULKAN: off by default; set -DWKOPENVR_CAPTIONS_VULKAN=ON to enable.
-# Vendor-neutral GPU acceleration (NVIDIA/AMD/Intel) via the system Vulkan
-# loader; only the build host needs the Vulkan SDK (headers + glslc shader
-# compiler). Runtime needs the system vulkan-1.dll, present with any GPU driver.
-option(WKOPENVR_CAPTIONS_VULKAN "Build whisper.cpp with Vulkan backend (vendor-neutral GPU)" OFF)
+# WHISPER_VULKAN: ON by default. Vendor-neutral GPU acceleration (NVIDIA/AMD/
+# Intel) via the system Vulkan loader; only the build host needs the Vulkan SDK
+# (headers + glslc shader compiler). The runtime needs the system vulkan-1.dll,
+# present with any GPU driver. Set -DWKOPENVR_CAPTIONS_VULKAN=OFF for a CPU-only
+# captions host when the SDK is unavailable (not recommended).
+option(WKOPENVR_CAPTIONS_VULKAN "Build whisper.cpp with Vulkan backend (vendor-neutral GPU)" ON)
 
 set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -51,9 +52,10 @@ if(WKOPENVR_CAPTIONS_VULKAN)
     find_package(Vulkan COMPONENTS glslc QUIET)
     if(NOT Vulkan_FOUND OR NOT Vulkan_glslc_FOUND)
         message(FATAL_ERROR
-            "WKOPENVR_CAPTIONS_VULKAN=ON requires the Vulkan SDK (headers + glslc). "
-            "Install https://vulkan.lunarg.com so VULKAN_SDK is set and glslc is on PATH, "
-            "or build with -DWKOPENVR_CAPTIONS_VULKAN=OFF.")
+            "The captions host builds the Vulkan GPU backend by default but the Vulkan SDK "
+            "(headers + glslc) was not found. Install it from https://vulkan.lunarg.com so "
+            "VULKAN_SDK is set and glslc is on PATH (build.ps1 can do this for you), or build a "
+            "CPU-only host with -DWKOPENVR_CAPTIONS_VULKAN=OFF (not recommended).")
     endif()
 endif()
 

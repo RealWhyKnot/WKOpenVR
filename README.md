@@ -66,16 +66,16 @@ Output:
 
 For local SteamVR iteration, run `./quick.ps1`. It builds, closes SteamVR and Steam for the deploy copy, installs the overlay files plus the full driver tree into the local SteamVR install, verifies deployed hashes, then launches SteamVR through Steam. Run `./test.ps1` when you only need a build plus the local test suite.
 
-### GPU-accelerated captions (optional)
+### GPU-accelerated captions
 
-The captions speech host runs whisper.cpp on the CPU by default. To build it with the Vulkan GPU backend (vendor-neutral -- NVIDIA, AMD, or Intel), pass `-CaptionsVulkan`:
+The captions speech host is built with the Vulkan GPU backend (vendor-neutral -- NVIDIA, AMD, or Intel) by default. The standard `./build.ps1` and `./quick.ps1` build it and, when the [Vulkan SDK](https://vulkan.lunarg.com) (headers plus the `glslc` shader compiler) is missing, offer to download and install it; at runtime the host uses only the system `vulkan-1.dll`. Add `-InstallVulkanSdk` to accept the install without prompting, and `-VulkanSdkRoot <dir>` to install into a different directory. The LunarG installer requires administrator rights, so a UAC prompt appears during the install. With the backend compiled in, the host runs speech recognition on the GPU when a Vulkan device is present and falls back to the CPU automatically otherwise.
+
+Building the Vulkan backend is recommended. To build a CPU-only captions host instead -- for example when you do not want to install the SDK -- pass `-CaptionsCpuOnly` to `build.ps1`, `quick.ps1`, or `test.ps1`:
 
 ```
-./build.ps1 -CaptionsVulkan        # build only
-./quick.ps1 -CaptionsVulkan        # build + deploy for local SteamVR
+./build.ps1 -CaptionsCpuOnly       # CPU-only build
+./quick.ps1 -CaptionsCpuOnly       # CPU-only build + deploy for local SteamVR
 ```
-
-This needs the [Vulkan SDK](https://vulkan.lunarg.com) (headers plus the `glslc` shader compiler) on the build host; at runtime the host uses only the system `vulkan-1.dll`. When the SDK is missing the build offers to download and install it -- add `-InstallVulkanSdk` to skip the confirmation prompt, and `-VulkanSdkRoot <dir>` to install into a different directory. The LunarG installer requires administrator rights, so a UAC prompt appears during the install. Released artifacts always include the Vulkan backend. With the backend compiled in, the host runs speech recognition on the GPU when a Vulkan device is present and falls back to the CPU automatically otherwise.
 
 ## Diagnostics
 

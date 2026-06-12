@@ -29,11 +29,12 @@ param(
 	# and falls back to the standard Steam location.
 	[string]$SteamExe = "",
 
-	# Build the captions speech host with the Vulkan GPU backend. Passed through
-	# to build.ps1, which offers to install the Vulkan SDK if it is missing.
-	[switch]$CaptionsVulkan,
+	# Build a CPU-only captions host (not recommended). By default the host is
+	# built with the Vulkan GPU backend; build.ps1 offers to install the Vulkan
+	# SDK when it is missing. Passed through to build.ps1.
+	[switch]$CaptionsCpuOnly,
 
-	# Install the Vulkan SDK without prompting (implies the non-interactive path).
+	# Install the Vulkan SDK without prompting (for non-interactive builds).
 	[switch]$InstallVulkanSdk,
 
 	# Install the Vulkan SDK into this directory instead of the default
@@ -630,7 +631,7 @@ if (-not $SkipBuild) {
 	Write-Step "Building"
 	$buildArgs = @{}
 	if ($SkipConfigure) { $buildArgs["SkipConfigure"] = $true }
-	if ($CaptionsVulkan) { $buildArgs["CaptionsVulkan"] = $true }
+	if ($CaptionsCpuOnly) { $buildArgs["CaptionsCpuOnly"] = $true }
 	if ($InstallVulkanSdk) { $buildArgs["InstallVulkanSdk"] = $true }
 	if ($VulkanSdkRoot) { $buildArgs["VulkanSdkRoot"] = $VulkanSdkRoot }
 	& "$PSScriptRoot\build.ps1" @buildArgs

@@ -100,13 +100,13 @@ else {
         $reply = Read-Host "Download and install Vulkan SDK $Version now? [y/N]"
     }
     catch {
-        throw "Vulkan SDK is required but not installed, and this session is non-interactive. Re-run with -InstallVulkanSdk (build.ps1/quick.ps1) or call tools\Install-VulkanSdk.ps1 -AutoInstall, or install it from https://vulkan.lunarg.com and re-run."
+        throw "Vulkan SDK is required for the default GPU captions build but is not installed, and this session is non-interactive. Re-run with -InstallVulkanSdk to install it, build a CPU-only host with -CaptionsCpuOnly, or install the SDK from https://vulkan.lunarg.com and re-run."
     }
     if ($reply -match "^(y|yes)$") { $proceed = $true }
 }
 
 if (-not $proceed) {
-    throw "Vulkan SDK install declined. Install it from https://vulkan.lunarg.com, or build without -CaptionsVulkan for a CPU-only captions host."
+    throw "Vulkan SDK install declined. Install it from https://vulkan.lunarg.com for GPU-accelerated captions (recommended), or build a CPU-only host with -CaptionsCpuOnly (build.ps1/quick.ps1/test.ps1)."
 }
 
 $effectiveRoot = $Root

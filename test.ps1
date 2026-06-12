@@ -27,7 +27,19 @@ param(
 
 	# Optional filter passed to WKOpenVR.exe --test-harness --filter <list>
 	# (comma-separated slug list: calibration,smoothing,inputhealth, ...).
-	[string]$HarnessFilter = ""
+	[string]$HarnessFilter = "",
+
+	# Build a CPU-only captions host (not recommended) so the suite builds without
+	# the Vulkan SDK. By default the captions host is built with the Vulkan GPU
+	# backend. Passed through to build.ps1.
+	[switch]$CaptionsCpuOnly,
+
+	# Install the Vulkan SDK without prompting when it is missing.
+	[switch]$InstallVulkanSdk,
+
+	# Install the Vulkan SDK into this directory instead of the default
+	# C:\VulkanSDK\<version>. The install runs elevated (a UAC prompt appears).
+	[string]$VulkanSdkRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,6 +137,9 @@ if (-not $SkipBuild) {
 	$buildArgs = @{}
 	if ($SkipConfigure) { $buildArgs["SkipConfigure"] = $true }
 	if ($BuildTargets.Count -gt 0) { $buildArgs["Target"] = $BuildTargets }
+	if ($CaptionsCpuOnly) { $buildArgs["CaptionsCpuOnly"] = $true }
+	if ($InstallVulkanSdk) { $buildArgs["InstallVulkanSdk"] = $true }
+	if ($VulkanSdkRoot) { $buildArgs["VulkanSdkRoot"] = $VulkanSdkRoot }
 	& "$PSScriptRoot\build.ps1" @buildArgs
 	if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed (exit $LASTEXITCODE)" }
 }

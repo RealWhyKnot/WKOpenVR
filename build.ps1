@@ -17,15 +17,14 @@ param(
 	# CPU-only unless this switch or WKOPENVR_CAPTIONS_CUDA=ON is explicit.
 	[switch]$CaptionsCuda,
 
-	# Opt-in for the Vulkan whisper backend (vendor-neutral GPU). Requires the
-	# Vulkan SDK on the build host. Enabled by this switch or
-	# WKOPENVR_CAPTIONS_VULKAN=ON; release.yml turns it on for shipped builds.
-	# When the SDK is missing, the build offers to install it (see
-	# tools/Install-VulkanSdk.ps1).
-	[switch]$CaptionsVulkan,
+	# The captions speech host is built with the Vulkan GPU backend (vendor-neutral
+	# GPU) by default. Use this to build a CPU-only host instead (not recommended)
+	# -- for example when the Vulkan SDK is not available. WKOPENVR_CAPTIONS_VULKAN=OFF
+	# in the environment has the same effect.
+	[switch]$CaptionsCpuOnly,
 
-	# Install the Vulkan SDK without prompting when -CaptionsVulkan is set and the
-	# SDK is missing. Useful for non-interactive/CI builds.
+	# Install the Vulkan SDK without prompting when it is missing. Useful for
+	# non-interactive/CI builds.
 	[switch]$InstallVulkanSdk,
 
 	# Install the Vulkan SDK into this directory instead of the default
@@ -329,13 +328,13 @@ if (-not $SkipConfigure) {
 	if ($CaptionsCuda -or $env:WKOPENVR_CAPTIONS_CUDA -eq "ON") {
 		$captionsCudaValue = "ON"
 	}
-	$captionsVulkanValue = "OFF"
-	if ($CaptionsVulkan -or $env:WKOPENVR_CAPTIONS_VULKAN -eq "ON") {
-		$captionsVulkanValue = "ON"
+	$captionsVulkanValue = "ON"
+	if ($CaptionsCpuOnly -or $env:WKOPENVR_CAPTIONS_VULKAN -eq "OFF") {
+		$captionsVulkanValue = "OFF"
 	}
-	# The Vulkan whisper backend needs the Vulkan SDK (headers + glslc) on the
-	# build host. Make sure it is present before configuring; offer to install it
-	# when it is missing (auto with -InstallVulkanSdk).
+	# The Vulkan whisper backend (the default) needs the Vulkan SDK (headers +
+	# glslc) on the build host. Make sure it is present before configuring; offer
+	# to install it when it is missing (auto with -InstallVulkanSdk).
 	if ($captionsVulkanValue -eq "ON") {
 		& "$PSScriptRoot\tools\Install-VulkanSdk.ps1" -AutoInstall:$InstallVulkanSdk -Root $VulkanSdkRoot
 	}
