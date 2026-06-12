@@ -132,15 +132,26 @@ else {
     }
 }
 
-# The LunarG installer needs administrator rights. Launch it elevated so a UAC
-# prompt appears; on an already-elevated shell (CI) this runs without a prompt.
-Write-Host "Installing Vulkan SDK to $effectiveRoot (accept the UAC prompt) ..." -ForegroundColor Cyan
+# The LunarG installer needs administrator rights. When this shell is already
+# elevated (for example a CI runner) install directly; otherwise relaunch the
+# installer elevated so a UAC prompt appears.
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+$isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 $installArgs = @("--root", $effectiveRoot, "--accept-licenses", "--default-answer", "--confirm-command", "install")
 try {
-    $proc = Start-Process -FilePath $installer -ArgumentList $installArgs -Verb RunAs -Wait -PassThru
+    if ($isElevated) {
+        Write-Host "Installing Vulkan SDK to $effectiveRoot ..." -ForegroundColor Cyan
+        $proc = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
+    }
+    else {
+        Write-Host "Installing Vulkan SDK to $effectiveRoot (accept the UAC prompt) ..." -ForegroundColor Cyan
+        $proc = Start-Process -FilePath $installer -ArgumentList $installArgs -Verb RunAs -Wait -PassThru
+    }
 }
 catch {
-    throw "Could not start the Vulkan SDK installer with elevation: $($_.Exception.Message). Accept the UAC prompt, or install manually from https://vulkan.lunarg.com."
+    throw "Could not start the Vulkan SDK installer: $($_.Exception.Message). Accept the UAC prompt if shown, or install manually from https://vulkan.lunarg.com."
 }
 if ($proc.ExitCode -ne 0) {
     throw "Vulkan SDK installer exited with code $($proc.ExitCode)."
