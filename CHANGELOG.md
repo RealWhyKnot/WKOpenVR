@@ -57,6 +57,12 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** V4 recording schema for offline locked-snap A/B (4496359)
 - **calibration:** Experimental drift-fighting toggles for continuous cal (cc04df1)
 - **captions:** Vulkan GPU speech path with CPU-priority safety net (120735a)
+- **perf:** Surface CPU spikes with peak and p95 (cddbf1c)
+- **phantom:** Infer tracker body roles from motion (1fdff0e)
+- **facetracking:** Compare recorded face replays (aceac7a)
+- **facetracking:** Show live tuning ranges (3c56902)
+- **facetracking:** Add face frame replay recording (f0af5f8)
+- **captions:** Add queued chatbox send delay (b63b177)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -199,6 +205,11 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Add acoustic segment risk signals (b75e24e)
 - **captions:** Score risky always-on segments (2fd139b)
 - **captions:** Harden always-on transcript filtering (0383cc9)
+- **facetracking:** Record replay with debug logging (c71c937)
+- **inputhealth:** Keep correction families enabled (58f03ed)
+- **runtime:** Repair phantom and diagnostic gates (f06e188)
+- **calibration:** Restore relative lock and smoothing sync (af45b60)
+- **calibration:** Stabilize drift breaker and headset lock controls (7bdc700)
 
 ---
 
