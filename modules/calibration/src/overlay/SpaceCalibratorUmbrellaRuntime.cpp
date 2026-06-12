@@ -7,6 +7,7 @@
 #include "Configuration.h"
 #include "TrackingStyle.h"
 #include "UserInterface.h"
+#include "UserInterfaceHeadMount.h"
 
 #include <openvr.h>
 
@@ -87,6 +88,24 @@ void AddCalibrationLock(std::vector<openvr_pair::overlay::CalibrationDeviceLock>
 	locks.push_back({serial, kind});
 }
 
+bool SetHeadsetSynthesisSmoothingFromBridge(int smoothness, const char* reason)
+{
+	if (smoothness < 0) smoothness = 0;
+	if (smoothness > 100) smoothness = 100;
+	const auto next = static_cast<uint8_t>(smoothness);
+	if (CalCtx.headMount.lockedHeadsetSmoothing == next) return true;
+
+	CalCtx.headMount.lockedHeadsetSmoothing = next;
+	SaveProfile(CalCtx);
+	CCal_SendHeadMountConfig();
+
+	char buf[160];
+	snprintf(buf, sizeof buf, "locked_headset_smoothing_ui_write: source=smoothing value=%d reason=%s", smoothness,
+	         reason ? reason : "unknown");
+	Metrics::WriteLogAnnotation(buf);
+	return true;
+}
+
 } // namespace
 
 void CCal_UmbrellaStart()
@@ -133,7 +152,9 @@ void CCal_UmbrellaTick()
 			headsetSynthesisTrackerSerial = ReadDeviceSerial(CalCtx.headMount.deviceID);
 			if (headsetSynthesisTrackerSerial.empty()) headsetSynthesisTrackerSerial = CalCtx.headMount.trackerSerial;
 		}
-		openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial(headsetSynthesisTrackerSerial);
+		openvr_pair::overlay::SetHeadsetSynthesisState(headsetSynthesisTrackerSerial,
+		                                               CalCtx.headMount.lockedHeadsetSmoothing,
+		                                               SetHeadsetSynthesisSmoothingFromBridge);
 	}
 	else {
 		static auto s_lastWaitingLog = std::chrono::steady_clock::time_point{};
@@ -145,7 +166,7 @@ void CCal_UmbrellaTick()
 			Metrics::WriteLogAnnotation(buf);
 		}
 		openvr_pair::overlay::SetCalibrationDeviceLocks({});
-		openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial({});
+		openvr_pair::overlay::SetHeadsetSynthesisState({}, 0, nullptr);
 	}
 }
 
@@ -156,7 +177,7 @@ void CCal_UmbrellaShutdown()
 	// session that quits mid-continuous-calibration still writes its final value.
 	FlushPendingContinuousSave();
 	openvr_pair::overlay::SetCalibrationDeviceLocks({});
-	openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial({});
+	openvr_pair::overlay::SetHeadsetSynthesisState({}, 0, nullptr);
 }
 
 void RequestImmediateRedraw() {}

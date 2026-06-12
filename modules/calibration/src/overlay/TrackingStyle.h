@@ -82,6 +82,21 @@ inline CalibrationContext::LockMode ExplicitLockModeFromRaw(int raw)
 	                                                    : CalibrationContext::LockMode::OFF;
 }
 
+inline CalibrationContext::LockMode LockRelativeModeFromEnabled(bool enabled)
+{
+	return enabled ? CalibrationContext::LockMode::ON : CalibrationContext::LockMode::OFF;
+}
+
+inline bool LockRelativeModeEnabled(CalibrationContext::LockMode mode)
+{
+	return mode == CalibrationContext::LockMode::ON;
+}
+
+inline bool ResolveLockRelativePositionValue(CalibrationContext::LockMode mode, bool driftBreakerFrozen)
+{
+	return LockRelativeModeEnabled(mode) || driftBreakerFrozen;
+}
+
 inline TrackingStyle InferTrackingStyleFromConfig(const CalibrationContext& ctx)
 {
 	if (ctx.headMount.mode == HeadMountMode::DriverSynth) {
@@ -121,4 +136,11 @@ inline void ApplyTrackingStylePreset(CalibrationContext& ctx, TrackingStyle styl
 			ctx.lockRelativePositionMode = CalibrationContext::LockMode::ON;
 			break;
 	}
+}
+
+inline void ApplyTrackingStylePresetPreservingLockMode(CalibrationContext& ctx, TrackingStyle style)
+{
+	const auto lockMode = ctx.lockRelativePositionMode;
+	ApplyTrackingStylePreset(ctx, style);
+	ctx.lockRelativePositionMode = lockMode;
 }

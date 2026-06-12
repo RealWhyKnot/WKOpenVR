@@ -42,14 +42,14 @@ inline const char* PrimaryActionLabel(const ActionInputs& in)
 		case TrackingStyle::LockedWithRecovery:
 			if (!continuousRunning) return "Start setup";
 			if (!in.offsetCalibrated) return "Calibrate headset tracker";
-			if (!in.relativePosCalibrated) return "Lock headset tracker";
+			if (!in.relativePosCalibrated) return "Save relative pose";
 			return "Re-calibrate headset tracker";
 		case TrackingStyle::HardTrackerLock:
 			if (!continuousRunning) {
 				return HeadsetTrackerLockReady(in) ? "Hard tracker lock active" : "Start setup";
 			}
 			if (!in.offsetCalibrated) return "Calibrate headset tracker";
-			if (!in.relativePosCalibrated) return "Lock headset tracker";
+			if (!in.relativePosCalibrated) return "Save relative pose";
 			return "Finish setup";
 	}
 	return "Calibrate now";

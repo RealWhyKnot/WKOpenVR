@@ -27,6 +27,8 @@ struct CalibrationDeviceLock
 	CalibrationDeviceLockKind kind = CalibrationDeviceLockKind::Target;
 };
 
+using HeadsetSynthesisSmoothingUpdateFn = bool (*)(int smoothness, const char* reason);
+
 // Set the current calibration device locks. Pass an empty vector when the
 // calibration module is not running continuous calibration.
 void SetCalibrationDeviceLocks(const std::vector<CalibrationDeviceLock>& locks);
@@ -38,11 +40,21 @@ bool TryGetCalibrationDeviceLockKind(const std::string& serial, CalibrationDevic
 // empty string when headset synthesis is inactive or unresolved.
 void SetHeadsetSynthesisTrackerSerial(const std::string& serial);
 
+// Set the headset synthesis tracker and the authoritative smoothing value for
+// the synthesized headset pose. The optional callback lets another UI surface
+// update the calibration-owned value without depending on calibration globals.
+void SetHeadsetSynthesisState(const std::string& serial, int lockedHeadsetSmoothing,
+                              HeadsetSynthesisSmoothingUpdateFn updateFn);
+
 // Return true when headset synthesis is active and the selected tracker serial
 // is known.
 bool TryGetHeadsetSynthesisTrackerSerial(std::string& serial);
 
 // Return true when the serial is the physical tracker feeding headset synthesis.
 bool IsHeadsetSynthesisTracker(const std::string& serial);
+
+bool TryGetHeadsetSynthesisLockedSmoothing(int& smoothness);
+
+bool TrySetHeadsetSynthesisLockedSmoothing(int smoothness, const char* reason);
 
 } // namespace openvr_pair::overlay

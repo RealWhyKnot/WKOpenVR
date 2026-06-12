@@ -48,6 +48,7 @@ private:
 	void TickPredictionRestore();
 	void TickExternalToolDetection();
 	void TickCalibrationLockClear(); // zero driver slots when locks change
+	void TickHeadsetSynthesisSmoothnessCleanup();
 	void DrawSettingsTab();
 	void DrawAdvancedTab();
 	void DrawLogsTab();

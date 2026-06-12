@@ -6,6 +6,15 @@ namespace {
 
 std::vector<openvr_pair::overlay::CalibrationDeviceLock> g_locks;
 std::string g_headsetSynthesisTrackerSerial;
+int g_headsetSynthesisLockedSmoothing = 0;
+HeadsetSynthesisSmoothingUpdateFn g_headsetSynthesisSmoothingUpdateFn = nullptr;
+
+int ClampPercent(int value)
+{
+	if (value < 0) return 0;
+	if (value > 100) return 100;
+	return value;
+}
 
 } // namespace
 
@@ -43,6 +52,16 @@ bool TryGetCalibrationDeviceLockKind(const std::string& serial, CalibrationDevic
 void SetHeadsetSynthesisTrackerSerial(const std::string& serial)
 {
 	g_headsetSynthesisTrackerSerial = serial;
+	g_headsetSynthesisLockedSmoothing = 0;
+	g_headsetSynthesisSmoothingUpdateFn = nullptr;
+}
+
+void SetHeadsetSynthesisState(const std::string& serial, int lockedHeadsetSmoothing,
+                              HeadsetSynthesisSmoothingUpdateFn updateFn)
+{
+	g_headsetSynthesisTrackerSerial = serial;
+	g_headsetSynthesisLockedSmoothing = serial.empty() ? 0 : ClampPercent(lockedHeadsetSmoothing);
+	g_headsetSynthesisSmoothingUpdateFn = serial.empty() ? nullptr : updateFn;
 }
 
 bool TryGetHeadsetSynthesisTrackerSerial(std::string& serial)
@@ -55,6 +74,22 @@ bool TryGetHeadsetSynthesisTrackerSerial(std::string& serial)
 bool IsHeadsetSynthesisTracker(const std::string& serial)
 {
 	return !serial.empty() && serial == g_headsetSynthesisTrackerSerial;
+}
+
+bool TryGetHeadsetSynthesisLockedSmoothing(int& smoothness)
+{
+	if (g_headsetSynthesisTrackerSerial.empty()) return false;
+	smoothness = g_headsetSynthesisLockedSmoothing;
+	return true;
+}
+
+bool TrySetHeadsetSynthesisLockedSmoothing(int smoothness, const char* reason)
+{
+	if (g_headsetSynthesisTrackerSerial.empty() || !g_headsetSynthesisSmoothingUpdateFn) return false;
+	smoothness = ClampPercent(smoothness);
+	if (!g_headsetSynthesisSmoothingUpdateFn(smoothness, reason)) return false;
+	g_headsetSynthesisLockedSmoothing = smoothness;
+	return true;
 }
 
 } // namespace openvr_pair::overlay

@@ -6,6 +6,7 @@
 #include "CalibrationAnchor.h"
 #include "DeviceFilters.h"
 #include "Protocol.h"
+#include "SmoothingPredictionLogic.h"
 #include "UiHelpers.h"
 #include "Win32Text.h"
 
@@ -154,19 +155,15 @@ void SmoothingPlugin::DrawPredictionTab()
 	// trackers does to the SC math. Avoids a wall of intro text on entry.
 	ImGui::TextWrapped("Per-tracker prediction smoothing. 0 = raw motion, 100 = strongest smoothing.");
 	ImGui::Spacing();
-	// The synthesized (locked) HMD pose is not a tracked device in this list, so
-	// its smoothing lives with the head-mount lock. Point the user there.
-	ImGui::TextDisabled("Locked-headset smoothing (headset driven by a head-mounted tracker) is under");
-	ImGui::TextDisabled("Space Calibration -> head-mounted tracker -> \"Smooth locked headset\".");
 	std::string headsetSynthesisTrackerSerial;
 	const bool headsetSynthesisTrackerKnown =
 	    openvr_pair::overlay::TryGetHeadsetSynthesisTrackerSerial(headsetSynthesisTrackerSerial);
 	if (headsetSynthesisTrackerKnown) {
-		ImGui::TextColored(pal.statusInfo, "Headset synthesis tracker input is marked below when connected.");
+		ImGui::TextColored(pal.statusInfo, "Headset synthesis tracker uses the locked-headset smoothing value.");
 		if (ImGui::IsItemHovered()) {
 			ImGui::SetTooltip("Selected tracker: %s\n"
-			                  "Its row smooths the physical tracker input.\n"
-			                  "\"Smooth locked headset\" filters the final synthesized HMD pose.",
+			                  "Its row below controls the same value as Space Calibration's\n"
+			                  "\"Smooth locked headset\" slider.",
 			                  headsetSynthesisTrackerSerial.c_str());
 		}
 	}
@@ -189,11 +186,18 @@ void SmoothingPlugin::DrawPredictionTab()
 		const bool isCalibrationLocked = openvr_pair::overlay::TryGetCalibrationDeviceLockKind(serial, lockKind);
 		const bool isHeadsetSynthesisTracker = openvr_pair::overlay::IsHeadsetSynthesisTracker(serial);
 		const bool isLocked = isHmd || isCalibrationLocked;
+		int lockedHeadsetSmoothing = 0;
+		const bool haveLockedHeadsetSmoothing =
+		    openvr_pair::overlay::TryGetHeadsetSynthesisLockedSmoothing(lockedHeadsetSmoothing);
 
-		int smoothness = 0;
-		auto it = cfg_.trackerSmoothness.find(serial);
-		if (it != cfg_.trackerSmoothness.end()) smoothness = it->second;
-		if (isLocked) smoothness = 0;
+		if (isHeadsetSynthesisTracker &&
+		    wkopenvr::smoothing_prediction::RemoveHeadsetSynthesisTrackerSmoothness(cfg_, serial)) {
+			if (canSendToDriver) SendDevicePrediction(id, 0);
+			dirty = true;
+		}
+
+		int smoothness = wkopenvr::smoothing_prediction::VisiblePredictionRowSmoothness(
+		    cfg_, serial, isLocked, isHeadsetSynthesisTracker, haveLockedHeadsetSmoothing, lockedHeadsetSmoothing);
 
 		ImGui::PushID(("trk_" + serial).c_str());
 		ImGui::TextWrapped("%s  [%s]  %s", model.empty() ? "(unknown model)" : model.c_str(),
@@ -208,17 +212,28 @@ void SmoothingPlugin::DrawPredictionTab()
 			ImGui::TextColored(pal.statusInfo, "[continuous calibration target, locked]");
 		}
 		else if (isHeadsetSynthesisTracker) {
-			ImGui::TextColored(pal.statusInfo, "[headset synthesis tracker input]");
+			ImGui::TextColored(pal.statusInfo, "[locked headset smoothing]");
 		}
 
-		ImGui::BeginDisabled(isLocked);
-		if (ImGui::SliderInt("smoothness##slider", &smoothness, 0, 100, "%d%%")) {
-			if (smoothness <= 0)
-				cfg_.trackerSmoothness.erase(serial);
-			else
-				cfg_.trackerSmoothness[serial] = smoothness;
-			if (canSendToDriver) SendDevicePrediction(id, smoothness);
-			dirty = true;
+		const bool sliderDisabled = isLocked || (isHeadsetSynthesisTracker && !haveLockedHeadsetSmoothing);
+		ImGui::BeginDisabled(sliderDisabled);
+		const char* sliderLabel = isHeadsetSynthesisTracker ? "locked headset smoothing##slider" : "smoothness##slider";
+		if (ImGui::SliderInt(sliderLabel, &smoothness, 0, 100, "%d%%")) {
+			smoothness = wkopenvr::smoothing_prediction::ClampSmoothness(smoothness);
+			if (isHeadsetSynthesisTracker) {
+				if (openvr_pair::overlay::TrySetHeadsetSynthesisLockedSmoothing(smoothness,
+				                                                                "smoothing_prediction_tab")) {
+					if (canSendToDriver) SendDevicePrediction(id, 0);
+				}
+			}
+			else {
+				if (smoothness <= 0)
+					cfg_.trackerSmoothness.erase(serial);
+				else
+					cfg_.trackerSmoothness[serial] = smoothness;
+				if (canSendToDriver) SendDevicePrediction(id, smoothness);
+				dirty = true;
+			}
 		}
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered()) {
@@ -233,9 +248,8 @@ void SmoothingPlugin::DrawPredictionTab()
 				ImGui::SetTooltip("Desktop simulation only. The value is saved locally but no driver write is sent.");
 			}
 			else if (isHeadsetSynthesisTracker) {
-				ImGui::SetTooltip("This slider smooths the physical tracker before it drives headset synthesis.\n"
-				                  "\"Smooth locked headset\" filters the final synthesized HMD pose.\n"
-				                  "Using both can add lag.");
+				ImGui::SetTooltip("This is the same value as Space Calibration's locked-headset smoothing.\n"
+				                  "The physical tracker's per-tracker prediction smoothing is kept off.");
 			}
 			else {
 				ImGui::SetTooltip("0 = raw motion (no suppression).\n"

@@ -1128,24 +1128,7 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 void CalibrationContext::ResolveLockMode()
 {
 	const bool prev = lockRelativePosition;
-	switch (lockRelativePositionMode) {
-		case LockMode::OFF:
-			lockRelativePosition = false;
-			break;
-		case LockMode::ON:
-			lockRelativePosition = true;
-			break;
-		case LockMode::AUTO:
-			lockRelativePosition = false;
-			break;
-	}
-	// Experimental drift circuit-breaker: a one-way override that forces the
-	// relative pose locked regardless of the user's mode, freezing the
-	// calibration so runaway drift cannot keep moving it. Released by the
-	// breaker's own hysteresis in UpdateAutoLockDetector.
-	if (driftBreakerFrozen) {
-		lockRelativePosition = true;
-	}
+	lockRelativePosition = ResolveLockRelativePositionValue(lockRelativePositionMode, driftBreakerFrozen);
 	// Diagnostic: annotate every resolved-value change. The UI-side toggle of
 	// "Lock relative position" is invisible in post-session logs unless we
 	// trace the resolve step; without this a user-reported "I toggled Lock

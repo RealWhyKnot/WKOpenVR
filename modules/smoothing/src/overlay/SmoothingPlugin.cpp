@@ -14,6 +14,7 @@
 #include "Protocol.h"
 #include "ShellContext.h"
 #include "ShellFooter.h"
+#include "SmoothingPredictionLogic.h"
 #include "UiHelpers.h"
 
 #include <imgui.h>
@@ -56,6 +57,7 @@ void SmoothingPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 	TickPredictionRestore();
 	TickExternalToolDetection();
 	TickCalibrationLockClear();
+	TickHeadsetSynthesisSmoothnessCleanup();
 }
 
 bool SmoothingPlugin::ConnectIfNeeded()
@@ -170,6 +172,7 @@ void SmoothingPlugin::ReplayDevicePredictions(const char* reason)
 	int restored = 0;
 	int cleared = 0;
 	int skipped = 0;
+	bool dirty = false;
 	char buffer[vr::k_unMaxPropertyStringSize];
 	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
 		const auto deviceClass = vrSystem->GetTrackedDeviceClass(id);
@@ -222,6 +225,20 @@ void SmoothingPlugin::ReplayDevicePredictions(const char* reason)
 			continue;
 		}
 
+		if (openvr_pair::overlay::IsHeadsetSynthesisTracker(serial)) {
+			if (wkopenvr::smoothing_prediction::RemoveHeadsetSynthesisTrackerSmoothness(cfg_, serial)) {
+				SendDevicePrediction(id, 0);
+				dirty = true;
+				SM_LOG("[prediction] replay reason=%s id=%u serial='%s' value=0 headset-synthesis",
+				       reason ? reason : "unknown", id, serial.c_str());
+				++cleared;
+			}
+			else {
+				++skipped;
+			}
+			continue;
+		}
+
 		auto it = cfg_.trackerSmoothness.find(serial);
 		if (it == cfg_.trackerSmoothness.end()) {
 			++skipped;
@@ -232,6 +249,7 @@ void SmoothingPlugin::ReplayDevicePredictions(const char* reason)
 		       serial.c_str(), it->second);
 		++restored;
 	}
+	if (dirty) SaveConfig(cfg_);
 	SM_LOG("[prediction] replay complete reason=%s restored=%d cleared=%d skipped=%d saved=%zu",
 	       reason ? reason : "unknown", restored, cleared, skipped, cfg_.trackerSmoothness.size());
 }
@@ -286,6 +304,31 @@ void SmoothingPlugin::TickCalibrationLockClear()
 	}
 
 	lastKnownCalibrationLocks_ = std::move(locks);
+}
+
+void SmoothingPlugin::TickHeadsetSynthesisSmoothnessCleanup()
+{
+	std::string serial;
+	if (!openvr_pair::overlay::TryGetHeadsetSynthesisTrackerSerial(serial)) return;
+	if (!wkopenvr::smoothing_prediction::RemoveHeadsetSynthesisTrackerSmoothness(cfg_, serial)) return;
+
+	if (ipc_.IsConnected()) {
+		auto* vrSystem = vr::VRSystem();
+		if (vrSystem) {
+			char buffer[vr::k_unMaxPropertyStringSize];
+			for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
+				if (vrSystem->GetTrackedDeviceClass(id) == vr::TrackedDeviceClass_Invalid) continue;
+				vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+				vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, sizeof buffer, &err);
+				if (err != vr::TrackedProp_Success || serial != buffer) continue;
+				SendDevicePrediction(id, 0);
+				break;
+			}
+		}
+	}
+
+	SaveConfig(cfg_);
+	SM_LOG("[prediction] cleared stale per-tracker smoothing for headset synthesis tracker '%s'", serial.c_str());
 }
 
 void SmoothingPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)

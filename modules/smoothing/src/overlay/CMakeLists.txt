@@ -13,7 +13,8 @@ add_library(openvr_pair_feature_smoothing_overlay STATIC
 	SmoothingFingers.cpp
 	SmoothingPlugin.cpp
 	SmoothingPlugin.h
-	SmoothingPrediction.cpp)
+	SmoothingPrediction.cpp
+	SmoothingPredictionLogic.h)
 
 target_include_directories(openvr_pair_feature_smoothing_overlay PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}

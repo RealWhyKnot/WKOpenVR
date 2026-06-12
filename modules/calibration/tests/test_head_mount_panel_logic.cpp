@@ -142,7 +142,7 @@ TEST(HeadMountPanelLogic, TrackingStyleActionLabelsLockedRecoverySetup)
 	EXPECT_STREQ("Calibrate headset tracker", PrimaryActionLabel(action));
 
 	action.offsetCalibrated = true;
-	EXPECT_STREQ("Lock headset tracker", PrimaryActionLabel(action));
+	EXPECT_STREQ("Save relative pose", PrimaryActionLabel(action));
 
 	action.relativePosCalibrated = true;
 	EXPECT_STREQ("Re-calibrate headset tracker", PrimaryActionLabel(action));
@@ -159,7 +159,7 @@ TEST(HeadMountPanelLogic, TrackingStyleActionLabelsHardLockSetup)
 	EXPECT_STREQ("Calibrate headset tracker", PrimaryActionLabel(action));
 
 	action.offsetCalibrated = true;
-	EXPECT_STREQ("Lock headset tracker", PrimaryActionLabel(action));
+	EXPECT_STREQ("Save relative pose", PrimaryActionLabel(action));
 
 	action.relativePosCalibrated = true;
 	EXPECT_STREQ("Finish setup", PrimaryActionLabel(action));

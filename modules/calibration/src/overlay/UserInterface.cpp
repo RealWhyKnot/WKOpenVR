@@ -630,6 +630,22 @@ static void ApplySelectedTrackingStyle(TrackingStyle style)
 	Metrics::WriteLogAnnotation(buf);
 }
 
+static void SetLockRelativePositionModeFromUi(bool enabled)
+{
+	const auto prev = CalCtx.lockRelativePositionMode;
+	const auto next = LockRelativeModeFromEnabled(enabled);
+	if (prev == next) return;
+
+	CalCtx.lockRelativePositionMode = next;
+	CalCtx.ResolveLockMode();
+	SaveProfile(CalCtx);
+
+	char buf[120];
+	snprintf(buf, sizeof buf, "lock_relative_position_ui_write: prev=%d now=%d effective=%d", (int)prev, (int)next,
+	         (int)CalCtx.lockRelativePosition);
+	Metrics::WriteLogAnnotation(buf);
+}
+
 static void SeedSavedHeadsetTrackerLockFromUi(const char* reason)
 {
 	if (CCal_SeedHeadMountProxyRelativeLock(reason)) {
@@ -651,7 +667,7 @@ static bool FinishHardTrackerLockSetup()
 	if (ContinuousCalibrationIsRunning()) {
 		EndContinuousCalibration();
 	}
-	ApplyTrackingStylePreset(CalCtx, TrackingStyle::HardTrackerLock);
+	ApplyTrackingStylePresetPreservingLockMode(CalCtx, TrackingStyle::HardTrackerLock);
 	if (!CalCtx.relativePosCalibrated && !CCal_SeedHeadMountProxyRelativeLock("ui_finish_hard_lock_after_end")) {
 		Metrics::WriteLogAnnotation("head_mount_relative_lock_seed_failed: reason=ui_finish_hard_lock_after_end");
 		return false;
@@ -684,7 +700,7 @@ static wkopenvr::tracking_style_ui::ActionInputs BuildTrackingStyleActionInputs(
 
 static void RunPrimaryTrackingAction()
 {
-	ApplyTrackingStylePreset(CalCtx, CalCtx.trackingStyle);
+	ApplyTrackingStylePresetPreservingLockMode(CalCtx, CalCtx.trackingStyle);
 	CalCtx.ResolveLockMode();
 	SaveProfile(CalCtx);
 	SendHeadMountConfigFromCalCtx();
@@ -693,7 +709,7 @@ static void RunPrimaryTrackingAction()
 		case TrackingStyle::Manual:
 			if (ContinuousCalibrationIsRunning()) {
 				EndContinuousCalibration();
-				ApplyTrackingStylePreset(CalCtx, TrackingStyle::Manual);
+				ApplyTrackingStylePresetPreservingLockMode(CalCtx, TrackingStyle::Manual);
 				CalCtx.ResolveLockMode();
 				SaveProfile(CalCtx);
 				SendHeadMountConfigFromCalCtx();
@@ -754,10 +770,27 @@ static void BuildTrackingStyleSetup(bool continuousCalibration)
 	}
 
 	ImGui::Spacing();
+	ImGui::TextUnformatted("Lock relative position");
+	const bool lockRelativeOn = LockRelativeModeEnabled(CalCtx.lockRelativePositionMode);
+	if (ImGui::RadioButton("Off##lock_relative_position", !lockRelativeOn)) {
+		SetLockRelativePositionModeFromUi(false);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Continuous calibration may re-solve the relative pose between reference and target.");
+	}
+	ImGui::SameLine();
+	if (ImGui::RadioButton("On##lock_relative_position", lockRelativeOn)) {
+		SetLockRelativePositionModeFromUi(true);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Freeze the calibrated relative pose. Useful when the target is rigidly attached.");
+	}
+
+	ImGui::Spacing();
 	const bool headsetStyle = TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle);
 	const bool needsOffset = headsetStyle && !CalCtx.headMount.offsetCalibrated;
 	const bool needsRelativeLock = headsetStyle && CalCtx.headMount.offsetCalibrated && !CalCtx.relativePosCalibrated;
-	const char* setupSuffix = needsOffset ? " | offset needed" : (needsRelativeLock ? " | lock needed" : "");
+	const char* setupSuffix = needsOffset ? " | offset needed" : (needsRelativeLock ? " | relative pose needed" : "");
 	ImGui::TextDisabled("Status: %s | %s%s", continuousCalibration ? "running" : "stopped",
 	                    TrackingStyleSummary(CalCtx.trackingStyle), setupSuffix);
 

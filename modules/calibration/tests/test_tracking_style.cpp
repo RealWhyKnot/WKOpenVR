@@ -47,6 +47,36 @@ TEST(TrackingStyleTest, PresetMappingMatchesSupportedStyles)
 	EXPECT_FALSE(TrackingStyleShowsBoundarySetup(ctx.trackingStyle));
 }
 
+TEST(TrackingStyleTest, LockRelativeModeHelpersUseExplicitOnOffOnly)
+{
+	EXPECT_EQ(LockRelativeModeFromEnabled(false), CalibrationContext::LockMode::OFF);
+	EXPECT_EQ(LockRelativeModeFromEnabled(true), CalibrationContext::LockMode::ON);
+
+	EXPECT_FALSE(LockRelativeModeEnabled(CalibrationContext::LockMode::OFF));
+	EXPECT_TRUE(LockRelativeModeEnabled(CalibrationContext::LockMode::ON));
+	EXPECT_FALSE(LockRelativeModeEnabled(CalibrationContext::LockMode::AUTO));
+
+	EXPECT_FALSE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::OFF, false));
+	EXPECT_TRUE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::ON, false));
+	EXPECT_FALSE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::AUTO, false));
+	EXPECT_TRUE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::OFF, true));
+}
+
+TEST(TrackingStyleTest, PreservingPresetKeepsManualLockRelativeOverride)
+{
+	CalibrationContext ctx;
+	ctx.lockRelativePositionMode = CalibrationContext::LockMode::ON;
+
+	ApplyTrackingStylePresetPreservingLockMode(ctx, TrackingStyle::Continuous);
+
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Continuous);
+	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::Off);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+
+	ApplyTrackingStylePreset(ctx, TrackingStyle::Continuous);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+}
+
 TEST(TrackingStyleTest, HmdPoseEventRecoveryIsPlainContinuousOnly)
 {
 	EXPECT_TRUE(HmdPoseEventRecoveryEligible(CalibrationState::Continuous, TrackingStyle::Continuous));

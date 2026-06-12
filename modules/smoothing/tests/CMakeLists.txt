@@ -16,6 +16,7 @@ set(SMOOTHING_DRIVER_SRC "${CMAKE_SOURCE_DIR}/modules/smoothing/src/driver")
 
 add_executable(smoothing_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_skeletal_smoothing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_prediction_ui_logic.cpp
     ${SMOOTHING_DRIVER_SRC}/SkeletalSmoothingMath.cpp
     ${CMAKE_SOURCE_DIR}/core/src/driver/ServerTrackedDeviceProviderConfigPacking.cpp
 )
@@ -23,6 +24,7 @@ add_executable(smoothing_tests
 target_include_directories(smoothing_tests
     PRIVATE ${CMAKE_SOURCE_DIR}
     PRIVATE ${SMOOTHING_DRIVER_SRC}
+    PRIVATE ${CMAKE_SOURCE_DIR}/modules/smoothing/src/overlay
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/driver
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
