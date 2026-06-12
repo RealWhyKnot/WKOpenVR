@@ -152,6 +152,9 @@ void CCal_UmbrellaTick()
 void CCal_UmbrellaShutdown()
 {
 	g_vrReady = false;
+	// Persist any continuous-mode offset the per-tick throttle left pending, so a
+	// session that quits mid-continuous-calibration still writes its final value.
+	FlushPendingContinuousSave();
 	openvr_pair::overlay::SetCalibrationDeviceLocks({});
 	openvr_pair::overlay::SetHeadsetSynthesisTrackerSerial({});
 }

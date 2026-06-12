@@ -503,13 +503,11 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// real stalls, see comment on the field).
 	if ((now - s.lastTickLogTime) >= 1.0) {
 		s.lastTickLogTime = now;
-		char tickbuf[256];
-		snprintf(tickbuf, sizeof tickbuf,
-		         "reloc_tick: hmdValid=%d havePrevHmd=%d state=%d hmdRaw.result=%d hmdRaw.poseIsValid=%d "
-		         "hmdRaw.deviceIsConnected=%d lastHmdInvalidTime=%.3f secSinceStall=%.2f",
-		         (int)hmdValid, (int)s.havePrevHmd, (int)CalCtx.state, (int)hmdRaw.result, (int)hmdRaw.poseIsValid,
-		         (int)hmdRaw.deviceIsConnected, s.lastHmdInvalidTime, now - s.lastHmdInvalidTime);
-		Metrics::WriteLogAnnotation(tickbuf);
+		Metrics::LogAnnotationf(
+		    "reloc_tick: hmdValid=%d havePrevHmd=%d state=%d hmdRaw.result=%d hmdRaw.poseIsValid=%d "
+		    "hmdRaw.deviceIsConnected=%d lastHmdInvalidTime=%.3f secSinceStall=%.2f",
+		    (int)hmdValid, (int)s.havePrevHmd, (int)CalCtx.state, (int)hmdRaw.result, (int)hmdRaw.poseIsValid,
+		    (int)hmdRaw.deviceIsConnected, s.lastHmdInvalidTime, now - s.lastHmdInvalidTime);
 	}
 
 	if (!hmdValid) {

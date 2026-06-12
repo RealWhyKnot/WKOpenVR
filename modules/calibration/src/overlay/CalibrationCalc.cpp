@@ -296,20 +296,18 @@ void RecordContinuousPolicyShadow(const char* label, bool hasCurrent, const Eige
 	const double deltaRotationDeg =
 	    hasCurrent && candidateFinite ? TransformRotationDeltaDeg(current, candidate) : -1.0;
 
-	char buf[1150];
-	snprintf(buf, sizeof buf,
-	         "[cal-shadow-continuous][%s] candidate_available=%d runtime_would_apply=%d using_relpose=%d"
-	         " threshold=%.3f prior_rms_mm=%.3f candidate_rms_mm=%.3f relpose_rms_mm=%.3f"
-	         " last_candidate_rms_mm=%.3f improvement_mm=%.3f candidate_prior_ratio=%.3f"
-	         " delta_trans_cm=%.2f delta_rot_deg=%.2f consecutive_improve=%d"
-	         " would_accept_rms=%d would_accept_nova_not_worse=%d would_accept_improve10=%d"
-	         " would_accept_hysteresis=%d worse_than_last=%d large_transform_jump=%d",
-	         label ? label : "incremental", (int)candidateFinite, (int)runtimeWouldApply, (int)usingRelPose, threshold,
-	         priorErrorM * 1000.0, candidateErrorM * 1000.0, relPoseErrorM * 1000.0, lastCandidateErrorM * 1000.0,
-	         improvementM * 1000.0, candidateVsPriorRatio, deltaTranslationCm, deltaRotationDeg,
-	         consecutiveImprovingCandidates, (int)wouldAcceptRms, (int)wouldAcceptNovaNotWorse,
-	         (int)wouldAcceptImprove10, (int)wouldAcceptHysteresis, (int)worseThanLast, (int)largeTransformJump);
-	Metrics::WriteLogAnnotation(buf);
+	Metrics::LogAnnotationf("[cal-shadow-continuous][%s] candidate_available=%d runtime_would_apply=%d using_relpose=%d"
+	                        " threshold=%.3f prior_rms_mm=%.3f candidate_rms_mm=%.3f relpose_rms_mm=%.3f"
+	                        " last_candidate_rms_mm=%.3f improvement_mm=%.3f candidate_prior_ratio=%.3f"
+	                        " delta_trans_cm=%.2f delta_rot_deg=%.2f consecutive_improve=%d"
+	                        " would_accept_rms=%d would_accept_nova_not_worse=%d would_accept_improve10=%d"
+	                        " would_accept_hysteresis=%d worse_than_last=%d large_transform_jump=%d",
+	                        label ? label : "incremental", (int)candidateFinite, (int)runtimeWouldApply,
+	                        (int)usingRelPose, threshold, priorErrorM * 1000.0, candidateErrorM * 1000.0,
+	                        relPoseErrorM * 1000.0, lastCandidateErrorM * 1000.0, improvementM * 1000.0,
+	                        candidateVsPriorRatio, deltaTranslationCm, deltaRotationDeg, consecutiveImprovingCandidates,
+	                        (int)wouldAcceptRms, (int)wouldAcceptNovaNotWorse, (int)wouldAcceptImprove10,
+	                        (int)wouldAcceptHysteresis, (int)worseThanLast, (int)largeTransformJump);
 }
 
 void RecordCalibrationShadowDiagnostics(const char* label, const CalibrationQualityReport& q)

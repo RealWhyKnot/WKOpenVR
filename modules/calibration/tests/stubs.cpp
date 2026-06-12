@@ -90,6 +90,18 @@ void WriteLogAnnotation(const char* /*s*/)
 	// No-op: the tests don't open a CSV log file.
 }
 
+bool LoggingEnabled()
+{
+	return enableLogs;
+}
+
+void LogAnnotationf(const char* /*fmt*/, ...)
+{
+	// No-op: tests don't open a log file. Matches the real signature so any
+	// translation unit compiled into the test target (e.g. CalibrationCalc.cpp)
+	// links cleanly.
+}
+
 void SetTickRawPoses(const Eigen::Vector3d& /*refTrans*/, const Eigen::Quaterniond& /*refRot*/,
                      const Eigen::Vector3d& /*targetTrans*/, const Eigen::Quaterniond& /*targetRot*/,
                      TickPhase /*phase*/)

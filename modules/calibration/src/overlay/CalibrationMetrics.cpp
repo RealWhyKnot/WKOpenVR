@@ -10,6 +10,8 @@
 #include "MotionRecording.h"
 #endif
 #include <cerrno>
+#include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <fcntl.h>
 #include <openvr.h>
@@ -142,6 +144,11 @@ static bool logFlushFailed = false;
 static uint64_t logRowsWritten = 0;
 static uint64_t logAnnotationsWritten = 0;
 static uint64_t logOpenAttempts = 0;
+// Deferred device-sync bookkeeping (see openvr_pair::common::ShouldFlushLog).
+// Reset on every successful flush so all flush paths -- deferred, explicit
+// FlushLogFile, and the close/discard syncs -- stay consistent.
+static long long logBytesSinceFlush = 0;
+static std::chrono::steady_clock::time_point logLastFlushTime = std::chrono::steady_clock::now();
 static unsigned long lastLogErrorCode = 0;
 static std::string lastLogStatus = "not opened";
 
@@ -500,6 +507,8 @@ static bool FlushOpenLogFile()
 	if (!logFile) return false;
 	if (openvr_pair::common::FlushLogFileToDisk(logFile)) {
 		logFlushFailed = false;
+		logBytesSinceFlush = 0;
+		logLastFlushTime = std::chrono::steady_clock::now();
 		return true;
 	}
 	if (!logFlushFailed) {
@@ -526,8 +535,21 @@ static bool WriteRawLogText(const std::string& text)
 			return false;
 		}
 		logWriteFailed = false;
+		logBytesSinceFlush += static_cast<long long>(written);
 	}
-	return FlushOpenLogFile();
+
+	// Defer the device sync: the fwrite above is already in the OS page cache
+	// (low-latency mode), so we only force FlushFileBuffers once a time/size
+	// threshold is crossed. The close/discard paths sync unconditionally, so a
+	// clean exit always lands the tail. Return value reports write success, not
+	// flush success -- a deferred (skipped) flush must not look like a failure.
+	const long long msSinceFlush =
+	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - logLastFlushTime)
+	        .count();
+	if (openvr_pair::common::ShouldFlushLog(logBytesSinceFlush, msSinceFlush)) {
+		FlushOpenLogFile();
+	}
+	return true;
 }
 
 static long long CurrentLogSizeBytes()
@@ -797,6 +819,29 @@ void WriteLogAnnotation(const char* s)
 	if (WriteRawLogText(row.str())) {
 		++logAnnotationsWritten;
 	}
+}
+
+bool LoggingEnabled()
+{
+	return enableLogs;
+}
+
+void LogAnnotationf(const char* fmt, ...)
+{
+	// Gate before formatting: the whole point is to avoid the snprintf cost at
+	// hot per-tick sites when logging is off. WriteLogAnnotation re-checks via
+	// CheckLogOpen (which also handles lazy open), so this is purely the fast
+	// pre-filter.
+	if (!enableLogs) return;
+	// Sized to cover the largest annotation routed through here (the
+	// [cal-shadow-continuous] dump is ~1150 chars). vsnprintf truncates safely
+	// if a future caller exceeds this; the stack cost is transient.
+	char buf[1280];
+	va_list args;
+	va_start(args, fmt);
+	std::vsnprintf(buf, sizeof buf, fmt, args);
+	va_end(args);
+	WriteLogAnnotation(buf);
 }
 
 void WriteLogEntry()

@@ -243,6 +243,21 @@ void SetTickRawPoses(const Eigen::Vector3d& refTrans, const Eigen::Quaterniond& 
 void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics);
 
 void WriteLogAnnotation(const char* s);
+
+// True when diagnostic logging is enabled. Cheap gate (mirrors `enableLogs`, the
+// authoritative flag CheckLogOpen uses) so hot per-tick call sites can skip
+// building an annotation string that WriteLogAnnotation would otherwise format
+// and then drop. Intentionally does NOT also require the file to be open, so the
+// logger's lazy open-on-first-write still happens.
+bool LoggingEnabled();
+
+// printf-style annotation that formats only when logging is enabled. Equivalent
+// to snprintf-into-buffer followed by WriteLogAnnotation, but skips the format
+// cost when LoggingEnabled() is false (the release default and dev-toggle-off).
+// Use at high-frequency per-tick sites; rare one-shot sites can keep calling
+// WriteLogAnnotation directly.
+void LogAnnotationf(const char* fmt, ...);
+
 void WriteLogEntry();
 bool EnsureLogFileReady(const char* reason = nullptr);
 bool FlushLogFile();

@@ -10,6 +10,7 @@
 #include "CalibrationRecoveryTick.h"
 #include "CalibrationMetrics.h"
 #include "Configuration.h"
+#include "ContinuousPersistDecision.h"
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
 #include "VRState.h"
@@ -1351,11 +1352,28 @@ void EndContinuousCalibration()
 	}
 	CalCtx.continuousStartSnapshot = {};
 	CalCtx.lastAcceptedContinuousSnapshot = {};
+	// The selected snapshot above already persisted the final offset, so no
+	// throttled save is still pending.
+	CalCtx.continuousSaveDirty = false;
 	char endBuf[240];
 	snprintf(endBuf, sizeof endBuf, "EndContinuousCalibration: selected=%s start_snapshot=%d relPosCal=%d valid=%d",
 	         hadAccepted ? "last_accepted" : (hadStart ? "entry" : "none"), (int)hadStart,
 	         (int)CalCtx.relativePosCalibrated, (int)CalCtx.validProfile);
 	Metrics::WriteLogAnnotation(endBuf);
+}
+
+void FlushPendingContinuousSave()
+{
+	if (!CalCtx.continuousSaveDirty) {
+		return;
+	}
+	if (CalCtx.validProfile) {
+		SaveProfile(CalCtx);
+		CalCtx.lastContinuousSaveTime = Metrics::CurrentTime;
+		CalCtx.lastPersistedContinuousTranslation = CalCtx.calibratedTranslation;
+	}
+	CalCtx.continuousSaveDirty = false;
+	Metrics::WriteLogAnnotation("[profile-save][flush] reason=continuous_pending_on_shutdown");
 }
 
 void CalibrationTick(double time)
@@ -2712,21 +2730,19 @@ void CalibrationTick(double time)
 					        ? "none"
 					        : (Metrics::lastRejectReason.empty() ? "none" : Metrics::lastRejectReason.c_str());
 					const Eigen::Vector3d candidateCm = calibration.Transformation().translation() * 100.0;
-					char solveBuf[960];
-					snprintf(solveBuf, sizeof solveBuf,
-					         "continuous_solve_tick: state=%d(%s) paused=%d attempted=1 produced=%d"
-					         " calc_valid=%d source=%s sample_count=%zu required=%zu"
-					         " relPosCal=%d lockRel=%d validProfile=%d hasAccepted=%d"
-					         " candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f"
-					         " reject_reason=%s warm_grace=%d",
-					         (int)ctx.state, CalibrationStateName(ctx.state), (int)CalCtx.calibrationPaused,
-					         (int)solveProducedCandidate, (int)calibration.isValid(),
-					         calibration.LastComputeUsedRelPose() ? "relpose" : "full", calibration.SampleCount(),
-					         CalCtx.SampleCount(), (int)CalCtx.relativePosCalibrated, (int)CalCtx.lockRelativePosition,
-					         (int)CalCtx.validProfile, (int)CalCtx.lastAcceptedContinuousSnapshot.captured,
-					         candidateCm.x(), candidateCm.y(), candidateCm.z(), candidateCm.norm(), rejectReason,
-					         CalCtx.warmRestartGraceSamples);
-					Metrics::WriteLogAnnotation(solveBuf);
+					Metrics::LogAnnotationf(
+					    "continuous_solve_tick: state=%d(%s) paused=%d attempted=1 produced=%d"
+					    " calc_valid=%d source=%s sample_count=%zu required=%zu"
+					    " relPosCal=%d lockRel=%d validProfile=%d hasAccepted=%d"
+					    " candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f"
+					    " reject_reason=%s warm_grace=%d",
+					    (int)ctx.state, CalibrationStateName(ctx.state), (int)CalCtx.calibrationPaused,
+					    (int)solveProducedCandidate, (int)calibration.isValid(),
+					    calibration.LastComputeUsedRelPose() ? "relpose" : "full", calibration.SampleCount(),
+					    CalCtx.SampleCount(), (int)CalCtx.relativePosCalibrated, (int)CalCtx.lockRelativePosition,
+					    (int)CalCtx.validProfile, (int)CalCtx.lastAcceptedContinuousSnapshot.captured, candidateCm.x(),
+					    candidateCm.y(), candidateCm.z(), candidateCm.norm(), rejectReason,
+					    CalCtx.warmRestartGraceSamples);
 				}
 			}
 
@@ -3054,7 +3070,32 @@ void CalibrationTick(double time)
 		auto vrRot = VRRotationQuat(Eigen::Quaterniond(calibration.Transformation().rotation()));
 
 		ctx.validProfile = true;
-		SaveProfile(ctx);
+
+		// Persist throttle (continuous mode only): the in-memory offset above is
+		// already current and is republished to the driver via ScanAndApplyProfile
+		// below; the registry copy is read only at startup, so persisting a
+		// sub-millimetre micro-update every tick is wasted serialization + I/O.
+		// One-shot and every other state still save immediately. Continuous saves
+		// on a cadence; the lastAcceptedContinuousSnapshot capture below stays
+		// per-tick, so EndContinuousCalibration still persists the latest value,
+		// and FlushPendingContinuousSave() covers shutdown mid-continuous.
+		if (inContinuousState) {
+			const double offsetDeltaCm = (ctx.calibratedTranslation - ctx.lastPersistedContinuousTranslation).norm();
+			if (spacecal::persist::ShouldPersistContinuous(Metrics::CurrentTime, ctx.lastContinuousSaveTime,
+			                                               offsetDeltaCm, firstContinuousCandidate)) {
+				SaveProfile(ctx);
+				ctx.lastContinuousSaveTime = Metrics::CurrentTime;
+				ctx.lastPersistedContinuousTranslation = ctx.calibratedTranslation;
+				ctx.continuousSaveDirty = false;
+			}
+			else {
+				ctx.continuousSaveDirty = true;
+			}
+		}
+		else {
+			SaveProfile(ctx);
+			ctx.continuousSaveDirty = false;
+		}
 
 		ScanAndApplyProfile(ctx, snapFirstContinuousCandidate,
 		                    snapFirstContinuousCandidate ? "first_continuous_candidate" : nullptr);
@@ -3064,15 +3105,12 @@ void CalibrationTick(double time)
 			ctx.lastAcceptedContinuousSnapshot = ctx.CaptureProfileSnapshot();
 		}
 
-		char acceptBuf[360];
-		std::snprintf(acceptBuf, sizeof acceptBuf,
-		              "calibration_candidate_accepted: state=%d(%s) source=%s trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f "
-		              "relPosCal=%d validProfile=%d",
-		              (int)ctx.state, CalibrationStateName(ctx.state),
-		              calibration.LastComputeUsedRelPose() ? "relpose" : "full", ctx.calibratedTranslation.x(),
-		              ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(),
-		              (int)ctx.relativePosCalibrated, (int)ctx.validProfile);
-		Metrics::WriteLogAnnotation(acceptBuf);
+		Metrics::LogAnnotationf(
+		    "calibration_candidate_accepted: state=%d(%s) source=%s trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f "
+		    "relPosCal=%d validProfile=%d",
+		    (int)ctx.state, CalibrationStateName(ctx.state), calibration.LastComputeUsedRelPose() ? "relpose" : "full",
+		    ctx.calibratedTranslation.x(), ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(),
+		    ctx.calibratedTranslation.norm(), (int)ctx.relativePosCalibrated, (int)ctx.validProfile);
 
 		CalCtx.Log("Finished calibration, profile saved\n");
 	}

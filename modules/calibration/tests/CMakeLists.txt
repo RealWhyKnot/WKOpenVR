@@ -59,6 +59,8 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_head_mount_visibility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_prediction_smoothing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_recording_retention.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_continuous_persist.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_transform_payload_compare.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs.cpp
     ${CMAKE_SOURCE_DIR}/core/src/overlay/CalibrationAnchor.cpp
     ${CMAKE_SOURCE_DIR}/core/src/overlay/DeviceFilters.cpp

@@ -5,6 +5,7 @@
 #include "CalibrationPoseSampling.h"
 #include "MotionGate.h"
 #include "HeadMountVisibility.h"
+#include "TransformPayloadCompare.h"
 #include "VRState.h"
 
 #include <Eigen/Dense>
@@ -47,28 +48,6 @@ bool g_alignmentSpeedSent = false;
 protocol::SetTrackingSystemFallback g_lastFallback{};
 bool g_lastFallbackSent = false;
 
-bool TransformPayloadEqual(const protocol::SetDeviceTransform& a, const protocol::SetDeviceTransform& b)
-{
-	if (a.openVRID != b.openVRID) return false;
-	if (a.enabled != b.enabled) return false;
-	if (a.updateTranslation != b.updateTranslation) return false;
-	if (a.updateRotation != b.updateRotation) return false;
-	if (a.updateScale != b.updateScale) return false;
-	if (a.lerp != b.lerp) return false;
-	if (a.quash != b.quash) return false;
-	if (a.updateQuash != b.updateQuash) return false;
-	if (a.predictionSmoothness != b.predictionSmoothness) return false;
-	if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
-	if (a.scale != b.scale) return false;
-	for (int i = 0; i < 3; i++)
-		if (a.translation.v[i] != b.translation.v[i]) return false;
-	if (a.rotation.w != b.rotation.w || a.rotation.x != b.rotation.x || a.rotation.y != b.rotation.y ||
-	    a.rotation.z != b.rotation.z)
-		return false;
-	if (memcmp(a.target_system, b.target_system, sizeof a.target_system) != 0) return false;
-	return true;
-}
-
 bool FallbackPayloadEqual(const protocol::SetTrackingSystemFallback& a, const protocol::SetTrackingSystemFallback& b)
 {
 	if (memcmp(a.system_name, b.system_name, sizeof a.system_name) != 0) return false;
@@ -98,7 +77,7 @@ bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransfor
 {
 	if (id >= vr::k_unMaxTrackedDeviceCount) return false;
 	auto& cache = g_lastApplied[id];
-	if (cache.valid && TransformPayloadEqual(cache.payload, payload)) {
+	if (cache.valid && spacecal::apply::TransformPayloadNearEqual(cache.payload, payload)) {
 		return false;
 	}
 	protocol::Request req(protocol::RequestSetDeviceTransform);
@@ -106,20 +85,17 @@ bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransfor
 	Driver.SendBlocking(req);
 	cache.valid = true;
 	cache.payload = payload;
-	char buf[512];
-	snprintf(buf, sizeof buf,
-	         "profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
-	         " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f lerp=%d quash=%d"
-	         " recalibrateOnMovement=%d state=%d",
-	         id, (int)payload.enabled, payload.target_system, payload.translation.v[0] * 100.0,
-	         payload.translation.v[1] * 100.0, payload.translation.v[2] * 100.0,
-	         std::sqrt(payload.translation.v[0] * payload.translation.v[0] +
-	                   payload.translation.v[1] * payload.translation.v[1] +
-	                   payload.translation.v[2] * payload.translation.v[2]) *
-	             100.0,
-	         payload.scale, (int)payload.lerp, (int)payload.quash, (int)payload.recalibrateOnMovement,
-	         (int)CalCtx.state);
-	Metrics::WriteLogAnnotation(buf);
+	Metrics::LogAnnotationf("profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
+	                        " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f lerp=%d quash=%d"
+	                        " recalibrateOnMovement=%d state=%d",
+	                        id, (int)payload.enabled, payload.target_system, payload.translation.v[0] * 100.0,
+	                        payload.translation.v[1] * 100.0, payload.translation.v[2] * 100.0,
+	                        std::sqrt(payload.translation.v[0] * payload.translation.v[0] +
+	                                  payload.translation.v[1] * payload.translation.v[1] +
+	                                  payload.translation.v[2] * payload.translation.v[2]) *
+	                            100.0,
+	                        payload.scale, (int)payload.lerp, (int)payload.quash, (int)payload.recalibrateOnMovement,
+	                        (int)CalCtx.state);
 	return true;
 }
 
@@ -170,14 +146,11 @@ void SendFallbackIfChanged(const std::string& systemName, bool enabled, const Ei
 	// Legacy single-slot cache kept for any code that still reads it.
 	g_lastFallback = payload;
 	g_lastFallbackSent = true;
-	char buf[480];
-	snprintf(buf, sizeof buf,
-	         "profile_apply_fallback_sent: system='%s' enabled=%d"
-	         " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f"
-	         " recalibrateOnMovement=%d state=%d",
-	         systemName.c_str(), (int)enabled, translationCm.x(), translationCm.y(), translationCm.z(),
-	         translationCm.norm(), scale, (int)recalibrateOnMovement, (int)CalCtx.state);
-	Metrics::WriteLogAnnotation(buf);
+	Metrics::LogAnnotationf("profile_apply_fallback_sent: system='%s' enabled=%d"
+	                        " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f"
+	                        " recalibrateOnMovement=%d state=%d",
+	                        systemName.c_str(), (int)enabled, translationCm.x(), translationCm.y(), translationCm.z(),
+	                        translationCm.norm(), scale, (int)recalibrateOnMovement, (int)CalCtx.state);
 }
 
 void InvalidateTransformCacheForId(uint32_t id)

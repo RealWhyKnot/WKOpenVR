@@ -613,6 +613,17 @@ struct CalibrationContext
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
 
+	// Persistence throttle for continuous-mode offset writes. The in-memory
+	// calibration is updated on every accepted candidate, but the registry copy
+	// is read only at startup, so we persist on a cadence (see
+	// ContinuousPersistDecision.h) instead of every tick. `continuousSaveDirty`
+	// marks an in-memory continuous update that has not yet been persisted; it
+	// is flushed when continuous mode ends or on shutdown so the latest offset
+	// always survives to the next session.
+	double lastContinuousSaveTime = -1e9; // Metrics::CurrentTime basis
+	Eigen::Vector3d lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
+	bool continuousSaveDirty = false;
+
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
 	// Per-device shmem-side QPC timestamps captured alongside the most recent pose.
@@ -753,6 +764,9 @@ struct CalibrationContext
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 		continuousStartSnapshot = {};
 		lastAcceptedContinuousSnapshot = {};
+		lastContinuousSaveTime = -1e9;
+		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
+		continuousSaveDirty = false;
 		headMountSourceFingerprintValid = false;
 		headMountLastSampleSource = HeadMountSampleSource::Unknown;
 		headMountLastSourceMode = HeadMountMode::Off;
@@ -774,6 +788,9 @@ struct CalibrationContext
 		calibratedTranslation = Eigen::Vector3d::Zero();
 		calibratedRotation = Eigen::Vector3d::Zero();
 		lastAcceptedContinuousSnapshot = {};
+		lastContinuousSaveTime = -1e9;
+		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
+		continuousSaveDirty = false;
 		headMountNeedsFreshRelativePose = false;
 	}
 
@@ -916,6 +933,13 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 
 void InitCalibrator();
 void CalibrationTick(double time);
+
+// Persists the latest continuous-mode offset if a throttled update is pending
+// (see ContinuousPersistDecision.h). No-op when nothing is pending. Called on
+// shutdown so a session that quits mid-continuous-calibration still writes its
+// final offset, which the per-tick throttle may otherwise leave up to a couple
+// of seconds stale on disk.
+void FlushPendingContinuousSave();
 
 // `reason` is a short tag (e.g. "ui_start_button", "continuous_standby",
 // "tracker_liveness_reconnect", "auto_recovery_snap") that lands in the
