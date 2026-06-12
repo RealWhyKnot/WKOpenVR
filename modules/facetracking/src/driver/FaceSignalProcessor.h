@@ -15,7 +15,7 @@ class FaceSignalProcessor
 {
 public:
 	void Apply(protocol::FaceTrackingFrameBody& frame, const protocol::FaceTrackingConfig& config,
-	           const uint16_t* shape_tuning_percent = nullptr);
+	           const protocol::FaceShapeTuningParams* shape_tuning = nullptr, float* pre_tuning_expressions = nullptr);
 	void Reset();
 
 private:

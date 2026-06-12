@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -96,17 +97,32 @@ bool ContainsNoCase(const char* haystack, const char* needle)
 	return false;
 }
 
-const char* ShapeScaleStateLabel(int value)
+bool IsShapeModified(const FaceShapeTuningValue& value)
 {
-	if (value < protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return "Under";
-	if (value > protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return "Over";
+	return !IsDefaultFaceShapeTuningValue(value);
+}
+
+const char* ShapeScaleStateLabel(const FaceShapeTuningValue& value)
+{
+	const FaceShapeTuningValue clamped = ClampFaceShapeTuningValue(value);
+	if (clamped.min_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT ||
+	    clamped.max_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT) {
+		return "Limited";
+	}
+	if (clamped.scale_percent < protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return "Under";
+	if (clamped.scale_percent > protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return "Over";
 	return "Default";
 }
 
-StatusTone ShapeScaleStateTone(int value)
+StatusTone ShapeScaleStateTone(const FaceShapeTuningValue& value)
 {
-	if (value < protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return StatusTone::Warn;
-	if (value > protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return StatusTone::Info;
+	const FaceShapeTuningValue clamped = ClampFaceShapeTuningValue(value);
+	if (clamped.min_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT ||
+	    clamped.max_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT) {
+		return StatusTone::Info;
+	}
+	if (clamped.scale_percent < protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return StatusTone::Warn;
+	if (clamped.scale_percent > protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return StatusTone::Info;
 	return StatusTone::Idle;
 }
 
@@ -139,10 +155,51 @@ std::vector<uint32_t> VisibleShapeIndices(const FaceShapeScaleArray& values)
 		const char* name = facetracking::ExpressionName(i);
 		if (!MatchesGroup(name, static_cast<ShapeGroup>(g_state.group))) continue;
 		if (!ContainsNoCase(name, g_state.filter)) continue;
-		if (g_state.modified_only && values[i] == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) continue;
+		if (g_state.modified_only && !IsShapeModified(values[i])) continue;
 		indices.push_back(i);
 	}
 	return indices;
+}
+
+void DrawShapeValueMeter(float preTuning, float postTuning, bool live)
+{
+	const float width = ImGui::GetContentRegionAvail().x;
+	const float height = ImGui::GetFrameHeight();
+	if (!live || width <= 4.0f) {
+		ImGui::ProgressBar(0.0f, ImVec2(-1.0f, height), "no live data");
+		TooltipForLastItem("Waiting for current driver expression values.");
+		return;
+	}
+
+	preTuning = std::isfinite(preTuning) ? std::clamp(preTuning, 0.0f, 2.0f) : 0.0f;
+	postTuning = std::isfinite(postTuning) ? std::clamp(postTuning, 0.0f, 2.0f) : 0.0f;
+
+	char overlay[96];
+	std::snprintf(overlay, sizeof(overlay), "%.0f%% -> %.0f%%  avatar %.0f%%", preTuning * 100.0f, postTuning * 100.0f,
+	              std::min(postTuning, 1.0f) * 100.0f);
+	ImGui::ProgressBar(postTuning / 2.0f, ImVec2(-1.0f, height), overlay);
+
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	const ImVec2 min = ImGui::GetItemRectMin();
+	const ImVec2 max = ImGui::GetItemRectMax();
+	const float markerX = min.x + (max.x - min.x) * 0.5f;
+	const ImU32 markerColor = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+	drawList->AddLine(ImVec2(markerX, min.y + 2.0f), ImVec2(markerX, max.y - 2.0f), markerColor, 1.0f);
+
+	const float rawX = min.x + (max.x - min.x) * (preTuning / 2.0f);
+	const ImU32 rawColor = ImGui::GetColorU32(ImGuiCol_Text);
+	drawList->AddCircleFilled(ImVec2(rawX, (min.y + max.y) * 0.5f), 3.0f, rawColor);
+	TooltipForLastItem("Bar scale is 0..200%. The vertical marker is the usual 100% avatar amplitude limit.");
+}
+
+bool DrawPercentSlider(const char* label, int& value, int minValue, int maxValue, const char* tooltip,
+                       bool& deactivatedAfterEdit)
+{
+	ImGui::SetNextItemWidth(-1.0f);
+	const bool changed = ImGui::SliderInt(label, &value, minValue, maxValue, "%d%%");
+	if (ImGui::IsItemDeactivatedAfterEdit()) deactivatedAfterEdit = true;
+	TooltipForLastItem(tooltip);
+	return changed;
 }
 
 void SyncRenameBuffer(FacetrackingPlugin& plugin, const std::string& avatarKey)
@@ -160,7 +217,7 @@ void CopyTextButton(const char* id, const std::string& value)
 {
 	if (value.empty()) return;
 	ImGui::PushID(id);
-	if (ImGui::SmallButton("Copy")) {
+	if (ImGui::Button("Copy", ImVec2(-1.0f, 0.0f))) {
 		ImGui::SetClipboardText(value.c_str());
 	}
 	ImGui::PopID();
@@ -335,7 +392,7 @@ void DrawSelectedAvatarDetails(FacetrackingPlugin& plugin, const std::string& se
 	if (detailsTable) {
 		SetupFixedColumn("Label", 86.0f);
 		SetupStretchColumn("Value");
-		SetupFixedColumn("Action", 48.0f);
+		SetupFixedColumn("Action", 68.0f);
 
 		auto detailRow = [](const char* label, const std::string& value, const char* copyId) {
 			ImGui::TableNextRow();
@@ -416,8 +473,8 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 	ImGui::BeginDisabled(visibleIndices.empty());
 	if (ImGui::SmallButton("Reset visible##ft_shape_reset_visible")) {
 		for (uint32_t index : visibleIndices) {
-			values[index] = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
-			plugin.SetAvatarShapeScale(selectedKey, index, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+			values[index] = DefaultFaceShapeTuningValue();
+			plugin.SetAvatarShapeTuning(selectedKey, index, values[index]);
 		}
 		plugin.Profile().Save();
 		visibleIndices = VisibleShapeIndices(values);
@@ -454,45 +511,63 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 	}
 	TooltipForLastItem("Show only expressions that differ from 100%.");
 
+	const auto& telemetry = plugin.driver_telemetry_.Snapshot();
+	const bool liveValuesAvailable =
+	    selectedKey == activeKey && telemetry.valid && !telemetry.stale && telemetry.shape_values_valid;
+
 	ImGuiTableFlags flags =
 	    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
 	{
 		TableScope shapeTable("ft_shape_tuning_table", 4, flags);
 		if (!shapeTable) return;
-		SetupStretchColumn("Expression");
-		SetupStretchColumn("Scale", 1.4f);
-		SetupFixedColumn("State", 78.0f);
-		SetupFixedColumn("Action", 72.0f);
+		SetupStretchColumn("Expression", 1.0f);
+		SetupStretchColumn("Live", 1.35f);
+		SetupStretchColumn("Tuning", 1.7f);
+		SetupFixedColumn("Action", 74.0f);
 		DrawTableHeader();
 
 		for (uint32_t i : visibleIndices) {
 			const char* name = facetracking::ExpressionName(i);
+			FaceShapeTuningValue tuning = ClampFaceShapeTuningValue(values[i]);
 
 			ImGui::TableNextRow();
 			ImGui::PushID(static_cast<int>(i));
 
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextUnformatted(name);
+			DrawStatusText(ShapeScaleStateLabel(tuning), ShapeScaleStateTone(tuning));
 
 			ImGui::TableSetColumnIndex(1);
-			int value = std::clamp(values[i], 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
-			ImGui::SetNextItemWidth(-1.0f);
-			if (ImGui::SliderInt("##scale", &value, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT, "%d%%")) {
-				values[i] = value;
-				plugin.SetAvatarShapeScale(selectedKey, i, value);
-			}
-			if (ImGui::IsItemDeactivatedAfterEdit()) {
-				plugin.Profile().Save();
-			}
+			DrawShapeValueMeter(telemetry.pre_tuning_expressions[i], telemetry.post_tuning_expressions[i],
+			                    liveValuesAvailable);
 
 			ImGui::TableSetColumnIndex(2);
-			DrawStatusText(ShapeScaleStateLabel(values[i]), ShapeScaleStateTone(values[i]));
+			bool changed = false;
+			bool saveAfterEdit = false;
+			int scale = tuning.scale_percent;
+			int minValue = tuning.min_percent;
+			int maxValue = tuning.max_percent;
+			changed |= DrawPercentSlider("Scale##scale", scale, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT,
+			                             "Multiplier applied before output limits.", saveAfterEdit);
+			changed |= DrawPercentSlider("Min##min", minValue, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT,
+			                             "Lowest value this expression can output after scaling.", saveAfterEdit);
+			changed |= DrawPercentSlider("Max##max", maxValue, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT,
+			                             "Highest value this expression can output after scaling.", saveAfterEdit);
+			if (changed) {
+				tuning.scale_percent = scale;
+				tuning.min_percent = minValue;
+				tuning.max_percent = maxValue;
+				tuning = ClampFaceShapeTuningValue(tuning);
+				values[i] = tuning;
+				plugin.SetAvatarShapeTuning(selectedKey, i, tuning);
+			}
+			if (saveAfterEdit) plugin.Profile().Save();
 
 			ImGui::TableSetColumnIndex(3);
-			if (values[i] != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) {
+			if (IsShapeModified(tuning)) {
 				if (ImGui::SmallButton("Reset")) {
-					values[i] = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
-					plugin.SetAvatarShapeScale(selectedKey, i, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+					values[i] = DefaultFaceShapeTuningValue();
+					plugin.SetAvatarShapeTuning(selectedKey, i, values[i]);
 					plugin.Profile().Save();
 				}
 			}

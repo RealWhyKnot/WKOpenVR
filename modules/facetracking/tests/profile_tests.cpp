@@ -135,9 +135,9 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 
 	FacetrackingProfileStore store;
 	FaceShapeScaleArray values = DefaultFaceShapeScales();
-	values[26] = 80;  // JawOpen
-	values[45] = 60;  // MouthSmileLeft
-	values[46] = 150; // MouthSmileRight
+	values[26].scale_percent = 80;  // JawOpen
+	values[45].scale_percent = 60;  // MouthSmileLeft
+	values[46].scale_percent = 150; // MouthSmileRight
 	store.current.avatar_shape_tuning["avtr_test"] = values;
 	ASSERT_TRUE(store.Save());
 
@@ -159,10 +159,48 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 	ASSERT_TRUE(loaded.Load());
 	const FaceShapeScaleArray* loadedValues = FindShapeTuningForAvatar(loaded.current, "avtr_test");
 	ASSERT_NE(loadedValues, nullptr);
-	EXPECT_EQ((*loadedValues)[26], 80);
-	EXPECT_EQ((*loadedValues)[45], 60);
-	EXPECT_EQ((*loadedValues)[46], 150);
-	EXPECT_EQ((*loadedValues)[47], protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	EXPECT_EQ((*loadedValues)[26].scale_percent, 80);
+	EXPECT_EQ((*loadedValues)[45].scale_percent, 60);
+	EXPECT_EQ((*loadedValues)[46].scale_percent, 150);
+	EXPECT_TRUE(IsDefaultFaceShapeTuningValue((*loadedValues)[47]));
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsScaleMinAndMax)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	FaceShapeScaleArray values = DefaultFaceShapeScales();
+	values[8].scale_percent = 175; // EyeWideLeft
+	values[8].min_percent = 10;
+	values[8].max_percent = 70;
+	store.current.avatar_shape_tuning["avtr_test"] = values;
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	const picojson::value* tuning = openvr_pair::common::json::ValueAt(saved, "avatar_shape_tuning");
+	ASSERT_NE(tuning, nullptr);
+	ASSERT_TRUE(tuning->is<picojson::object>());
+	const auto& tuningObj = tuning->get<picojson::object>();
+	const auto& shapeObj = tuningObj.at("avtr_test").get<picojson::object>();
+	ASSERT_TRUE(shapeObj.at("EyeWideLeft").is<picojson::object>());
+	const auto& valueObj = shapeObj.at("EyeWideLeft").get<picojson::object>();
+	EXPECT_EQ(valueObj.at("scale").get<double>(), 175.0);
+	EXPECT_EQ(valueObj.at("min").get<double>(), 10.0);
+	EXPECT_EQ(valueObj.at("max").get<double>(), 70.0);
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	const FaceShapeScaleArray* loadedValues = FindShapeTuningForAvatar(loaded.current, "avtr_test");
+	ASSERT_NE(loadedValues, nullptr);
+	EXPECT_EQ((*loadedValues)[8].scale_percent, 175);
+	EXPECT_EQ((*loadedValues)[8].min_percent, 10);
+	EXPECT_EQ((*loadedValues)[8].max_percent, 70);
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);

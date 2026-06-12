@@ -193,15 +193,24 @@ void CopyMappedInternalShapesToUpstream(protocol::FaceTrackingFrameBody& frame)
 	}
 }
 
-void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const uint16_t* shape_tuning_percent)
+void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const protocol::FaceShapeTuningParams* shape_tuning)
 {
-	if (!shape_tuning_percent) return;
+	if (!shape_tuning) return;
 
 	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
 		const uint16_t percent =
-		    std::min<uint16_t>(shape_tuning_percent[i], protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		    std::min<uint16_t>(shape_tuning[i].scale_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		const uint16_t minPercent =
+		    std::min<uint16_t>(shape_tuning[i].min_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		const uint16_t maxPercent =
+		    std::min<uint16_t>(shape_tuning[i].max_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		const uint16_t lo = std::min(minPercent, maxPercent);
+		const uint16_t hi = std::max(minPercent, maxPercent);
 		const float scale = static_cast<float>(percent) / 100.0f;
-		frame.expressions[i] = ClampExpressionOutputSignal(frame.expressions[i] * scale);
+		const float minValue = static_cast<float>(lo) / 100.0f;
+		const float maxValue = static_cast<float>(hi) / 100.0f;
+		frame.expressions[i] =
+		    std::clamp(ClampExpressionOutputSignal(frame.expressions[i] * scale), minValue, maxValue);
 	}
 }
 
@@ -281,7 +290,7 @@ void FaceSignalProcessor::SmoothVec3(float value[3], Vec3Filter& state, uint8_t 
 }
 
 void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody& frame, const protocol::FaceTrackingConfig& config,
-                                const uint16_t* shape_tuning_percent)
+                                const protocol::FaceShapeTuningParams* shape_tuning, float* pre_tuning_expressions)
 {
 	const float dt_sec = FrameDeltaSeconds(frame);
 
@@ -324,7 +333,11 @@ void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody& frame, const pr
 			ApplyBrowSync(frame, BrowCorrectionStrength(config));
 		}
 
-		ApplyShapeTuning(frame, shape_tuning_percent);
+		if (pre_tuning_expressions) {
+			std::memcpy(pre_tuning_expressions, frame.expressions,
+			            sizeof(float) * protocol::FACETRACKING_EXPRESSION_COUNT);
+		}
+		ApplyShapeTuning(frame, shape_tuning);
 	}
 	else {
 		idle_mouth_open_since_qpc_ = 0;

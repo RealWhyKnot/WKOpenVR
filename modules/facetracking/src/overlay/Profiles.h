@@ -8,11 +8,21 @@
 #include <string>
 #include <vector>
 
-using FaceShapeScaleArray = std::array<int, protocol::FACETRACKING_EXPRESSION_COUNT>;
+struct FaceShapeTuningValue
+{
+	int scale_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
+	int min_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
+	int max_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
+};
+
+using FaceShapeScaleArray = std::array<FaceShapeTuningValue, protocol::FACETRACKING_EXPRESSION_COUNT>;
 
 inline constexpr const char* kDefaultAvatarShapeTuningKey = "__default__";
 
 FaceShapeScaleArray DefaultFaceShapeScales();
+FaceShapeTuningValue DefaultFaceShapeTuningValue();
+FaceShapeTuningValue ClampFaceShapeTuningValue(FaceShapeTuningValue value);
+bool IsDefaultFaceShapeTuningValue(const FaceShapeTuningValue& value);
 std::string NormalizeAvatarShapeTuningKey(std::string key);
 bool IsDefaultFaceShapeScales(const FaceShapeScaleArray& values);
 

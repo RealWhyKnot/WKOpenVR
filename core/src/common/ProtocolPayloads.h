@@ -419,6 +419,15 @@ struct FaceModuleSelection
 static const uint16_t FACETRACKING_SHAPE_TUNING_RESET_INDEX = 0xFFFFu;
 static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT = 100u;
 static const uint16_t FACETRACKING_SHAPE_TUNING_MAX_PERCENT = 200u;
+static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT = 0u;
+static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT = 200u;
+
+struct FaceShapeTuningParams
+{
+	uint16_t scale_percent; // 0..200; 100 = pass through
+	uint16_t min_percent;   // 0..200; lower post-scale output limit
+	uint16_t max_percent;   // 0..200; upper post-scale output limit
+};
 
 // POD payload for RequestSetFaceShapeTuning. index addresses one
 // FACETRACKING_EXPRESSION_COUNT slot. index == RESET_INDEX clears the driver's
@@ -428,7 +437,8 @@ struct FaceShapeTuning
 {
 	uint16_t index;
 	uint16_t scale_percent; // 0..200; 100 = pass through
-	uint8_t _reserved[4];
+	uint16_t min_percent;   // 0..200; 0 = default lower bound
+	uint16_t max_percent;   // 0..200; 200 = default upper bound
 };
 
 // =========================================================================

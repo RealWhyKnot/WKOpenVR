@@ -69,8 +69,8 @@ bool IsMetadataEmpty(const AvatarShapeTuningMetadata& metadata)
 uint32_t CountShapeOverrides(const FaceShapeScaleArray& values)
 {
 	uint32_t count = 0;
-	for (int value : values) {
-		if (value != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) ++count;
+	for (const FaceShapeTuningValue& value : values) {
+		if (!IsDefaultFaceShapeTuningValue(value)) ++count;
 	}
 	return count;
 }
@@ -400,21 +400,24 @@ void FacetrackingPlugin::RenameAvatarTuningKey(const std::string& key, const std
 	}
 }
 
-bool FacetrackingPlugin::SendShapeTuningRequest(uint16_t index, uint16_t percent)
+bool FacetrackingPlugin::SendShapeTuningRequest(uint16_t index, FaceShapeTuningValue value)
 {
 	if (!ipc_.IsConnected()) return false;
 
+	value = ClampFaceShapeTuningValue(value);
 	protocol::Request req(protocol::RequestSetFaceShapeTuning);
 	auto& tune = req.setFaceShapeTuning;
 	tune.index = index;
-	tune.scale_percent = std::min<uint16_t>(percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-	std::memset(tune._reserved, 0, sizeof(tune._reserved));
+	tune.scale_percent = static_cast<uint16_t>(value.scale_percent);
+	tune.min_percent = static_cast<uint16_t>(value.min_percent);
+	tune.max_percent = static_cast<uint16_t>(value.max_percent);
 
 	auto resp = ipc_.SendBlocking(req);
 	if (resp.type != protocol::ResponseSuccess) {
 		last_error_ = "Driver rejected SetFaceShapeTuning (type=" + std::to_string(resp.type) + ")";
-		FT_LOG_OVL("[ipc] driver rejected face shape tuning: index=%u scale=%u type=%d", (unsigned)index,
-		           (unsigned)percent, (int)resp.type);
+		FT_LOG_OVL("[ipc] driver rejected face shape tuning: index=%u scale=%u min=%u max=%u type=%d", (unsigned)index,
+		           (unsigned)value.scale_percent, (unsigned)value.min_percent, (unsigned)value.max_percent,
+		           (int)resp.type);
 		return false;
 	}
 	return true;
@@ -430,18 +433,16 @@ void FacetrackingPlugin::PushShapeTuningToDriver()
 	const std::string avatarKey = CurrentAvatarTuningKey();
 	const FaceShapeScaleArray* values = FindShapeTuningForAvatar(profile_.current, avatarKey);
 	try {
-		if (!SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX,
-		                            protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT)) {
+		if (!SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX, DefaultFaceShapeTuningValue())) {
 			return;
 		}
 
 		uint32_t overrides = 0;
 		if (values) {
 			for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-				const int value =
-				    std::clamp((*values)[i], 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
-				if (value == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) continue;
-				if (!SendShapeTuningRequest(static_cast<uint16_t>(i), static_cast<uint16_t>(value))) return;
+				const FaceShapeTuningValue value = ClampFaceShapeTuningValue((*values)[i]);
+				if (IsDefaultFaceShapeTuningValue(value)) continue;
+				if (!SendShapeTuningRequest(static_cast<uint16_t>(i), value)) return;
 				++overrides;
 			}
 		}
@@ -453,26 +454,41 @@ void FacetrackingPlugin::PushShapeTuningToDriver()
 	}
 }
 
-void FacetrackingPlugin::SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent)
+void FacetrackingPlugin::SetAvatarShapeTuning(const std::string& avatarKey, uint32_t index, FaceShapeTuningValue value)
 {
 	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return;
-	const int value = std::clamp(percent, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+	value = ClampFaceShapeTuningValue(value);
 	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
 	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, normalized);
-	if (values[index] == value) return;
+	const FaceShapeTuningValue old = ClampFaceShapeTuningValue(values[index]);
+	if (old.scale_percent == value.scale_percent && old.min_percent == value.min_percent &&
+	    old.max_percent == value.max_percent) {
+		return;
+	}
 
 	values[index] = value;
 	PruneAvatarShapeTuning(profile_.current, normalized);
 
 	if (normalized == CurrentAvatarTuningKey()) {
 		try {
-			SendShapeTuningRequest(static_cast<uint16_t>(index), static_cast<uint16_t>(value));
+			SendShapeTuningRequest(static_cast<uint16_t>(index), value);
 		}
 		catch (const std::exception& e) {
 			last_error_ = std::string("IPC error: ") + e.what();
-			FT_LOG_OVL("[ipc] SetAvatarShapeScale failed: %s", e.what());
+			FT_LOG_OVL("[ipc] SetAvatarShapeTuning failed: %s", e.what());
 		}
 	}
+}
+
+void FacetrackingPlugin::SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent)
+{
+	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return;
+	const int value = std::clamp(percent, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
+	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, normalized);
+	FaceShapeTuningValue next = values[index];
+	next.scale_percent = value;
+	SetAvatarShapeTuning(normalized, index, next);
 }
 
 void FacetrackingPlugin::ResetAvatarShapeTuning(const std::string& avatarKey)
@@ -482,8 +498,7 @@ void FacetrackingPlugin::ResetAvatarShapeTuning(const std::string& avatarKey)
 
 	if (normalized == CurrentAvatarTuningKey()) {
 		try {
-			SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX,
-			                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+			SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX, DefaultFaceShapeTuningValue());
 		}
 		catch (const std::exception& e) {
 			last_error_ = std::string("IPC error: ") + e.what();

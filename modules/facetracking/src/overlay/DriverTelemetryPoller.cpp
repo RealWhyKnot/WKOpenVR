@@ -6,6 +6,7 @@
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <sstream>
@@ -25,6 +26,19 @@ std::wstring ResolveTelemetryPath()
 {
 	std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"facetracking", false);
 	return dir.empty() ? std::wstring() : dir + L"\\driver_telemetry.json";
+}
+
+void ReadExpressionArray(const picojson::value& parent, const char* key,
+                         std::array<float, protocol::FACETRACKING_EXPRESSION_COUNT>& out)
+{
+	const picojson::value* value = openvr_pair::common::json::ValueAt(parent, key);
+	if (!value || !value->is<picojson::array>()) return;
+
+	const auto& arr = value->get<picojson::array>();
+	const size_t count = std::min<size_t>(arr.size(), out.size());
+	for (size_t i = 0; i < count; ++i) {
+		if (arr[i].is<double>()) out[i] = static_cast<float>(arr[i].get<double>());
+	}
 }
 
 } // namespace
@@ -106,12 +120,19 @@ void DriverTelemetryPoller::ReadFile()
 		s.focus_distance_m = static_cast<float>(openvr_pair::common::json::NumberAt(*verg, "focus_distance_m"));
 		s.ipd_m = static_cast<float>(openvr_pair::common::json::NumberAt(*verg, "ipd_m"));
 	}
+	if (const auto* shapes = openvr_pair::common::json::ValueAt(root, "shape_values");
+	    shapes && shapes->is<picojson::object>()) {
+		s.shape_values_valid = openvr_pair::common::json::BoolAt(*shapes, "valid");
+		s.shape_values_frame = static_cast<uint64_t>(openvr_pair::common::json::NumberAt(*shapes, "frame"));
+		ReadExpressionArray(*shapes, "pre_tuning", s.pre_tuning_expressions);
+		ReadExpressionArray(*shapes, "post_tuning", s.post_tuning_expressions);
+	}
 
 	FT_LOG_OVL("DriverTelemetryPoller: refreshed (pid=%d read=%llu processed=%llu osc_sent=%llu osc_drop=%llu verg=%s "
-	           "focus=%.3fm)",
+	           "focus=%.3fm shapes=%s)",
 	           s.driver_pid, (unsigned long long)s.frames_read, (unsigned long long)s.frames_processed,
 	           (unsigned long long)s.osc_messages_sent, (unsigned long long)s.osc_messages_dropped,
-	           s.vergence_enabled ? "on" : "off", s.focus_distance_m);
+	           s.vergence_enabled ? "on" : "off", s.focus_distance_m, s.shape_values_valid ? "valid" : "none");
 
 	snapshot_ = std::move(s);
 }

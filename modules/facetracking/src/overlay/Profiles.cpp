@@ -41,7 +41,7 @@ std::string TrimAsciiCopy(std::string value)
 	return value;
 }
 
-int ClampShapeScale(int value)
+int ClampShapeTuningPercent(int value)
 {
 	return std::clamp(value, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
 }
@@ -52,6 +52,28 @@ int ExpressionIndexForName(const std::string& name)
 		if (name == facetracking::ExpressionName(i)) return static_cast<int>(i);
 	}
 	return -1;
+}
+
+FaceShapeTuningValue DecodeShapeTuningValue(const picojson::value& value)
+{
+	FaceShapeTuningValue tuning = DefaultFaceShapeTuningValue();
+	if (value.is<double>()) {
+		tuning.scale_percent = ClampShapeTuningPercent(static_cast<int>(value.get<double>()));
+		return tuning;
+	}
+	if (!value.is<picojson::object>()) return tuning;
+
+	const auto& obj = value.get<picojson::object>();
+	auto readPercent = [&](const char* key, int fallback) {
+		auto it = obj.find(key);
+		if (it == obj.end() || !it->second.is<double>()) return fallback;
+		return ClampShapeTuningPercent(static_cast<int>(it->second.get<double>()));
+	};
+
+	tuning.scale_percent = readPercent("scale", tuning.scale_percent);
+	tuning.min_percent = readPercent("min", tuning.min_percent);
+	tuning.max_percent = readPercent("max", tuning.max_percent);
+	return ClampFaceShapeTuningValue(tuning);
 }
 
 void DecodeAvatarShapeTuning(const picojson::object& obj, FacetrackingProfile& p)
@@ -67,10 +89,9 @@ void DecodeAvatarShapeTuning(const picojson::object& obj, FacetrackingProfile& p
 		bool sawScale = false;
 		const auto& shapeObj = avatarEntry.second.get<picojson::object>();
 		for (const auto& shapeEntry : shapeObj) {
-			if (!shapeEntry.second.is<double>()) continue;
 			const int index = ExpressionIndexForName(shapeEntry.first);
 			if (index < 0) continue;
-			values[static_cast<size_t>(index)] = ClampShapeScale(static_cast<int>(shapeEntry.second.get<double>()));
+			values[static_cast<size_t>(index)] = DecodeShapeTuningValue(shapeEntry.second);
 			sawScale = true;
 		}
 
@@ -209,9 +230,20 @@ std::string Encode(const FacetrackingProfile& p)
 
 			picojson::object shapeObj;
 			for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-				const int value = ClampShapeScale(entry.second[i]);
-				if (value == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) continue;
-				shapeObj[facetracking::ExpressionName(i)] = picojson::value(static_cast<double>(value));
+				const FaceShapeTuningValue value = ClampFaceShapeTuningValue(entry.second[i]);
+				if (IsDefaultFaceShapeTuningValue(value)) continue;
+				if (value.min_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT &&
+				    value.max_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT) {
+					shapeObj[facetracking::ExpressionName(i)] =
+					    picojson::value(static_cast<double>(value.scale_percent));
+				}
+				else {
+					picojson::object shapeValue;
+					shapeValue["scale"] = picojson::value(static_cast<double>(value.scale_percent));
+					shapeValue["min"] = picojson::value(static_cast<double>(value.min_percent));
+					shapeValue["max"] = picojson::value(static_cast<double>(value.max_percent));
+					shapeObj[facetracking::ExpressionName(i)] = picojson::value(shapeValue);
+				}
 			}
 			if (!shapeObj.empty()) {
 				tuningRoot[NormalizeAvatarShapeTuningKey(entry.first)] = picojson::value(shapeObj);
@@ -247,8 +279,30 @@ std::string Encode(const FacetrackingProfile& p)
 FaceShapeScaleArray DefaultFaceShapeScales()
 {
 	FaceShapeScaleArray values{};
-	values.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+	values.fill(DefaultFaceShapeTuningValue());
 	return values;
+}
+
+FaceShapeTuningValue DefaultFaceShapeTuningValue()
+{
+	return FaceShapeTuningValue{};
+}
+
+FaceShapeTuningValue ClampFaceShapeTuningValue(FaceShapeTuningValue value)
+{
+	value.scale_percent = ClampShapeTuningPercent(value.scale_percent);
+	value.min_percent = ClampShapeTuningPercent(value.min_percent);
+	value.max_percent = ClampShapeTuningPercent(value.max_percent);
+	if (value.min_percent > value.max_percent) std::swap(value.min_percent, value.max_percent);
+	return value;
+}
+
+bool IsDefaultFaceShapeTuningValue(const FaceShapeTuningValue& value)
+{
+	const FaceShapeTuningValue clamped = ClampFaceShapeTuningValue(value);
+	return clamped.scale_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT &&
+	       clamped.min_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT &&
+	       clamped.max_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
 }
 
 std::string NormalizeAvatarShapeTuningKey(std::string key)
@@ -260,7 +314,7 @@ std::string NormalizeAvatarShapeTuningKey(std::string key)
 bool IsDefaultFaceShapeScales(const FaceShapeScaleArray& values)
 {
 	return std::all_of(values.begin(), values.end(),
-	                   [](int value) { return value == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT; });
+	                   [](const FaceShapeTuningValue& value) { return IsDefaultFaceShapeTuningValue(value); });
 }
 
 FaceShapeScaleArray& ShapeTuningForAvatar(FacetrackingProfile& profile, const std::string& avatarKey)

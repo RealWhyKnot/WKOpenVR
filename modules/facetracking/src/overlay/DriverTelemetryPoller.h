@@ -12,8 +12,11 @@
 // functions immediately after.
 
 #include <chrono>
+#include <array>
 #include <cstdint>
 #include <string>
+
+#include "Protocol.h"
 
 namespace facetracking {
 
@@ -33,6 +36,11 @@ struct DriverTelemetrySnapshot
 	bool vergence_enabled = false;
 	float focus_distance_m = 0.f;
 	float ipd_m = 0.f;
+
+	bool shape_values_valid = false;
+	uint64_t shape_values_frame = 0;
+	std::array<float, protocol::FACETRACKING_EXPRESSION_COUNT> pre_tuning_expressions{};
+	std::array<float, protocol::FACETRACKING_EXPRESSION_COUNT> post_tuning_expressions{};
 };
 
 class DriverTelemetryPoller

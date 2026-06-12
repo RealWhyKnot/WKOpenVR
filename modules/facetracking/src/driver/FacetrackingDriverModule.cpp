@@ -38,7 +38,8 @@
 namespace facetracking {
 namespace {
 
-using FaceShapeTuningArray = std::array<uint16_t, protocol::FACETRACKING_EXPRESSION_COUNT>;
+using FaceShapeTuningArray = std::array<protocol::FaceShapeTuningParams, protocol::FACETRACKING_EXPRESSION_COUNT>;
+using FaceExpressionArray = std::array<float, protocol::FACETRACKING_EXPRESSION_COUNT>;
 
 // -----------------------------------------------------------------------
 // Telemetry sidecar helpers
@@ -73,11 +74,48 @@ static bool AtomicWriteFile(const std::wstring& final_path, const std::string& c
 	return true;
 }
 
+static protocol::FaceShapeTuningParams DefaultShapeTuning()
+{
+	return protocol::FaceShapeTuningParams{protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT,
+	                                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT,
+	                                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT};
+}
+
+static protocol::FaceShapeTuningParams NormalizeShapeTuning(const protocol::FaceShapeTuning& tuning)
+{
+	protocol::FaceShapeTuningParams params{};
+	params.scale_percent = std::min<uint16_t>(tuning.scale_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+
+	if (tuning.min_percent == 0 && tuning.max_percent == 0) {
+		params.min_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
+		params.max_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
+	}
+	else {
+		params.min_percent = std::min<uint16_t>(tuning.min_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		params.max_percent = std::min<uint16_t>(tuning.max_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
+		if (params.min_percent > params.max_percent) std::swap(params.min_percent, params.max_percent);
+	}
+
+	return params;
+}
+
+static void AppendExpressionArrayJson(std::ostringstream& o, const FaceExpressionArray& values)
+{
+	o << "[";
+	for (size_t i = 0; i < values.size(); ++i) {
+		if (i != 0) o << ",";
+		o << values[i];
+	}
+	o << "]";
+}
+
 // Build driver_telemetry.json from current state.
 static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint64_t frames_read,
                                       uint64_t osc_messages_sent, uint64_t osc_messages_dropped,
                                       const std::string& active_module_uuid, bool vergence_enabled, float focus_m,
-                                      float ipd_m)
+                                      float ipd_m, bool shape_values_valid, uint64_t shape_values_frame,
+                                      const FaceExpressionArray& pre_tuning_expressions,
+                                      const FaceExpressionArray& post_tuning_expressions)
 {
 	// Timestamp.
 	SYSTEMTIME st{};
@@ -97,7 +135,7 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
 
 	std::ostringstream o;
 	o << "{\n";
-	o << "  \"schema_version\": 1,\n";
+	o << "  \"schema_version\": 2,\n";
 	o << "  \"driver_pid\": " << pid << ",\n";
 	o << "  \"wrote_at\": \"" << tsz << "\",\n";
 	o << "  \"wrote_at_unix\": " << unix_s << ",\n";
@@ -110,6 +148,16 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
 	o << "    \"enabled\": " << (vergence_enabled ? "true" : "false") << ",\n";
 	o << "    \"focus_distance_m\": " << focus_m << ",\n";
 	o << "    \"ipd_m\": " << ipd_m << "\n";
+	o << "  },\n";
+	o << "  \"shape_values\": {\n";
+	o << "    \"valid\": " << (shape_values_valid ? "true" : "false") << ",\n";
+	o << "    \"frame\": " << shape_values_frame << ",\n";
+	o << "    \"pre_tuning\": ";
+	AppendExpressionArrayJson(o, pre_tuning_expressions);
+	o << ",\n";
+	o << "    \"post_tuning\": ";
+	AppendExpressionArrayJson(o, post_tuning_expressions);
+	o << "\n";
 	o << "  }\n";
 	o << "}\n";
 	return o.str();
@@ -342,24 +390,28 @@ public:
 				const auto& tune = req.setFaceShapeTuning;
 				std::lock_guard<std::mutex> lk(config_mutex_);
 				if (tune.index == protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX) {
-					shape_tuning_percent_.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+					shape_tuning_percent_.fill(DefaultShapeTuning());
 					FT_LOG_DRV("[module] face shape tuning reset", 0);
 					resp.type = protocol::ResponseSuccess;
 					return true;
 				}
 				if (tune.index >= protocol::FACETRACKING_EXPRESSION_COUNT) {
-					FT_LOG_DRV("[module] face shape tuning rejected: index=%u scale=%u", (unsigned)tune.index,
-					           (unsigned)tune.scale_percent);
+					FT_LOG_DRV("[module] face shape tuning rejected: index=%u scale=%u min=%u max=%u",
+					           (unsigned)tune.index, (unsigned)tune.scale_percent, (unsigned)tune.min_percent,
+					           (unsigned)tune.max_percent);
 					resp.type = protocol::ResponseInvalid;
 					return true;
 				}
-				const uint16_t percent =
-				    std::min<uint16_t>(tune.scale_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-				const uint16_t old = shape_tuning_percent_[tune.index];
-				shape_tuning_percent_[tune.index] = percent;
-				if (old != percent) {
-					FT_LOG_DRV("[module] face shape tuning update: index=%u %u%%->%u%%", (unsigned)tune.index,
-					           (unsigned)old, (unsigned)percent);
+				const protocol::FaceShapeTuningParams params = NormalizeShapeTuning(tune);
+				const protocol::FaceShapeTuningParams old = shape_tuning_percent_[tune.index];
+				shape_tuning_percent_[tune.index] = params;
+				if (old.scale_percent != params.scale_percent || old.min_percent != params.min_percent ||
+				    old.max_percent != params.max_percent) {
+					FT_LOG_DRV("[module] face shape tuning update: index=%u scale=%u%%->%u%% min=%u%%->%u%% "
+					           "max=%u%%->%u%%",
+					           (unsigned)tune.index, (unsigned)old.scale_percent, (unsigned)params.scale_percent,
+					           (unsigned)old.min_percent, (unsigned)params.min_percent, (unsigned)old.max_percent,
+					           (unsigned)params.max_percent);
 				}
 				resp.type = protocol::ResponseSuccess;
 				return true;
@@ -397,7 +449,7 @@ private:
 	protocol::FaceTrackingConfig config_{};
 	FaceShapeTuningArray shape_tuning_percent_ = [] {
 		FaceShapeTuningArray values{};
-		values.fill(protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT);
+		values.fill(DefaultShapeTuning());
 		return values;
 	}();
 	mutable std::mutex config_mutex_;
@@ -412,6 +464,10 @@ private:
 	uint64_t frames_read_ = 0;
 	uint64_t osc_messages_sent_ = 0;
 	uint64_t osc_messages_dropped_ = 0;
+	bool latest_shape_values_valid_ = false;
+	uint64_t latest_shape_values_frame_ = 0;
+	FaceExpressionArray latest_pre_tuning_expressions_{};
+	FaceExpressionArray latest_post_tuning_expressions_{};
 	FaceOscAddressFilter osc_filter_;
 	bool telemetry_write_failed_ = false;
 
@@ -722,10 +778,18 @@ private:
 				              cfg.eyelid_sync_mode);
 			}
 
-			signal_processor_.Apply(frame, cfg, shapeTuning.data());
+			FaceExpressionArray preTuningExpressions{};
+			signal_processor_.Apply(frame, cfg, shapeTuning.data(), preTuningExpressions.data());
 
 			const bool eye_valid = (frame.flags & 0x1u) != 0;
 			const bool expr_valid = (frame.flags & 0x2u) != 0;
+			if (expr_valid) {
+				latest_shape_values_valid_ = true;
+				latest_shape_values_frame_ = frames_read_;
+				latest_pre_tuning_expressions_ = preTuningExpressions;
+				std::copy(frame.expressions, frame.expressions + protocol::FACETRACKING_EXPRESSION_COUNT,
+				          latest_post_tuning_expressions_.begin());
+			}
 
 			// Publish to SteamVR inputs.
 			if (cfg._reserved_native && device_) {
@@ -911,9 +975,10 @@ private:
 		const float focus_m = verg_enabled ? vergence_.LastFocusDistanceM() : 0.f;
 		const float ipd_m = verg_enabled ? vergence_.LastIpdM() : 0.f;
 
-		std::string json =
-		    BuildTelemetryJson(pid, frames_processed_, frames_read_, osc_messages_sent_, osc_messages_dropped_,
-		                       cfg.active_module_uuid, verg_enabled, focus_m, ipd_m);
+		std::string json = BuildTelemetryJson(pid, frames_processed_, frames_read_, osc_messages_sent_,
+		                                      osc_messages_dropped_, cfg.active_module_uuid, verg_enabled, focus_m,
+		                                      ipd_m, latest_shape_values_valid_, latest_shape_values_frame_,
+		                                      latest_pre_tuning_expressions_, latest_post_tuning_expressions_);
 
 		if (!AtomicWriteFile(telemetry_path_, json)) {
 			if (!telemetry_write_failed_) {
