@@ -88,6 +88,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Adopt shared tab bar and table components (f904a86)
 - **oscrouter:** Draw tables and status text via shared UI library (356bf84)
 - **overlay:** Skip UI rebuild when no surface is visible (82e033a)
+- **overlay:** Trim per-tick persistence, IPC, and log churn (a8978dd)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
