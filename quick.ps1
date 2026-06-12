@@ -37,7 +37,7 @@ param(
 	[switch]$InstallVulkanSdk,
 
 	# Install the Vulkan SDK into this directory instead of the default
-	# C:\VulkanSDK\<version>. Pass a user-writable path to install without elevation.
+	# C:\VulkanSDK\<version>. The install runs elevated (a UAC prompt appears).
 	[string]$VulkanSdkRoot = ""
 )
 

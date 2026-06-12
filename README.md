@@ -75,7 +75,7 @@ The captions speech host runs whisper.cpp on the CPU by default. To build it wit
 ./quick.ps1 -CaptionsVulkan        # build + deploy for local SteamVR
 ```
 
-This needs the [Vulkan SDK](https://vulkan.lunarg.com) (headers plus the `glslc` shader compiler) on the build host; at runtime the host uses only the system `vulkan-1.dll`. When the SDK is missing the build offers to download and install it -- add `-InstallVulkanSdk` to accept without prompting, and `-VulkanSdkRoot <dir>` to install into a user-writable directory without administrator rights. Released artifacts always include the Vulkan backend. With the backend compiled in, the host runs speech recognition on the GPU when a Vulkan device is present and falls back to the CPU automatically otherwise.
+This needs the [Vulkan SDK](https://vulkan.lunarg.com) (headers plus the `glslc` shader compiler) on the build host; at runtime the host uses only the system `vulkan-1.dll`. When the SDK is missing the build offers to download and install it -- add `-InstallVulkanSdk` to skip the confirmation prompt, and `-VulkanSdkRoot <dir>` to install into a different directory. The LunarG installer requires administrator rights, so a UAC prompt appears during the install. Released artifacts always include the Vulkan backend. With the backend compiled in, the host runs speech recognition on the GPU when a Vulkan device is present and falls back to the CPU automatically otherwise.
 
 ## Diagnostics
 

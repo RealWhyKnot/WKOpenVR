@@ -23,12 +23,15 @@
     local and CI builds.
 
 .PARAMETER Root
-    Install directory. Defaults to C:\VulkanSDK\<Version> (matches the installer
-    default; needs administrator rights). Pass a user-writable path to install
-    without elevation, for example "$env:USERPROFILE\VulkanSDK\<Version>".
+    Install directory. Defaults to C:\VulkanSDK\<Version>. The LunarG installer
+    requires administrator rights, so the install is launched elevated (a UAC
+    prompt appears). On an already-elevated shell (for example CI) no prompt is
+    shown.
 
 .PARAMETER AutoInstall
-    Install without prompting. Used by CI and other non-interactive callers.
+    Install without prompting for confirmation. The UAC elevation prompt may
+    still appear unless the shell is already elevated. Used by CI and other
+    non-interactive callers.
 #>
 param(
     [string]$Version = "1.3.296.0",
@@ -114,21 +117,33 @@ if (-not $effectiveRoot) {
 $installer = Join-Path $env:TEMP "VulkanSDK-$Version-Installer.exe"
 $url = "https://sdk.lunarg.com/sdk/download/$Version/windows/VulkanSDK-$Version-Installer.exe"
 
-Write-Host "Downloading Vulkan SDK $Version ..." -ForegroundColor Cyan
-$oldProgress = $ProgressPreference
-$ProgressPreference = "SilentlyContinue"  # large file: skip the per-byte progress UI
-try {
-    Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+if ((Test-Path $installer) -and ((Get-Item $installer).Length -gt 50MB)) {
+    Write-Host "Using cached Vulkan SDK installer: $installer" -ForegroundColor Cyan
 }
-finally {
-    $ProgressPreference = $oldProgress
+else {
+    Write-Host "Downloading Vulkan SDK $Version ..." -ForegroundColor Cyan
+    $oldProgress = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue"  # large file: skip the per-byte progress UI
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+    }
+    finally {
+        $ProgressPreference = $oldProgress
+    }
 }
 
-Write-Host "Installing Vulkan SDK to $effectiveRoot (silent) ..." -ForegroundColor Cyan
+# The LunarG installer needs administrator rights. Launch it elevated so a UAC
+# prompt appears; on an already-elevated shell (CI) this runs without a prompt.
+Write-Host "Installing Vulkan SDK to $effectiveRoot (accept the UAC prompt) ..." -ForegroundColor Cyan
 $installArgs = @("--root", $effectiveRoot, "--accept-licenses", "--default-answer", "--confirm-command", "install")
-$proc = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
+try {
+    $proc = Start-Process -FilePath $installer -ArgumentList $installArgs -Verb RunAs -Wait -PassThru
+}
+catch {
+    throw "Could not start the Vulkan SDK installer with elevation: $($_.Exception.Message). Accept the UAC prompt, or install manually from https://vulkan.lunarg.com."
+}
 if ($proc.ExitCode -ne 0) {
-    throw "Vulkan SDK installer exited with code $($proc.ExitCode). If the install needs administrator rights, run the build from an elevated shell or pass a user-writable -Root."
+    throw "Vulkan SDK installer exited with code $($proc.ExitCode)."
 }
 
 $resolved = Resolve-VulkanSdkRoot -PreferredRoot $effectiveRoot
