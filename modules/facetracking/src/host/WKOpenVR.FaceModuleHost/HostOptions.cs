@@ -31,6 +31,10 @@ public sealed class HostOptions
     public bool E2eFakeFrames { get; set; } = false;
     public int E2eFakeFrameCount { get; set; } = 5;
     public int E2eFakeFrameIntervalMs { get; set; } = 5;
+    public bool FaceReplayRecordEnabled { get; set; }
+    public string FaceReplayDirectory { get; set; } = Path.Combine(
+        AppPaths.FaceTrackingDir(), "replays");
+    public double FaceReplayMaxHz { get; set; } = 30.0;
     public string? E2eSingletonSuffix { get; set; }
     public string? OwnerLivenessName { get; set; }
     public ulong OwnerLivenessNonce { get; set; }
@@ -56,6 +60,23 @@ public sealed class HostOptions
             opts.DebugLoggingEnabled = IsTruthy(envDebug);
         }
 
+        if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_REPLAY_RECORD") is { } envReplay)
+        {
+            opts.FaceReplayRecordEnabled = IsTruthy(envReplay);
+        }
+
+        if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_REPLAY_DIR") is { } envReplayDir &&
+            !string.IsNullOrWhiteSpace(envReplayDir))
+        {
+            opts.FaceReplayDirectory = envReplayDir;
+        }
+
+        if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_REPLAY_HZ") is { } envReplayHz &&
+            double.TryParse(envReplayHz, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double replayHz))
+        {
+            opts.FaceReplayMaxHz = Math.Max(0.0, replayHz);
+        }
+
         // Command-line args override env vars.
         for (int i = 0; i < args.Length; i++)
         {
@@ -67,6 +88,15 @@ public sealed class HostOptions
                 case "--status-file" when i + 1 < args.Length: opts.StatusFilePath = args[++i]; break;
                 case "--log-file" when i + 1 < args.Length: opts.LogFilePath = args[++i]; break;
                 case "--debug-logging" when i + 1 < args.Length: opts.DebugLoggingEnabled = IsTruthy(args[++i]); break;
+                case "--face-replay-record": opts.FaceReplayRecordEnabled = true; break;
+                case "--face-replay-dir" when i + 1 < args.Length: opts.FaceReplayDirectory = args[++i]; break;
+                case "--face-replay-hz" when i + 1 < args.Length:
+                    if (double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double argReplayHz))
+                    {
+                        opts.FaceReplayMaxHz = Math.Max(0.0, argReplayHz);
+                    }
+
+                    break;
                 case "--e2e-singleton-suffix" when i + 1 < args.Length: opts.E2eSingletonSuffix = args[++i]; break;
                 case "--owner-liveness" when i + 1 < args.Length: opts.OwnerLivenessName = args[++i]; break;
                 case "--owner-liveness-nonce" when i + 1 < args.Length:

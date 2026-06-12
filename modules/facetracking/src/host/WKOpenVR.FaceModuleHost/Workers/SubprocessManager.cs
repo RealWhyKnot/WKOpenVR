@@ -773,6 +773,7 @@ public sealed class SubprocessManager : IDisposable
                 proc.Id,
                 upstreamShapes.Length,
                 Interlocked.Read(ref _replyUpdatesReceived));
+            using FaceFrameReplayRecorder? replayRecorder = FaceFrameReplayRecorder.CreateFromOptions(_opts, _logger);
 
             _logger.Info($"[ftp/data] pull loop started for {module.Manifest.Name} PID={proc.Id}");
             SetPhase("publishing-frames");
@@ -1006,6 +1007,19 @@ public sealed class SubprocessManager : IDisposable
                 {
                     Interlocked.Increment(ref _framesWithData);
                 }
+
+                replayRecorder?.RecordFrame(
+                    module.Uuid,
+                    module.Manifest.Name,
+                    module.UuidHash,
+                    diag.FrameNumber,
+                    upstreamShapes,
+                    eyeSink,
+                    headSink,
+                    initReply.eyeSuccess && diag.SawEyeData,
+                    initReply.expressionSuccess && diag.SawExpressionData,
+                    validExprSignals,
+                    validEyeSignals);
 
                 diag.MaybeLogPeriod(
                     Interlocked.Read(ref _replyUpdatesReceived),

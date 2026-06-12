@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using WKOpenVR.FaceModuleHost;
 using WKOpenVR.FaceModuleHost.Logging;
+using WKOpenVR.FaceModuleHost.Workers;
 
 var failures = new List<string>();
 
@@ -9,6 +10,8 @@ await Run("extracts unique float avatar inputs", ExtractsUniqueFloatAvatarInputs
 await Run("infers current avatar from observed parameters", InfersCurrentAvatarFromObservedParameters);
 await Run("restores empty output from cached avatar", RestoresEmptyOutputFromCachedAvatar);
 await Run("does not infer ambiguous observed parameters", DoesNotInferAmbiguousObservedParameters);
+await Run("parses face replay options", ParsesFaceReplayOptions);
+await Run("records face replay frame", RecordsFaceReplayFrame);
 
 if (failures.Count > 0)
 {
@@ -20,7 +23,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("FaceModuleHost allowlist tests passed.");
+Console.WriteLine("FaceModuleHost tests passed.");
 return 0;
 
 async Task Run(string name, Func<Task> test)
@@ -118,6 +121,67 @@ static async Task DoesNotInferAmbiguousObservedParameters()
     Require(!File.Exists(fixture.OutputPath), "ambiguous inference should not write an allowlist");
 }
 
+static Task ParsesFaceReplayOptions()
+{
+    string replayDir = Path.Combine(Path.GetTempPath(), "wkopenvr-ft-replay-options-" + Guid.NewGuid().ToString("N"));
+    HostOptions opts = HostOptions.FromArgs(["--face-replay-record", "--face-replay-dir", replayDir, "--face-replay-hz", "12.5"]);
+
+    Require(opts.FaceReplayRecordEnabled, "replay recording was not enabled");
+    Require(opts.FaceReplayDirectory == replayDir, "replay directory was not parsed");
+    Require(Math.Abs(opts.FaceReplayMaxHz - 12.5) < 0.001, "replay hz was not parsed");
+    return Task.CompletedTask;
+}
+
+static Task RecordsFaceReplayFrame()
+{
+    using var fixture = new TempFixture();
+    string outputPath = Path.Combine(fixture.Root, "face_replay.test.jsonl");
+    using (var recorder = new FaceFrameReplayRecorder(outputPath, maxHz: 0))
+    {
+        var eye = new EyeFrameSink
+        {
+            LeftOpenness = 0.6f,
+            RightOpenness = 0.7f,
+            PupilDilationLeft = 0.4f,
+            PupilDilationRight = 0.5f,
+        };
+        var head = new HeadFrameSink { IsValid = true, Yaw = 1.0f };
+        var expressions = new float[FaceFrameReplayRecorder.ShapeCount];
+        expressions[22] = 0.42f;
+        expressions[29] = 0.11f;
+
+        recorder.RecordFrame(
+            "module-uuid",
+            "Test Module",
+            0x1234u,
+            frameNumber: 7,
+            expressions,
+            eye,
+            head,
+            eyeValid: true,
+            expressionValid: true,
+            validExpressionSignals: 88,
+            validEyeSignals: 8);
+    }
+
+    string[] lines = File.ReadAllLines(outputPath, Encoding.UTF8);
+    Require(lines.Length == 2, $"expected 2 replay lines, got {lines.Length}");
+
+    using JsonDocument header = JsonDocument.Parse(lines[0]);
+    Require(header.RootElement.GetProperty("type").GetString() == "header", "missing replay header");
+    Require(header.RootElement.GetProperty("shapeCount").GetInt32() == FaceFrameReplayRecorder.ShapeCount, "wrong shape count");
+
+    using JsonDocument frame = JsonDocument.Parse(lines[1]);
+    JsonElement root = frame.RootElement;
+    Require(root.GetProperty("type").GetString() == "frame", "missing frame record");
+    Require(root.GetProperty("moduleUuid").GetString() == "module-uuid", "wrong module uuid");
+    Require(root.GetProperty("flags").GetProperty("expression").GetBoolean(), "expression flag missing");
+    float jaw = root.GetProperty("expressions").EnumerateArray().ElementAt(22).GetSingle();
+    Require(Math.Abs(jaw - 0.42f) < 0.001f, "jaw value missing");
+    Require(root.GetProperty("top").EnumerateArray().Any(e => e.GetProperty("name").GetString() == "JawOpen"), "top shapes missing JawOpen");
+    return Task.CompletedTask;
+}
+
 static string[] MakeAddresses(string prefix, int count)
 {
     return [.. Enumerable.Range(0, count).Select(i => $"/avatar/parameters/{prefix}{i}")];
@@ -133,17 +197,16 @@ static void Require(bool condition, string message)
 
 sealed class TempFixture : IDisposable
 {
-    private readonly string _root;
-
     public TempFixture()
     {
-        _root = Path.Combine(Path.GetTempPath(), "wkopenvr-ft-allowlist-tests-" + Guid.NewGuid().ToString("N"));
-        OscRoot = Path.Combine(_root, "OSC");
-        CacheDir = Path.Combine(_root, "cache");
-        OutputPath = Path.Combine(_root, "avatar_parameters.txt");
-        Logger = new HostLogger(Path.Combine(_root, "test.log"), forceEnabled: true);
+        Root = Path.Combine(Path.GetTempPath(), "wkopenvr-ft-allowlist-tests-" + Guid.NewGuid().ToString("N"));
+        OscRoot = Path.Combine(Root, "OSC");
+        CacheDir = Path.Combine(Root, "cache");
+        OutputPath = Path.Combine(Root, "avatar_parameters.txt");
+        Logger = new HostLogger(Path.Combine(Root, "test.log"), forceEnabled: true);
     }
 
+    public string Root { get; }
     public string OscRoot { get; }
     public string CacheDir { get; }
     public string OutputPath { get; }
@@ -166,6 +229,6 @@ sealed class TempFixture : IDisposable
     public void Dispose()
     {
         Logger.Dispose();
-        try { Directory.Delete(_root, recursive: true); } catch { }
+        try { Directory.Delete(Root, recursive: true); } catch { }
     }
 }
