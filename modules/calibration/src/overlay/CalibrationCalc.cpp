@@ -1,4 +1,5 @@
 #include "CalibrationCalc.h"
+#include "BoundedSolve.h"
 #include "Calibration.h"
 #include "CalibrationMetrics.h"
 #include "Protocol.h"
@@ -1557,6 +1558,23 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 		s_lastHoldoutQualityLogAt = Metrics::CurrentTime;
 	}
 
+	// Common-mode (whole-universe) jump rejection (experimental, default off).
+	// When the reference and target both translate together coherently this
+	// tick, the motion is a shared frame shift (a SLAM relocalization / origin
+	// reset), not relative motion the solve should absorb. Reject the update so
+	// the poisoned sample pair cannot drag the calibration. Applies to both the
+	// locked and unlocked paths -- a frame shift is never a real cal update.
+	if (boundedSolveEnabled && boundedSolveCommonMode && m_samples.size() >= 2) {
+		const Sample& cur = m_samples[m_samples.size() - 1];
+		const Sample& prev = m_samples[m_samples.size() - 2];
+		const Eigen::Vector3d refDelta = cur.ref.trans - prev.ref.trans;
+		const Eigen::Vector3d tgtDelta = cur.target.trans - prev.target.trans;
+		if (spacecal::bounded_solve::IsCommonModeJump(refDelta, tgtDelta)) {
+			Metrics::WriteLogAnnotation("bounded_solve_common_mode_reject");
+			return false;
+		}
+	}
+
 	if (lockRelativePosition) {
 		Eigen::AffineCompact3d byRelPose;
 		double relPoseError = INFINITY;
@@ -1706,6 +1724,20 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 
 		m_isValid = true;
 		m_lastComputeUsedRelPose = usingRelPose;
+		// Bounded-solve guards (experimental, default off): damp the accepted
+		// calibration toward the previous applied one and/or cap how far it may
+		// move this tick, so a burst of biased post-relocalization samples cannot
+		// yank the result hundreds of mm. Only meaningful once a prior result
+		// exists (the first calibration must land unconstrained).
+		if (boundedSolveEnabled && hadCurrentAtStart) {
+			if (boundedSolvePrior) {
+				calibration = spacecal::bounded_solve::ApplyPrior(calibration, currentAtStart, boundedSolvePriorLambda);
+			}
+			if (boundedSolveSlew) {
+				calibration = spacecal::bounded_solve::ClampStep(currentAtStart, calibration, boundedSolveMaxStepM,
+				                                                 boundedSolveMaxStepRad);
+			}
+		}
 		m_estimatedTransformation = calibration;
 		m_axisVariance = newVariance;
 

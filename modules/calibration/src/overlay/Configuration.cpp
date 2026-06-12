@@ -664,6 +664,35 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.baseStationDriftCorrectionEnabled = true;
 	}
 
+	// Experimental drift-fighting toggles (all default OFF; skip-if-default save,
+	// so missing keys keep the in-code defaults and old profiles are unaffected).
+	if (obj["experimental_reloc_quarantine"].is<bool>())
+		ctx.experimentalRelocQuarantineEnabled = obj["experimental_reloc_quarantine"].get<bool>();
+	if (obj["experimental_reloc_quarantine_sec"].is<double>())
+		ctx.experimentalRelocQuarantineSec = obj["experimental_reloc_quarantine_sec"].get<double>();
+	if (obj["experimental_drift_breaker"].is<bool>())
+		ctx.experimentalDriftBreakerEnabled = obj["experimental_drift_breaker"].get<bool>();
+	if (obj["experimental_drift_breaker_mad_mult"].is<double>())
+		ctx.experimentalDriftBreakerMadMult = obj["experimental_drift_breaker_mad_mult"].get<double>();
+	if (obj["experimental_drift_breaker_abs_cap_mm"].is<double>())
+		ctx.experimentalDriftBreakerAbsCapMm = obj["experimental_drift_breaker_abs_cap_mm"].get<double>();
+	if (obj["experimental_bounded_solve"].is<bool>())
+		ctx.experimentalBoundedSolveEnabled = obj["experimental_bounded_solve"].get<bool>();
+	if (obj["experimental_bounded_solve_prior"].is<bool>())
+		ctx.experimentalBoundedSolvePrior = obj["experimental_bounded_solve_prior"].get<bool>();
+	if (obj["experimental_bounded_solve_prior_lambda"].is<double>())
+		ctx.experimentalBoundedSolvePriorLambda = obj["experimental_bounded_solve_prior_lambda"].get<double>();
+	if (obj["experimental_bounded_solve_slew"].is<bool>())
+		ctx.experimentalBoundedSolveSlew = obj["experimental_bounded_solve_slew"].get<bool>();
+	if (obj["experimental_bounded_solve_max_step_mm"].is<double>())
+		ctx.experimentalBoundedSolveMaxStepMm = obj["experimental_bounded_solve_max_step_mm"].get<double>();
+	if (obj["experimental_bounded_solve_max_step_deg"].is<double>())
+		ctx.experimentalBoundedSolveMaxStepDeg = obj["experimental_bounded_solve_max_step_deg"].get<double>();
+	if (obj["experimental_bounded_solve_common_mode"].is<bool>())
+		ctx.experimentalBoundedSolveCommonMode = obj["experimental_bounded_solve_common_mode"].get<bool>();
+	if (obj["experimental_locked_snap_recovery"].is<bool>())
+		ctx.experimentalLockedSnapRecoveryEnabled = obj["experimental_locked_snap_recovery"].get<bool>();
+
 	if (obj["scale"].is<double>()) {
 		ctx.calibratedScale = obj["scale"].get<double>();
 	}
@@ -959,6 +988,21 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	WRITE_IF_CHANGED_BOOL("base_station_drift_correction", baseStationDriftCorrectionEnabled);
 	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed", oneShotCalibrationSpeed);
 	WRITE_IF_CHANGED_DOUBLE("continuous_calibration_speed", continuousCalibrationSpeed);
+
+	// Experimental drift-fighting toggles (skip-if-default).
+	WRITE_IF_CHANGED_BOOL("experimental_reloc_quarantine", experimentalRelocQuarantineEnabled);
+	WRITE_IF_CHANGED_DOUBLE("experimental_reloc_quarantine_sec", experimentalRelocQuarantineSec);
+	WRITE_IF_CHANGED_BOOL("experimental_drift_breaker", experimentalDriftBreakerEnabled);
+	WRITE_IF_CHANGED_DOUBLE("experimental_drift_breaker_mad_mult", experimentalDriftBreakerMadMult);
+	WRITE_IF_CHANGED_DOUBLE("experimental_drift_breaker_abs_cap_mm", experimentalDriftBreakerAbsCapMm);
+	WRITE_IF_CHANGED_BOOL("experimental_bounded_solve", experimentalBoundedSolveEnabled);
+	WRITE_IF_CHANGED_BOOL("experimental_bounded_solve_prior", experimentalBoundedSolvePrior);
+	WRITE_IF_CHANGED_DOUBLE("experimental_bounded_solve_prior_lambda", experimentalBoundedSolvePriorLambda);
+	WRITE_IF_CHANGED_BOOL("experimental_bounded_solve_slew", experimentalBoundedSolveSlew);
+	WRITE_IF_CHANGED_DOUBLE("experimental_bounded_solve_max_step_mm", experimentalBoundedSolveMaxStepMm);
+	WRITE_IF_CHANGED_DOUBLE("experimental_bounded_solve_max_step_deg", experimentalBoundedSolveMaxStepDeg);
+	WRITE_IF_CHANGED_BOOL("experimental_bounded_solve_common_mode", experimentalBoundedSolveCommonMode);
+	WRITE_IF_CHANGED_BOOL("experimental_locked_snap_recovery", experimentalLockedSnapRecoveryEnabled);
 
 	// finger_smoothing_* and tracker_smoothness moved out of SC profiles
 	// on 2026-05-11 (Protocol v12 migration). The Smoothing overlay owns

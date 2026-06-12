@@ -78,6 +78,20 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	ApplyTrackingStylePreset(src, TrackingStyle::LockedWithRecovery);
 	src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
 	src.floorOffsetMetersY = -0.4375; // non-default; must round-trip
+	// Experimental drift-fighting toggles (non-default; must round-trip).
+	src.experimentalRelocQuarantineEnabled = true;
+	src.experimentalRelocQuarantineSec = 2.0;
+	src.experimentalDriftBreakerEnabled = true;
+	src.experimentalDriftBreakerMadMult = 6.0;
+	src.experimentalDriftBreakerAbsCapMm = 80.0;
+	src.experimentalBoundedSolveEnabled = true;
+	src.experimentalBoundedSolvePrior = true;
+	src.experimentalBoundedSolvePriorLambda = 0.3;
+	src.experimentalBoundedSolveSlew = true;
+	src.experimentalBoundedSolveMaxStepMm = 40.0;
+	src.experimentalBoundedSolveMaxStepDeg = 3.0;
+	src.experimentalBoundedSolveCommonMode = true;
+	src.experimentalLockedSnapRecoveryEnabled = true;
 	src.validProfile = true;
 
 	std::stringstream io;
@@ -101,6 +115,19 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_EQ(dst.trackingStyle, TrackingStyle::LockedWithRecovery);
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
 	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, -0.4375);
+	EXPECT_TRUE(dst.experimentalRelocQuarantineEnabled);
+	EXPECT_DOUBLE_EQ(dst.experimentalRelocQuarantineSec, 2.0);
+	EXPECT_TRUE(dst.experimentalDriftBreakerEnabled);
+	EXPECT_DOUBLE_EQ(dst.experimentalDriftBreakerMadMult, 6.0);
+	EXPECT_DOUBLE_EQ(dst.experimentalDriftBreakerAbsCapMm, 80.0);
+	EXPECT_TRUE(dst.experimentalBoundedSolveEnabled);
+	EXPECT_TRUE(dst.experimentalBoundedSolvePrior);
+	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolvePriorLambda, 0.3);
+	EXPECT_TRUE(dst.experimentalBoundedSolveSlew);
+	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolveMaxStepMm, 40.0);
+	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolveMaxStepDeg, 3.0);
+	EXPECT_TRUE(dst.experimentalBoundedSolveCommonMode);
+	EXPECT_TRUE(dst.experimentalLockedSnapRecoveryEnabled);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +176,15 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
 	EXPECT_EQ(dst.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(dst.headMount.allowRawHmdFallback);
+	// Experimental drift-fighting toggles default OFF.
+	EXPECT_FALSE(dst.experimentalRelocQuarantineEnabled);
+	EXPECT_FALSE(dst.experimentalDriftBreakerEnabled);
+	EXPECT_FALSE(dst.experimentalBoundedSolveEnabled);
+	EXPECT_FALSE(dst.experimentalBoundedSolvePrior);
+	EXPECT_FALSE(dst.experimentalBoundedSolveSlew);
+	EXPECT_FALSE(dst.experimentalBoundedSolveCommonMode);
+	EXPECT_FALSE(dst.experimentalLockedSnapRecoveryEnabled);
+	EXPECT_DOUBLE_EQ(dst.experimentalRelocQuarantineSec, 1.0);
 }
 
 // ---------------------------------------------------------------------------

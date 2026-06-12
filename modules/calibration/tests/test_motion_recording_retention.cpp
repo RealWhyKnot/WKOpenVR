@@ -74,6 +74,18 @@ bool EnvFlag(const char* name, bool fallback)
 	return fallback;
 }
 
+double EnvDouble(const char* name, double fallback)
+{
+	const char* raw = std::getenv(name);
+	if (!raw) return fallback;
+	try {
+		return std::stod(TrimAscii(raw));
+	}
+	catch (...) {
+		return fallback;
+	}
+}
+
 std::size_t EnvSize(const char* name, std::size_t fallback)
 {
 	const char* raw = std::getenv(name);
@@ -433,6 +445,20 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.continuous = true;
 	baseOptions.qualityReportInterval = EnvSize("WKOPENVR_REPLAY_QUALITY_INTERVAL", baseOptions.qualityReportInterval);
 	baseOptions.includeHoldoutQuality = EnvFlag("WKOPENVR_REPLAY_HOLDOUT", baseOptions.includeHoldoutQuality);
+	// Experimental drift-fighting guards (all default off -> legacy replay).
+	baseOptions.applyRelocQuarantine = EnvFlag("WKOPENVR_REPLAY_QUARANTINE", baseOptions.applyRelocQuarantine);
+	baseOptions.quarantineSec = EnvDouble("WKOPENVR_REPLAY_QUARANTINE_SEC", baseOptions.quarantineSec);
+	baseOptions.applyDriftBreaker = EnvFlag("WKOPENVR_REPLAY_DRIFT_BREAKER", baseOptions.applyDriftBreaker);
+	baseOptions.driftBreakerMadMult = EnvDouble("WKOPENVR_REPLAY_DRIFT_BREAKER_MULT", baseOptions.driftBreakerMadMult);
+	baseOptions.driftBreakerAbsCapMm =
+	    EnvDouble("WKOPENVR_REPLAY_DRIFT_BREAKER_CAP_MM", baseOptions.driftBreakerAbsCapMm);
+	baseOptions.applyBoundedSolve = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE", baseOptions.applyBoundedSolve);
+	baseOptions.bsPrior = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR", baseOptions.bsPrior);
+	baseOptions.bsPriorLambda = EnvDouble("WKOPENVR_REPLAY_BOUNDED_SOLVE_LAMBDA", baseOptions.bsPriorLambda);
+	baseOptions.bsSlew = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW", baseOptions.bsSlew);
+	baseOptions.bsMaxStepMm = EnvDouble("WKOPENVR_REPLAY_BOUNDED_SOLVE_STEP_MM", baseOptions.bsMaxStepMm);
+	baseOptions.bsCommonMode = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE", baseOptions.bsCommonMode);
+	baseOptions.relocProxyJumpM = EnvDouble("WKOPENVR_REPLAY_RELOC_PROXY_M", baseOptions.relocProxyJumpM);
 	const auto sampleWindows = ReplaySampleWindows();
 
 	std::size_t replayed = 0;
@@ -465,6 +491,12 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " unchanged=" << result.sampleRowsUnchanged << " high_motion=" << result.sampleRowsHighMotion
 			          << " quality_reports=" << result.qualityReports << " shadow_accepts=" << result.shadowWouldAccept
 			          << " shadow_rejects=" << result.shadowWouldReject
+			          << " peak_relpose_mad_mm=" << result.peakRelPoseMadMm
+			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
+			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
+			          << " samples_quarantined=" << result.samplesQuarantined
+			          << " freeze_engagements=" << result.freezeEngagements
+			          << " snap_reanchors=" << result.snapReanchors
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
 			PrintQualitySummary(input.name, sampleWindow, result);
 			++replayed;

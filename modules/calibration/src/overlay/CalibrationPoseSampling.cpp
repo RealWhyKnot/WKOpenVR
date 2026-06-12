@@ -4,6 +4,7 @@
 #include "CalibrationMetrics.h"
 #include "ControllerInput.h"
 #include "HeadMountPoseSampling.h"
+#include "RelocGuard.h" // spacecal::reloc_guard -- post-relocalization sample quarantine.
 #include "RuntimeHealthSummary.h"
 #include "RotationMatrix3.h"
 #include "VRState.h"
@@ -636,6 +637,24 @@ bool CollectSample(const CalibrationContext& ctx)
 	collectedSample.targetPoseUnchanged = targetHealth.unchanged;
 	collectedSample.trackingPoseStale = refHealth.stale || targetHealth.stale;
 	collectedSample.trackingPoseJump = refHealth.jump || targetHealth.jump;
+	// Post-relocalization sample quarantine (experimental, default off). After a
+	// detected HMD relocalization the inside-out world frame has shifted; drop
+	// samples for a short settle window so the shifted pose pairs never enter the
+	// solve OR the AUTO-lock MAD window. Returning true (not false) keeps the rest
+	// of the tick -- solve on the unchanged buffer, detectors, heartbeat -- live;
+	// only the new poisoned sample is withheld.
+	if (ctx.experimentalRelocQuarantineEnabled &&
+	    spacecal::reloc_guard::ShouldQuarantineSample(glfwGetTime(), ctx.lastRelocDetectedTime,
+	                                                  ctx.experimentalRelocQuarantineSec)) {
+		RecordReplaySampleDiagnostics(collectedSample, false);
+		static double s_lastQuarantineLog = -1e9;
+		const double nowLog = glfwGetTime();
+		if (nowLog - s_lastQuarantineLog >= 1.0) {
+			s_lastQuarantineLog = nowLog;
+			Metrics::WriteLogAnnotation("reloc_quarantine_sample_dropped");
+		}
+		return true;
+	}
 	RecordReplaySampleDiagnostics(collectedSample, true);
 	calibration.PushSample(collectedSample);
 	openvr_pair::common::RuntimePoseHealthSample runtimeHealth{};

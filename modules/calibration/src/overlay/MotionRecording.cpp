@@ -1,9 +1,15 @@
 #include "MotionRecording.h"
 
+#include "AutoLockHysteresis.h" // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
+#include "BoundedSolve.h"
+#include "DriftBreaker.h"
+#include "RelocGuard.h"
+
 #include <windows.h>
 #include <shlobj_core.h>
 
 #include <algorithm>
+#include <deque>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -423,6 +429,26 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	CalibrationCalc calc;
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = false;
+	// Toggle 3 (robust/bounded solve) plumbs straight into ComputeIncremental.
+	calc.boundedSolveEnabled = opts.applyBoundedSolve;
+	calc.boundedSolvePrior = opts.bsPrior;
+	calc.boundedSolvePriorLambda = opts.bsPriorLambda;
+	calc.boundedSolveSlew = opts.bsSlew;
+	calc.boundedSolveMaxStepM = opts.bsMaxStepMm / 1000.0;
+	calc.boundedSolveMaxStepRad = opts.bsMaxStepDeg * 0.017453292519943295;
+	calc.boundedSolveCommonMode = opts.bsCommonMode;
+
+	// Experimental-guard replay state. prevRel/lastRelocTime drive the
+	// relocalization proxy + quarantine (toggles 1); relWindow/madFloorWindow
+	// drive the relative-pose MAD + drift breaker (toggle 2).
+	Eigen::AffineCompact3d prevRel = Eigen::AffineCompact3d::Identity();
+	bool havePrevRel = false;
+	double lastRelocTime = -1e9;
+	std::deque<Eigen::AffineCompact3d> relWindow;
+	std::deque<double> madFloorWindow;
+	std::vector<double> allMad;
+	bool driftFrozen = false;
+
 	const bool boundedContinuous = opts.continuous && opts.maxContinuousSamples > 0;
 	const std::size_t continuousWindow = boundedContinuous ? opts.maxContinuousSamples : 0;
 	const std::size_t continuousDrop = boundedContinuous ? std::max<std::size_t>(1, continuousWindow / 10) : 0;
@@ -495,6 +521,35 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			continue;
 		}
 
+		// Relative-pose-jump proxy for relocalization (toggle 1/2 driver). A
+		// sudden change in ref^-1*target between consecutive observed rows marks a
+		// frame shift, derived purely from the recorded poses so v3 recordings
+		// work. prevRel advances every observed row (even quarantined ones) so the
+		// jump is measured tick-to-tick and doesn't re-trigger after it settles.
+		Eigen::AffineCompact3d refW;
+		refW.linear() = s.ref.rot;
+		refW.translation() = s.ref.trans;
+		Eigen::AffineCompact3d tgtW;
+		tgtW.linear() = s.target.rot;
+		tgtW.translation() = s.target.trans;
+		const Eigen::AffineCompact3d rel = refW.inverse() * tgtW;
+		if (havePrevRel && (rel.translation() - prevRel.translation()).norm() > opts.relocProxyJumpM) {
+			lastRelocTime = row.timestamp;
+		}
+		prevRel = rel;
+		havePrevRel = true;
+
+		// Toggle 1: drop this sample for the settle window after a proxy
+		// relocalization. Mirrors the live CollectSample gate -- the dropped
+		// sample never enters the solver or the MAD window below.
+		if (opts.applyRelocQuarantine &&
+		    spacecal::reloc_guard::ShouldQuarantineSample(row.timestamp, lastRelocTime, opts.quarantineSec)) {
+			++res.samplesQuarantined;
+			tick.rejectReason = "quarantined";
+			res.trace.push_back(std::move(tick));
+			continue;
+		}
+
 		calc.PushSample(s);
 		if (boundedContinuous) {
 			while (calc.SampleCount() > continuousWindow) {
@@ -502,6 +557,38 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			}
 		}
 		res.maxSamplesInWindow = std::max(res.maxSamplesInWindow, static_cast<int>(calc.SampleCount()));
+
+		// Relative-pose MAD (the AUTO-lock translMad analog) over a bounded
+		// window, plus the drift breaker (toggle 2). Mirrors the live
+		// UpdateAutoLock + ResolveLockMode path: the breaker forces
+		// calc.lockRelativePosition on for this and subsequent ticks when the MAD
+		// runs away, releasing with hysteresis.
+		relWindow.push_back(rel);
+		while (relWindow.size() > spacecal::autolock::kHistoryMax)
+			relWindow.pop_front();
+		if (relWindow.size() >= spacecal::autolock::kSamplesNeeded) {
+			const double madMm = spacecal::autolock::RobustTranslDeviation(relWindow) * 1000.0;
+			madFloorWindow.push_back(madMm);
+			while (madFloorWindow.size() > 200)
+				madFloorWindow.pop_front();
+			const double floorMm = *std::min_element(madFloorWindow.begin(), madFloorWindow.end());
+			allMad.push_back(madMm);
+			res.peakRelPoseMadMm = std::max(res.peakRelPoseMadMm, madMm);
+			res.finalRelPoseMadMm = madMm;
+			if (opts.applyDriftBreaker) {
+				if (!driftFrozen && spacecal::drift_breaker::ShouldFreeze(madMm, floorMm, opts.driftBreakerMadMult,
+				                                                          opts.driftBreakerAbsCapMm)) {
+					driftFrozen = true;
+					calc.lockRelativePosition = true;
+					++res.freezeEngagements;
+				}
+				else if (driftFrozen &&
+				         spacecal::drift_breaker::ShouldRelease(madMm, floorMm, opts.driftBreakerMadMult)) {
+					driftFrozen = false;
+					calc.lockRelativePosition = false;
+				}
+			}
+		}
 
 		if (opts.continuous) {
 			if (boundedContinuous && calc.SampleCount() < continuousWindow) {
@@ -562,6 +649,12 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	}
 
 	captureQuality(nullptr);
+
+	if (!allMad.empty()) {
+		std::vector<double> sorted = allMad;
+		std::sort(sorted.begin(), sorted.end());
+		res.medianRelPoseMadMm = sorted[sorted.size() / 2];
+	}
 
 	res.rowsReplayed = (int)rec.rows.size();
 	res.finalTransformValid = calc.isValid();

@@ -142,6 +142,27 @@ struct ReplayOptions
 	std::size_t maxContinuousSamples = 200; // 0 keeps every sample; live continuous mode uses a bounded window.
 	std::size_t qualityReportInterval = 50; // 0 disables periodic shadow-quality snapshots.
 	bool includeHoldoutQuality = false;
+
+	// --- Experimental drift-fighting guards, applied during replay so a recorded
+	// session can be A/B compared with each guard on vs off. All default off ->
+	// byte-identical to the legacy replay. See RelocGuard.h / DriftBreaker.h /
+	// BoundedSolve.h.
+	bool applyRelocQuarantine = false; // toggle 1
+	double quarantineSec = 1.0;
+	bool applyDriftBreaker = false; // toggle 2
+	double driftBreakerMadMult = 8.0;
+	double driftBreakerAbsCapMm = 60.0;
+	bool applyBoundedSolve = false; // toggle 3 parent
+	bool bsPrior = false;
+	double bsPriorLambda = 0.2;
+	bool bsSlew = false;
+	double bsMaxStepMm = 50.0;
+	double bsMaxStepDeg = 2.0;
+	bool bsCommonMode = false;
+	// Relative-pose-jump proxy threshold (m): a jump in ref^-1*target larger than
+	// this marks a relocalization for the quarantine/breaker, derived purely from
+	// the recorded ref/target poses, so v3 recordings (no raw HMD pose) work too.
+	double relocProxyJumpM = 0.05;
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
@@ -168,6 +189,16 @@ struct ReplayResult
 	int shadowWouldAccept = 0;
 	int shadowWouldReject = 0;
 	double finalErrorMm = 0.0; // NaN if calc never produced a valid result
+	// Relative-pose dispersion across the replay (the AUTO-lock translMad analog),
+	// in mm -- the headline drift signal for A/B-ing the experimental guards --
+	// plus how often each guard engaged. peak/median/final summarise the
+	// per-row MAD trajectory over the bounded relative-pose window.
+	double peakRelPoseMadMm = 0.0;
+	double medianRelPoseMadMm = 0.0;
+	double finalRelPoseMadMm = 0.0;
+	int samplesQuarantined = 0;
+	int freezeEngagements = 0;
+	int snapReanchors = 0;
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();
 	bool finalTransformValid = false;
 	ReplayQualitySnapshot finalQuality;

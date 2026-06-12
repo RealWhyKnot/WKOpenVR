@@ -8,6 +8,7 @@
 #include "CalibrationProfileApply.h"
 #include "CommonModeCoherence.h"
 #include "HeadMountPoseSampling.h"
+#include "LockedSnapRecovery.h"
 #include "SnapSuppression.h"
 #include "TrackingStyle.h"
 
@@ -778,6 +779,12 @@ void TickHmdRelocalizationDetectorImpl(double now)
 			s.lastFireDelta = dpos;
 			s.lastFireRotRad = angRad;
 			fired = true;
+			// Arm the experimental post-relocalization sample quarantine on the
+			// same 5 cm detection (the sub-30 cm relocalizations that never reach
+			// the auto-recover gate are exactly the ones poisoning continuous cal).
+			// Read in CalibrationPoseSampling::CollectSample; no-op unless the
+			// quarantine toggle is on. Same glfwGetTime() clock as the sampler.
+			CalCtx.lastRelocDetectedTime = now;
 		}
 	}
 
@@ -836,12 +843,24 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	const bool startupOK = now >= kRelocAutoRecoverStartupSec;
 	const bool throttleOK = (now - s.lastAutoRecoverTime) >= kRelocAutoRecoverThrottleSec;
 
+	// Snap corroboration (head tracker confirms the head didn't physically move
+	// during the HMD jump -- a universe flip, not real motion). Hoisted above the
+	// gate so the experimental locked-style path can use it as an entry condition.
+	const bool snapCorroborated =
+	    spacecal::snap_suppression::IsJumpClassifiedAsSnap(CalCtx.headMount.mode, currentHmdDelta, headTrackerDelta);
+	// Experimental: allow ONLY the gentle corroborated re-anchor (never the
+	// destructive Clear) to run in the locked tracking styles, which otherwise
+	// skip HMD-pose-event recovery entirely (styleOK is Continuous-only).
+	const bool lockedGentleEligible = spacecal::locked_snap::GentleSnapAllowedInLockedStyle(
+	    CalCtx.trackingStyle, CalCtx.experimentalLockedSnapRecoveryEnabled, snapCorroborated, CalCtx.state);
+	const bool recoveryEntryEligible = recoveryEligible || lockedGentleEligible;
+
 	// If `fired` is true (a relocalization log line was emitted) but a
 	// gate blocked the recovery, log WHY -- gives us debug evidence for
 	// every borderline event so we can tune thresholds against real data
 	// instead of guessing. Throttled to once per fire (the fire itself
 	// is throttled to 5s by the existing code), so this won't flood.
-	if (fired && (!magnitudeOK || !recoveryEligible || !startupOK || !throttleOK || postStallGrace)) {
+	if (fired && (!magnitudeOK || !recoveryEntryEligible || !startupOK || !throttleOK || postStallGrace)) {
 		const auto& hmDbg = CalCtx.headMount;
 		int poseValid = -1, connected = -1, result = -1;
 		if (hmDbg.deviceID >= 0 && (uint32_t)hmDbg.deviceID < vr::k_unMaxTrackedDeviceCount) {
@@ -862,7 +881,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 		Metrics::WriteLogAnnotation(skipbuf);
 	}
 
-	if (fired && magnitudeOK && recoveryEligible && startupOK && throttleOK && !postStallGrace) {
+	if (fired && magnitudeOK && recoveryEntryEligible && startupOK && throttleOK && !postStallGrace) {
 		const double hmdDelta = currentHmdDelta;
 		const Eigen::Vector3d dpos = hmdPose.translation() - s.prevHmd.translation();
 
@@ -902,9 +921,8 @@ void TickHmdRelocalizationDetectorImpl(double now)
 		// Falls back to full recovery unchanged when: corroborate mode is off,
 		// the tracker was invalid this tick (headTrackerDelta < 0), or both
 		// the HMD AND tracker exceeded their thresholds (genuine physical jump).
-		const bool snapCorroborated =
-		    spacecal::snap_suppression::IsJumpClassifiedAsSnap(CalCtx.headMount.mode, hmdDelta, headTrackerDelta);
-
+		// snapCorroborated was computed above the gate (it is also a locked-style
+		// entry condition); reuse it here.
 		if (snapCorroborated) {
 			// SLAM snap confirmed: HMD jumped but tracker didn't.
 			// Increment the shared session counter and push so the TimeSeries
@@ -937,7 +955,11 @@ void TickHmdRelocalizationDetectorImpl(double now)
 			CalCtx.warmRestartSnapTime = Metrics::CurrentTime;
 			g_snapNextProfileApply = true;
 		}
-		else {
+		// Destructive full recovery (calibration Clear + cold restart) stays
+		// Continuous-only. In a locked style the gate only opens for a
+		// corroborated snap (handled above), so this branch is unreachable there;
+		// the guard makes that explicit and future-proof.
+		else if (recoveryEligible) {
 			char logbuf[384];
 			snprintf(logbuf, sizeof logbuf,
 			         "auto_recover_from_relocalization: hmdDelta=%.3f dpos=(%.3f,%.3f,%.3f) rotRad=%.3f"
