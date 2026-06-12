@@ -53,17 +53,30 @@ TEST(DriftBreakerTest, FloorMultBoundary)
 TEST(DriftBreakerTest, ReleaseHysteresis)
 {
 	// Tripped against floor=5, K=8 -> trip level 40, release level 0.5*40=20.
-	EXPECT_TRUE(db::ShouldRelease(19.0, 5.0, 8.0));  // back under 20 -> release
-	EXPECT_FALSE(db::ShouldRelease(25.0, 5.0, 8.0)); // still elevated -> hold freeze
-	EXPECT_FALSE(db::ShouldRelease(20.0, 5.0, 8.0)); // boundary: not strictly under
+	EXPECT_TRUE(db::ShouldRelease(19.0, 5.0, 8.0, /*cap*/ 0.0));  // back under 20 -> release
+	EXPECT_FALSE(db::ShouldRelease(25.0, 5.0, 8.0, /*cap*/ 0.0)); // still elevated -> hold freeze
+	EXPECT_FALSE(db::ShouldRelease(20.0, 5.0, 8.0, /*cap*/ 0.0)); // boundary: not strictly under
 }
 
-TEST(DriftBreakerTest, ReleaseWhenFloorGateDisabled)
+TEST(DriftBreakerTest, CapReleaseHysteresis)
 {
-	// No floor hysteresis level to hold against -> release immediately and let
-	// the cap gate re-trip if MAD is still high.
-	EXPECT_TRUE(db::ShouldRelease(400.0, /*floor*/ 0.0, 8.0));
-	EXPECT_TRUE(db::ShouldRelease(400.0, 5.0, /*K*/ 0.0));
+	// Cap=60 -> release below 30 mm, not while the cap is still elevated.
+	EXPECT_FALSE(db::ShouldRelease(60.0, /*floor*/ 0.0, 8.0, /*cap*/ 60.0));
+	EXPECT_FALSE(db::ShouldRelease(30.0, /*floor*/ 0.0, 8.0, /*cap*/ 60.0));
+	EXPECT_TRUE(db::ShouldRelease(29.9, /*floor*/ 0.0, 8.0, /*cap*/ 60.0));
+}
+
+TEST(DriftBreakerTest, CapStillHoldsWhenFloorReleaseWouldPass)
+{
+	// Regression pin for a live flapping case: floor=36 made the floor-release
+	// threshold 144 mm, so 111 mm released and immediately re-tripped the 60 mm cap.
+	EXPECT_FALSE(db::ShouldRelease(111.0, 36.0, 8.0, /*cap*/ 60.0));
+}
+
+TEST(DriftBreakerTest, ReleaseWhenAllGatesDisabled)
+{
+	EXPECT_TRUE(db::ShouldRelease(400.0, /*floor*/ 0.0, 8.0, /*cap*/ 0.0));
+	EXPECT_TRUE(db::ShouldRelease(400.0, 5.0, /*K*/ 0.0, /*cap*/ 0.0));
 }
 
 // --- Pinned constants -------------------------------------------------------

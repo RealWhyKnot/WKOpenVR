@@ -30,7 +30,7 @@ constexpr double kDefaultMadMult = 8.0;
 // climbed to 100+ mm in the bad session, which would defeat a floor-only gate).
 constexpr double kDefaultAbsCapMm = 60.0;
 
-// Release happens at half the floor-multiple trip level, giving a 2:1 hysteresis
+// Release happens at half the active trip level, giving a 2:1 hysteresis
 // band so a MAD hovering near the trip point does not flap the freeze on and off.
 constexpr double kReleaseHysteresisMult = 0.5;
 
@@ -50,14 +50,17 @@ inline bool ShouldFreeze(double translMadMm, double madFloorMm, double kMult, do
 }
 
 // True when an engaged freeze should be released because the MAD has dropped
-// back under kReleaseHysteresisMult * kMult * madFloorMm. When the floor or
-// multiplier is non-positive (floor gate disabled) there is no meaningful
-// hysteresis level to hold against, so release immediately and let the cap gate
-// re-trip if the MAD is still high.
-inline bool ShouldRelease(double translMadMm, double madFloorMm, double kMult)
+// back under every enabled gate's hysteresis release level. When both gates are
+// disabled, release immediately so stale runtime state cannot keep forcing lock.
+inline bool ShouldRelease(double translMadMm, double madFloorMm, double kMult, double absCapMm)
 {
-	if (madFloorMm <= 0.0 || kMult <= 0.0) return true;
-	return translMadMm < kReleaseHysteresisMult * kMult * madFloorMm;
+	const bool floorGateEnabled = madFloorMm > 0.0 && kMult > 0.0;
+	const bool capGateEnabled = absCapMm > 0.0;
+	if (!floorGateEnabled && !capGateEnabled) return true;
+
+	const bool belowFloorRelease = !floorGateEnabled || translMadMm < kReleaseHysteresisMult * kMult * madFloorMm;
+	const bool belowCapRelease = !capGateEnabled || translMadMm < kReleaseHysteresisMult * absCapMm;
+	return belowFloorRelease && belowCapRelease;
 }
 
 } // namespace spacecal::drift_breaker

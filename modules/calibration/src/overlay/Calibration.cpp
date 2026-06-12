@@ -942,7 +942,14 @@ void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& re
 	// a one-way override read by ResolveLockMode; it never touches the AUTO
 	// pending-flip queue, so it composes with the detector rather than fighting
 	// it. Reuses translStdDev / autoLockMadFloor just computed above.
-	if (experimentalDriftBreakerEnabled) {
+	if (!experimentalDriftBreakerEnabled) {
+		if (driftBreakerFrozen) {
+			driftBreakerFrozen = false;
+			ResolveLockMode();
+			Metrics::WriteLogAnnotation("drift_breaker_disabled_released");
+		}
+	}
+	else {
 		const double madMm = translStdDev * 1000.0;
 		const double floorMm = autoLockMadFloor * 1000.0;
 		if (!driftBreakerFrozen &&
@@ -956,7 +963,8 @@ void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& re
 			Metrics::WriteLogAnnotation(buf);
 		}
 		else if (driftBreakerFrozen &&
-		         spacecal::drift_breaker::ShouldRelease(madMm, floorMm, experimentalDriftBreakerMadMult)) {
+		         spacecal::drift_breaker::ShouldRelease(madMm, floorMm, experimentalDriftBreakerMadMult,
+		                                                experimentalDriftBreakerAbsCapMm)) {
 			driftBreakerFrozen = false;
 			ResolveLockMode();
 			char buf[200];

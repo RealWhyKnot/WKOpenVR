@@ -25,6 +25,7 @@ extern CalibrationContext CalCtx;
 
 void SaveProfile(CalibrationContext& ctx);
 std::string LabelString(const StandbyDevice& device);
+bool CCal_SeedHeadMountProxyRelativeLock(const char* reason = "unknown");
 
 void CCal_SendHeadMountConfig()
 {
@@ -254,9 +255,47 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 		ImGui::Spacing();
 		ImGui::TextUnformatted("3. Tracking style");
 		ImGui::TextDisabled("%s", TrackingStyleLabel(CalCtx.trackingStyle));
-		ImGui::TextDisabled("Headset synthesis: %s",
-		                    TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) ? "on" : "off");
-		if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle)) {
+		const bool headsetStyle = TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle);
+		ImGui::TextDisabled("Headset synthesis: %s", headsetStyle ? "on" : "off");
+		if (headsetStyle) {
+			const bool running = CalCtx.state == CalibrationState::Continuous;
+			const bool targetMatches = wkopenvr::headmount::HeadMountMatchesContinuousTarget(CalCtx);
+			std::string lockDisabledReason;
+			if (!running) {
+				lockDisabledReason = "Start setup first.";
+			}
+			else if (!hasTracker) {
+				lockDisabledReason = "Start setup with the headset-mounted tracker as the target first.";
+			}
+			else if (!offsetOk) {
+				lockDisabledReason = "Calibrate offset first.";
+			}
+			else if (!CalCtx.validProfile) {
+				lockDisabledReason = "Save or create a calibration profile before locking the headset tracker.";
+			}
+			else if (!targetMatches) {
+				lockDisabledReason = "Restart setup with the selected headset tracker.";
+			}
+			const bool lockReady = lockDisabledReason.empty();
+			{
+				openvr_pair::overlay::ui::DisabledSection ds(!lockReady, lockDisabledReason.c_str());
+				const char* lockLabel =
+				    CalCtx.relativePosCalibrated ? "Re-lock headset tracker" : "Lock headset tracker";
+				if (ImGui::Button(lockLabel)) {
+					if (CCal_SeedHeadMountProxyRelativeLock("head_mount_tab_lock")) {
+						SaveProfile(CalCtx);
+						CCal_SendHeadMountConfig();
+					}
+					else {
+						Metrics::WriteLogAnnotation("head_mount_relative_lock_seed_failed: reason=head_mount_tab_lock");
+					}
+				}
+				ds.AttachReasonTooltip();
+			}
+			if (ImGui::IsItemHovered() && lockReady) {
+				ImGui::SetTooltip("Use the calibrated headset-mounted tracker as the headset pose anchor.");
+			}
+
 			ImGui::TextDisabled("Raw HMD fallback: %s", hm.allowRawHmdFallback ? "on" : "off");
 			int lockedSmoothing = (int)hm.lockedHeadsetSmoothing;
 			ImGui::SetNextItemWidth(200.0f);

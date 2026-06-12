@@ -724,8 +724,8 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 					calc.lockRelativePosition = true;
 					++res.freezeEngagements;
 				}
-				else if (driftFrozen &&
-				         spacecal::drift_breaker::ShouldRelease(madMm, floorMm, opts.driftBreakerMadMult)) {
+				else if (driftFrozen && spacecal::drift_breaker::ShouldRelease(madMm, floorMm, opts.driftBreakerMadMult,
+				                                                               opts.driftBreakerAbsCapMm)) {
 					driftFrozen = false;
 					calc.lockRelativePosition = false;
 				}

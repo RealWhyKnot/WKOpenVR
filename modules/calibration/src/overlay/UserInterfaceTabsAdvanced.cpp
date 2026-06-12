@@ -277,8 +277,7 @@ void CCal_DrawSettings()
 					                                                                       : "?";
 					const double fitRmsMm = spacecal::calibration_speed::SelectObservedFitRmsMm(
 					    Metrics::error_rawComputed.last(), Metrics::error_currentCal.last());
-					const bool haveFitRms =
-					    Metrics::error_rawComputed.size() > 0 || Metrics::error_currentCal.size() > 0;
+					const bool haveFitRms = spacecal::calibration_speed::IsUsableFitRmsMm(fitRmsMm);
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 					if (haveFitRms) {
 						ImGui::Text("    Currently resolved to: %s  (fit RMS %.2f mm)", resolvedName, fitRmsMm);
@@ -469,6 +468,11 @@ void CCal_DrawSettings()
 					            "running away), automatically freeze it -- the same thing turning on headset lock "
 					            "does, "
 					            "but without you having to notice first.\n\nExperimental.")) {
+						    if (!CalCtx.experimentalDriftBreakerEnabled && CalCtx.driftBreakerFrozen) {
+							    CalCtx.driftBreakerFrozen = false;
+							    CalCtx.ResolveLockMode();
+							    Metrics::WriteLogAnnotation("drift_breaker_disabled_released: source=ui");
+						    }
 						    SaveProfile(CalCtx);
 					    }
 				    });

@@ -37,3 +37,19 @@ TEST(CalibrationAutoSpeedTest, CurrentFitUsedWhenCandidateIsUnavailable)
 	EXPECT_DOUBLE_EQ(selected, 7.0);
 	EXPECT_EQ(cas::BucketForObservedFitRmsMm(selected), cas::AutoSpeedBucket::Slow);
 }
+
+TEST(CalibrationAutoSpeedTest, ZeroFitRmsIsTreatedAsUnavailable)
+{
+	EXPECT_FALSE(cas::IsUsableFitRmsMm(0.0));
+
+	const double selected = cas::SelectObservedFitRmsMm(0.0, 8.0);
+	EXPECT_DOUBLE_EQ(selected, 8.0);
+	EXPECT_EQ(cas::BucketForObservedFitRmsMm(selected), cas::AutoSpeedBucket::Slow);
+}
+
+TEST(CalibrationAutoSpeedTest, MissingFitRmsReturnsNaN)
+{
+	const double selected = cas::SelectObservedFitRmsMm(0.0, 0.0);
+	EXPECT_TRUE(std::isnan(selected));
+	EXPECT_EQ(cas::BucketForObservedFitRmsMm(selected), cas::AutoSpeedBucket::Fast);
+}
