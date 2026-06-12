@@ -52,9 +52,45 @@ public:
 		return best;
 	}
 
+	// Nearest-rank percentile over the current window. p in [0,1]; 0.95 gives a
+	// spike-tolerant "busy" level that ignores the single worst outlier sample.
+	float Percentile(float p) const
+	{
+		if (points_.empty()) return 0.0f;
+		std::vector<float> values;
+		values.reserve(points_.size());
+		for (const auto& pt : points_) {
+			values.push_back(pt.second);
+		}
+		p = std::clamp(p, 0.0f, 1.0f);
+		const size_t idx = static_cast<size_t>(p * static_cast<float>(values.size() - 1) + 0.5f);
+		std::nth_element(values.begin(), values.begin() + idx, values.end());
+		return values[idx];
+	}
+
 private:
 	std::deque<std::pair<double, float>> points_;
 };
+
+// Compact spike summary for one series: where it sits now, the worst sample in
+// the window, and a percentile that ignores the single worst outlier. Showing
+// peak next to current is what makes a transient spike visible even when the
+// table's smoothed value has already settled back down.
+struct PerfSpikeStats
+{
+	double current = 0.0;
+	double peak = 0.0;
+	double p95 = 0.0;
+};
+
+inline PerfSpikeStats ComputeSpikeStats(const PerfTimeSeries& series)
+{
+	PerfSpikeStats out;
+	out.current = series.Latest();
+	out.peak = series.Max();
+	out.p95 = series.Percentile(0.95f);
+	return out;
+}
 
 // Series for one source process (the overlay itself, or the driver host as
 // mirrored over shmem). Module series carry section + thread time only;

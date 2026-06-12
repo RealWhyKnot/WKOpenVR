@@ -156,3 +156,42 @@ TEST(PerfHistory, EmaSeedsThenSmooths)
 	value = overlay::EmaUpdate(value, 20.0, valid, 0.25);
 	EXPECT_DOUBLE_EQ(12.5, value);
 }
+
+TEST(PerfHistory, PercentileIgnoresSingleOutlier)
+{
+	overlay::PerfTimeSeries series;
+	// Twenty calm samples plus one spike. p95 should sit on the calm shelf
+	// while the peak captures the spike.
+	for (int i = 0; i < 20; ++i) {
+		series.Push(static_cast<double>(i), 5.0f);
+	}
+	series.Push(20.0, 200.0f);
+
+	EXPECT_FLOAT_EQ(200.0f, series.Max());
+	EXPECT_FLOAT_EQ(5.0f, series.Percentile(0.95f));
+	EXPECT_FLOAT_EQ(200.0f, series.Percentile(1.0f));
+}
+
+TEST(PerfHistory, ComputeSpikeStatsReportsCurrentPeakAndP95)
+{
+	overlay::PerfTimeSeries series;
+	for (int i = 0; i < 50; ++i) {
+		series.Push(static_cast<double>(i), 8.0f);
+	}
+	series.Push(50.0, 150.0f); // a spike one sample ago
+	series.Push(51.0, 9.0f);   // settled back down
+
+	const overlay::PerfSpikeStats stats = overlay::ComputeSpikeStats(series);
+	EXPECT_FLOAT_EQ(9.0f, static_cast<float>(stats.current)); // current is calm again
+	EXPECT_FLOAT_EQ(150.0f, static_cast<float>(stats.peak));  // but the spike is remembered
+	EXPECT_NEAR(8.0, stats.p95, 1.0);                         // p95 stays on the calm shelf
+}
+
+TEST(PerfHistory, SpikeStatsOnEmptySeriesAreZero)
+{
+	overlay::PerfTimeSeries series;
+	const overlay::PerfSpikeStats stats = overlay::ComputeSpikeStats(series);
+	EXPECT_DOUBLE_EQ(0.0, stats.current);
+	EXPECT_DOUBLE_EQ(0.0, stats.peak);
+	EXPECT_DOUBLE_EQ(0.0, stats.p95);
+}

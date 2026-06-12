@@ -177,8 +177,8 @@ void DrawPerfMemoryGraph(const PerfHistoryStore& history)
 	}
 }
 
-void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double otherCpuPct, double memoryMb,
-                        uint32_t threads, uint32_t handles, const char* status)
+void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double otherCpuPct, double peakPct,
+                        double p95Pct, double memoryMb, uint32_t threads, uint32_t handles, const char* status)
 {
 	ui::NextRow();
 	ui::NextColumn();
@@ -190,6 +190,14 @@ void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double o
 	ui::NextColumn();
 	ui::DrawStatusCell(FormatPercent(otherCpuPct).c_str(), PerfTone(otherCpuPct), true);
 	ui::NextColumn();
+	// Window peak next to the live value makes a transient spike visible even
+	// after the smoothed reading has settled. The p95 (spike-tolerant "busy"
+	// level) rides along in a tooltip.
+	ui::DrawStatusCell(FormatPercent(peakPct).c_str(), PerfTone(peakPct), true);
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("120s peak %s, p95 %s", FormatPercent(peakPct).c_str(), FormatPercent(p95Pct).c_str());
+	}
+	ui::NextColumn();
 	ImGui::Text("%.1f", memoryMb);
 	ui::NextColumn();
 	ImGui::Text("%lu", static_cast<unsigned long>(threads));
@@ -199,44 +207,49 @@ void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double o
 	ImGui::TextUnformatted(status);
 }
 
-void DrawPerfProcessTable(const PerfViewModel& vm)
+void DrawPerfProcessTable(const PerfViewModel& vm, const PerfHistoryStore& history)
 {
-	ui::TableScope table("module_perf_processes", 8,
+	ui::TableScope table("module_perf_processes", 9,
 	                     ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
 	if (!table) return;
 	ui::SetupStretchColumn("Process", 1.0f);
 	ui::SetupFixedColumn("PID", 70.0f);
 	ui::SetupFixedColumn("CPU", 76.0f);
 	ui::SetupFixedColumn("Other", 76.0f);
+	ui::SetupFixedColumn("Peak", 76.0f);
 	ui::SetupFixedColumn("WS MB", 80.0f);
 	ui::SetupFixedColumn("Threads", 82.0f);
 	ui::SetupFixedColumn("Handles", 82.0f);
 	ui::SetupFixedColumn("Status", 110.0f);
 	ui::DrawTableHeader();
 
-	DrawPerfProcessRow("Overlay", vm.overlayPid, vm.overlayTotalPct, vm.overlayUnattributedPct, vm.overlayWorkingSetMb,
-	                   vm.overlayThreadCount, vm.overlayHandleCount, "local");
+	const PerfSpikeStats overlaySpikes = ComputeSpikeStats(history.overlay.totalCpuPctOneCore);
+	DrawPerfProcessRow("Overlay", vm.overlayPid, vm.overlayTotalPct, vm.overlayUnattributedPct, overlaySpikes.peak,
+	                   overlaySpikes.p95, vm.overlayWorkingSetMb, vm.overlayThreadCount, vm.overlayHandleCount,
+	                   "local");
 	if (vm.driverConnected) {
-		DrawPerfProcessRow("Driver host", vm.driverPid, vm.driverTotalPct, vm.driverUnattributedPct,
-		                   vm.driverWorkingSetMb, vm.driverThreadCount, vm.driverHandleCount, "live");
+		const PerfSpikeStats driverSpikes = ComputeSpikeStats(history.driver.totalCpuPctOneCore);
+		DrawPerfProcessRow("Driver host", vm.driverPid, vm.driverTotalPct, vm.driverUnattributedPct, driverSpikes.peak,
+		                   driverSpikes.p95, vm.driverWorkingSetMb, vm.driverThreadCount, vm.driverHandleCount, "live");
 	}
 	else {
-		DrawPerfProcessRow("Driver host", 0, 0.0, 0.0, 0.0, 0, 0, "not mapped");
+		DrawPerfProcessRow("Driver host", 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "not mapped");
 	}
 }
 
-void DrawPerfModuleTable(const PerfViewModel& vm, const PerfStatsHub& hub)
+void DrawPerfModuleTable(const PerfViewModel& vm, const PerfStatsHub& hub, const PerfHistoryStore& history)
 {
 	if (vm.rows.empty()) {
 		ui::DrawEmptyState("No module samples yet.");
 		return;
 	}
 
-	ui::TableScope table("module_perf_attribution", 7,
+	ui::TableScope table("module_perf_attribution", 8,
 	                     ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
 	if (!table) return;
 	ui::SetupStretchColumn("Module", 1.0f);
 	ui::SetupFixedColumn("Total", 76.0f);
+	ui::SetupFixedColumn("Peak", 70.0f);
 	ui::SetupFixedColumn("Overlay", 76.0f);
 	ui::SetupFixedColumn("Driver", 76.0f);
 	ui::SetupFixedColumn("Sidecar", 82.0f);
@@ -247,6 +260,12 @@ void DrawPerfModuleTable(const PerfViewModel& vm, const PerfStatsHub& hub)
 	for (const PerfModuleRow& row : vm.rows) {
 		const uint32_t slot = openvr_pair::common::moduleperf::SlotIndex(row.id);
 		const double smoothedTotal = hub.SmoothedTotalPct(slot);
+		// Worst single-process spike this module caused in the window. Per-
+		// process peaks do not sum, so report the largest of the three rather
+		// than an inflated total.
+		const double modulePeak =
+		    std::max({history.overlay.moduleCpuPctOneCore[slot].Max(), history.driver.moduleCpuPctOneCore[slot].Max(),
+		              history.sidecarModuleCpuPctOneCore[slot].Max()});
 		ui::NextRow();
 		ui::NextColumn();
 		ImGui::TextUnformatted(module_registry::DisplayName(row.id));
@@ -256,6 +275,8 @@ void DrawPerfModuleTable(const PerfViewModel& vm, const PerfStatsHub& hub)
 		}
 		ui::NextColumn();
 		ui::DrawStatusCell(FormatPercent(smoothedTotal).c_str(), PerfTone(smoothedTotal), true);
+		ui::NextColumn();
+		ImGui::TextUnformatted(FormatPercent(modulePeak).c_str());
 		ui::NextColumn();
 		ImGui::TextUnformatted(FormatPercent(row.overlayPct).c_str());
 		ui::NextColumn();
@@ -295,12 +316,12 @@ void DrawPerformanceCard()
 		}
 
 		ImGui::Spacing();
-		DrawPerfProcessTable(vm);
+		DrawPerfProcessTable(vm, history);
 		ImGui::Spacing();
 		DrawPerfCpuGraph(history);
 		DrawPerfMemoryGraph(history);
 		ImGui::Spacing();
-		DrawPerfModuleTable(vm, hub);
+		DrawPerfModuleTable(vm, hub, history);
 	});
 }
 
