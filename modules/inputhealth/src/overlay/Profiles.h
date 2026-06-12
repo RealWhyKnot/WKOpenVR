@@ -51,9 +51,9 @@ struct DeviceProfile
 
 	// Preferences. Defaults match the driver-side InputHealthConfig
 	// defaults so a freshly-created profile does not surprise the user.
-	bool enable_diagnostics_only = true;
+	bool enable_diagnostics_only = false;
 	bool enable_rest_recenter = true;
-	bool enable_trigger_remap = false;
+	bool enable_trigger_remap = true;
 	bool corrections_enabled = true;
 
 	// Set once the rest-recenter default-flip migration has run for this profile
@@ -61,6 +61,7 @@ struct DeviceProfile
 	// on lack this marker, which triggers a one-time force-on of
 	// enable_rest_recenter so existing users pick up the new default.
 	bool rest_recenter_migrated = false;
+	bool input_help_defaults_migrated = true;
 
 	std::vector<LearnedPathRecord> learned_paths;
 };

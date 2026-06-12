@@ -109,6 +109,10 @@ void InputHealthPlugin::WriteHealthSummary()
 	snapshot.publish_tick = reader_.LastPublishTick();
 	snapshot.live_components = reader_.EntriesByHandle().size();
 	snapshot.profiles_loaded = profiles_.All().size();
+	snapshot.config.master_enabled = pending_config_.master_enabled != 0;
+	snapshot.config.diagnostics_only = pending_config_.diagnostics_only != 0;
+	snapshot.config.enable_rest_recenter = pending_config_.enable_rest_recenter != 0;
+	snapshot.config.enable_trigger_remap = pending_config_.enable_trigger_remap != 0;
 	snapshot.path_families = CountInputHealthPathFamilies(reader_.EntriesByHandle());
 	snapshot.learning = engine_.Stats();
 	snapshot.profile_io = profiles_.Stats();

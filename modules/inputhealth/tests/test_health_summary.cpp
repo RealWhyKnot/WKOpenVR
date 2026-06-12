@@ -13,6 +13,10 @@ TEST(InputHealthHealthSummary, JsonIsValidAndHasRequiredFields)
 	snapshot.publish_tick = 42;
 	snapshot.live_components = 7;
 	snapshot.profiles_loaded = 2;
+	snapshot.config.master_enabled = true;
+	snapshot.config.diagnostics_only = false;
+	snapshot.config.enable_rest_recenter = true;
+	snapshot.config.enable_trigger_remap = true;
 	snapshot.path_families.finger_capsense = 1;
 	snapshot.path_families.trackpad_axis = 2;
 	snapshot.learning.drift_suppressed_policy = 3;
@@ -34,6 +38,7 @@ TEST(InputHealthHealthSummary, JsonIsValidAndHasRequiredFields)
 
 	EXPECT_NE(root.find("schema"), root.end());
 	EXPECT_NE(root.find("pipeline"), root.end());
+	EXPECT_NE(root.find("config"), root.end());
 	EXPECT_NE(root.find("path_families"), root.end());
 	EXPECT_NE(root.find("learning"), root.end());
 	EXPECT_NE(root.find("profile_io"), root.end());
@@ -43,6 +48,12 @@ TEST(InputHealthHealthSummary, JsonIsValidAndHasRequiredFields)
 	EXPECT_DOUBLE_EQ(learning.at("compensation_push_success").get<double>(), 4.0);
 	EXPECT_DOUBLE_EQ(learning.at("compensation_push_rejected").get<double>(), 5.0);
 	EXPECT_TRUE(learning.at("top_drift_paths").is<picojson::array>());
+
+	const auto& config = root.at("config").get<picojson::object>();
+	EXPECT_TRUE(config.at("master_enabled").get<bool>());
+	EXPECT_FALSE(config.at("diagnostics_only").get<bool>());
+	EXPECT_TRUE(config.at("enable_rest_recenter").get<bool>());
+	EXPECT_TRUE(config.at("enable_trigger_remap").get<bool>());
 
 	const auto& profileIo = root.at("profile_io").get<picojson::object>();
 	EXPECT_DOUBLE_EQ(profileIo.at("attempted_saves").get<double>(), 8.0);

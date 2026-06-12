@@ -11,6 +11,7 @@ struct InputHealthGlobalConfig
 	bool diagnostics_only = false;
 	bool enable_rest_recenter = true;
 	bool enable_trigger_remap = true;
+	bool defaults_v2_migrated = true;
 };
 
 // Load from disk. On any read / parse error the on-disk file is ignored and

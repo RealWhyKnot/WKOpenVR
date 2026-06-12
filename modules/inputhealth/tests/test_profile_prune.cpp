@@ -144,7 +144,56 @@ void DeleteFile(const std::wstring& path)
 TEST(DeviceProfileDefaults, RestRecenterIsOnByDefault)
 {
 	const DeviceProfile p;
+	EXPECT_FALSE(p.enable_diagnostics_only) << "New profiles must not default to observe-only";
 	EXPECT_TRUE(p.enable_rest_recenter) << "New profiles must default rest-recenter to on";
+	EXPECT_TRUE(p.enable_trigger_remap) << "New profiles must default trigger remap to on";
+	EXPECT_TRUE(p.input_help_defaults_migrated);
+}
+
+TEST(DeviceProfileDefaults, LegacyProfileMigratesInputHelpFamiliesOn)
+{
+	const uint64_t testHash = 0xDEADBEEFCAFE0002ULL;
+	const std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
+	if (dir.empty()) {
+		GTEST_SKIP() << "Cannot access profiles directory";
+	}
+
+	char hashHex[32];
+	snprintf(hashHex, sizeof(hashHex), "%016llx", (unsigned long long)testHash);
+	const std::wstring testFile = dir + L"\\" + openvr_pair::common::Utf8ToWide(std::string(hashHex) + ".json");
+
+	const std::string body = std::string(R"({
+  "serial": "LEGACY_INPUT_HELP",
+  "serial_hash_hex": ")") + hashHex +
+	                         R"(",
+  "display_name": "Legacy Controller",
+  "enable_diagnostics_only": true,
+  "enable_rest_recenter": false,
+  "enable_trigger_remap": false,
+  "corrections_enabled": true,
+  "learned_paths": []
+})";
+
+	{
+		std::ofstream f(testFile);
+		if (!f.is_open()) {
+			GTEST_SKIP() << "Cannot write test profile";
+		}
+		f << body;
+	}
+
+	ProfileStore store;
+	store.LoadAll();
+
+	const auto it = store.All().find(testHash);
+	ASSERT_NE(it, store.All().end());
+	EXPECT_FALSE(it->second.enable_diagnostics_only);
+	EXPECT_TRUE(it->second.enable_rest_recenter);
+	EXPECT_TRUE(it->second.enable_trigger_remap);
+	EXPECT_TRUE(it->second.input_help_defaults_migrated);
+	EXPECT_TRUE(it->second.rest_recenter_migrated);
+
+	DeleteFile(testFile);
 }
 
 TEST(ProfileSaveScheduler, SampleCountOnlyChurnIsNotMaterial)

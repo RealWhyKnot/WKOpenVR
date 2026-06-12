@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Config.h"
 #include "LearningEngine.h"
 #include "Profiles.h"
 #include "SnapshotReader.h"
@@ -29,6 +30,7 @@ struct InputHealthHealthSummarySnapshot
 	uint64_t publish_tick = 0;
 	uint64_t live_components = 0;
 	uint64_t profiles_loaded = 0;
+	InputHealthGlobalConfig config;
 	InputHealthPathFamilyCounters path_families;
 	LearningEngineStats learning;
 	ProfileIoStats profile_io;

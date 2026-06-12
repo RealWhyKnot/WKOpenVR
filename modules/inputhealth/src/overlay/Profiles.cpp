@@ -98,11 +98,24 @@ DeviceProfile Decode(const picojson::value& v)
 	getStr("serial", p.serial);
 	getU64("serial_hash_hex", p.serial_hash);
 	getStr("display_name", p.display_name);
+	const bool hasInputHelpDefaultsMarker = obj.find("input_help_defaults_migrated") != obj.end();
 	getBool("enable_diagnostics_only", p.enable_diagnostics_only);
 	getBool("enable_rest_recenter", p.enable_rest_recenter);
 	getBool("enable_trigger_remap", p.enable_trigger_remap);
 	getBool("corrections_enabled", p.corrections_enabled);
 	getBool("rest_recenter_migrated", p.rest_recenter_migrated);
+	getBool("input_help_defaults_migrated", p.input_help_defaults_migrated);
+
+	if (!hasInputHelpDefaultsMarker || !p.input_help_defaults_migrated) {
+		if (p.enable_diagnostics_only || !p.enable_rest_recenter || !p.enable_trigger_remap) {
+			LOG("[profiles] input help defaults migration for '%s' (families default on)", p.serial.c_str());
+		}
+		p.enable_diagnostics_only = false;
+		p.enable_rest_recenter = true;
+		p.enable_trigger_remap = true;
+		p.rest_recenter_migrated = true;
+		p.input_help_defaults_migrated = true;
+	}
 
 	// One-time migration: rest-recenter's default was flipped on. Profiles saved
 	// before the flip persisted the old off default and lack the marker above;
@@ -190,6 +203,7 @@ std::string Encode(const DeviceProfile& p)
 	obj["enable_trigger_remap"] = picojson::value(p.enable_trigger_remap);
 	obj["corrections_enabled"] = picojson::value(p.corrections_enabled);
 	obj["rest_recenter_migrated"] = picojson::value(p.rest_recenter_migrated);
+	obj["input_help_defaults_migrated"] = picojson::value(p.input_help_defaults_migrated);
 
 	picojson::array learned;
 	learned.reserve(p.learned_paths.size());

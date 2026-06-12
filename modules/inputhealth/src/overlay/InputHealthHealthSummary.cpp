@@ -124,6 +124,14 @@ std::string BuildInputHealthHealthSummaryJson(const InputHealthHealthSummarySnap
 	pipeline["live_components"] = CountValue(snapshot.live_components);
 	root["pipeline"] = picojson::value(pipeline);
 
+	picojson::object config;
+	config["master_enabled"] = picojson::value(snapshot.config.master_enabled);
+	config["diagnostics_only"] = picojson::value(snapshot.config.diagnostics_only);
+	config["enable_rest_recenter"] = picojson::value(snapshot.config.enable_rest_recenter);
+	config["enable_trigger_remap"] = picojson::value(snapshot.config.enable_trigger_remap);
+	config["defaults_v2_migrated"] = picojson::value(snapshot.config.defaults_v2_migrated);
+	root["config"] = picojson::value(config);
+
 	root["path_families"] = picojson::value(PathFamilyObject(snapshot.path_families));
 
 	picojson::object learning;
