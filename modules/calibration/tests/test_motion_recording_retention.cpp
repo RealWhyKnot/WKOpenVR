@@ -86,6 +86,26 @@ double EnvDouble(const char* name, double fallback)
 	}
 }
 
+// Parse a tracking-style env override. Accepts the numeric enum value (0-3) or a
+// case-insensitive name ("manual", "continuous", "locked"/"lockedwithrecovery",
+// "hard"/"hardtrackerlock"). Anything else returns the fallback.
+TrackingStyle EnvTrackingStyle(const char* name, TrackingStyle fallback)
+{
+	const char* raw = std::getenv(name);
+	if (!raw) return fallback;
+	std::string value = TrimAscii(raw);
+	for (char& c : value) {
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	if (value == "0" || value == "manual") return TrackingStyle::Manual;
+	if (value == "1" || value == "continuous") return TrackingStyle::Continuous;
+	if (value == "2" || value == "locked" || value == "lockedwithrecovery" || value == "locked_with_recovery")
+		return TrackingStyle::LockedWithRecovery;
+	if (value == "3" || value == "hard" || value == "hardtrackerlock" || value == "hard_tracker_lock")
+		return TrackingStyle::HardTrackerLock;
+	return fallback;
+}
+
 std::size_t EnvSize(const char* name, std::size_t fallback)
 {
 	const char* raw = std::getenv(name);
@@ -270,6 +290,54 @@ void PrintQualitySummary(const std::string& name, std::size_t window, const repl
 	std::cout << "\n";
 }
 
+// Write a synthetic v4 recording for the locked-snap A/B tests. Models a locked
+// continuous session: the head-mount tracker (lighthouse-anchored) never moves,
+// while at `flipRow` the HMD's reported world pose teleports `flipDistanceM` --
+// the Quest universe-flip signature the snap classifier keys on. Only the
+// columns the replay parser reads are emitted (it's column-name based). Pass
+// flipRow < 0 for a clean session with no flip.
+void WriteLockedSnapV4Recording(const std::filesystem::path& path, int rowCount, int flipRow, double flipDistanceM)
+{
+	std::ofstream out(path);
+	ASSERT_TRUE(out) << path.string();
+	out << "# spacecal_log_v4\n";
+	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
+	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase,"
+	       "hmd_tx,hmd_ty,hmd_tz,hmd_qw,hmd_qx,hmd_qy,hmd_qz,"
+	       "head_tracker_valid,head_tracker_tx,head_tracker_ty,head_tracker_tz,"
+	       "head_tracker_qw,head_tracker_qx,head_tracker_qy,head_tracker_qz,reloc_detected\n";
+	out.precision(17);
+	for (int i = 0; i < rowCount; ++i) {
+		const double t = static_cast<double>(i) / 60.0;
+		// Reference + target wander a little so the rows resemble a live session.
+		const double refX = 0.01 * (i % 5);
+		const double tgtX = refX + 0.15;
+		// HMD stationary until the flip, then teleported in X and held there.
+		const double hmdX = (flipRow >= 0 && i >= flipRow) ? flipDistanceM : 0.0;
+		// Head-mount tracker: lighthouse-tracked physical head never moves.
+		const int reloc = (flipRow >= 0 && i == flipRow) ? 1 : 0;
+		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << tgtX << ",1.60,0.0,1,0,0,0,Continuous," << hmdX
+		    << ",1.60,0.0,1,0,0,0,1,0.0,1.60,-0.1,1,0,0,0," << reloc << "\n";
+	}
+}
+
+// Write a minimal v3 recording (raw poses + tick_phase, no v4 locked-snap
+// columns) so the locked-snap path reports the requires_v4 skip.
+void WriteMinimalV3Recording(const std::filesystem::path& path, int rowCount)
+{
+	std::ofstream out(path);
+	ASSERT_TRUE(out) << path.string();
+	out << "# spacecal_log_v3\n";
+	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
+	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase\n";
+	out.precision(17);
+	for (int i = 0; i < rowCount; ++i) {
+		const double t = static_cast<double>(i) / 60.0;
+		const double refX = 0.01 * (i % 5);
+		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15) << ",1.60,0.0,1,0,0,0,Continuous\n";
+	}
+}
+
 } // namespace
 
 TEST(MotionRecordingRetentionTest, KeepsNewestFilesWithinFileLimit)
@@ -429,6 +497,111 @@ TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
 	EXPECT_GE(result.finalQuality.highMotionSampleCount, 1);
 }
 
+TEST(MotionRecordingReplayTest, LockedSnapReanchorsOnV4UniverseFlip)
+{
+	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_locked_snap.csv";
+	std::filesystem::remove(path);
+	WriteLockedSnapV4Recording(path, /*rowCount=*/40, /*flipRow=*/20, /*flipDistanceM=*/0.5);
+
+	const auto recording = replay::LoadRecording(path.string());
+	std::filesystem::remove(path);
+	ASSERT_TRUE(recording.error.empty()) << recording.error;
+	ASSERT_EQ(4, recording.formatVersion);
+	ASSERT_TRUE(recording.hasLockedSnapColumns);
+	ASSERT_EQ(40u, recording.rows.size());
+	// The flip row carries the raw HMD teleport + the (unmoved) head tracker.
+	EXPECT_TRUE(recording.rows[20].hasHmdPose);
+	EXPECT_TRUE(recording.rows[20].headTrackerValid);
+	EXPECT_TRUE(recording.rows[20].relocDetected);
+	EXPECT_NEAR(0.5, recording.rows[20].hmd.trans.x(), 1e-9);
+	EXPECT_NEAR(0.0, recording.rows[19].hmd.trans.x(), 1e-9);
+
+	replay::ReplayOptions base;
+	base.continuous = false;
+	base.qualityReportInterval = 0;
+
+	// Toggle ON in a locked style: the corroborated universe flip opens exactly
+	// one gentle re-anchor.
+	{
+		replay::ReplayOptions options = base;
+		options.applyLockedSnap = true;
+		options.trackingStyle = TrackingStyle::LockedWithRecovery;
+		const auto result = replay::RunReplay(recording, options);
+		EXPECT_TRUE(result.succeeded) << result.error;
+		EXPECT_EQ("applied", result.lockedSnapStatus);
+		EXPECT_EQ(1, result.snapReanchors);
+	}
+
+	// Toggle OFF: byte-identical legacy replay, no re-anchors counted.
+	{
+		replay::ReplayOptions options = base;
+		options.applyLockedSnap = false;
+		const auto result = replay::RunReplay(recording, options);
+		EXPECT_TRUE(result.succeeded) << result.error;
+		EXPECT_EQ("off", result.lockedSnapStatus);
+		EXPECT_EQ(0, result.snapReanchors);
+	}
+
+	// Toggle ON but a non-locked style: the gentle path is locked-only, so the
+	// snap is classified (v4 columns present -> "applied") yet never re-anchors.
+	{
+		replay::ReplayOptions options = base;
+		options.applyLockedSnap = true;
+		options.trackingStyle = TrackingStyle::Continuous;
+		const auto result = replay::RunReplay(recording, options);
+		EXPECT_TRUE(result.succeeded) << result.error;
+		EXPECT_EQ("applied", result.lockedSnapStatus);
+		EXPECT_EQ(0, result.snapReanchors);
+	}
+}
+
+TEST(MotionRecordingReplayTest, LockedSnapNoReanchorWithoutFlip)
+{
+	const std::filesystem::path path =
+	    std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_locked_snap_clean.csv";
+	std::filesystem::remove(path);
+	WriteLockedSnapV4Recording(path, /*rowCount=*/40, /*flipRow=*/-1, /*flipDistanceM=*/0.0);
+
+	const auto recording = replay::LoadRecording(path.string());
+	std::filesystem::remove(path);
+	ASSERT_TRUE(recording.error.empty()) << recording.error;
+	ASSERT_TRUE(recording.hasLockedSnapColumns);
+
+	replay::ReplayOptions options;
+	options.continuous = false;
+	options.qualityReportInterval = 0;
+	options.applyLockedSnap = true;
+	options.trackingStyle = TrackingStyle::LockedWithRecovery;
+	const auto result = replay::RunReplay(recording, options);
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_EQ("applied", result.lockedSnapStatus);
+	EXPECT_EQ(0, result.snapReanchors);
+}
+
+TEST(MotionRecordingReplayTest, LockedSnapRequiresV4OnV3Recording)
+{
+	const std::filesystem::path path =
+	    std::filesystem::temp_directory_path() / "wkopenvr_replay_v3_locked_snap_skip.csv";
+	std::filesystem::remove(path);
+	WriteMinimalV3Recording(path, /*rowCount=*/40);
+
+	const auto recording = replay::LoadRecording(path.string());
+	std::filesystem::remove(path);
+	ASSERT_TRUE(recording.error.empty()) << recording.error;
+	ASSERT_EQ(3, recording.formatVersion);
+	ASSERT_FALSE(recording.hasLockedSnapColumns);
+
+	replay::ReplayOptions options;
+	options.continuous = false;
+	options.qualityReportInterval = 0;
+	options.applyLockedSnap = true;
+	options.trackingStyle = TrackingStyle::LockedWithRecovery;
+	const auto result = replay::RunReplay(recording, options);
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_EQ("locked_snap_replay_requires_v4", result.lockedSnapStatus);
+	EXPECT_EQ(0, result.snapReanchors);
+}
+
 TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 {
 	const char* enabled = std::getenv("WKOPENVR_REPLAY_RECORDINGS");
@@ -459,6 +632,10 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.bsMaxStepMm = EnvDouble("WKOPENVR_REPLAY_BOUNDED_SOLVE_STEP_MM", baseOptions.bsMaxStepMm);
 	baseOptions.bsCommonMode = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE", baseOptions.bsCommonMode);
 	baseOptions.relocProxyJumpM = EnvDouble("WKOPENVR_REPLAY_RELOC_PROXY_M", baseOptions.relocProxyJumpM);
+	// Toggle 4 (locked-style snap recovery). Needs a v4 recording; on v3 input the
+	// replay reports locked_snap=locked_snap_replay_requires_v4 and counts zero.
+	baseOptions.applyLockedSnap = EnvFlag("WKOPENVR_REPLAY_LOCKED_SNAP", baseOptions.applyLockedSnap);
+	baseOptions.trackingStyle = EnvTrackingStyle("WKOPENVR_REPLAY_TRACKING_STYLE", baseOptions.trackingStyle);
 	const auto sampleWindows = ReplaySampleWindows();
 
 	std::size_t replayed = 0;
@@ -496,7 +673,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
 			          << " samples_quarantined=" << result.samplesQuarantined
 			          << " freeze_engagements=" << result.freezeEngagements
-			          << " snap_reanchors=" << result.snapReanchors
+			          << " snap_reanchors=" << result.snapReanchors << " locked_snap=" << result.lockedSnapStatus
+			          << " tracking_style=" << static_cast<int>(options.trackingStyle)
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
 			PrintQualitySummary(input.name, sampleWindow, result);
 			++replayed;

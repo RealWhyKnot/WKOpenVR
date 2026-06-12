@@ -3270,6 +3270,39 @@ void CalibrationTick(double time)
 		}
 
 		Metrics::SetTickRawPoses(refT, refQ, tgtT, tgtQ, phase);
+
+		// v4 locked-snap corroboration inputs. The replay harness reconstructs the
+		// per-row HMD jump and head-tracker displacement from these to reproduce the
+		// snap classification (spacecal::snap_suppression::IsJumpClassifiedAsSnap)
+		// that the locked-style snap-recovery toggle gates on -- v3 recordings lack
+		// the raw HMD + head-tracker poses, so that toggle could only be confirmed
+		// live. Poses are world-space, same as ref/target above (driverPoseToWorld
+		// matches CalibrationPoseSampling::ConvertPose, so the recorded deltas equal
+		// the ones the live detector measured).
+		Metrics::ReplayLockedSnapInputs lockedSnap;
+		driverPoseToWorld(ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd], lockedSnap.hmdTrans, lockedSnap.hmdRot);
+
+		// Head-mount tracker validity mirrors the live detector's gate (see
+		// CalibrationRecoveryTick.cpp head-tracker block): poseIsValid +
+		// deviceIsConnected + Running_OK. Recorded mode-agnostically (not gated on
+		// HeadMountMode) so a capture can be A/B-replayed as if a locked style had
+		// been active even when it wasn't.
+		const int32_t headMountId = ctx.headMount.deviceID;
+		if (headMountId >= 0 && headMountId < maxId) {
+			const vr::DriverPose_t& headTrackerPose = ctx.devicePoses[headMountId];
+			if (headTrackerPose.poseIsValid && headTrackerPose.deviceIsConnected &&
+			    headTrackerPose.result == vr::ETrackingResult::TrackingResult_Running_OK) {
+				driverPoseToWorld(headTrackerPose, lockedSnap.headTrackerTrans, lockedSnap.headTrackerRot);
+				lockedSnap.headTrackerValid = true;
+			}
+		}
+
+		// reloc_detected: the HMD relocalization detector (TickHmdRelocalizationDetector,
+		// run earlier this tick on the same `time` clock) stamps ctx.lastRelocDetectedTime
+		// when it fires, so an exact match means it fired on this row.
+		lockedSnap.relocDetected = (ctx.lastRelocDetectedTime == time);
+
+		Metrics::SetTickLockedSnapInputs(lockedSnap);
 	}
 
 	Metrics::WriteLogEntry();

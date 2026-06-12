@@ -3,7 +3,9 @@
 #include "AutoLockHysteresis.h" // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
 #include "BoundedSolve.h"
 #include "DriftBreaker.h"
+#include "LockedSnapRecovery.h" // spacecal::locked_snap::GentleSnapAllowedInLockedStyle (toggle 4).
 #include "RelocGuard.h"
+#include "SnapSuppression.h" // spacecal::snap_suppression::IsJumpClassifiedAsSnap (toggle 4).
 
 #include <windows.h>
 #include <shlobj_core.h>
@@ -196,6 +198,49 @@ void AddReasonCount(std::vector<ReplayReasonCount>& counts, const std::string& r
 	counts.push_back(std::move(entry));
 }
 
+// Map a recorded tick_phase string to the CalibrationState the locked-snap gate
+// consults. Only Continuous / ContinuousStandby make the gentle re-anchor
+// eligible; every other phase maps to None (ineligible), matching the live
+// GentleSnapAllowedInLockedStyle state check.
+CalibrationState ReplayRowStateFromPhase(const std::string& phase)
+{
+	if (phase == "ContinuousStandby") return CalibrationState::ContinuousStandby;
+	if (phase == "Continuous") return CalibrationState::Continuous;
+	return CalibrationState::None;
+}
+
+// Read a 7-tuple of doubles (tx,ty,tz,qw,qx,qy,qz) from `fields` at the given
+// column indexes into `pose` (world space). Returns false if any column is
+// missing or unparseable, leaving `pose` untouched. A zero-norm quaternion
+// (the "device not tracking" sentinel) is normalised to identity so the
+// rotation is still well-formed; only the translation matters for the snap
+// displacement deltas the caller computes.
+bool ReadPoseColumns(const std::vector<std::string>& fields, int idxTx, int idxTy, int idxTz, int idxQw, int idxQx,
+                     int idxQy, int idxQz, Pose& pose)
+{
+	if (idxTx < 0 || idxTy < 0 || idxTz < 0 || idxQw < 0 || idxQx < 0 || idxQy < 0 || idxQz < 0) return false;
+	double t[3], q[4];
+	if (!ReadDouble(fields[static_cast<size_t>(idxTx)], t[0]) ||
+	    !ReadDouble(fields[static_cast<size_t>(idxTy)], t[1]) ||
+	    !ReadDouble(fields[static_cast<size_t>(idxTz)], t[2]) ||
+	    !ReadDouble(fields[static_cast<size_t>(idxQw)], q[0]) ||
+	    !ReadDouble(fields[static_cast<size_t>(idxQx)], q[1]) ||
+	    !ReadDouble(fields[static_cast<size_t>(idxQy)], q[2]) ||
+	    !ReadDouble(fields[static_cast<size_t>(idxQz)], q[3])) {
+		return false;
+	}
+	Eigen::Quaterniond rot(q[0], q[1], q[2], q[3]);
+	if (rot.norm() >= 1e-9) {
+		rot.normalize();
+	}
+	else {
+		rot = Eigen::Quaterniond::Identity();
+	}
+	pose.rot = rot.toRotationMatrix();
+	pose.trans = Eigen::Vector3d(t[0], t[1], t[2]);
+	return true;
+}
+
 } // namespace
 
 LoadedRecording LoadRecording(const std::string& path)
@@ -217,6 +262,10 @@ LoadedRecording LoadRecording(const std::string& path)
 		RTrim(line);
 		if (line.empty()) continue;
 		if (line.rfind('#', 0) == 0) {
+			if (line.find("spacecal_log_v4") != std::string::npos) {
+				formatVersion = 4;
+				continue;
+			}
 			if (line.find("spacecal_log_v3") != std::string::npos) {
 				formatVersion = 3;
 				continue;
@@ -226,7 +275,7 @@ LoadedRecording LoadRecording(const std::string& path)
 				continue;
 			}
 			if (line.find("spacecal_log_v") != std::string::npos) {
-				rec.error = "Recording is not v2/v3 (saw '" + line + "'). Replay needs v2 or newer.";
+				rec.error = "Recording is not v2/v3/v4 (saw '" + line + "'). Replay needs v2 or newer.";
 				return rec;
 			}
 			// Pull metadata KVs out of the header annotations the live logger emits.
@@ -259,7 +308,7 @@ LoadedRecording LoadRecording(const std::string& path)
 		return rec;
 	}
 	if (formatVersion < 2) {
-		rec.error = "Recording missing '# spacecal_log_v2' or '# spacecal_log_v3' banner; v1 logs lack raw poses.";
+		rec.error = "Recording missing '# spacecal_log_v2'/'v3'/'v4' banner; v1 logs lack raw poses.";
 		return rec;
 	}
 	rec.formatVersion = formatVersion;
@@ -308,6 +357,28 @@ LoadedRecording LoadRecording(const std::string& path)
 	const int idxSampleStale = ColIndex(cols, "sample_stale");
 	const int idxSampleJump = ColIndex(cols, "sample_jump");
 	const bool hasSampleDiagnostics = idxSampleObserved >= 0 || idxSampleAccepted >= 0;
+
+	// v4 locked-snap columns (all optional; absent in v2/v3 -> idx < 0).
+	const int idxHmdTx = ColIndex(cols, "hmd_tx");
+	const int idxHmdTy = ColIndex(cols, "hmd_ty");
+	const int idxHmdTz = ColIndex(cols, "hmd_tz");
+	const int idxHmdQw = ColIndex(cols, "hmd_qw");
+	const int idxHmdQx = ColIndex(cols, "hmd_qx");
+	const int idxHmdQy = ColIndex(cols, "hmd_qy");
+	const int idxHmdQz = ColIndex(cols, "hmd_qz");
+	const int idxHeadTrackerValid = ColIndex(cols, "head_tracker_valid");
+	const int idxHeadTx = ColIndex(cols, "head_tracker_tx");
+	const int idxHeadTy = ColIndex(cols, "head_tracker_ty");
+	const int idxHeadTz = ColIndex(cols, "head_tracker_tz");
+	const int idxHeadQw = ColIndex(cols, "head_tracker_qw");
+	const int idxHeadQx = ColIndex(cols, "head_tracker_qx");
+	const int idxHeadQy = ColIndex(cols, "head_tracker_qy");
+	const int idxHeadQz = ColIndex(cols, "head_tracker_qz");
+	const int idxRelocDetected = ColIndex(cols, "reloc_detected");
+	// The locked-snap A/B needs both the HMD jump and the head-tracker displacement,
+	// so it's only enabled when both pose blocks (and the valid flag) are present.
+	const bool hasLockedSnapColumns = idxHmdTx >= 0 && idxHeadTx >= 0 && idxHeadTrackerValid >= 0;
+	rec.hasLockedSnapColumns = hasLockedSnapColumns;
 
 	const int required[] = {
 	    idxRefTx, idxRefTy, idxRefTz, idxRefQw, idxRefQx, idxRefQy, idxRefQz,
@@ -408,6 +479,20 @@ LoadedRecording LoadRecording(const std::string& path)
 			row.sample.valid = true;
 		}
 
+		// v4 locked-snap inputs. Optional: absent columns leave hasHmdPose /
+		// headTrackerValid false so the locked-snap replay path is skipped. The
+		// head-tracker pose is only read when the recorded valid flag is set
+		// (mirrors the live detector clearing its cache on tracker invalidity).
+		if (hasLockedSnapColumns) {
+			row.hasHmdPose =
+			    ReadPoseColumns(fields, idxHmdTx, idxHmdTy, idxHmdTz, idxHmdQw, idxHmdQx, idxHmdQy, idxHmdQz, row.hmd);
+			if (ReadOptionalBool(fields, idxHeadTrackerValid, false)) {
+				row.headTrackerValid = ReadPoseColumns(fields, idxHeadTx, idxHeadTy, idxHeadTz, idxHeadQw, idxHeadQx,
+				                                       idxHeadQy, idxHeadQz, row.headTracker);
+			}
+			row.relocDetected = ReadOptionalBool(fields, idxRelocDetected, false);
+		}
+
 		rec.rows.push_back(std::move(row));
 	}
 
@@ -449,6 +534,20 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	std::vector<double> allMad;
 	bool driftFrozen = false;
 
+	// Toggle 4 (locked-style snap recovery) replay state. We track the previous
+	// row's HMD and head-tracker world translations so each row's HMD jump and
+	// head-tracker displacement can be compared, exactly as the live
+	// TickHmdRelocalizationDetector does tick-to-tick. The locked-snap A/B needs
+	// the v4 columns; on v2/v3 input we report the skip and leave snapReanchors=0.
+	const bool runLockedSnap = opts.applyLockedSnap && rec.hasLockedSnapColumns;
+	if (opts.applyLockedSnap) {
+		res.lockedSnapStatus = rec.hasLockedSnapColumns ? "applied" : "locked_snap_replay_requires_v4";
+	}
+	Eigen::Vector3d prevHmdTrans = Eigen::Vector3d::Zero();
+	Eigen::Vector3d prevHeadTrackerTrans = Eigen::Vector3d::Zero();
+	bool haveLockedPrevHmd = false;
+	bool haveLockedPrevHeadTracker = false;
+
 	const bool boundedContinuous = opts.continuous && opts.maxContinuousSamples > 0;
 	const std::size_t continuousWindow = boundedContinuous ? opts.maxContinuousSamples : 0;
 	const std::size_t continuousDrop = boundedContinuous ? std::max<std::size_t>(1, continuousWindow / 10) : 0;
@@ -486,6 +585,49 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 
 	for (std::size_t rowIndex = 0; rowIndex < rec.rows.size(); ++rowIndex) {
 		const auto& row = rec.rows[rowIndex];
+
+		// Toggle 4: locked-style snap recovery. Run before sample intake so it sees
+		// every row (the live detector runs ahead of CollectSample and fires
+		// regardless of whether the sample is accepted). A >=30 cm HMD jump
+		// corroborated by a <2 cm head-tracker displacement is a Quest universe
+		// flip; in a locked tracking style the live styleOK gate (Continuous-only)
+		// skips recovery, so the experimental toggle opens the gentle re-anchor that
+		// GentleSnapAllowedInLockedStyle authorises. Mode is DriverSynth -- the mode
+		// the locked styles configure (>= Corroborate, which IsJumpClassifiedAsSnap
+		// requires); the per-row head-tracker validity still gates corroboration.
+		if (runLockedSnap) {
+			if (row.hasHmdPose) {
+				if (haveLockedPrevHmd) {
+					const double hmdDeltaM = (row.hmd.trans - prevHmdTrans).norm();
+					const double headTrackerDeltaM = (row.headTrackerValid && haveLockedPrevHeadTracker)
+					                                     ? (row.headTracker.trans - prevHeadTrackerTrans).norm()
+					                                     : -1.0; // negative = no valid head-tracker reading
+					const bool snapCorroborated = spacecal::snap_suppression::IsJumpClassifiedAsSnap(
+					    HeadMountMode::DriverSynth, hmdDeltaM, headTrackerDeltaM);
+					if (spacecal::locked_snap::GentleSnapAllowedInLockedStyle(opts.trackingStyle, /*toggleOn=*/true,
+					                                                          snapCorroborated,
+					                                                          ReplayRowStateFromPhase(row.tickPhase))) {
+						++res.snapReanchors;
+					}
+				}
+				prevHmdTrans = row.hmd.trans;
+				haveLockedPrevHmd = true;
+				if (row.headTrackerValid) {
+					prevHeadTrackerTrans = row.headTracker.trans;
+					haveLockedPrevHeadTracker = true;
+				}
+				else {
+					haveLockedPrevHeadTracker = false;
+				}
+			}
+			else {
+				// No HMD pose this row -> drop the window so the next delta isn't
+				// measured across a gap (mirrors the live havePrevHmd reset).
+				haveLockedPrevHmd = false;
+				haveLockedPrevHeadTracker = false;
+			}
+		}
+
 		Sample s = row.hasSampleDiagnostics ? row.sample : Sample(row.ref, row.target, row.timestamp);
 		if (row.sampleObserved) ++res.sampleRowsObserved;
 		if (row.hasSampleDiagnostics) {

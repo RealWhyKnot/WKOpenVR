@@ -234,6 +234,24 @@ struct ReplaySampleDiagnostics
 	bool trackingPoseJump = false;
 };
 
+// v4 wire-format addition: raw HMD pose, head-mount tracker pose (+ a valid flag),
+// and a per-row relocalization-detected flag. These let the offline replay harness
+// reconstruct the head-tracker corroboration the locked-style snap recovery depends
+// on (spacecal::snap_suppression::IsJumpClassifiedAsSnap needs the head-tracker
+// displacement, which v3 didn't record), so experimentalLockedSnapRecoveryEnabled
+// can be A/B-confirmed on a recorded session rather than only live. Poses are in
+// world space (worldFromDriver applied), matching the ref/target columns. Filled by
+// SetTickLockedSnapInputs() each tick alongside SetTickRawPoses().
+struct ReplayLockedSnapInputs
+{
+	Eigen::Vector3d hmdTrans = Eigen::Vector3d::Zero();
+	Eigen::Quaterniond hmdRot = Eigen::Quaterniond::Identity();
+	Eigen::Vector3d headTrackerTrans = Eigen::Vector3d::Zero();
+	Eigen::Quaterniond headTrackerRot = Eigen::Quaterniond::Identity();
+	bool headTrackerValid = false; // head-mount tracker resolved + reporting a running pose this tick
+	bool relocDetected = false;    // HMD relocalization detector fired this tick
+};
+
 // Set the raw reference and target pose (translation + quaternion) and the tick
 // phase that will be written by the next WriteLogEntry() call. Caller is expected
 // to invoke this once per tick, just before WriteLogEntry(), so the v2 columns
@@ -241,6 +259,12 @@ struct ReplaySampleDiagnostics
 void SetTickRawPoses(const Eigen::Vector3d& refTrans, const Eigen::Quaterniond& refRot,
                      const Eigen::Vector3d& targetTrans, const Eigen::Quaterniond& targetRot, TickPhase phase);
 void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics);
+
+// Set the v4 locked-snap inputs (raw HMD pose, head-mount tracker pose + valid
+// flag, reloc-detected flag) for the next WriteLogEntry() call. Like the sample
+// diagnostics, this is reset to defaults after each row is written, so a tick that
+// doesn't set it emits the additive defaults (identity HMD, invalid head tracker).
+void SetTickLockedSnapInputs(const ReplayLockedSnapInputs& inputs);
 
 void WriteLogAnnotation(const char* s);
 

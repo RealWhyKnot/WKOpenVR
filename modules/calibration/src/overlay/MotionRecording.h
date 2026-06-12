@@ -1,6 +1,6 @@
 #pragma once
 
-// Loads a captured "spacecal_log_v2/v3" CSV (the same file format the debug logger
+// Loads a captured "spacecal_log_v2/v3/v4" CSV (the same file format the debug logger
 // emits to %LocalAppDataLow%\SpaceCalibrator\Logs\) into memory and replays it
 // through a fresh CalibrationCalc. The intent: a user records a problematic
 // motion sequence, we ship a fix, the user replays the same recording against
@@ -8,12 +8,15 @@
 //
 // Parsing is column-name based, so adding new columns to the live log is
 // backward compatible; only the raw-pose columns are required. The header line
-// must begin with `# spacecal_log_v2` or `# spacecal_log_v3`; older v1 captures
-// lacked the raw poses and can't be replayed. v3 adds per-row sample-health
-// columns so replay can evaluate tracking contamination instead of assuming
-// every restored sample was healthy.
+// must begin with `# spacecal_log_v2`, `# spacecal_log_v3`, or
+// `# spacecal_log_v4`; older v1 captures lacked the raw poses and can't be
+// replayed. v3 adds per-row sample-health columns so replay can evaluate
+// tracking contamination instead of assuming every restored sample was healthy.
+// v4 adds the raw HMD + head-mount tracker poses and a reloc flag so the
+// locked-style snap-recovery toggle can be A/B-confirmed offline.
 
 #include "CalibrationCalc.h"
+#include "TrackingStyle.h" // TrackingStyle enum for the locked-snap replay option
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -37,6 +40,14 @@ struct ReplayRow
 	bool sampleObserved = true;
 	bool sampleAccepted = true;
 	std::string tickPhase; // "Continuous", "Begin", etc — informational only.
+
+	// v4 locked-snap inputs (world space). hasHmdPose / headTrackerValid are false
+	// for v2/v3 rows; the locked-snap replay path is skipped unless they're present.
+	Pose hmd;
+	Pose headTracker;
+	bool hasHmdPose = false;       // raw HMD pose column present + parsed this row
+	bool headTrackerValid = false; // head-mount tracker reported a running pose this row
+	bool relocDetected = false;    // HMD relocalization detector fired this row
 };
 
 // Parsed file metadata: header annotations the live logger emits up-front
@@ -65,6 +76,10 @@ struct LoadedRecording
 	std::vector<ReplayRow> rows;
 	std::string sourcePath; // path passed to LoadRecording, for display
 	std::string error;      // populated on failure; rows will be empty.
+	// True when the v4 raw-HMD + head-tracker columns are present, so the
+	// locked-snap A/B path can run. v2/v3 recordings leave this false and the
+	// replay reports "locked_snap_replay_requires_v4" instead of counting snaps.
+	bool hasLockedSnapColumns = false;
 };
 
 // Parse a v2 log file from disk. Returns LoadedRecording with `error` empty
@@ -163,6 +178,17 @@ struct ReplayOptions
 	// this marks a relocalization for the quarantine/breaker, derived purely from
 	// the recorded ref/target poses, so v3 recordings (no raw HMD pose) work too.
 	double relocProxyJumpM = 0.05;
+
+	// Toggle 4 (locked-style snap recovery). When on AND the recording is v4 (raw
+	// HMD + head-tracker columns present), the replay reproduces the live snap
+	// corroboration: a >=30 cm HMD jump confirmed by a <2 cm head-tracker
+	// displacement is a Quest universe flip, and in a locked tracking style the
+	// experimental toggle opens the gentle re-anchor that the live styleOK gate
+	// otherwise skips. Each such row increments ReplayResult::snapReanchors.
+	// trackingStyle is the style the A/B assumes; the gentle path only opens for
+	// LockedWithRecovery / HardTrackerLock (GentleSnapAllowedInLockedStyle).
+	bool applyLockedSnap = false;
+	TrackingStyle trackingStyle = TrackingStyle::LockedWithRecovery;
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
@@ -199,6 +225,10 @@ struct ReplayResult
 	int samplesQuarantined = 0;
 	int freezeEngagements = 0;
 	int snapReanchors = 0;
+	// Locked-snap A/B status: "off" (toggle not requested), "applied" (ran on a v4
+	// recording), or "locked_snap_replay_requires_v4" (requested but the recording
+	// lacks the raw HMD + head-tracker columns, so snapReanchors stays 0).
+	std::string lockedSnapStatus = "off";
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();
 	bool finalTransformValid = false;
 	ReplayQualitySnapshot finalQuality;

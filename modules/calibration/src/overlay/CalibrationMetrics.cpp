@@ -168,6 +168,7 @@ struct TickRawPoses
 };
 static TickRawPoses g_tickRaw;
 static ReplaySampleDiagnostics g_tickSample;
+static ReplayLockedSnapInputs g_tickLockedSnap;
 
 static const char* TickPhaseName(TickPhase p)
 {
@@ -203,6 +204,11 @@ void SetTickRawPoses(const Eigen::Vector3d& refTrans, const Eigen::Quaterniond& 
 void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics)
 {
 	g_tickSample = diagnostics;
+}
+
+void SetTickLockedSnapInputs(const ReplayLockedSnapInputs& inputs)
+{
+	g_tickLockedSnap = inputs;
 }
 
 struct CsvField
@@ -418,6 +424,84 @@ static const CsvField fields[] = {
     {"sample_tgt_unchanged", [](auto& s) { s << (g_tickSample.targetPoseUnchanged ? 1 : 0); }},
     {"sample_stale", [](auto& s) { s << (g_tickSample.trackingPoseStale ? 1 : 0); }},
     {"sample_jump", [](auto& s) { s << (g_tickSample.trackingPoseJump ? 1 : 0); }},
+
+    // --- v4 columns: locked-snap corroboration inputs ------------------------
+    // Raw HMD pose, head-mount tracker pose (+ valid flag) and a reloc-detected
+    // flag. The replay harness computes the per-row HMD jump and head-tracker
+    // displacement from these to reproduce the snap classification the
+    // locked-style snap-recovery toggle depends on. World space, full precision.
+    {"hmd_tx",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdTrans.x();
+     }},
+    {"hmd_ty",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdTrans.y();
+     }},
+    {"hmd_tz",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdTrans.z();
+     }},
+    {"hmd_qw",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdRot.w();
+     }},
+    {"hmd_qx",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdRot.x();
+     }},
+    {"hmd_qy",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdRot.y();
+     }},
+    {"hmd_qz",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.hmdRot.z();
+     }},
+    {"head_tracker_valid", [](auto& s) { s << (g_tickLockedSnap.headTrackerValid ? 1 : 0); }},
+    {"head_tracker_tx",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerTrans.x();
+     }},
+    {"head_tracker_ty",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerTrans.y();
+     }},
+    {"head_tracker_tz",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerTrans.z();
+     }},
+    {"head_tracker_qw",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerRot.w();
+     }},
+    {"head_tracker_qx",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerRot.x();
+     }},
+    {"head_tracker_qy",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerRot.y();
+     }},
+    {"head_tracker_qz",
+     [](auto& s) {
+	     s.precision(17);
+	     s << g_tickLockedSnap.headTrackerRot.z();
+     }},
+    {"reloc_detected", [](auto& s) { s << (g_tickLockedSnap.relocDetected ? 1 : 0); }},
 };
 #endif
 
@@ -609,10 +693,13 @@ static bool OpenLogFile()
 #if WKOPENVR_BUILD_IS_DEV
 	if (enableReplayCsv) {
 		// Wire-format version annotation. v2 added per-tick raw reference + target
-		// poses (ref_t{x,y,z}, ref_q{w,x,y,z}, tgt_*) and tick_phase. The replay
-		// harness rejects logs that don't begin with this banner so older captures
-		// fail loud rather than being interpreted with the wrong column layout.
-		header << "# spacecal_log_v3\n";
+		// poses (ref_t{x,y,z}, ref_q{w,x,y,z}, tgt_*) and tick_phase; v3 added the
+		// sample-health columns; v4 added the locked-snap corroboration inputs (raw
+		// HMD pose, head-mount tracker pose + valid flag, reloc_detected). New
+		// columns are strictly appended, so the replay parser still loads v2/v3.
+		// The harness rejects logs that don't begin with this banner so older
+		// captures fail loud rather than being read with the wrong column layout.
+		header << "# spacecal_log_v4\n";
 	}
 	else
 #endif
@@ -630,7 +717,7 @@ static bool OpenLogFile()
 	header << "# debug_logging_effective=1\n";
 	header << "# replay_recording="
 #if WKOPENVR_BUILD_IS_DEV
-	       << (enableReplayCsv ? "enabled format=spacecal_log_v3" : "disabled")
+	       << (enableReplayCsv ? "enabled format=spacecal_log_v4" : "disabled")
 #else
 	       << "not_compiled"
 #endif
@@ -863,6 +950,7 @@ void WriteLogEntry()
 		}
 	}
 	g_tickSample = ReplaySampleDiagnostics{};
+	g_tickLockedSnap = ReplayLockedSnapInputs{};
 #endif
 }
 
