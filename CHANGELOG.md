@@ -54,6 +54,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **updater:** Queue verified installer on SteamVR close (c5b6559)
 - **calibration:** Capture replay sample quality (1a42c1c)
 - **runtime:** Add module perf and sidecar liveness (677b1c9)
+- **calibration:** V4 recording schema for offline locked-snap A/B (4496359)
+- **calibration:** Experimental drift-fighting toggles for continuous cal (cc04df1)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
