@@ -160,12 +160,15 @@ inline VirtualRoleReadiness EvaluateVirtualRoleReadiness(bool solverCalibrated, 
 // device_role this frame. The driver already applies confident detections to
 // the live pose; this gates only the on-disk mapping so it survives a restart.
 // Persist only when auto-save is on, the snapshot read was stable (untorn),
-// the detection names a real role that differs from what is already saved, and
-// the confidence clears the bar.
+// the detection names a real role that differs from what is already saved, the
+// confidence clears the bar, and the existing entry was not hand-picked -- a
+// manual assignment is never silently overwritten by detection.
 inline bool ShouldAutoSaveDetectedRole(bool autoAcceptEnabled, bool snapshotStable, phantom::BodyRole detectedRole,
-                                       phantom::BodyRole savedRole, float confidence, float threshold)
+                                       phantom::BodyRole savedRole, bool savedIsManual, float confidence,
+                                       float threshold)
 {
 	if (!autoAcceptEnabled || !snapshotStable) return false;
+	if (savedIsManual) return false;
 	if (detectedRole == phantom::BodyRole::None) return false;
 	if (detectedRole == savedRole) return false;
 	return confidence >= threshold;

@@ -874,7 +874,9 @@ void PhantomPlugin::DrawAutoDetectPanel()
 		ui::DrawTextWrapped("Move around normally for a few seconds. The driver watches each tracker's "
 		                    "height and motion relative to your headset and works out which body point "
 		                    "it sits on. Confident detections are applied live; with auto-save on they "
-		                    "also persist so the mapping is remembered next session.");
+		                    "also persist so the mapping is remembered next session. The Assigned column "
+		                    "badges whether a saved role was detected (Auto) or hand-picked below (Manual); "
+		                    "Clear removes a saved role and Manual roles are never overwritten by detection.");
 		ImGui::Spacing();
 
 		if (ImGui::Checkbox("Save confident detections automatically", &cfg_.auto_accept_roles)) {
@@ -896,13 +898,14 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			return;
 		}
 
-		ui::TableScope table("PhantomAutoDetect", 4,
+		ui::TableScope table("PhantomAutoDetect", 5,
 		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
 		if (!table) return;
-		ui::SetupStretchColumn("Tracker", 1.6f);
-		ui::SetupStretchColumn("Detected role", 1.1f);
-		ui::SetupStretchColumn("Confidence", 1.3f);
-		ui::SetupFixedColumn("", 84.0f);
+		ui::SetupStretchColumn("Tracker", 1.5f);
+		ui::SetupStretchColumn("Assigned", 1.0f);
+		ui::SetupStretchColumn("Detected role", 1.0f);
+		ui::SetupStretchColumn("Confidence", 1.2f);
+		ui::SetupFixedColumn("", 138.0f);
 		ImGui::TableHeadersRow();
 
 		constexpr float kAutoAcceptConfidence = 0.70f;
@@ -925,6 +928,9 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			const auto cfgIt = cfg_.device_role.find(serial);
 			const phantom::BodyRole cfgRole =
 			    (cfgIt != cfg_.device_role.end()) ? cfgIt->second : phantom::BodyRole::None;
+			const auto manualIt = cfg_.role_manual.find(serial);
+			const bool savedIsManual =
+			    cfgRole != phantom::BodyRole::None && manualIt != cfg_.role_manual.end() && manualIt->second;
 
 			// Only surface devices the inference cares about: either it has an
 			// estimate, or the user already mapped this tracker.
@@ -937,40 +943,63 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextUnformatted(serial.c_str());
-			if (cfgRole != phantom::BodyRole::None) {
+
+			// Assigned role + where it came from: a hand-picked role shows a
+			// Manual badge, a detection-sourced one shows Auto.
+			ImGui::TableSetColumnIndex(1);
+			if (cfgRole == phantom::BodyRole::None) {
+				ImGui::TextDisabled("-");
+			}
+			else {
+				ImGui::TextUnformatted(phantom::BodyRoleLabel(cfgRole));
 				ImGui::SameLine();
-				ImGui::TextDisabled("(saved: %s)", phantom::BodyRoleLabel(cfgRole));
+				ui::StatusBadge(savedIsManual ? "Manual" : "Auto",
+				                savedIsManual ? ui::StatusTone::Info : ui::StatusTone::Ok);
 			}
 
-			ImGui::TableSetColumnIndex(1);
+			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(phantom::BodyRoleLabel(inferredRole));
-			if (applied) {
+			if (applied && cfgRole == phantom::BodyRole::None) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("(live)");
 			}
 
-			ImGui::TableSetColumnIndex(2);
+			ImGui::TableSetColumnIndex(3);
 			char pct[16];
 			std::snprintf(pct, sizeof(pct), "%d%%", static_cast<int>(std::clamp(conf, 0.0f, 1.0f) * 100.0f + 0.5f));
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			ImGui::ProgressBar(std::clamp(conf, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0.0f), pct);
 
-			ImGui::TableSetColumnIndex(3);
+			ImGui::TableSetColumnIndex(4);
 			const bool acceptable = inferredRole != phantom::BodyRole::None && inferredRole != cfgRole;
 			ImGui::BeginDisabled(!acceptable);
 			if (ImGui::Button("Accept")) {
 				cfg_.device_role[serial] = inferredRole;
+				cfg_.role_manual[serial] = false; // sourced from detection
 				SendDeviceRole(serial, inferredRole);
 				SavePhantomConfig(cfg_);
 			}
 			ImGui::EndDisabled();
+			ui::TooltipForLastItem("Save the detected role for this tracker.");
+			ImGui::SameLine();
+			ImGui::BeginDisabled(cfgRole == phantom::BodyRole::None);
+			if (ImGui::Button("Clear")) {
+				cfg_.device_role.erase(serial);
+				cfg_.role_manual.erase(serial);
+				SendDeviceRole(serial, phantom::BodyRole::None);
+				SavePhantomConfig(cfg_);
+			}
+			ImGui::EndDisabled();
+			ui::TooltipForLastItem("Remove the saved role. Automatic detection may re-assign it.");
 			ImGui::PopID();
 
 			// Auto-save confident detections. The driver has already applied
-			// them live; this only writes the persistent mapping once.
-			if (phantom::ui::ShouldAutoSaveDetectedRole(cfg_.auto_accept_roles, stable, inferredRole, cfgRole, conf,
-			                                            kAutoAcceptConfidence)) {
+			// them live; this only writes the persistent mapping once, and never
+			// over a hand-picked (Manual) role.
+			if (phantom::ui::ShouldAutoSaveDetectedRole(cfg_.auto_accept_roles, stable, inferredRole, cfgRole,
+			                                            savedIsManual, conf, kAutoAcceptConfidence)) {
 				cfg_.device_role[serial] = inferredRole;
+				cfg_.role_manual[serial] = false; // sourced from detection
 				SendDeviceRole(serial, inferredRole);
 				SavePhantomConfig(cfg_);
 			}
@@ -1104,9 +1133,11 @@ void PhantomPlugin::DrawCalibrationTab()
 					if (ImGui::Selectable(phantom::BodyRoleLabel(r), selected)) {
 						if (r == phantom::BodyRole::None) {
 							cfg_.device_role.erase(serial);
+							cfg_.role_manual.erase(serial);
 						}
 						else {
 							cfg_.device_role[serial] = r;
+							cfg_.role_manual[serial] = true; // hand-picked
 						}
 						SendDeviceRole(serial, r);
 						SavePhantomConfig(cfg_);

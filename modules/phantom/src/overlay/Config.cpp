@@ -113,6 +113,10 @@ PhantomConfig LoadPhantomConfig()
 			const std::string serial(key + 16);
 			cfg.dropout_enabled[serial] = (std::atoi(val) != 0);
 		}
+		else if (std::strncmp(key, "device_role_manual.", 19) == 0) {
+			const std::string serial(key + 19);
+			cfg.role_manual[serial] = (std::atoi(val) != 0);
+		}
 		else if (std::strncmp(key, "device_role.", 12) == 0) {
 			const std::string serial(key + 12);
 			const phantom::BodyRole r = phantom::BodyRoleFromKey(val);
@@ -191,6 +195,13 @@ void SavePhantomConfig(const PhantomConfig& cfg)
 	for (const auto& kv : cfg.device_role) {
 		if (kv.second != phantom::BodyRole::None) {
 			std::fprintf(f, "device_role.%s=%s\n", kv.first.c_str(), phantom::BodyRoleToKey(kv.second));
+		}
+	}
+	for (const auto& kv : cfg.role_manual) {
+		// Only the manual flag is persisted; an automatic entry is the default
+		// for any device_role without a matching device_role_manual line.
+		if (kv.second) {
+			std::fprintf(f, "device_role_manual.%s=1\n", kv.first.c_str());
 		}
 	}
 	for (const auto& kv : cfg.virtual_enabled) {

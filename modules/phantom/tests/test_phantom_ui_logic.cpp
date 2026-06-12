@@ -132,33 +132,40 @@ TEST(PhantomUiLogic, AutoSaveDetectedRoleGatesOnConfidenceAndState)
 {
 	using phantom::BodyRole;
 	const float kThreshold = 0.70f;
+	const bool kAuto = false;  // saved entry came from detection
+	const bool kManual = true; // saved entry was hand-picked
 
 	// Clean, confident, new detection with auto-save on -> persist.
 	EXPECT_TRUE(
-	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::None, 0.80f, kThreshold));
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::None, kAuto, 0.80f, kThreshold));
 
 	// Below the confidence bar -> do not persist.
 	EXPECT_FALSE(
-	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::None, 0.50f, kThreshold));
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::None, kAuto, 0.50f, kThreshold));
 
 	// Auto-save disabled -> never persists, even when confident.
-	EXPECT_FALSE(
-	    phantom::ui::ShouldAutoSaveDetectedRole(false, true, BodyRole::Waist, BodyRole::None, 0.95f, kThreshold));
+	EXPECT_FALSE(phantom::ui::ShouldAutoSaveDetectedRole(false, true, BodyRole::Waist, BodyRole::None, kAuto, 0.95f,
+	                                                     kThreshold));
 
 	// Torn snapshot read -> hold off until a stable read.
-	EXPECT_FALSE(
-	    phantom::ui::ShouldAutoSaveDetectedRole(true, false, BodyRole::Waist, BodyRole::None, 0.95f, kThreshold));
+	EXPECT_FALSE(phantom::ui::ShouldAutoSaveDetectedRole(true, false, BodyRole::Waist, BodyRole::None, kAuto, 0.95f,
+	                                                     kThreshold));
 
 	// Already saved as that role -> nothing to do.
-	EXPECT_FALSE(
-	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::Waist, 0.95f, kThreshold));
+	EXPECT_FALSE(phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::Waist, BodyRole::Waist, kAuto, 0.95f,
+	                                                     kThreshold));
 
 	// No detection -> nothing to persist.
 	EXPECT_FALSE(
-	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::None, BodyRole::None, 0.95f, kThreshold));
+	    phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::None, BodyRole::None, kAuto, 0.95f, kThreshold));
 
-	// A confident detection that disagrees with the saved role still persists
+	// A confident detection that disagrees with an AUTO entry still persists
 	// (the newer, stronger reading wins).
-	EXPECT_TRUE(phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::LeftFoot, BodyRole::RightFoot, 0.85f,
-	                                                    kThreshold));
+	EXPECT_TRUE(phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::LeftFoot, BodyRole::RightFoot, kAuto,
+	                                                    0.85f, kThreshold));
+
+	// But a hand-picked (Manual) entry is never overwritten by detection,
+	// however confident.
+	EXPECT_FALSE(phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::LeftFoot, BodyRole::RightFoot, kManual,
+	                                                     0.99f, kThreshold));
 }

@@ -71,6 +71,12 @@ struct PhantomConfig
 	// device already holds" check.
 	std::unordered_map<std::string, phantom::BodyRole> device_role;
 
+	// Origin of each device_role entry: true when the user hand-picked it in the
+	// role dropdown, false when it came from automatic detection (Accept or
+	// auto-save). Lets the UI badge manual vs automatic and keeps auto-save from
+	// overwriting a hand-picked role. Keyed by serial, same as device_role.
+	std::unordered_map<std::string, bool> role_manual;
+
 	// When true, a high-confidence passive role detection from the driver is
 	// saved as the persistent device_role automatically (so the mapping sticks
 	// across sessions without the user pressing Accept). The driver already
