@@ -11,6 +11,8 @@ await Run("infers current avatar from observed parameters", InfersCurrentAvatarF
 await Run("restores empty output from cached avatar", RestoresEmptyOutputFromCachedAvatar);
 await Run("does not infer ambiguous observed parameters", DoesNotInferAmbiguousObservedParameters);
 await Run("parses face replay options", ParsesFaceReplayOptions);
+await Run("debug logging enables face replay by default", DebugLoggingEnablesFaceReplayByDefault);
+await Run("explicit face replay disable overrides debug logging", ExplicitFaceReplayDisableOverridesDebugLogging);
 await Run("records face replay frame", RecordsFaceReplayFrame);
 
 if (failures.Count > 0)
@@ -123,12 +125,39 @@ static async Task DoesNotInferAmbiguousObservedParameters()
 
 static Task ParsesFaceReplayOptions()
 {
+    using var env = ScopedFaceReplayEnvironment();
     string replayDir = Path.Combine(Path.GetTempPath(), "wkopenvr-ft-replay-options-" + Guid.NewGuid().ToString("N"));
     HostOptions opts = HostOptions.FromArgs(["--face-replay-record", "--face-replay-dir", replayDir, "--face-replay-hz", "12.5"]);
 
     Require(opts.FaceReplayRecordEnabled, "replay recording was not enabled");
     Require(opts.FaceReplayDirectory == replayDir, "replay directory was not parsed");
     Require(Math.Abs(opts.FaceReplayMaxHz - 12.5) < 0.001, "replay hz was not parsed");
+    return Task.CompletedTask;
+}
+
+static Task DebugLoggingEnablesFaceReplayByDefault()
+{
+    using var env = ScopedFaceReplayEnvironment();
+    HostOptions opts = HostOptions.FromArgs(["--debug-logging", "true"]);
+
+    Require(opts.DebugLoggingEnabled, "debug logging was not enabled");
+    Require(opts.FaceReplayRecordEnabled, "debug logging should enable face replay recording");
+    return Task.CompletedTask;
+}
+
+static Task ExplicitFaceReplayDisableOverridesDebugLogging()
+{
+    using var env = ScopedFaceReplayEnvironment();
+    HostOptions opts = HostOptions.FromArgs(["--debug-logging", "true", "--no-face-replay-record"]);
+
+    Require(opts.DebugLoggingEnabled, "debug logging was not enabled");
+    Require(!opts.FaceReplayRecordEnabled, "explicit replay disable should override debug logging");
+
+    Environment.SetEnvironmentVariable("WKOPENVR_DEBUG_LOGGING", "1");
+    Environment.SetEnvironmentVariable("WKOPENVR_FACE_REPLAY_RECORD", "0");
+    opts = HostOptions.FromArgs([]);
+    Require(opts.DebugLoggingEnabled, "env debug logging was not enabled");
+    Require(!opts.FaceReplayRecordEnabled, "env replay disable should override env debug logging");
     return Task.CompletedTask;
 }
 
@@ -192,6 +221,37 @@ static void Require(bool condition, string message)
     if (!condition)
     {
         throw new InvalidOperationException(message);
+    }
+}
+
+static ScopedEnvironmentVariables ScopedFaceReplayEnvironment()
+{
+    return new ScopedEnvironmentVariables(
+        "WKOPENVR_DEBUG_LOGGING",
+        "WKOPENVR_FACE_REPLAY_RECORD",
+        "WKOPENVR_FACE_REPLAY_DIR",
+        "WKOPENVR_FACE_REPLAY_HZ");
+}
+
+sealed class ScopedEnvironmentVariables : IDisposable
+{
+    private readonly Dictionary<string, string?> previous_ = [];
+
+    public ScopedEnvironmentVariables(params string[] names)
+    {
+        foreach (string name in names)
+        {
+            previous_[name] = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, null);
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach ((string name, string? value) in previous_)
+        {
+            Environment.SetEnvironmentVariable(name, value);
+        }
     }
 }
 

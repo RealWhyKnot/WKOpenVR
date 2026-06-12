@@ -43,6 +43,7 @@ public sealed class HostOptions
     public static HostOptions FromArgs(string[] args)
     {
         var opts = new HostOptions();
+        bool faceReplayRecordConfigured = false;
 
         // Override from env vars first (lower priority than args).
         if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_PIPE") is { } envPipe)
@@ -63,6 +64,7 @@ public sealed class HostOptions
         if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_REPLAY_RECORD") is { } envReplay)
         {
             opts.FaceReplayRecordEnabled = IsTruthy(envReplay);
+            faceReplayRecordConfigured = true;
         }
 
         if (Environment.GetEnvironmentVariable("WKOPENVR_FACE_REPLAY_DIR") is { } envReplayDir &&
@@ -88,7 +90,14 @@ public sealed class HostOptions
                 case "--status-file" when i + 1 < args.Length: opts.StatusFilePath = args[++i]; break;
                 case "--log-file" when i + 1 < args.Length: opts.LogFilePath = args[++i]; break;
                 case "--debug-logging" when i + 1 < args.Length: opts.DebugLoggingEnabled = IsTruthy(args[++i]); break;
-                case "--face-replay-record": opts.FaceReplayRecordEnabled = true; break;
+                case "--face-replay-record":
+                    opts.FaceReplayRecordEnabled = true;
+                    faceReplayRecordConfigured = true;
+                    break;
+                case "--no-face-replay-record":
+                    opts.FaceReplayRecordEnabled = false;
+                    faceReplayRecordConfigured = true;
+                    break;
                 case "--face-replay-dir" when i + 1 < args.Length: opts.FaceReplayDirectory = args[++i]; break;
                 case "--face-replay-hz" when i + 1 < args.Length:
                     if (double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double argReplayHz))
@@ -122,6 +131,11 @@ public sealed class HostOptions
 
                     break;
             }
+        }
+
+        if (!faceReplayRecordConfigured && opts.DebugLoggingEnabled)
+        {
+            opts.FaceReplayRecordEnabled = true;
         }
 
         return opts;
