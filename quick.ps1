@@ -27,7 +27,18 @@ param(
 
 	# Override steam.exe. When omitted, the script reads the Steam registry keys
 	# and falls back to the standard Steam location.
-	[string]$SteamExe = ""
+	[string]$SteamExe = "",
+
+	# Build the captions speech host with the Vulkan GPU backend. Passed through
+	# to build.ps1, which offers to install the Vulkan SDK if it is missing.
+	[switch]$CaptionsVulkan,
+
+	# Install the Vulkan SDK without prompting (implies the non-interactive path).
+	[switch]$InstallVulkanSdk,
+
+	# Install the Vulkan SDK into this directory instead of the default
+	# C:\VulkanSDK\<version>. Pass a user-writable path to install without elevation.
+	[string]$VulkanSdkRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -619,6 +630,9 @@ if (-not $SkipBuild) {
 	Write-Step "Building"
 	$buildArgs = @{}
 	if ($SkipConfigure) { $buildArgs["SkipConfigure"] = $true }
+	if ($CaptionsVulkan) { $buildArgs["CaptionsVulkan"] = $true }
+	if ($InstallVulkanSdk) { $buildArgs["InstallVulkanSdk"] = $true }
+	if ($VulkanSdkRoot) { $buildArgs["VulkanSdkRoot"] = $VulkanSdkRoot }
 	& "$PSScriptRoot\build.ps1" @buildArgs
 	if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed (exit $LASTEXITCODE)" }
 } else {

@@ -20,7 +20,18 @@ param(
 	# Opt-in for the Vulkan whisper backend (vendor-neutral GPU). Requires the
 	# Vulkan SDK on the build host. Enabled by this switch or
 	# WKOPENVR_CAPTIONS_VULKAN=ON; release.yml turns it on for shipped builds.
+	# When the SDK is missing, the build offers to install it (see
+	# tools/Install-VulkanSdk.ps1).
 	[switch]$CaptionsVulkan,
+
+	# Install the Vulkan SDK without prompting when -CaptionsVulkan is set and the
+	# SDK is missing. Useful for non-interactive/CI builds.
+	[switch]$InstallVulkanSdk,
+
+	# Install the Vulkan SDK into this directory instead of the default
+	# C:\VulkanSDK\<version> (which needs administrator rights). Pass a
+	# user-writable path to install without elevation.
+	[string]$VulkanSdkRoot = "",
 
 	# Optional CMake target names for focused iteration, for example
 	# spacecal_tests. Full build verification and packaging run only when no
@@ -322,6 +333,12 @@ if (-not $SkipConfigure) {
 	$captionsVulkanValue = "OFF"
 	if ($CaptionsVulkan -or $env:WKOPENVR_CAPTIONS_VULKAN -eq "ON") {
 		$captionsVulkanValue = "ON"
+	}
+	# The Vulkan whisper backend needs the Vulkan SDK (headers + glslc) on the
+	# build host. Make sure it is present before configuring; offer to install it
+	# when it is missing (auto with -InstallVulkanSdk).
+	if ($captionsVulkanValue -eq "ON") {
+		& "$PSScriptRoot\tools\Install-VulkanSdk.ps1" -AutoInstall:$InstallVulkanSdk -Root $VulkanSdkRoot
 	}
 	$releaseBuildValue = if ($Release) { "ON" } else { "OFF" }
 	$configureArgs = @(

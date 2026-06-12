@@ -66,6 +66,17 @@ Output:
 
 For local SteamVR iteration, run `./quick.ps1`. It builds, closes SteamVR and Steam for the deploy copy, installs the overlay files plus the full driver tree into the local SteamVR install, verifies deployed hashes, then launches SteamVR through Steam. Run `./test.ps1` when you only need a build plus the local test suite.
 
+### GPU-accelerated captions (optional)
+
+The captions speech host runs whisper.cpp on the CPU by default. To build it with the Vulkan GPU backend (vendor-neutral -- NVIDIA, AMD, or Intel), pass `-CaptionsVulkan`:
+
+```
+./build.ps1 -CaptionsVulkan        # build only
+./quick.ps1 -CaptionsVulkan        # build + deploy for local SteamVR
+```
+
+This needs the [Vulkan SDK](https://vulkan.lunarg.com) (headers plus the `glslc` shader compiler) on the build host; at runtime the host uses only the system `vulkan-1.dll`. When the SDK is missing the build offers to download and install it -- add `-InstallVulkanSdk` to accept without prompting, and `-VulkanSdkRoot <dir>` to install into a user-writable directory without administrator rights. Released artifacts always include the Vulkan backend. With the backend compiled in, the host runs speech recognition on the GPU when a Vulkan device is present and falls back to the CPU automatically otherwise.
+
 ## Diagnostics
 
 Debug logging is controlled from the Logs tab. When enabled, logs are written under `%LocalAppDataLow%\WKOpenVR\Logs\`; calibration also writes a replayable `spacecal_log.<ts>.txt` CSV that opens as soon as logging is enabled and flushes every row to disk. The Logs tab shows the active SpaceCal file path, size, row count, annotation count, open status, and a flush button.
