@@ -43,14 +43,15 @@ struct PhantomSolverCalibration
 // inspect or hand-edit if needed.
 struct PhantomConfig
 {
-	// Master switch. When false the driver hot-path fast-paths to passthrough
-	// for every device (pose history still records so a later flip-on has
-	// back-history available, but no synthesis is applied).
+	// Dropout bridge master switch. When false the driver hot-path fast-paths
+	// to passthrough for every real device (pose history still records so a
+	// later flip-on has back-history available, but no dropout synthesis is
+	// applied). Absent-mode virtual trackers are controlled by virtual_enabled.
 	bool master_enabled = false;
 
 	// Per-tracker dropout opt-in, keyed by serial. A device absent from the
 	// map (or mapped to false) does not get dropout bridging even when
-	// master_enabled is true. Allows the user to opt in only the body
+	// the bridge master is true. Allows the user to opt in only the body
 	// trackers and leave HMD / controllers on passthrough.
 	std::unordered_map<std::string, bool> dropout_enabled;
 

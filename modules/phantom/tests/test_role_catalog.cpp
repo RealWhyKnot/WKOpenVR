@@ -51,8 +51,9 @@ TEST(RoleCatalogTest, InputProfilePathUsesInstalledDriverResourceRoot)
 	EXPECT_FALSE(phantom::BodyRoleInputProfilePath(phantom::BodyRole::RightShoulder, path, sizeof(path)));
 }
 
-TEST(RoleCatalogTest, VirtualTrackersRespectMasterGate)
+TEST(RoleCatalogTest, VirtualTrackersRunWhenAnyRoleIsEnabled)
 {
-	EXPECT_FALSE(phantom::PhantomVirtualTrackersShouldRun(false));
-	EXPECT_TRUE(phantom::PhantomVirtualTrackersShouldRun(true));
+	EXPECT_FALSE(phantom::PhantomVirtualTrackersShouldRun(0));
+	EXPECT_TRUE(phantom::PhantomVirtualTrackersShouldRun(1));
+	EXPECT_TRUE(phantom::PhantomVirtualTrackersShouldRun(4));
 }

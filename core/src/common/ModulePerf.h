@@ -98,6 +98,10 @@ struct PerfSampleResult
 	uint32_t processThreadCount = 0;
 };
 
+double ModuleInProcessCpuPercentOneCore(const ModuleSample& sample);
+double AttributedProcessCpuPercentOneCore(const PerfSampleResult& result);
+double UnattributedProcessCpuPercentOneCore(const PerfSampleResult& result);
+
 class Registry
 {
 public:

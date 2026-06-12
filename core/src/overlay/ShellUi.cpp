@@ -177,8 +177,8 @@ void DrawPerfMemoryGraph(const PerfHistoryStore& history)
 	}
 }
 
-void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double memoryMb, uint32_t threads,
-                        uint32_t handles, const char* status)
+void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double otherCpuPct, double memoryMb,
+                        uint32_t threads, uint32_t handles, const char* status)
 {
 	ui::NextRow();
 	ui::NextColumn();
@@ -187,6 +187,8 @@ void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double m
 	ImGui::TextUnformatted(FormatPid(pid).c_str());
 	ui::NextColumn();
 	ui::DrawStatusCell(FormatPercent(cpuPct).c_str(), PerfTone(cpuPct), true);
+	ui::NextColumn();
+	ui::DrawStatusCell(FormatPercent(otherCpuPct).c_str(), PerfTone(otherCpuPct), true);
 	ui::NextColumn();
 	ImGui::Text("%.1f", memoryMb);
 	ui::NextColumn();
@@ -199,26 +201,27 @@ void DrawPerfProcessRow(const char* label, uint32_t pid, double cpuPct, double m
 
 void DrawPerfProcessTable(const PerfViewModel& vm)
 {
-	ui::TableScope table("module_perf_processes", 7,
+	ui::TableScope table("module_perf_processes", 8,
 	                     ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp);
 	if (!table) return;
 	ui::SetupStretchColumn("Process", 1.0f);
 	ui::SetupFixedColumn("PID", 70.0f);
 	ui::SetupFixedColumn("CPU", 76.0f);
+	ui::SetupFixedColumn("Other", 76.0f);
 	ui::SetupFixedColumn("WS MB", 80.0f);
 	ui::SetupFixedColumn("Threads", 82.0f);
 	ui::SetupFixedColumn("Handles", 82.0f);
 	ui::SetupFixedColumn("Status", 110.0f);
 	ui::DrawTableHeader();
 
-	DrawPerfProcessRow("Overlay", vm.overlayPid, vm.overlayTotalPct, vm.overlayWorkingSetMb, vm.overlayThreadCount,
-	                   vm.overlayHandleCount, "local");
+	DrawPerfProcessRow("Overlay", vm.overlayPid, vm.overlayTotalPct, vm.overlayUnattributedPct, vm.overlayWorkingSetMb,
+	                   vm.overlayThreadCount, vm.overlayHandleCount, "local");
 	if (vm.driverConnected) {
-		DrawPerfProcessRow("Driver host", vm.driverPid, vm.driverTotalPct, vm.driverWorkingSetMb, vm.driverThreadCount,
-		                   vm.driverHandleCount, "live");
+		DrawPerfProcessRow("Driver host", vm.driverPid, vm.driverTotalPct, vm.driverUnattributedPct,
+		                   vm.driverWorkingSetMb, vm.driverThreadCount, vm.driverHandleCount, "live");
 	}
 	else {
-		DrawPerfProcessRow("Driver host", 0, 0.0, 0.0, 0, 0, "not mapped");
+		DrawPerfProcessRow("Driver host", 0, 0.0, 0.0, 0.0, 0, 0, "not mapped");
 	}
 }
 

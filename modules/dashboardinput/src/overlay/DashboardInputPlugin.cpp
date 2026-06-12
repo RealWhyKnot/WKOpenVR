@@ -184,15 +184,36 @@ void DashboardInputPlugin::TickDashboardState(openvr_pair::overlay::ShellContext
 
 void DashboardInputPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 {
+	const bool moduleEnabled = context.IsFlagPresent(FlagFileName());
+	const bool runtimeOptIn = context.IsFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName);
 	const bool runtimeEnabled = RuntimeEnabled(context);
+	const auto runtimeState = openvr_pair::common::dashboardinput::RuntimeState(moduleEnabled, runtimeOptIn);
 	openvr_pair::overlay::ui::DrawSectionHeading("SteamVR dashboard");
 	openvr_pair::overlay::ui::DrawSettingTable(
 	    "dashboard_input_status", 170.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
 		    openvr_pair::overlay::ui::SettingRow(table, "Runtime", [&] {
-			    openvr_pair::overlay::ui::DrawStatusCell(runtimeEnabled ? "Opted in" : "Disabled",
-			                                             runtimeEnabled ? openvr_pair::overlay::ui::StatusTone::Warn
-			                                                            : openvr_pair::overlay::ui::StatusTone::Idle,
-			                                             false);
+			    openvr_pair::overlay::ui::DrawStatusCell(
+			        openvr_pair::common::dashboardinput::RuntimeStateLabel(runtimeState),
+			        runtimeEnabled ? openvr_pair::overlay::ui::StatusTone::Warn
+			                       : openvr_pair::overlay::ui::StatusTone::Idle,
+			        false);
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Runtime opt-in", [&] {
+			    bool wantOptIn = runtimeOptIn;
+			    const bool pending =
+			        context.IsTogglePending(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName);
+			    const bool canToggle = moduleEnabled && !pending;
+			    ImGui::BeginDisabled(!canToggle);
+			    if (ImGui::Checkbox("##dashboardinput_runtime_opt_in", &wantOptIn)) {
+				    context.SetFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName, wantOptIn);
+			    }
+			    ImGui::EndDisabled();
+			    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+				    ImGui::SetTooltip(
+				        !moduleEnabled ? "Turn on the Dashboard Input module first."
+				        : pending      ? "Runtime opt-in change is pending."
+				                       : "Allows Dashboard Input to load in the SteamVR driver on next driver start.");
+			    }
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Finger passthrough", [&] {
 			    openvr_pair::overlay::ui::DrawStatusCell(runtimeEnabled ? "Enabled" : "Disabled",

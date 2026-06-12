@@ -2,6 +2,8 @@
 
 #include "PerfHistory.h"
 
+#include <string>
+
 namespace {
 
 namespace modules = openvr_pair::common::modules;
@@ -25,7 +27,27 @@ TEST(PerfHistory, FloorsUnattributedCpuAtZero)
 	sample.modules[Slot(modules::ModuleId::Smoothing)].active = true;
 	sample.modules[Slot(modules::ModuleId::Smoothing)].threadCpuPctOneCore = 4.0;
 
+	EXPECT_DOUBLE_EQ(8.0, moduleperf::AttributedProcessCpuPercentOneCore(sample));
 	EXPECT_DOUBLE_EQ(0.0, overlay::UnattributedPct(sample));
+}
+
+TEST(PerfHistory, ReportsUnattributedCpuWhenProcessExceedsModuleAttribution)
+{
+	moduleperf::PerfSampleResult sample{};
+	sample.process.cpuValid = true;
+	sample.process.cpuPctOneCore = 25.0;
+	sample.modules[Slot(modules::ModuleId::Calibration)].active = true;
+	sample.modules[Slot(modules::ModuleId::Calibration)].sectionCpuPctOneCore = 4.5;
+	sample.modules[Slot(modules::ModuleId::Smoothing)].active = true;
+	sample.modules[Slot(modules::ModuleId::Smoothing)].threadCpuPctOneCore = 1.5;
+
+	EXPECT_DOUBLE_EQ(6.0, moduleperf::AttributedProcessCpuPercentOneCore(sample));
+	EXPECT_DOUBLE_EQ(19.0, moduleperf::UnattributedProcessCpuPercentOneCore(sample));
+	EXPECT_DOUBLE_EQ(19.0, overlay::UnattributedPct(sample));
+
+	const std::string line = moduleperf::FormatPerfProcessLine("driver-host", sample);
+	EXPECT_NE(std::string::npos, line.find("attributed_pct_one_core=6.00"));
+	EXPECT_NE(std::string::npos, line.find("unattributed_pct_one_core=19.00"));
 }
 
 TEST(PerfHistory, PushesOverlayAndDriverSeries)

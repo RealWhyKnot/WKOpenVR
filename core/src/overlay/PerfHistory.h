@@ -77,7 +77,7 @@ struct PerfHistoryStore
 
 inline double ModuleInProcessPct(const moduleperf::ModuleSample& m)
 {
-	return m.sectionCpuPctOneCore + m.threadCpuPctOneCore;
+	return moduleperf::ModuleInProcessCpuPercentOneCore(m);
 }
 
 // Process total minus everything attributed to modules, floored at zero
@@ -86,11 +86,7 @@ inline double ModuleInProcessPct(const moduleperf::ModuleSample& m)
 // callbacks, shell UI.
 inline double UnattributedPct(const moduleperf::PerfSampleResult& sample)
 {
-	double attributed = 0.0;
-	for (uint32_t slot = 0; slot < moduleperf::kSlotCount; ++slot) {
-		attributed += ModuleInProcessPct(sample.modules[slot]);
-	}
-	return std::max(0.0, sample.process.cpuPctOneCore - attributed);
+	return moduleperf::UnattributedProcessCpuPercentOneCore(sample);
 }
 
 // Appends one 1 Hz sample to the rolling series. Pushes nothing for a

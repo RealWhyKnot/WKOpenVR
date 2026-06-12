@@ -276,7 +276,6 @@ private:
 	int64_t last_body_completion_qpc_ = 0;
 	int64_t qpc_freq_ = 0;
 	VirtualTrackerManager virtual_trackers_;
-	bool virtual_master_disabled_logged_ = false;
 	bool first_hmd_diag_logged_ = false;
 	std::chrono::steady_clock::time_point last_body_diag_log_{};
 	uint64_t body_diag_ticks_ = 0;
@@ -344,7 +343,7 @@ void PhantomModule::ResolveSerialIfMissing(uint32_t openVRID, DeviceSlot& s)
 	}
 
 	LOG("[phantom][diag] device resolved id=%u serial_hash=0x%016llx serial_len=%u "
-	    "class=%s controller_role=%s role=%s opted_in=%u master=%u",
+	    "class=%s controller_role=%s role=%s opted_in=%u dropout_master=%u",
 	    (unsigned)openVRID, static_cast<unsigned long long>(s.serial_hash), (unsigned)s.serial.size(),
 	    DeviceClassLabel(s.device_class), ControllerRoleLabel(s.controller_role), BodyRoleToKey(s.role),
 	    s.opted_in ? 1u : 0u, master_enabled_.load(std::memory_order_acquire) ? 1u : 0u);
@@ -450,7 +449,7 @@ void PhantomModule::UpdateBodyCompletion(int64_t now_qpc)
 	}
 	else if (now - last_body_diag_log_ >= std::chrono::seconds(5)) {
 		const double ticks = body_diag_ticks_ > 0 ? static_cast<double>(body_diag_ticks_) : 1.0;
-		LOG("[phantom][diag] completion period ticks=%llu master=%u hmd_valid=%u "
+		LOG("[phantom][diag] completion period ticks=%llu dropout_master=%u hmd_valid=%u "
 		    "virtual=(enabled=%d active=%d min_conf=%.2f) "
 		    "roles=(valid_avg=%.2f publishable_avg=%.2f best=%s best_conf=%.2f best_mode=%s) "
 		    "global_conf=%.2f",
@@ -485,6 +484,7 @@ bool PhantomModule::Init(DriverModuleContext& context)
 	context_ = context;
 	g_active = this;
 	virtual_trackers_.OnDriverInit();
+	virtual_trackers_.SetMasterEnabled(true);
 	LARGE_INTEGER freqLI{};
 	if (QueryPerformanceFrequency(&freqLI)) {
 		qpc_freq_ = freqLI.QuadPart;
@@ -523,14 +523,12 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 			};
 			const bool master_enabled = c.master_enabled != 0;
 			master_enabled_.store(master_enabled, std::memory_order_release);
-			virtual_trackers_.SetMasterEnabled(master_enabled);
-			virtual_master_disabled_logged_ = false;
 			// Apply new timings to every active slot. Cheap: just a copy.
 			std::lock_guard<std::mutex> lk(state_mutex_);
 			for (auto& s : slots_)
 				s.ladder.SetTimings(timings_);
 			response.type = protocol::ResponseSuccess;
-			LOG("[phantom] config applied: master_enabled=%d blend_out=%u blend_in=%u reckon=%u synth=%u lost=%u",
+			LOG("[phantom] config applied: dropout_master=%d blend_out=%u blend_in=%u reckon=%u synth=%u lost=%u",
 			    (int)c.master_enabled, (unsigned)timings_.blend_out_ms, (unsigned)timings_.blend_in_ms,
 			    (unsigned)timings_.reckon_hold_ms, (unsigned)timings_.synth_hold_ms, (unsigned)timings_.lost_hold_ms);
 			return true;
@@ -632,7 +630,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 			const BodyRole role = static_cast<BodyRole>(e.body_role);
 			virtual_trackers_.SetEnabled(role, e.enabled != 0);
 			response.type = protocol::ResponseSuccess;
-			LOG("[phantom][diag] virtual role request role=%s enabled=%u master=%u "
+			LOG("[phantom][diag] virtual role request role=%s enabled=%u dropout_master=%u "
 			    "enabled_roles=%d active=%d",
 			    BodyRoleToKey(role), e.enabled ? 1u : 0u, master_enabled_.load(std::memory_order_acquire) ? 1u : 0u,
 			    virtual_trackers_.EnabledCount(), virtual_trackers_.ActiveCount());
@@ -659,7 +657,7 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 		if (!first_hmd_diag_logged_) {
 			first_hmd_diag_logged_ = true;
 			LOG("[phantom][diag] first valid HMD pose id=%u pos=(%.3f,%.3f,%.3f) "
-			    "rot=(%.3f,%.3f,%.3f,%.3f) virtual=(enabled=%d active=%d master=%u)",
+			    "rot=(%.3f,%.3f,%.3f,%.3f) virtual=(enabled=%d active=%d dropout_master=%u)",
 			    (unsigned)openVRID, pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2], pose.qRotation.w,
 			    pose.qRotation.x, pose.qRotation.y, pose.qRotation.z, virtual_trackers_.EnabledCount(),
 			    virtual_trackers_.ActiveCount(), master_enabled_.load(std::memory_order_acquire) ? 1u : 0u);
@@ -669,16 +667,12 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 		UpdateBodyCompletion(qpc_ns);
 		// Drive virtual trackers off the HMD pose cadence. Each HMD update
 		// produces one completion frame; the manager only publishes roles
-		// whose confidence passes the policy threshold.
-		const bool master_enabled = master_enabled_.load(std::memory_order_acquire);
-		if (PhantomVirtualTrackersShouldRun(master_enabled)) {
+		// whose confidence passes the policy threshold. Dropout bridging has
+		// its own master switch; estimated trackers are gated by their per-role
+		// toggles so the Absent tab remains useful without enabling dropout
+		// replacement for real devices.
+		if (PhantomVirtualTrackersShouldRun(virtual_trackers_.EnabledCount())) {
 			virtual_trackers_.Tick(last_hmd_pose_, last_body_completion_, body_calibration_.virtual_min_confidence);
-			virtual_master_disabled_logged_ = false;
-		}
-		else if (!virtual_master_disabled_logged_ && virtual_trackers_.EnabledCount() > 0) {
-			virtual_master_disabled_logged_ = true;
-			LOG("[phantom] virtual trackers gated off: master_enabled=0 enabled_roles=%d",
-			    virtual_trackers_.EnabledCount());
 		}
 	}
 }

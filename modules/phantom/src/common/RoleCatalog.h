@@ -165,9 +165,9 @@ inline bool BodyRoleInputProfilePath(BodyRole r, char* out, std::size_t out_size
 	return written > 0 && static_cast<std::size_t>(written) < out_size;
 }
 
-inline bool PhantomVirtualTrackersShouldRun(bool master_enabled)
+inline bool PhantomVirtualTrackersShouldRun(int enabled_role_count)
 {
-	return master_enabled;
+	return enabled_role_count > 0;
 }
 
 } // namespace phantom

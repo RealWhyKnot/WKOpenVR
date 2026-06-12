@@ -166,6 +166,26 @@ uint32_t SlotIndex(ModuleId id)
 	return index < kSlotCount ? index : kSlotCount - 1;
 }
 
+double ModuleInProcessCpuPercentOneCore(const ModuleSample& sample)
+{
+	return sample.sectionCpuPctOneCore + sample.threadCpuPctOneCore;
+}
+
+double AttributedProcessCpuPercentOneCore(const PerfSampleResult& result)
+{
+	double attributed = 0.0;
+	for (uint32_t slot = 0; slot < kSlotCount; ++slot) {
+		attributed += ModuleInProcessCpuPercentOneCore(result.modules[slot]);
+	}
+	if (!std::isfinite(attributed) || attributed < 0.0) return 0.0;
+	return attributed;
+}
+
+double UnattributedProcessCpuPercentOneCore(const PerfSampleResult& result)
+{
+	return std::max(0.0, result.process.cpuPctOneCore - AttributedProcessCpuPercentOneCore(result));
+}
+
 Registry& Registry::Instance()
 {
 	static Registry instance;
@@ -494,16 +514,20 @@ std::string FormatPerfProcessLine(const char* role, const PerfSampleResult& resu
 	char buffer[768]{};
 	const ProcessPerfSample& sample = result.process;
 	const ProcessPerfSnapshot& s = sample.snapshot;
+	const double attributedPct = AttributedProcessCpuPercentOneCore(result);
+	const double unattributedPct = UnattributedProcessCpuPercentOneCore(result);
 	std::snprintf(buffer, sizeof(buffer),
 	              "role=%s pid=%lu interval_ms=%llu cpu_valid=%d cpu_pct_total=%.2f "
-	              "cpu_pct_one_core=%.2f cpu_ms=%llu logical_cpus=%lu memory_valid=%d "
+	              "cpu_pct_one_core=%.2f attributed_pct_one_core=%.2f unattributed_pct_one_core=%.2f "
+	              "cpu_ms=%llu logical_cpus=%lu memory_valid=%d "
 	              "working_set_mb=%.2f private_mb=%.2f peak_working_set_mb=%.2f "
 	              "handle_valid=%d handles=%lu threads=%lu",
 	              role ? role : "process", static_cast<unsigned long>(s.processId),
 	              static_cast<unsigned long long>(sample.intervalMs), sample.cpuValid ? 1 : 0, sample.cpuPctTotal,
-	              sample.cpuPctOneCore, static_cast<unsigned long long>(sample.processCpuMs),
-	              static_cast<unsigned long>(s.logicalProcessors), s.memoryValid ? 1 : 0, BytesToMb(s.workingSetBytes),
-	              BytesToMb(s.privateBytes), BytesToMb(s.peakWorkingSetBytes), s.handleCountValid ? 1 : 0,
+	              sample.cpuPctOneCore, attributedPct, unattributedPct,
+	              static_cast<unsigned long long>(sample.processCpuMs), static_cast<unsigned long>(s.logicalProcessors),
+	              s.memoryValid ? 1 : 0, BytesToMb(s.workingSetBytes), BytesToMb(s.privateBytes),
+	              BytesToMb(s.peakWorkingSetBytes), s.handleCountValid ? 1 : 0,
 	              static_cast<unsigned long>(s.handleCount), static_cast<unsigned long>(result.processThreadCount));
 	return std::string(buffer);
 }

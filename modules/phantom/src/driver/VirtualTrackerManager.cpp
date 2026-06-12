@@ -23,7 +23,7 @@ void VirtualTrackerManager::SetEnabled(BodyRole role, bool enabled)
 	if (enabled && !was_enabled) {
 		char profilePath[160] = {};
 		const bool hasProfile = BodyRoleInputProfilePath(role, profilePath, sizeof(profilePath));
-		LOG("[phantom] virtual role %s enabled; profile=%s master_enabled=%d", BodyRoleToKey(role),
+		LOG("[phantom] virtual role %s enabled; profile=%s publishing_gate=%d", BodyRoleToKey(role),
 		    hasProfile ? profilePath : "(none)", MasterEnabled() ? 1 : 0);
 	}
 	else if (!enabled && devices_[idx]) {
@@ -78,8 +78,8 @@ void VirtualTrackerManager::SetMasterEnabled(bool enabled)
 {
 	const bool previous = master_enabled_.exchange(enabled, std::memory_order_acq_rel);
 	if (previous != enabled) {
-		LOG("[phantom] virtual tracker master gate %s (enabled_roles=%d active=%d)", enabled ? "enabled" : "disabled",
-		    EnabledCount(), ActiveCount());
+		LOG("[phantom] virtual tracker publishing gate %s (enabled_roles=%d active=%d)",
+		    enabled ? "enabled" : "disabled", EnabledCount(), ActiveCount());
 	}
 }
 
