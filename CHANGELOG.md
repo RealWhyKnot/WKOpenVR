@@ -65,6 +65,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Add queued chatbox send delay (b63b177)
 - **phantom:** Distinguish manual vs detected roles (a5ed92f)
 - **facetracking:** Gate prerelease module sources (ecee6cd)
+- **calibration:** Defer continuous solve while target tracking is unstable (939eeb6)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -100,6 +101,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **oscrouter:** Draw tables and status text via shared UI library (356bf84)
 - **overlay:** Skip UI rebuild when no surface is visible (82e033a)
 - **overlay:** Trim per-tick persistence, IPC, and log churn (a8978dd)
+- **diagnostics:** Log pollers and reloc_tick on change, not every tick (e917728)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
