@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace facetracking::ui {
@@ -46,6 +47,20 @@ struct ModulesTabState
 
 static ModulesTabState g_state;
 
+static const ModuleSource* FindSourceInCatalogue(const SourcesCatalogue& cat, const std::string& sourceId)
+{
+	for (const auto& src : cat.sources)
+		if (src.id == sourceId) return &src;
+	return nullptr;
+}
+
+static bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModule& mod)
+{
+	if (!mod.prerelease) return true;
+	const ModuleSource* source = FindSourceInCatalogue(cat, mod.source_id);
+	return source && source->include_prerelease;
+}
+
 static void RefreshIfStale()
 {
 	uint64_t now = GetTickCount64();
@@ -55,7 +70,10 @@ static void RefreshIfStale()
 	g_state.last_scan_tick = static_cast<int64_t>(now);
 	g_state.installed = ScanInstalledModules();
 	g_state.catalogue = EnsureSourcesCatalogue();
-	g_state.available = LoadAvailableModules();
+	g_state.available.clear();
+	for (AvailableModule& mod : LoadAvailableModules()) {
+		if (ShouldShowAvailableModule(g_state.catalogue, mod)) g_state.available.push_back(std::move(mod));
+	}
 	g_state.initialised = true;
 }
 
@@ -107,6 +125,7 @@ static std::string BuildSourceDataJson(const ModuleSource& src)
 	                            : src.kind == SourceKind::GitHub ? "github"
 	                                                             : "registry");
 	o["label"] = picojson::value(src.label);
+	o["include_prerelease"] = picojson::value(src.include_prerelease);
 	if (!src.path.empty()) o["path"] = picojson::value(src.path);
 	if (!src.owner_repo.empty()) o["owner_repo"] = picojson::value(src.owner_repo);
 	// Registry sources need their base URL passed to face-module-sync.ps1;
@@ -130,6 +149,8 @@ static std::string BuildRegistryInstallDataJson(const ModuleSource& src, const A
 	o["vendor"] = picojson::value(mod.vendor);
 	if (!mod.payload_url.empty()) o["payload_url"] = picojson::value(mod.payload_url);
 	if (!mod.payload_sha256.empty()) o["payload_sha256"] = picojson::value(mod.payload_sha256);
+	if (mod.prerelease) o["prerelease"] = picojson::value(mod.prerelease);
+	if (!mod.release_channel.empty()) o["release_channel"] = picojson::value(mod.release_channel);
 	if (!mod.download_url.empty()) o["download_url"] = picojson::value(mod.download_url);
 	if (!mod.file_hash.empty()) o["file_hash"] = picojson::value(mod.file_hash);
 	if (!mod.dll_file_name.empty()) o["dll_file_name"] = picojson::value(mod.dll_file_name);
@@ -187,9 +208,7 @@ static void DisableModulesFromSource(FacetrackingPlugin& plugin, const std::stri
 
 static const ModuleSource* FindSourceById(const std::string& sourceId)
 {
-	for (const auto& src : g_state.catalogue.sources)
-		if (src.id == sourceId) return &src;
-	return nullptr;
+	return FindSourceInCatalogue(g_state.catalogue, sourceId);
 }
 
 static const InstalledModule* FindInstalledByUuid(const std::string& uuid)
@@ -345,6 +364,11 @@ static void DrawAvailableModulesSection(FacetrackingPlugin& plugin)
 
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextUnformatted(mod.version.c_str());
+			if (mod.prerelease) {
+				ImGui::SameLine();
+				const std::string channel = mod.release_channel.empty() ? std::string{"beta"} : mod.release_channel;
+				StatusBadge(channel.c_str(), StatusTone::Warn);
+			}
 
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(mod.vendor.c_str());
@@ -405,11 +429,12 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 	ImGuiTableFlags tf = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
 
 	{
-		TableScope sourcesTable("ft_sources", 4, tf);
+		TableScope sourcesTable("ft_sources", 5, tf);
 		if (sourcesTable) {
 			SetupStretchColumn("Label");
 			SetupFixedColumn("Kind", 70.0f);
-			SetupFixedColumn("Status", 140.0f);
+			SetupFixedColumn("Betas", 54.0f);
+			SetupFixedColumn("Status", 130.0f);
 			SetupFixedColumn("Actions", 180.0f);
 			DrawTableHeader();
 
@@ -432,6 +457,27 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 				ImGui::TextDisabled("%s", kindStr);
 
 				ImGui::TableSetColumnIndex(2);
+				bool syncing = plugin.SyncRunner().IsRunning();
+				if (isRegistry) {
+					bool includePrerelease = src.include_prerelease;
+					ImGui::BeginDisabled(syncing);
+					if (ImGui::Checkbox(("##ft_src_beta_" + src.id).c_str(), &includePrerelease)) {
+						src.include_prerelease = includePrerelease;
+						SaveSourcesCatalogue(g_state.catalogue);
+						g_state.last_scan_tick = 0;
+						if (!syncing && syncSourceId.empty()) {
+							syncSourceId = src.id;
+							syncSourceData = BuildSourceDataJson(src);
+						}
+					}
+					ImGui::EndDisabled();
+					TooltipForLastItem("Show prerelease module versions from this source.");
+				}
+				else {
+					ImGui::TextDisabled("-");
+				}
+
+				ImGui::TableSetColumnIndex(3);
 				if (!src.last_sync_error.empty())
 					ImGui::TextColored(GetPalette().statusError, "%s", src.last_sync_error.c_str());
 				else if (!src.last_checked_at.empty())
@@ -439,9 +485,7 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 				else
 					ImGui::TextDisabled("Never synced");
 
-				ImGui::TableSetColumnIndex(3);
-				bool syncing = plugin.SyncRunner().IsRunning();
-
+				ImGui::TableSetColumnIndex(4);
 				ImGui::BeginDisabled(syncing);
 				const char* buttonText = isRegistry ? "Sync" : "Install";
 				if (ImGui::SmallButton((std::string(buttonText) + "##" + src.id).c_str())) {

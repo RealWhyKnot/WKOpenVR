@@ -360,9 +360,25 @@ try {
 	$nativeAvailablePath = Join-Path $LocalAppDataLow "WKOpenVR\facetracking\available\$nativeRegistrySourceId.json"
 	Assert-FileExists $nativeAvailablePath 'native available modules cache'
 	$nativeAvailable = Get-Content -LiteralPath $nativeAvailablePath -Raw | ConvertFrom-Json
+	Assert-True (@($nativeAvailable.modules).Count -eq 0) "native prerelease module should be hidden until prerelease sync is enabled"
+	Assert-True ($nativeAvailable.modules.Count -eq 0) "native available cache should be empty before prerelease opt-in"
+
+	$nativePrereleaseRegistryJson = [ordered]@{
+		id = $nativeRegistrySourceId
+		kind = 'registry'
+		url = $nativeRegistryUrl
+		label = 'Harness native registry'
+		include_prerelease = $true
+	} | ConvertTo-Json -Compress
+	$nativePrereleaseListResultPath = Join-Path $WorkingRoot 'face-native-registry-prerelease-list-result.json'
+	$nativePrereleaseListExit = Invoke-FaceSync -Action 'update' -Kind 'registry' -SourceData $nativePrereleaseRegistryJson -SourceId $nativeRegistrySourceId -ResultPath $nativePrereleaseListResultPath
+	if ($nativePrereleaseListExit -ne 0) { throw "face-module-sync native prerelease registry list exited $nativePrereleaseListExit" }
+	$nativeAvailable = Get-Content -LiteralPath $nativeAvailablePath -Raw | ConvertFrom-Json
 	Assert-True (@($nativeAvailable.modules).Count -eq 1) "native available cache should contain one module"
 	$nativeModule = $nativeAvailable.modules[0]
 	Assert-True ($nativeModule.uuid -eq $Summary.native_module_uuid) "native available module uuid should match fixture"
+	Assert-True ($nativeModule.prerelease -eq $true) "native available module should preserve prerelease metadata"
+	Assert-True ($nativeModule.release_channel -eq 'beta') "native available module should preserve release channel"
 	Assert-True ($nativeModule.payload_url -match 'wrong-sha=1') "native fixture should advertise a bad external payload URL"
 	$nativeInstallJson = [ordered]@{
 		id = $nativeRegistrySourceId

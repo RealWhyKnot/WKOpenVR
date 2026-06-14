@@ -104,6 +104,25 @@ function Get-Prop($obj, [string[]]$names, [string]$fallback = '') {
     return $fallback
 }
 
+function Get-BoolProp($obj, [string[]]$names, [bool]$fallback = $false) {
+    if ($null -eq $obj) { return $fallback }
+    foreach ($name in $names) {
+        $prop = $obj.PSObject.Properties[$name]
+        if ($null -eq $prop -or $null -eq $prop.Value) { continue }
+        if ($prop.Value -is [bool]) { return [bool]$prop.Value }
+        $value = ([string]$prop.Value).Trim().ToLowerInvariant()
+        if ($value -in @('true', '1', 'yes')) { return $true }
+        if ($value -in @('false', '0', 'no')) { return $false }
+    }
+    return $fallback
+}
+
+function Test-IsPrereleaseChannel([string]$channel) {
+    if ([string]::IsNullOrWhiteSpace($channel)) { return $false }
+    $normalized = $channel.Trim().ToLowerInvariant()
+    return $normalized -in @('alpha', 'beta', 'nightly', 'preview', 'prerelease', 'pre-release')
+}
+
 function Read-Manifest([string]$folder) {
     $path = Join-Path $folder 'manifest.json'
     if (-not (Test-Path $path)) { return $null }
@@ -234,6 +253,8 @@ try {
 
 $srcId   = if ($src.PSObject.Properties['id'])         { $src.id }         else { $SourceId }
 $srcKind = if ($src.PSObject.Properties['kind'])       { $src.kind }       else { $Kind }
+$includePrerelease = Get-BoolProp $src @('include_prerelease','include_prereleases','allow_prerelease','allow_prereleases') $false
+$script:IncludePrerelease = $includePrerelease
 $script:ResultSourceId = $srcId
 
 # ---- action: add/update (folder) -------------------------------------------
@@ -456,7 +477,7 @@ if ($srcKind -eq 'registry') {
                 payload_sha256 = Get-Prop $selected @('payload_sha256','sha256','SHA256') ''
                 file_hash      = Get-Prop $selected @('FileHash','file_hash','md5') ''
                 dll_file_name  = Get-Prop $selected @('DllFileName','dll_file_name') ''
-                prerelease     = Get-Prop $selected @('prerelease','is_prerelease') $false
+                prerelease     = Get-BoolProp $selected @('prerelease','is_prerelease') $false
                 release_channel = Get-Prop $selected @('release_channel','channel') ''
                 module_page_url = Get-Prop $selected @('ModulePageUrl','module_page_url','release_url') ''
             }
@@ -468,7 +489,7 @@ if ($srcKind -eq 'registry') {
             payload_sha256 = Get-Prop $entry @('payload_sha256','sha256','SHA256') ''
             file_hash      = Get-Prop $entry @('FileHash','file_hash','md5') ''
             dll_file_name  = Get-Prop $entry @('DllFileName','dll_file_name') ''
-            prerelease     = Get-Prop $entry @('prerelease','is_prerelease') $false
+            prerelease     = Get-BoolProp $entry @('prerelease','is_prerelease') $false
             release_channel = Get-Prop $entry @('release_channel','channel') ''
             module_page_url = Get-Prop $entry @('ModulePageUrl','module_page_url','release_url') ''
         }
@@ -528,11 +549,26 @@ if ($srcKind -eq 'registry') {
                 if ([string]::IsNullOrEmpty([string]$verMeta.payload_url)) {
                     $verMeta.payload_url = Get-Prop $manifest @('payload_url','download_url','DownloadUrl') ''
                 }
+                if (-not [bool]$verMeta.prerelease) {
+                    $verMeta.prerelease = Get-BoolProp $manifest @('prerelease','is_prerelease') $false
+                }
+                if ([string]::IsNullOrEmpty([string]$verMeta.release_channel)) {
+                    $verMeta.release_channel = Get-Prop $manifest @('release_channel','channel') ''
+                }
             }
 
             $modulePageUrl = [string]$verMeta.module_page_url
             if ([string]::IsNullOrEmpty($modulePageUrl)) {
                 $modulePageUrl = Get-Prop $entry @('ModulePageUrl','module_page_url','release_url') ''
+            }
+
+            $isPrerelease = [bool]$verMeta.prerelease
+            $releaseChannel = [string]$verMeta.release_channel
+            if (-not $isPrerelease -and (Test-IsPrereleaseChannel $releaseChannel)) {
+                $isPrerelease = $true
+            }
+            if ($isPrerelease -and -not $script:IncludePrerelease) {
+                continue
             }
 
             $available += [ordered]@{
@@ -546,6 +582,8 @@ if ($srcKind -eq 'registry') {
                 registry_url   = $base
                 payload_url    = [string]$verMeta.payload_url
                 payload_sha256 = [string]$verMeta.payload_sha256
+                prerelease     = $isPrerelease
+                release_channel = $releaseChannel
                 download_url   = Get-Prop $entry @('DownloadUrl','download_url') ''
                 file_hash      = [string]$verMeta.file_hash
                 dll_file_name  = [string]$verMeta.dll_file_name
@@ -811,7 +849,6 @@ if ($srcKind -eq 'registry') {
     foreach ($entry in $index.Entries) {
         $modules = @(Convert-RegistryEntryToAvailable $entry)
         if ($modules.Count -eq 0) {
-            $failed++
             continue
         }
         foreach ($module in $modules) {

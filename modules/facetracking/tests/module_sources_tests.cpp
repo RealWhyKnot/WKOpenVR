@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -73,12 +74,70 @@ TEST(ModuleSources, SeedsNativeAndLegacyRegistrySources)
 	ASSERT_NE(legacy, nullptr);
 	EXPECT_EQ(native->label, "WKOpenVR native registry");
 	EXPECT_EQ(native->url, "https://wkopenvr-module-registry.whyknot.dev");
+	EXPECT_FALSE(native->include_prerelease);
 	EXPECT_EQ(legacy->label, "VRCFT legacy registry");
 	EXPECT_EQ(legacy->url, "https://registry.vrcft.io");
+	EXPECT_FALSE(legacy->include_prerelease);
 	EXPECT_EQ(cat.sources.front().id, "00000000000000000000000000000002");
 
 	facetracking::SourcesCatalogue again = facetracking::EnsureSourcesCatalogue();
 	EXPECT_EQ(again.sources.size(), 2u);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(ModuleSources, PersistsPrereleaseSourceOptIn)
+{
+	auto temp = MakeSourceTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+
+	facetracking::SourcesCatalogue cat = facetracking::EnsureSourcesCatalogue();
+	ASSERT_FALSE(cat.sources.empty());
+	cat.sources.front().include_prerelease = true;
+	ASSERT_TRUE(facetracking::SaveSourcesCatalogue(cat));
+
+	facetracking::SourcesCatalogue loaded = facetracking::LoadSourcesCatalogue();
+	const auto* native = FindSource(loaded, "00000000000000000000000000000002");
+	ASSERT_NE(native, nullptr);
+	EXPECT_TRUE(native->include_prerelease);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(ModuleSources, LoadsAvailablePrereleaseMetadata)
+{
+	auto temp = MakeSourceTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+
+	const std::filesystem::path availableDir = temp / L"WKOpenVR" / L"facetracking" / L"available";
+	std::filesystem::create_directories(availableDir);
+	const std::filesystem::path cachePath = availableDir / L"source-a.json";
+	std::ofstream out(cachePath);
+	out << R"json({
+  "schema_version": 1,
+  "source_id": "source-a",
+  "source_label": "Test registry",
+  "registry_url": "https://example.invalid",
+  "modules": [
+    {
+      "uuid": "module-a",
+      "version": "2026.6.13.0-beta",
+      "name": "Module A",
+      "vendor": "WhyKnot",
+      "prerelease": true,
+      "release_channel": "beta"
+    }
+  ]
+})json";
+	out.close();
+
+	const std::vector<facetracking::AvailableModule> modules = facetracking::LoadAvailableModules();
+	ASSERT_EQ(modules.size(), 1u);
+	EXPECT_EQ(modules.front().uuid, "module-a");
+	EXPECT_TRUE(modules.front().prerelease);
+	EXPECT_EQ(modules.front().release_channel, "beta");
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);

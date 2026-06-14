@@ -107,6 +107,7 @@ SourcesCatalogue LoadSourcesCatalogue()
 			src.owner_repo = openvr_pair::common::json::StringAt(el, "owner_repo");
 			src.label = openvr_pair::common::json::StringAt(el, "label");
 			src.auto_update = openvr_pair::common::json::BoolAt(el, "auto_update");
+			src.include_prerelease = openvr_pair::common::json::BoolAt(el, "include_prerelease");
 			src.added_at = openvr_pair::common::json::StringAt(el, "added_at");
 			src.last_checked_at = openvr_pair::common::json::StringAt(el, "last_checked_at");
 			src.last_release_tag = openvr_pair::common::json::StringAt(el, "last_release_tag");
@@ -129,6 +130,7 @@ bool SaveSourcesCatalogue(const SourcesCatalogue& cat)
 		o["kind"] = picojson::value(KindToString(src.kind));
 		o["label"] = picojson::value(src.label);
 		o["auto_update"] = picojson::value(src.auto_update);
+		o["include_prerelease"] = picojson::value(src.include_prerelease);
 		if (!src.url.empty()) o["url"] = picojson::value(src.url);
 		if (!src.path.empty()) o["path"] = picojson::value(src.path);
 		if (!src.owner_repo.empty()) o["owner_repo"] = picojson::value(src.owner_repo);
@@ -346,6 +348,8 @@ std::vector<AvailableModule> LoadAvailableModules(const std::string& source_id)
 			mod.registry_url = openvr_pair::common::json::StringAt(el, "registry_url", registryUrl);
 			mod.payload_url = openvr_pair::common::json::StringAt(el, "payload_url");
 			mod.payload_sha256 = openvr_pair::common::json::StringAt(el, "payload_sha256");
+			mod.prerelease = openvr_pair::common::json::BoolAt(el, "prerelease");
+			mod.release_channel = openvr_pair::common::json::StringAt(el, "release_channel");
 			mod.download_url = openvr_pair::common::json::StringAt(el, "download_url");
 			mod.file_hash = openvr_pair::common::json::StringAt(el, "file_hash");
 			mod.dll_file_name = openvr_pair::common::json::StringAt(el, "dll_file_name");

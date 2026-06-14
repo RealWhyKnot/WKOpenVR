@@ -39,6 +39,7 @@ struct ModuleSource
 	std::string owner_repo; // github: "owner/repo"
 	std::string label;      // display label
 	bool auto_update = false;
+	bool include_prerelease = false;
 	std::string added_at;
 	std::string last_checked_at;
 	std::string last_release_tag;
@@ -78,6 +79,8 @@ struct AvailableModule
 	std::string registry_url;
 	std::string payload_url;
 	std::string payload_sha256;
+	bool prerelease = false;
+	std::string release_channel;
 	std::string download_url;
 	std::string file_hash;
 	std::string dll_file_name;
