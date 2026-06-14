@@ -64,6 +64,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Add face frame replay recording (f0af5f8)
 - **captions:** Add queued chatbox send delay (b63b177)
 - **phantom:** Distinguish manual vs detected roles (a5ed92f)
+- **facetracking:** Gate prerelease module sources (ecee6cd)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
