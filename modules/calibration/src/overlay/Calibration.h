@@ -355,6 +355,13 @@ struct CalibrationContext
 	// Continuous-only, so corroborated Quest universe flips are skipped today).
 	bool experimentalLockedSnapRecoveryEnabled = false;
 
+	// Target-stability back-off (always on, conservative). Rolling EWMA of the
+	// fraction of recent continuous-cal ticks whose target tracker was not
+	// reporting a valid pose; when it climbs past the defer threshold the full
+	// solve is skipped until the link steadies (see TargetStabilityGate.h).
+	// Runtime only -- reset in Clear(), not persisted.
+	double targetInvalidEwma = 0.0;
+
 	float xprev, yprev, zprev;
 	int consecutiveHmdStalls = 0;
 
@@ -764,6 +771,7 @@ struct CalibrationContext
 		// settings and intentionally NOT reset here -- only the runaway state).
 		driftBreakerFrozen = false;
 		lastRelocDetectedTime = -1e9;
+		targetInvalidEwma = 0.0;
 		autoLockHistory.clear();
 		autoLockEffectivelyLocked = false;
 		autoLockHasPendingFlip = false;

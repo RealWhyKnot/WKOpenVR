@@ -50,6 +50,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reloc_guard.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_drift_breaker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_bounded_solve.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_target_stability_gate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_locked_snap_recovery.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_pose_sampling.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_progress.cpp

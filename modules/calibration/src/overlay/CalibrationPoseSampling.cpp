@@ -6,6 +6,7 @@
 #include "HeadMountPoseSampling.h"
 #include "RelocGuard.h" // spacecal::reloc_guard -- post-relocalization sample quarantine.
 #include "RuntimeHealthSummary.h"
+#include "TargetStabilityGate.h" // spacecal::target_stability -- continuous-solve back-off.
 #include "RotationMatrix3.h"
 #include "VRState.h"
 
@@ -510,6 +511,15 @@ bool CollectSample(const CalibrationContext& ctx)
 	if (!target.poseIsValid || target.result != vr::ETrackingResult::TrackingResult_Running_OK) {
 		CalCtx.Log("Target device is not tracking\n");
 		ok = false;
+	}
+	// Feed this tick's target validity into the rolling EWMA the continuous solve
+	// gate reads (TargetStabilityGate.h). Updated for both valid and invalid ticks
+	// so it reflects the true recent dropout rate of an intermittent target link.
+	if (inContinuousFamily) {
+		const bool targetInvalidThisTick =
+		    !target.poseIsValid || target.result != vr::ETrackingResult::TrackingResult_Running_OK;
+		CalCtx.targetInvalidEwma = spacecal::target_stability::UpdateInvalidEwma(
+		    CalCtx.targetInvalidEwma, targetInvalidThisTick, spacecal::target_stability::kSolveDeferEwmaAlpha);
 	}
 	if (refSilentInvalid || tgtSilentInvalid) {
 		Metrics::WriteLogAnnotation(refSilentInvalid && tgtSilentInvalid ? "silent_invalid_pose_rejected: ref+tgt"

@@ -36,18 +36,20 @@
 // Called each CalibrationTick so capture runs independent of which tab is
 // visible. No-op when CaptureState is not Active.
 void CCal_TickBoundaryCapture();
-#include "TrackerLiveness.h"    // spacecal::liveness::* -- detect non-HMD calibration anchor
-                                // going silent under SteamVR's "Running_OK + poseIsValid stays true
-                                // while pose hash is frozen" disconnect path.
-#include "RotationMatrix3.h"    // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
-#include "AutoLockHysteresis.h" // spacecal::autolock::VerdictWithHysteresis -- AUTO Lock
-                                // hysteresis + stationary-gate constants and pure helpers.
-#include "WarmRestart.h"        // spacecal::warm_restart::ShouldEngage -- proximity-edge
-                                // decision for the saved-profile snap path.
-#include "DriftBreaker.h"       // spacecal::drift_breaker -- experimental auto-freeze on
-                                // relative-pose MAD runaway.
-#include "RelocGuard.h"         // spacecal::reloc_guard -- experimental post-relocalization
-                                // sample quarantine window helper.
+#include "TrackerLiveness.h"     // spacecal::liveness::* -- detect non-HMD calibration anchor
+                                 // going silent under SteamVR's "Running_OK + poseIsValid stays true
+                                 // while pose hash is frozen" disconnect path.
+#include "RotationMatrix3.h"     // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
+#include "AutoLockHysteresis.h"  // spacecal::autolock::VerdictWithHysteresis -- AUTO Lock
+                                 // hysteresis + stationary-gate constants and pure helpers.
+#include "WarmRestart.h"         // spacecal::warm_restart::ShouldEngage -- proximity-edge
+                                 // decision for the saved-profile snap path.
+#include "DriftBreaker.h"        // spacecal::drift_breaker -- experimental auto-freeze on
+                                 // relative-pose MAD runaway.
+#include "RelocGuard.h"          // spacecal::reloc_guard -- experimental post-relocalization
+                                 // sample quarantine window helper.
+#include "TargetStabilityGate.h" // spacecal::target_stability -- defer the continuous solve
+                                 // while the target tracking link is flapping.
 
 #include <string>
 #include <vector>
@@ -2771,7 +2773,28 @@ void CalibrationTick(double time)
 		// User-toggled "Pause updates" from the continuous-cal UI: keep the
 		// already-applied driver offset live, skip any new solve cycle so the
 		// math doesn't fight the user trying to inspect the current result.
-		if (!CalCtx.calibrationPaused) {
+		const bool deferSolveForUnstableTarget =
+		    !CalCtx.calibrationPaused &&
+		    spacecal::target_stability::ShouldDeferSolve(CalCtx.targetInvalidEwma,
+		                                                 spacecal::target_stability::kSolveDeferInvalidFraction);
+		if (deferSolveForUnstableTarget) {
+			// The target tracking link is flapping (recent invalid-pose rate high).
+			// A solve built from samples stitched across the dropouts is unreliable
+			// churn, so defer it -- the applied offset stays put and CollectSample
+			// keeps refilling the buffer until the link steadies. Skipping this
+			// branch also skips the warm-restart grace countdown below, which is
+			// correct: no solve happened this tick.
+			static double s_lastSolveDeferLog = -1e9;
+			if (time - s_lastSolveDeferLog >= 1.0) {
+				s_lastSolveDeferLog = time;
+				Metrics::LogAnnotationf("continuous_solve_deferred: reason=target_unstable"
+				                        " target_invalid_ewma=%.3f threshold=%.2f sample_count=%zu",
+				                        CalCtx.targetInvalidEwma,
+				                        spacecal::target_stability::kSolveDeferInvalidFraction,
+				                        calibration.SampleCount());
+			}
+		}
+		else if (!CalCtx.calibrationPaused) {
 			solveAttempted = true;
 			solveProducedCandidate = calibration.ComputeIncremental(
 			    lerp, CalCtx.continuousCalibrationThreshold, CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers);
