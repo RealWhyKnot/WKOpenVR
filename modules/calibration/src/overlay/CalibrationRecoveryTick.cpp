@@ -416,9 +416,15 @@ struct RelocalizationDetectorState
 	// geometry the detector observed.
 	std::map<std::string, double> prevHmdToBaseDist;
 
-	// Throttle for the per-tick reloc_tick diagnostic log. 1 Hz cap so
-	// we always have a recent baseline state in the log without flooding.
+	// Heartbeat timer for the reloc_tick diagnostic. The line is emitted on any
+	// change of the (hmdValid, state, hmdRaw.result) tuple below, plus this slow
+	// heartbeat so the log still confirms the detector is ticking. The old 1 Hz
+	// unconditional cadence dominated the spacecal log (~28k lines/session of a
+	// static steady-state tuple).
 	double lastTickLogTime = -1e9;
+	int lastLoggedHmdValid = -1;
+	int lastLoggedState = -1;
+	int lastLoggedHmdResult = -1;
 
 	// Throttle for the per-tick reloc_hmd_invalid_stamped diagnostic log
 	// inside the !hmdValid branch. Same 1 Hz cap so a long stall produces
@@ -502,12 +508,20 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// (vs. some upstream skipping it during stalls -- which is what we
 	// suspect is preventing lastHmdInvalidTime from advancing during
 	// real stalls, see comment on the field).
-	if ((now - s.lastTickLogTime) >= 1.0) {
+	const int hmdValidInt = (int)hmdValid;
+	const int stateInt = (int)CalCtx.state;
+	const int hmdResultInt = (int)hmdRaw.result;
+	const bool relocTickChanged =
+	    hmdValidInt != s.lastLoggedHmdValid || stateInt != s.lastLoggedState || hmdResultInt != s.lastLoggedHmdResult;
+	if (relocTickChanged || (now - s.lastTickLogTime) >= 30.0) {
 		s.lastTickLogTime = now;
+		s.lastLoggedHmdValid = hmdValidInt;
+		s.lastLoggedState = stateInt;
+		s.lastLoggedHmdResult = hmdResultInt;
 		Metrics::LogAnnotationf(
 		    "reloc_tick: hmdValid=%d havePrevHmd=%d state=%d hmdRaw.result=%d hmdRaw.poseIsValid=%d "
 		    "hmdRaw.deviceIsConnected=%d lastHmdInvalidTime=%.3f secSinceStall=%.2f",
-		    (int)hmdValid, (int)s.havePrevHmd, (int)CalCtx.state, (int)hmdRaw.result, (int)hmdRaw.poseIsValid,
+		    hmdValidInt, (int)s.havePrevHmd, stateInt, hmdResultInt, (int)hmdRaw.poseIsValid,
 		    (int)hmdRaw.deviceIsConnected, s.lastHmdInvalidTime, now - s.lastHmdInvalidTime);
 	}
 

@@ -128,11 +128,20 @@ void DriverTelemetryPoller::ReadFile()
 		ReadExpressionArray(*shapes, "post_tuning", s.post_tuning_expressions);
 	}
 
-	FT_LOG_OVL("DriverTelemetryPoller: refreshed (pid=%d read=%llu processed=%llu osc_sent=%llu osc_drop=%llu verg=%s "
-	           "focus=%.3fm shapes=%s)",
-	           s.driver_pid, (unsigned long long)s.frames_read, (unsigned long long)s.frames_processed,
-	           (unsigned long long)s.osc_messages_sent, (unsigned long long)s.osc_messages_dropped,
-	           s.vergence_enabled ? "on" : "off", s.focus_distance_m, s.shape_values_valid ? "valid" : "none");
+	// The driver rewrites this file ~2x/s, so logging every refresh floods the
+	// log (tens of thousands of lines per session, each flushed) in both dev and
+	// release. The live counters are shown in the overlay; the log only needs the
+	// connect / PID change and the shape-validity transition.
+	const bool connectOrPidChange = !snapshot_.valid || s.driver_pid != snapshot_.driver_pid;
+	const bool shapesValidChange = s.shape_values_valid != snapshot_.shape_values_valid;
+	if (connectOrPidChange || shapesValidChange) {
+		FT_LOG_OVL("DriverTelemetryPoller: %s (pid=%d read=%llu processed=%llu osc_sent=%llu osc_drop=%llu verg=%s "
+		           "focus=%.3fm shapes=%s)",
+		           connectOrPidChange ? "connected" : "shapes-changed", s.driver_pid, (unsigned long long)s.frames_read,
+		           (unsigned long long)s.frames_processed, (unsigned long long)s.osc_messages_sent,
+		           (unsigned long long)s.osc_messages_dropped, s.vergence_enabled ? "on" : "off", s.focus_distance_m,
+		           s.shape_values_valid ? "valid" : "none");
+	}
 
 	snapshot_ = std::move(s);
 }

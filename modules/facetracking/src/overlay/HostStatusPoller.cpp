@@ -161,7 +161,19 @@ void HostStatusPoller::ReadFile()
 		}
 	}
 
-	FT_LOG_OVL("HostStatusPoller: refreshed (pid=%d uptime=%ds)", s.host_pid, s.host_uptime_seconds);
+	// The host rewrites this file ~1x/s, so logging every refresh floods the log.
+	// Connect / PID change, lifecycle phase change, shutdown, and error
+	// transitions are what matter; steady-state uptime ticks are not. Staleness
+	// is already reported separately above.
+	const bool connectOrPidChange = !snapshot_.valid || s.host_pid != snapshot_.host_pid;
+	const bool phaseChange = s.phase != snapshot_.phase;
+	const bool errorChange = s.last_error != snapshot_.last_error;
+	const bool shutdownChange = s.host_shutting_down != snapshot_.host_shutting_down;
+	if (connectOrPidChange || phaseChange || errorChange || shutdownChange) {
+		FT_LOG_OVL("HostStatusPoller: %s (pid=%d uptime=%ds phase='%s' shutting_down=%d last_error='%s')",
+		           connectOrPidChange ? "connected" : "changed", s.host_pid, s.host_uptime_seconds, s.phase.c_str(),
+		           s.host_shutting_down ? 1 : 0, s.last_error.c_str());
+	}
 
 	snapshot_ = std::move(s);
 }
