@@ -258,7 +258,8 @@ void DrawPerfModuleTable(const PerfViewModel& vm, const PerfStatsHub& hub, const
 	ui::DrawTableHeader();
 
 	for (const PerfModuleRow& row : vm.rows) {
-		const uint32_t slot = openvr_pair::common::moduleperf::SlotIndex(row.id);
+		const uint32_t slot = row.slot;
+		if (slot >= openvr_pair::common::moduleperf::kSlotCount) continue;
 		const double smoothedTotal = hub.SmoothedTotalPct(slot);
 		// Worst single-process spike this module caused in the window. Per-
 		// process peaks do not sum, so report the largest of the three rather

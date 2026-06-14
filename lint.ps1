@@ -8,8 +8,10 @@ param(
 	[Alias("SkipTidy")]
 	[switch]$FormatOnly,
 
-	# Limit format operations to files changed from ChangedBase plus staged,
-	# unstaged, and untracked files. Pair with -FormatOnly for quick local checks.
+	# Limit format operations and clang-tidy source analysis to files changed
+	# from ChangedBase plus staged, unstaged, and untracked files. Header-only
+	# C/C++ changes still run full clang-tidy because headers are not compile
+	# database translation units.
 	[switch]$ChangedOnly,
 
 	[string]$ChangedBase = "origin/main"
@@ -150,6 +152,47 @@ function Test-IsProjectCppFile {
 	return $true
 }
 
+function Test-IsCppSourceFile {
+	param([Parameter(Mandatory=$true)][string]$Path)
+
+	return $Path -match "\.(c|cc|cpp|cxx)$"
+}
+
+function Test-IsCppHeaderFile {
+	param([Parameter(Mandatory=$true)][string]$Path)
+
+	return $Path -match "\.(h|hpp)$"
+}
+
+function Convert-RepoPathToRegex {
+	param([Parameter(Mandatory=$true)][string]$Path)
+
+	$escaped = [regex]::Escape(($Path -replace "\\", "/"))
+	return ".*" + ($escaped -replace "/", "[/\\]") + "$"
+}
+
+function Get-ClangTidyFileFilters {
+	if (-not $ChangedOnly) {
+		return [pscustomobject]@{ Skip = $false; Filters = @() }
+	}
+
+	$changedProjectCpp = @($script:ChangedFiles | Where-Object { Test-IsProjectCppFile $_ })
+	$changedSources = @($changedProjectCpp | Where-Object { Test-IsCppSourceFile $_ })
+	if ($changedSources.Count -gt 0) {
+		Write-Host "clang-tidy: changed-only includes $($changedSources.Count) C/C++ source file(s)."
+		return [pscustomobject]@{ Skip = $false; Filters = @($changedSources | ForEach-Object { Convert-RepoPathToRegex $_ }) }
+	}
+
+	$changedHeaders = @($changedProjectCpp | Where-Object { Test-IsCppHeaderFile $_ })
+	if ($changedHeaders.Count -gt 0) {
+		Write-Host "clang-tidy: changed-only saw $($changedHeaders.Count) C/C++ header file(s); running full project analysis."
+		return [pscustomobject]@{ Skip = $false; Filters = @() }
+	}
+
+	Write-Host "clang-tidy: no changed project C/C++ source/header files found."
+	return [pscustomobject]@{ Skip = $true; Filters = @() }
+}
+
 function Invoke-ClangFormat {
 	param([Parameter(Mandatory=$true)][string]$ClangFormat)
 
@@ -189,6 +232,11 @@ function Invoke-ClangTidy {
 		[Parameter(Mandatory=$true)][string]$ClangTidy,
 		[Parameter(Mandatory=$true)][string]$ClangApplyReplacements
 	)
+
+	$fileFilterPlan = Get-ClangTidyFileFilters
+	if ($fileFilterPlan.Skip) {
+		return
+	}
 
 	$buildDir = Join-Path $PSScriptRoot "build\lint-tidy"
 	$cmakeArgs = @(
@@ -231,6 +279,9 @@ function Invoke-ClangTidy {
 		"-hide-progress",
 		"-j", [string]$parallelJobs
 	)
+	foreach ($filter in $fileFilterPlan.Filters) {
+		$tidyArgs += $filter
+	}
 
 	if (-not $Check) {
 		$tidyArgs += @("-fix", "-format", "-style=file")

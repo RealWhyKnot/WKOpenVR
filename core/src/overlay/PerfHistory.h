@@ -168,6 +168,7 @@ inline void PushPerfHistory(PerfHistoryStore& store, double nowSeconds, const mo
 struct PerfModuleRow
 {
 	moduleperf::ModuleId id{};
+	uint32_t slot = moduleperf::kSlotCount;
 	bool overlayActive = false;
 	bool driverActive = false;
 	bool sidecarPresent = false;
@@ -207,8 +208,9 @@ struct PerfViewModel
 };
 
 // Merges the overlay's own latest sample with the driver's mirrored one.
-// Rows appear for every module either process has seen activity from, in
-// ModuleId order, so row order and series colors stay stable.
+// Rows appear for every registered module either process has seen activity
+// from, in registry order, so row order and series colors stay stable while
+// spare perf slots remain internal.
 inline PerfViewModel BuildPerfViewModel(const moduleperf::PerfSampleResult& overlay, bool driverConnected,
                                         const moduleperf::PerfSampleResult& driver, double driverSnapshotAgeSec)
 {
@@ -232,14 +234,21 @@ inline PerfViewModel BuildPerfViewModel(const moduleperf::PerfSampleResult& over
 		vm.driverPid = driver.process.snapshot.processId;
 	}
 
-	for (uint32_t slot = 0; slot < moduleperf::kSlotCount; ++slot) {
+	size_t moduleCount = 0;
+	const openvr_pair::common::modules::ModuleInfo* modules = openvr_pair::common::modules::All(&moduleCount);
+	for (size_t i = 0; i < moduleCount; ++i) {
+		const moduleperf::ModuleId id = modules[i].id;
+		const uint32_t slot = moduleperf::SlotIndex(id);
+		if (slot >= moduleperf::kSlotCount) continue;
+
 		const moduleperf::ModuleSample& o = overlay.modules[slot];
 		const moduleperf::ModuleSample& d = driver.modules[slot];
 		const bool driverSide = driverConnected && d.active;
 		if (!o.active && !driverSide) continue;
 
 		PerfModuleRow row;
-		row.id = static_cast<moduleperf::ModuleId>(slot);
+		row.id = id;
+		row.slot = slot;
 		row.overlayActive = o.active;
 		row.driverActive = driverSide;
 		row.overlayPct = ModuleInProcessPct(o);

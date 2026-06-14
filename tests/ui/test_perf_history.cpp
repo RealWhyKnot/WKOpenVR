@@ -2,6 +2,7 @@
 
 #include "PerfHistory.h"
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -145,6 +146,37 @@ TEST(PerfHistory, BuildsMergedModuleRows)
 	EXPECT_EQ(333u, row.sidecarPid);
 	EXPECT_EQ(5u, row.sidecarThreads);
 	EXPECT_EQ(96ULL * 1024ULL * 1024ULL, row.sidecarWorkingSetBytes);
+}
+
+TEST(PerfHistory, IgnoresActiveSparePerfSlots)
+{
+	size_t moduleCount = 0;
+	const modules::ModuleInfo* infos = modules::All(&moduleCount);
+	ASSERT_GT(moduleCount, 0u);
+
+	uint32_t lastRegisteredSlot = 0;
+	for (size_t i = 0; i < moduleCount; ++i) {
+		lastRegisteredSlot = std::max(lastRegisteredSlot, Slot(infos[i].id));
+	}
+	if (lastRegisteredSlot + 1 >= moduleperf::kSlotCount) {
+		GTEST_SKIP() << "No spare perf slots remain.";
+	}
+
+	const uint32_t spareSlot = lastRegisteredSlot + 1;
+	moduleperf::PerfSampleResult overlaySample{};
+	overlaySample.modules[spareSlot].active = true;
+	overlaySample.modules[spareSlot].sectionCpuPctOneCore = 42.0;
+
+	moduleperf::PerfSampleResult driverSample{};
+	driverSample.modules[spareSlot].active = true;
+	driverSample.modules[spareSlot].threadCpuPctOneCore = 7.0;
+	driverSample.modules[spareSlot].sidecarValid = true;
+	driverSample.modules[spareSlot].sidecarCpuPctOneCore = 3.0;
+
+	const overlay::PerfViewModel vm = overlay::BuildPerfViewModel(overlaySample, true, driverSample, 0.0);
+
+	EXPECT_TRUE(vm.rows.empty());
+	EXPECT_DOUBLE_EQ(0.0, vm.sidecarTotalPct);
 }
 
 TEST(PerfHistory, EmaSeedsThenSmooths)

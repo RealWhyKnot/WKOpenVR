@@ -150,7 +150,8 @@ void PerfStatsHub::Tick(double nowSeconds)
 
 	bool seen[moduleperf::kSlotCount]{};
 	for (PerfModuleRow& row : viewModel_.rows) {
-		const uint32_t slot = moduleperf::SlotIndex(row.id);
+		const uint32_t slot = row.slot;
+		if (slot >= moduleperf::kSlotCount) continue;
 		smoothedTotalPct_[slot] = EmaUpdate(smoothedTotalPct_[slot], row.totalPct, smoothedValid_[slot]);
 		smoothedValid_[slot] = true;
 		seen[slot] = true;

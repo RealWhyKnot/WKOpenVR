@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Pre-push guard: block pushes that would fail CI's formatting/style check, so the
-# same clang-format / dotnet-format drift stops reaching CI over and over.
+# Pre-push guard: block pushes that would fail CI's formatting/style or
+# changed-source clang-tidy checks.
 #
 # - Check-only: never modifies files (no clang-format -i, no churn).
-# - Changed-only + format-only: fast (seconds), skips the heavy clang-tidy pass.
-# - Skips gracefully when the formatters are not installed, so it can never block a
-#   push on a machine without the toolchain. Bypass in an emergency: git push --no-verify
+# - Changed-only: fast for source edits; header-only C/C++ edits run full
+#   clang-tidy because headers are not compile database translation units.
+# - Skips gracefully when tools are absent, so it can never block a push on a
+#   bare machine. Bypass in an emergency: git push --no-verify
 set -uo pipefail
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
@@ -25,18 +26,35 @@ if ! command -v clang-format >/dev/null 2>&1 || ! command -v dotnet >/dev/null 2
   exit 0
 fi
 
-echo "pre-push: checking formatting (lint.ps1 -FormatOnly -Check -ChangedOnly)..." >&2
-"$pwsh_bin" -NoProfile -ExecutionPolicy Bypass -File "$repo_root/lint.ps1" -FormatOnly -Check -ChangedOnly
+full_lint_available=1
+for c in clang-tidy clang-apply-replacements cmake ninja python; do
+  if ! command -v "$c" >/dev/null 2>&1; then
+    full_lint_available=0
+    break
+  fi
+done
+
+lint_args=(-Check -ChangedOnly)
+lint_label="formatting and changed-source clang-tidy"
+if [ "$full_lint_available" -ne 1 ]; then
+  echo "pre-push: clang-tidy/CMake/Ninja/Python not found; falling back to format-only check." >&2
+  lint_args=(-FormatOnly -Check -ChangedOnly)
+  lint_label="formatting"
+fi
+
+echo "pre-push: checking $lint_label (lint.ps1 ${lint_args[*]})..." >&2
+"$pwsh_bin" -NoProfile -ExecutionPolicy Bypass -File "$repo_root/lint.ps1" "${lint_args[@]}"
 if [ "$?" -ne 0 ]; then
   {
     echo ""
-    echo "pre-push BLOCKED: formatting/style drift would fail CI's lint job."
-    echo "  Fix:    pwsh ./lint.ps1 -FormatOnly      (applies clang-format + dotnet format)"
-    echo "  Then:   git add -u && git commit and push again."
-    echo "  Bypass: git push --no-verify             (only if you are certain)"
+    echo "pre-push BLOCKED: changed files would fail CI's lint job."
+    echo "  Fix format:  pwsh ./lint.ps1 -FormatOnly -ChangedOnly"
+    echo "  Check again: pwsh ./lint.ps1 -Check -ChangedOnly"
+    echo "  Then:        git add -u && git commit and push again."
+    echo "  Bypass:      git push --no-verify"
   } >&2
   exit 1
 fi
 
-echo "pre-push: format check passed." >&2
+echo "pre-push: lint check passed." >&2
 exit 0
