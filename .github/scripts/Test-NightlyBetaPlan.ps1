@@ -184,6 +184,16 @@ try {
   $repo = New-TestRepo
   [void] $tempRoots.Add($repo)
   $state = Write-ReleaseState -RepoRoot $repo -Tag "v2026.6.1.0"
+  Invoke-TestGit -RepoRoot $repo -Arguments @("tag", "v2026.6.9.0") | Out-Null
+  Write-TestFile -Path (Join-Path $repo "modules/captions/source.txt") -Content "captions change after stable release`n"
+  Invoke-TestGit -RepoRoot $repo -Arguments @("add", ".") | Out-Null
+  Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "change captions after stable release") | Out-Null
+  $plan = Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -Today "2026.6.9"
+  Assert-Equal -Actual $plan.next_tag -Expected "v2026.6.9.1-beta" -Message "Next beta tag should increment after a same-day stable release"
+
+  $repo = New-TestRepo
+  [void] $tempRoots.Add($repo)
+  $state = Write-ReleaseState -RepoRoot $repo -Tag "v2026.6.1.0"
   $failed = $false
   try {
     Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -Tag "v2026.6.2.0-beta.1" | Out-Null
