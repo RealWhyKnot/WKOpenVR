@@ -66,6 +66,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Distinguish manual vs detected roles (a5ed92f)
 - **facetracking:** Gate prerelease module sources (ecee6cd)
 - **calibration:** Defer continuous solve while target tracking is unstable (939eeb6)
+- **calibration:** Add floor ownership state machine (4fd0cf9)
+- **phantom:** Infer body priors automatically (3f7e1d4)
+- **phantom:** Add replay-driven tracker harness (deda132)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -215,6 +218,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Restore relative lock and smoothing sync (af45b60)
 - **calibration:** Stabilize drift breaker and headset lock controls (7bdc700)
 - **oscrouter:** Avoid stale shutdown safety disable (bcf4f22)
+- **calibration:** Stop boundary floor reassert loop (330444e)
+- **phantom:** Bridge invalid pose dropouts (39150cb)
+- **facetracking:** Hide prerelease modules unless opted in (ac3f2cd)
 
 ---
 
