@@ -923,15 +923,25 @@ static bool SetWorkingBoundary(vr::IVRChaperoneSetup* setup,
 
 namespace {
 
+FloorOwnership g_floorOwnership = FloorOwnership::Inactive;
 bool g_floorTargetActive = false;
 vr::HmdMatrix34_t g_floorTargetZero = {};
+uint32_t g_floorExternalChangeCount = 0;
+double g_floorLastCountedExternalChangeAt = 0.0;
 
 constexpr double kLocalChaperoneEventWindowSec = 2.0;
 constexpr uint32_t kLocalChaperoneEventBudget = 6;
+constexpr uint32_t kFloorOwnershipDisarmThreshold = 3;
+constexpr double kFloorOwnershipBurstDebounceSec = 1.0;
+constexpr double kFloorOwnershipConflictWindowSec = 10.0;
 
 double g_localChaperoneWriteExpiresAt = 0.0;
 uint32_t g_localChaperoneEventBudget = 0;
 std::string g_localChaperoneWriteSource;
+bool g_driverImportKnown = false;
+bool g_driverImportEnabled = false;
+bool g_driverImportRecommended = false;
+int g_driverImportSettingsError = -1;
 
 double NowSecondsSteady()
 {
@@ -971,8 +981,8 @@ const char* ChaperoneEventName(uint32_t eventType)
 
 bool ConsumeLocalChaperoneWrite(uint32_t eventType, double now, const char** sourceOut)
 {
-	if (!IsObservedChaperoneEvent(eventType)) return false;
-	if (g_localChaperoneEventBudget == 0 || now > g_localChaperoneWriteExpiresAt) {
+	if (!ShouldConsumeLocalChaperoneWrite(eventType, g_localChaperoneEventBudget, now,
+	                                      g_localChaperoneWriteExpiresAt)) {
 		g_localChaperoneEventBudget = 0;
 		g_localChaperoneWriteSource.clear();
 		return false;
@@ -1011,8 +1021,17 @@ void RebaseFloorTargetFromWorkingCopy(uint32_t eventType)
 
 	char lbuf[224];
 	snprintf(lbuf, sizeof lbuf,
-	         "[boundary-floor] target rebased: event=%u name=%s drift_mm=%.1f target_y=%.4f source=external", eventType,
-	         ChaperoneEventName(eventType), driftM * 1000.0, g_floorTargetZero.m[1][3]);
+	         "[boundary-floor] target refreshed: event=%u name=%s drift_mm=%.1f target_y=%.4f source=external",
+	         eventType, ChaperoneEventName(eventType), driftM * 1000.0, g_floorTargetZero.m[1][3]);
+	Metrics::WriteLogAnnotation(lbuf);
+}
+
+void DisarmFloorTarget(uint32_t eventType, uint32_t externalChangeCount)
+{
+	g_floorOwnership = FloorOwnership::Disarmed;
+	char lbuf[224];
+	snprintf(lbuf, sizeof lbuf, "[boundary-floor] target paused: event=%u name=%s external_changes=%u", eventType,
+	         ChaperoneEventName(eventType), externalChangeCount);
 	Metrics::WriteLogAnnotation(lbuf);
 }
 
@@ -1023,6 +1042,11 @@ static void MarkLocalChaperoneWrite(const char* source)
 	g_localChaperoneWriteExpiresAt = NowSecondsSteady() + kLocalChaperoneEventWindowSec;
 	g_localChaperoneEventBudget = kLocalChaperoneEventBudget;
 	g_localChaperoneWriteSource = (source && source[0]) ? source : "unknown";
+}
+
+static bool FloorOwnershipAppliesTarget(FloorOwnership state)
+{
+	return state == FloorOwnership::OneShotApplied || state == FloorOwnership::Rebased;
 }
 
 static void LogChaperoneApplyDiagnostics(const char* source, bool committed,
@@ -1054,6 +1078,10 @@ static void LogChaperoneApplyDiagnostics(const char* source, bool committed,
 			driverImport = value ? 1 : 0;
 		}
 	}
+	g_driverImportSettingsError = settingsErrValue;
+	g_driverImportKnown = driverImport >= 0;
+	g_driverImportEnabled = driverImport == 1;
+	g_driverImportRecommended = g_driverImportKnown && g_driverImportEnabled;
 
 	uint64_t universeId = 0;
 	int universeErrValue = -1;
@@ -1088,18 +1116,60 @@ void SetFloorStandingZeroTarget(const vr::HmdMatrix34_t& standingZeroToRaw)
 {
 	g_floorTargetZero = standingZeroToRaw;
 	g_floorTargetActive = true;
+	g_floorOwnership = FloorOwnership::OneShotApplied;
+	g_floorExternalChangeCount = 0;
+	g_floorLastCountedExternalChangeAt = 0.0;
 }
 
 void ClearFloorStandingZeroTarget()
 {
 	g_floorTargetActive = false;
+	g_floorOwnership = FloorOwnership::Inactive;
+	g_floorExternalChangeCount = 0;
+	g_floorLastCountedExternalChangeAt = 0.0;
 }
 
 bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out)
 {
 	if (!g_floorTargetActive) return false;
+	if (!FloorOwnershipAppliesTarget(g_floorOwnership)) return false;
 	if (out) *out = g_floorTargetZero;
 	return true;
+}
+
+void MarkFloorChaperoneCommitForEvents(const char* source)
+{
+	MarkLocalChaperoneWrite(source);
+}
+
+const char* FloorOwnershipStateName(FloorOwnership state)
+{
+	switch (state) {
+		case FloorOwnership::Inactive:
+			return "inactive";
+		case FloorOwnership::OneShotApplied:
+			return "one_shot_applied";
+		case FloorOwnership::Rebased:
+			return "rebased";
+		case FloorOwnership::Disarmed:
+			return "disarmed";
+		default:
+			return "unknown";
+	}
+}
+
+FloorOwnershipStatus GetFloorOwnershipStatus()
+{
+	FloorOwnershipStatus status;
+	status.state = g_floorOwnership;
+	status.targetActive = g_floorTargetActive;
+	status.appliesToBoundaryCommits = g_floorTargetActive && FloorOwnershipAppliesTarget(g_floorOwnership);
+	status.externalChangeCount = g_floorExternalChangeCount;
+	status.driverImportKnown = g_driverImportKnown;
+	status.driverImportEnabled = g_driverImportEnabled;
+	status.driverImportRecommended = g_driverImportRecommended;
+	status.driverImportSettingsError = g_driverImportSettingsError;
+	return status;
 }
 
 bool IsObservedChaperoneEvent(uint32_t eventType)
@@ -1118,6 +1188,15 @@ bool IsObservedChaperoneEvent(uint32_t eventType)
 	}
 }
 
+bool ShouldConsumeLocalChaperoneWrite(uint32_t eventType, uint32_t localEventBudget, double nowSeconds,
+                                      double expiresAtSeconds)
+{
+	if (!IsObservedChaperoneEvent(eventType)) return false;
+	if (localEventBudget == 0) return false;
+	if (!std::isfinite(nowSeconds) || !std::isfinite(expiresAtSeconds)) return false;
+	return nowSeconds <= expiresAtSeconds;
+}
+
 bool ShouldRebaseFloorTargetForChaperoneEvent(uint32_t eventType, bool originatedByLocalCommit, bool floorTargetActive)
 {
 	(void)originatedByLocalCommit;
@@ -1132,6 +1211,46 @@ bool ShouldRebaseFloorTargetForChaperoneEvent(uint32_t eventType, bool originate
 		default:
 			return false;
 	}
+}
+
+FloorOwnershipTransition DecideFloorTransition(uint32_t eventType, bool originatedByLocalCommit,
+                                               FloorOwnership currentState, uint32_t externalChangeCount,
+                                               double secondsSinceLastExternalChange, uint32_t disarmThreshold,
+                                               double burstDebounceSeconds, double conflictWindowSeconds)
+{
+	FloorOwnershipTransition out;
+	out.nextState = currentState;
+	out.nextExternalChangeCount = externalChangeCount;
+
+	if (currentState == FloorOwnership::Inactive || currentState == FloorOwnership::Disarmed) {
+		return out;
+	}
+	if (originatedByLocalCommit) {
+		return out;
+	}
+	if (!ShouldRebaseFloorTargetForChaperoneEvent(eventType, false, true)) {
+		return out;
+	}
+
+	uint32_t count = externalChangeCount;
+	if (!std::isfinite(secondsSinceLastExternalChange) || secondsSinceLastExternalChange < 0.0 ||
+	    secondsSinceLastExternalChange > conflictWindowSeconds) {
+		count = 0;
+	}
+	const bool burstEvent = count > 0 && secondsSinceLastExternalChange < burstDebounceSeconds;
+	const uint32_t nextCount = burstEvent ? count : count + 1;
+
+	out.nextExternalChangeCount = nextCount;
+	out.countedExternalChange = !burstEvent;
+	if (disarmThreshold > 0 && nextCount >= disarmThreshold) {
+		out.nextState = FloorOwnership::Disarmed;
+		out.action = FloorOwnershipAction::Disarm;
+		return out;
+	}
+
+	out.nextState = FloorOwnership::Rebased;
+	out.action = FloorOwnershipAction::Rebase;
+	return out;
 }
 
 void TickFloorStandingZeroEvents()
@@ -1149,8 +1268,27 @@ void TickFloorStandingZeroEvents()
 		const char* localSource = nullptr;
 		const bool local = ConsumeLocalChaperoneWrite(ev.eventType, now, &localSource);
 		LogObservedChaperoneEvent(ev.eventType, local, localSource);
-		if (ShouldRebaseFloorTargetForChaperoneEvent(ev.eventType, local, g_floorTargetActive)) {
+
+		const double sinceExternalChange = g_floorLastCountedExternalChangeAt > 0.0
+		                                       ? now - g_floorLastCountedExternalChangeAt
+		                                       : std::numeric_limits<double>::infinity();
+		const auto transition = DecideFloorTransition(
+		    ev.eventType, local, g_floorOwnership, g_floorExternalChangeCount, sinceExternalChange,
+		    kFloorOwnershipDisarmThreshold, kFloorOwnershipBurstDebounceSec, kFloorOwnershipConflictWindowSec);
+		if (transition.countedExternalChange) {
+			g_floorExternalChangeCount = transition.nextExternalChangeCount;
+			g_floorLastCountedExternalChangeAt = now;
+		}
+		else {
+			g_floorExternalChangeCount = transition.nextExternalChangeCount;
+		}
+		g_floorOwnership = transition.nextState;
+
+		if (transition.action == FloorOwnershipAction::Rebase) {
 			RebaseFloorTargetFromWorkingCopy(ev.eventType);
+		}
+		else if (transition.action == FloorOwnershipAction::Disarm) {
+			DisarmFloorTarget(ev.eventType, transition.nextExternalChangeCount);
 		}
 	}
 }

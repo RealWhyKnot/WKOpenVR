@@ -1519,12 +1519,15 @@ TEST(BoundaryFloorTest, StandingZeroTargetStoresAndClears)
 	// refreshes this target after chaperone/zero-pose changes instead of
 	// re-committing it.
 	using wkopenvr::boundary::ClearFloorStandingZeroTarget;
+	using wkopenvr::boundary::FloorOwnership;
+	using wkopenvr::boundary::GetFloorOwnershipStatus;
 	using wkopenvr::boundary::GetFloorStandingZeroTarget;
 	using wkopenvr::boundary::SetFloorStandingZeroTarget;
 
 	ClearFloorStandingZeroTarget();
 	vr::HmdMatrix34_t out{};
 	EXPECT_FALSE(GetFloorStandingZeroTarget(&out));
+	EXPECT_EQ(GetFloorOwnershipStatus().state, FloorOwnership::Inactive);
 
 	vr::HmdMatrix34_t target{};
 	target.m[0][0] = 1.0f;
@@ -1533,11 +1536,108 @@ TEST(BoundaryFloorTest, StandingZeroTargetStoresAndClears)
 	target.m[1][3] = 0.5027f; // floor offset along world up
 	SetFloorStandingZeroTarget(target);
 
+	const auto activeStatus = GetFloorOwnershipStatus();
+	EXPECT_EQ(activeStatus.state, FloorOwnership::OneShotApplied);
+	EXPECT_TRUE(activeStatus.targetActive);
+	EXPECT_TRUE(activeStatus.appliesToBoundaryCommits);
 	EXPECT_TRUE(GetFloorStandingZeroTarget(&out));
 	EXPECT_FLOAT_EQ(out.m[1][3], 0.5027f);
 
 	ClearFloorStandingZeroTarget();
+	const auto clearedStatus = GetFloorOwnershipStatus();
+	EXPECT_EQ(clearedStatus.state, FloorOwnership::Inactive);
+	EXPECT_FALSE(clearedStatus.targetActive);
+	EXPECT_FALSE(clearedStatus.appliesToBoundaryCommits);
 	EXPECT_FALSE(GetFloorStandingZeroTarget(&out));
+}
+
+TEST(BoundaryFloorTest, FloorOwnershipStateNamesAreStable)
+{
+	using wkopenvr::boundary::FloorOwnership;
+	using wkopenvr::boundary::FloorOwnershipStateName;
+
+	EXPECT_STREQ(FloorOwnershipStateName(FloorOwnership::Inactive), "inactive");
+	EXPECT_STREQ(FloorOwnershipStateName(FloorOwnership::OneShotApplied), "one_shot_applied");
+	EXPECT_STREQ(FloorOwnershipStateName(FloorOwnership::Rebased), "rebased");
+	EXPECT_STREQ(FloorOwnershipStateName(FloorOwnership::Disarmed), "disarmed");
+}
+
+TEST(BoundaryFloorTest, LocalWriteConsumptionRequiresObservedEventBudgetAndWindow)
+{
+	using wkopenvr::boundary::ShouldConsumeLocalChaperoneWrite;
+
+	EXPECT_TRUE(ShouldConsumeLocalChaperoneWrite(vr::VREvent_StandingZeroPoseReset, 1, 10.0, 11.0));
+	EXPECT_FALSE(ShouldConsumeLocalChaperoneWrite(vr::VREvent_StandingZeroPoseReset, 0, 10.0, 11.0));
+	EXPECT_FALSE(ShouldConsumeLocalChaperoneWrite(vr::VREvent_StandingZeroPoseReset, 1, 12.0, 11.0));
+	EXPECT_FALSE(ShouldConsumeLocalChaperoneWrite(vr::VREvent_Quit, 1, 10.0, 11.0));
+}
+
+TEST(BoundaryFloorTest, FloorOwnershipKeepsLocalCommitEchoes)
+{
+	using wkopenvr::boundary::DecideFloorTransition;
+	using wkopenvr::boundary::FloorOwnership;
+	using wkopenvr::boundary::FloorOwnershipAction;
+
+	const auto decision = DecideFloorTransition(vr::VREvent_StandingZeroPoseReset,
+	                                            /*originatedByLocalCommit=*/true, FloorOwnership::OneShotApplied,
+	                                            /*externalChangeCount=*/0,
+	                                            /*secondsSinceLastExternalChange=*/100.0);
+
+	EXPECT_EQ(decision.nextState, FloorOwnership::OneShotApplied);
+	EXPECT_EQ(decision.action, FloorOwnershipAction::None);
+	EXPECT_EQ(decision.nextExternalChangeCount, 0u);
+	EXPECT_FALSE(decision.countedExternalChange);
+}
+
+TEST(BoundaryFloorTest, FloorOwnershipRebasesFirstExternalOriginChange)
+{
+	using wkopenvr::boundary::DecideFloorTransition;
+	using wkopenvr::boundary::FloorOwnership;
+	using wkopenvr::boundary::FloorOwnershipAction;
+
+	const auto decision = DecideFloorTransition(vr::VREvent_ChaperoneUniverseHasChanged,
+	                                            /*originatedByLocalCommit=*/false, FloorOwnership::OneShotApplied,
+	                                            /*externalChangeCount=*/0,
+	                                            /*secondsSinceLastExternalChange=*/100.0);
+
+	EXPECT_EQ(decision.nextState, FloorOwnership::Rebased);
+	EXPECT_EQ(decision.action, FloorOwnershipAction::Rebase);
+	EXPECT_EQ(decision.nextExternalChangeCount, 1u);
+	EXPECT_TRUE(decision.countedExternalChange);
+}
+
+TEST(BoundaryFloorTest, FloorOwnershipDebouncesExternalEventBurst)
+{
+	using wkopenvr::boundary::DecideFloorTransition;
+	using wkopenvr::boundary::FloorOwnership;
+	using wkopenvr::boundary::FloorOwnershipAction;
+
+	const auto decision = DecideFloorTransition(vr::VREvent_StandingZeroPoseReset,
+	                                            /*originatedByLocalCommit=*/false, FloorOwnership::Rebased,
+	                                            /*externalChangeCount=*/1,
+	                                            /*secondsSinceLastExternalChange=*/0.25);
+
+	EXPECT_EQ(decision.nextState, FloorOwnership::Rebased);
+	EXPECT_EQ(decision.action, FloorOwnershipAction::Rebase);
+	EXPECT_EQ(decision.nextExternalChangeCount, 1u);
+	EXPECT_FALSE(decision.countedExternalChange);
+}
+
+TEST(BoundaryFloorTest, FloorOwnershipDisarmsAfterRepeatedExternalOriginChanges)
+{
+	using wkopenvr::boundary::DecideFloorTransition;
+	using wkopenvr::boundary::FloorOwnership;
+	using wkopenvr::boundary::FloorOwnershipAction;
+
+	const auto decision = DecideFloorTransition(vr::VREvent_StandingZeroPoseReset,
+	                                            /*originatedByLocalCommit=*/false, FloorOwnership::Rebased,
+	                                            /*externalChangeCount=*/2,
+	                                            /*secondsSinceLastExternalChange=*/2.0);
+
+	EXPECT_EQ(decision.nextState, FloorOwnership::Disarmed);
+	EXPECT_EQ(decision.action, FloorOwnershipAction::Disarm);
+	EXPECT_EQ(decision.nextExternalChangeCount, 3u);
+	EXPECT_TRUE(decision.countedExternalChange);
 }
 
 TEST(BoundaryFloorTest, ChaperoneEventObserverFiltersRelevantEvents)

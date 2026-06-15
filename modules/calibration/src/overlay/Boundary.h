@@ -244,14 +244,58 @@ std::vector<uint8_t> SnapshotCurrentChaperone();
 bool RestoreChaperoneFromSnapshot(const std::vector<uint8_t>& snapshot);
 
 // Floor ownership: record the standing-zero committed for a floor apply, fold it
-// into WKOpenVR's own boundary commits, and refresh that stored target when
-// SteamVR reports origin-changing chaperone events. This keeps floor writes
+// into WKOpenVR's own boundary commits, and refresh or pause that stored target
+// when SteamVR reports origin-changing chaperone events. This keeps floor writes
 // one-shot and avoids re-committing over other tools' recenter logic.
+enum class FloorOwnership
+{
+	Inactive,
+	OneShotApplied,
+	Rebased,
+	Disarmed,
+};
+
+enum class FloorOwnershipAction
+{
+	None,
+	Rebase,
+	Disarm,
+};
+
+struct FloorOwnershipTransition
+{
+	FloorOwnership nextState = FloorOwnership::Inactive;
+	FloorOwnershipAction action = FloorOwnershipAction::None;
+	uint32_t nextExternalChangeCount = 0;
+	bool countedExternalChange = false;
+};
+
+struct FloorOwnershipStatus
+{
+	FloorOwnership state = FloorOwnership::Inactive;
+	bool targetActive = false;
+	bool appliesToBoundaryCommits = false;
+	uint32_t externalChangeCount = 0;
+	bool driverImportKnown = false;
+	bool driverImportEnabled = false;
+	bool driverImportRecommended = false;
+	int driverImportSettingsError = -1;
+};
+
 void SetFloorStandingZeroTarget(const vr::HmdMatrix34_t& standingZeroToRaw);
 void ClearFloorStandingZeroTarget();
 bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out);
+void MarkFloorChaperoneCommitForEvents(const char* source);
+const char* FloorOwnershipStateName(FloorOwnership state);
+FloorOwnershipStatus GetFloorOwnershipStatus();
 bool IsObservedChaperoneEvent(uint32_t eventType);
 bool ShouldRebaseFloorTargetForChaperoneEvent(uint32_t eventType, bool originatedByLocalCommit, bool floorTargetActive);
+bool ShouldConsumeLocalChaperoneWrite(uint32_t eventType, uint32_t localEventBudget, double nowSeconds,
+                                      double expiresAtSeconds);
+FloorOwnershipTransition DecideFloorTransition(uint32_t eventType, bool originatedByLocalCommit,
+                                               FloorOwnership currentState, uint32_t externalChangeCount,
+                                               double secondsSinceLastExternalChange, uint32_t disarmThreshold = 3,
+                                               double burstDebounceSeconds = 1.0, double conflictWindowSeconds = 10.0);
 void TickFloorStandingZeroEvents();
 
 PolygonBounds ComputePolygonBoundsXZ(const std::vector<BoundaryVertex>& v);

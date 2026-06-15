@@ -45,6 +45,7 @@ wkopenvr::boundary::FloorCaptureSession s_floorCapture;
 wkopenvr::boundary::SpatialSession s_spatialSession;
 std::string s_boundaryError;
 std::string s_boundaryNativeStatus;
+wkopenvr::boundary::FloorOwnershipStatus s_floorOwnershipStatus;
 uint64_t s_floorSessionId = 0;
 bool s_steamVrWorkingPreviewVisible = false;
 bool s_floorPreviewVisible = false;
@@ -352,6 +353,9 @@ bool AdjustStandingZeroFloorY(double deltaY, vr::HmdMatrix34_t* committedOut = n
 	zero.m[2][3] += zero.m[2][1] * deltaY;
 	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&zero);
 	const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+	if (committed) {
+		wkopenvr::boundary::MarkFloorChaperoneCommitForEvents("floor_apply");
+	}
 	if (committed && committedOut) *committedOut = zero;
 
 	char lbuf[224];
@@ -1279,6 +1283,35 @@ void DrawBoundaryPreviewStatus()
 	}
 }
 
+void DrawFloorOwnershipStatus()
+{
+	const auto& pal = openvr_pair::overlay::ui::GetPalette();
+	if (s_floorOwnershipStatus.targetActive) {
+		switch (s_floorOwnershipStatus.state) {
+			case wkopenvr::boundary::FloorOwnership::OneShotApplied:
+				ImGui::TextDisabled(
+				    "Floor status: applied once; later SteamVR room changes are treated as user changes.");
+				break;
+			case wkopenvr::boundary::FloorOwnership::Rebased:
+				ImGui::TextDisabled("Floor status: following the current SteamVR room floor.");
+				break;
+			case wkopenvr::boundary::FloorOwnership::Disarmed:
+				ImGui::TextColored(
+				    pal.statusWarn,
+				    "Floor status: paused after repeated SteamVR room changes. Apply floor again to update it.");
+				break;
+			default:
+				break;
+		}
+	}
+	if (s_floorOwnershipStatus.driverImportRecommended) {
+		ImGui::TextColored(
+		    pal.statusWarn,
+		    "SteamVR driver boundary import is enabled; the active headset runtime may replace native boundary changes "
+		    "until SteamVR is restarted with driver import off.");
+	}
+}
+
 void DrawBoundarySection(ImVec2 panelSize)
 {
 	{
@@ -1286,6 +1319,7 @@ void DrawBoundarySection(ImVec2 panelSize)
 		if (s_floorCapture.active() || s_capture.state() == wkopenvr::boundary::CaptureState::Active) {
 			::CCal_TickBoundaryCapture();
 		}
+		s_floorOwnershipStatus = wkopenvr::boundary::GetFloorOwnershipStatus();
 		const auto& pal = openvr_pair::overlay::ui::GetPalette();
 		const auto state = s_capture.state();
 		const bool transformReady = BoundaryTransformReady();
@@ -1432,6 +1466,7 @@ void DrawBoundarySection(ImVec2 panelSize)
 				ImGui::TextDisabled("Preview maps floor to SteamVR Y %.2f m",
 				                    BoundaryHeightToStanding(CalCtx.boundary.vertices, CalCtx.boundary.floorY));
 			}
+			DrawFloorOwnershipStatus();
 			DrawBoundaryPreviewStatus();
 
 			ImGui::Spacing();
