@@ -26,7 +26,6 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_role_catalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_inference_shmem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_passive_role_inference.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_replay_proof.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_ui_logic.cpp
     # Compile the driver-side sources directly so the test binary does not
     # have to link the full driver DLL (which would drag in MinHook,

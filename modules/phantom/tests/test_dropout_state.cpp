@@ -59,7 +59,10 @@ TEST(DropoutStateTest, EnterBlendOutAfterSilenceThreshold)
 	phantom::DropoutState s;
 	auto t = phantom::LadderTimings::Defaults();
 	s.SetTimings(t);
-	const auto pose = MakeRealPose();
+	auto pose = MakeRealPose();
+	pose.vecPosition[0] = 0.42;
+	pose.vecPosition[1] = 1.23;
+	pose.vecPosition[2] = -0.31;
 	s.OnRealPoseObserved(Ms(0), hist, pose);
 
 	s.Tick(Ms(t.dropout_silence_ms - 1), kQpcFreq);
@@ -68,6 +71,9 @@ TEST(DropoutStateTest, EnterBlendOutAfterSilenceThreshold)
 	s.Tick(Ms(t.dropout_silence_ms + 1), kQpcFreq);
 	EXPECT_EQ(s.state(), phantom::TrackerState::BLEND_OUT);
 	EXPECT_EQ(s.dropout_count(), 1u);
+	EXPECT_DOUBLE_EQ(s.dropout_anchor().vecPosition[0], pose.vecPosition[0]);
+	EXPECT_DOUBLE_EQ(s.dropout_anchor().vecPosition[1], pose.vecPosition[1]);
+	EXPECT_DOUBLE_EQ(s.dropout_anchor().vecPosition[2], pose.vecPosition[2]);
 }
 
 TEST(DropoutStateTest, EscalatesThroughLadderOnContinuedSilence)

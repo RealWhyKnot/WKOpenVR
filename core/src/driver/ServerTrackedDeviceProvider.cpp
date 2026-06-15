@@ -1600,53 +1600,54 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 					LOG("[driver-synth] tracker snapshot skipped: tracking system unknown for selected tracker");
 				}
 			}
-			return true; // No system known yet; nothing to fall back to.
 		}
+		else {
+			const auto& sys = deviceSystem[openVRID];
+			FallbackSlot* slot = FindFallbackSlot(sys.data(), sys.size());
+			if (slot && slot->tf.enabled) {
+				const auto& fb = slot->tf;
 
-		const auto& sys = deviceSystem[openVRID];
-		FallbackSlot* slot = FindFallbackSlot(sys.data(), sys.size());
-		if (slot && slot->tf.enabled) {
-			const auto& fb = slot->tf;
+				// Update the slot's blend target from the (possibly newly updated) fallback.
+				tf.targetTransform = fb.transform;
+				tf.scale = fb.scale;
+				// Propagate motion-gate setting so the fallback path also gets the
+				// movement-masked blend if the user has it enabled. Reset the captured
+				// previous-frame pose if the flag is transitioning off.
+				if (tf.recalibrateOnMovement && !fb.recalibrateOnMovement) {
+					tf.blendMotionInitialized = false;
+				}
+				tf.recalibrateOnMovement = fb.recalibrateOnMovement;
 
-			// Update the slot's blend target from the (possibly newly updated) fallback.
-			tf.targetTransform = fb.transform;
-			tf.scale = fb.scale;
-			// Propagate motion-gate setting so the fallback path also gets the
-			// movement-masked blend if the user has it enabled. Reset the captured
-			// previous-frame pose if the flag is transitioning off.
-			if (tf.recalibrateOnMovement && !fb.recalibrateOnMovement) {
-				tf.blendMotionInitialized = false;
+				// First activation: snap so the device doesn't ramp in from an identity
+				// or otherwise stale `transform` value.
+				if (!tf.fallbackActive) {
+					tf.transform = fb.transform;
+					tf.fallbackActive = true;
+					tf.currentRate = DeltaSize::TINY;
+					QueryPerformanceCounter(&tf.lastPoll);
+				}
+
+				pose.vecPosition[0] *= tf.scale;
+				pose.vecPosition[1] *= tf.scale;
+				pose.vecPosition[2] *= tf.scale;
+
+				auto deviceWorldPose = toIsoPose(pose);
+				tf.currentRate =
+				    GetTransformDeltaSize(tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
+
+				BlendTransform(tf, deviceWorldPose);
+				ApplyTransform(tf, pose);
+				snapshotDriverSynthTracker(pose);
+				shmem.IncrementTelemetry(protocol::DriverPoseShmem::TELEMETRY_FALLBACK_APPLY);
 			}
-			tf.recalibrateOnMovement = fb.recalibrateOnMovement;
-
-			// First activation: snap so the device doesn't ramp in from an identity
-			// or otherwise stale `transform` value.
-			if (!tf.fallbackActive) {
-				tf.transform = fb.transform;
-				tf.fallbackActive = true;
+			else if (tf.fallbackActive) {
+				// Fallback was removed/disabled while we were following it. Clear our
+				// blend state so a future re-enable starts clean.
+				tf.fallbackActive = false;
+				tf.targetTransform = tf.transform;
 				tf.currentRate = DeltaSize::TINY;
 				QueryPerformanceCounter(&tf.lastPoll);
 			}
-
-			pose.vecPosition[0] *= tf.scale;
-			pose.vecPosition[1] *= tf.scale;
-			pose.vecPosition[2] *= tf.scale;
-
-			auto deviceWorldPose = toIsoPose(pose);
-			tf.currentRate = GetTransformDeltaSize(tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
-
-			BlendTransform(tf, deviceWorldPose);
-			ApplyTransform(tf, pose);
-			snapshotDriverSynthTracker(pose);
-			shmem.IncrementTelemetry(protocol::DriverPoseShmem::TELEMETRY_FALLBACK_APPLY);
-		}
-		else if (tf.fallbackActive) {
-			// Fallback was removed/disabled while we were following it. Clear our
-			// blend state so a future re-enable starts clean.
-			tf.fallbackActive = false;
-			tf.targetTransform = tf.transform;
-			tf.currentRate = DeltaSize::TINY;
-			QueryPerformanceCounter(&tf.lastPoll);
 		}
 	}
 
@@ -1719,6 +1720,24 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 #endif
 
 	return true;
+}
+
+std::vector<std::pair<uint32_t, vr::DriverPose_t>>
+ServerTrackedDeviceProvider::CollectPhantomSyntheticPoseUpdates(uint32_t triggeringOpenVRID)
+{
+	std::vector<std::pair<uint32_t, vr::DriverPose_t>> updates;
+#if OPENVR_PAIR_HAS_PHANTOM_DRIVER
+	if ((featureFlags & pairdriver::kFeaturePhantom) == 0) return updates;
+	LARGE_INTEGER qpcNow{};
+	LARGE_INTEGER qpcFreq{};
+	if (!QueryPerformanceCounter(&qpcNow) || !QueryPerformanceFrequency(&qpcFreq)) {
+		return updates;
+	}
+	phantom::CollectSilentPoseUpdates(triggeringOpenVRID, qpcNow.QuadPart, qpcFreq.QuadPart, updates);
+#else
+	(void)triggeringOpenVRID;
+#endif
+	return updates;
 }
 
 void ServerTrackedDeviceProvider::HandleApplyRandomOffset()

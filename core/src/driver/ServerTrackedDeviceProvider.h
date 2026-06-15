@@ -69,6 +69,7 @@ public:
 	// clobber each other.
 	void SetDevicePrediction(const protocol::SetDevicePrediction& cfg);
 	bool HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t& pose);
+	std::vector<std::pair<uint32_t, vr::DriverPose_t>> CollectPhantomSyntheticPoseUpdates(uint32_t triggeringOpenVRID);
 	void HandleApplyRandomOffset();
 	void HandleSetAlignmentSpeedParams(const protocol::AlignmentSpeedParams params) { alignmentSpeedParams = params; }
 	// v25: head-mount tracker config from the overlay. Caches state used by

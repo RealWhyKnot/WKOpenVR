@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <cstdlib>
+#include <filesystem>
 #include <set>
 #include <string>
 #include <string_view>
@@ -32,6 +34,12 @@ struct Options
 	std::set<std::string> filter; // empty = all
 	bool keep_sandbox = false;
 	bool verbose = false;
+	std::filesystem::path phantom_replay_path;
+	std::filesystem::path phantom_replay_report_path;
+	std::string phantom_replay_dropout_role;
+	double phantom_replay_dropout_start_ms = -1.0;
+	double phantom_replay_dropout_end_ms = -1.0;
+	double phantom_replay_speed = 1.0;
 };
 
 Options ParseArgs(int argc, char** argv)
@@ -59,6 +67,54 @@ Options ParseArgs(int argc, char** argv)
 			}
 			continue;
 		}
+		if (arg == "--phantom-replay" && i + 1 < argc) {
+			o.phantom_replay_path = argv[++i];
+			continue;
+		}
+		if (arg.substr(0, 17) == "--phantom-replay=") {
+			o.phantom_replay_path = std::string(arg.substr(17));
+			continue;
+		}
+		if (arg == "--phantom-replay-report" && i + 1 < argc) {
+			o.phantom_replay_report_path = argv[++i];
+			continue;
+		}
+		if (arg.substr(0, 24) == "--phantom-replay-report=") {
+			o.phantom_replay_report_path = std::string(arg.substr(24));
+			continue;
+		}
+		if (arg == "--phantom-replay-dropout-role" && i + 1 < argc) {
+			o.phantom_replay_dropout_role = argv[++i];
+			continue;
+		}
+		if (arg.substr(0, 30) == "--phantom-replay-dropout-role=") {
+			o.phantom_replay_dropout_role = std::string(arg.substr(30));
+			continue;
+		}
+		if (arg == "--phantom-replay-dropout-start-ms" && i + 1 < argc) {
+			o.phantom_replay_dropout_start_ms = std::strtod(argv[++i], nullptr);
+			continue;
+		}
+		if (arg.substr(0, 34) == "--phantom-replay-dropout-start-ms=") {
+			o.phantom_replay_dropout_start_ms = std::strtod(std::string(arg.substr(34)).c_str(), nullptr);
+			continue;
+		}
+		if (arg == "--phantom-replay-dropout-end-ms" && i + 1 < argc) {
+			o.phantom_replay_dropout_end_ms = std::strtod(argv[++i], nullptr);
+			continue;
+		}
+		if (arg.substr(0, 32) == "--phantom-replay-dropout-end-ms=") {
+			o.phantom_replay_dropout_end_ms = std::strtod(std::string(arg.substr(32)).c_str(), nullptr);
+			continue;
+		}
+		if (arg == "--phantom-replay-speed" && i + 1 < argc) {
+			o.phantom_replay_speed = std::strtod(argv[++i], nullptr);
+			continue;
+		}
+		if (arg.substr(0, 23) == "--phantom-replay-speed=") {
+			o.phantom_replay_speed = std::strtod(std::string(arg.substr(23)).c_str(), nullptr);
+			continue;
+		}
 		// --filter <slug>
 		if (arg == "--filter" && i + 1 < argc) {
 			std::string list(argv[++i]);
@@ -72,6 +128,12 @@ Options ParseArgs(int argc, char** argv)
 			continue;
 		}
 		std::fprintf(stderr, "[testharness] unknown flag '%.*s' (ignored)\n", (int)arg.size(), arg.data());
+	}
+	if (!o.phantom_replay_path.empty() && o.filter.empty()) {
+		o.filter.insert("phantom_replay");
+	}
+	if (o.phantom_replay_speed <= 0.0) {
+		o.phantom_replay_speed = 1.0;
 	}
 	return o;
 }
@@ -193,10 +255,14 @@ int Run(int argc, char** argv)
 	    {"oscrouter", &RunScenario_oscrouter},
 	    {"captions", &RunScenario_captions},
 	    {"phantom", &RunScenario_phantom},
+	    {"phantom_replay", &RunScenario_phantom_replay},
 	};
 
 	std::vector<ScenarioResult> results;
 	for (const auto& entry : kScenarios) {
+		if (std::strcmp(entry.slug, "phantom_replay") == 0 && opts.phantom_replay_path.empty() && opts.filter.empty()) {
+			continue;
+		}
 		if (!ShouldRun(opts.filter, entry.slug)) continue;
 
 		HarnessLogger log(entry.slug);
@@ -205,6 +271,12 @@ int Run(int argc, char** argv)
 		ScenarioContext ctx{
 		    mock, loader.provider(), pose_source, layout.root, layout.driver_root, layout.driver_resources, log,
 		};
+		ctx.phantom_replay_path = opts.phantom_replay_path;
+		ctx.phantom_replay_report_path = opts.phantom_replay_report_path;
+		ctx.phantom_replay_dropout_role = opts.phantom_replay_dropout_role;
+		ctx.phantom_replay_dropout_start_ms = opts.phantom_replay_dropout_start_ms;
+		ctx.phantom_replay_dropout_end_ms = opts.phantom_replay_dropout_end_ms;
+		ctx.phantom_replay_speed = opts.phantom_replay_speed;
 
 		const auto t0 = std::chrono::steady_clock::now();
 		ScenarioResult result;

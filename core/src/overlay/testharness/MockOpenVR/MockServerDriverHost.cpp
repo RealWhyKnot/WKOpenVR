@@ -51,6 +51,17 @@ bool MockServerDriverHost::TrackedDeviceAdded(const char* pchDeviceSerialNumber,
 	call.aux_int = (uint32_t)eDeviceClass;
 	call.text = serial;
 	owner_.recorder().Push(std::move(call));
+	if (pDriver) {
+		const auto err = pDriver->Activate(id);
+		if (err != vr::VRInitError_None) {
+			MockCall err_call = MakeCall(MockCallKind::LogMessage);
+			err_call.device_id = id;
+			err_call.aux_int = (uint32_t)err;
+			err_call.text = "TrackedDeviceAdded activation failed";
+			owner_.recorder().Push(std::move(err_call));
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -65,6 +76,17 @@ void MockServerDriverHost::TrackedDevicePoseUpdated(uint32_t unWhichDevice, cons
 	call.f_value = newPose.vecPosition[0];
 	call.time_offset_sec = newPose.vecPosition[1];
 	call.aux_int = (uint32_t)(int32_t)(newPose.vecPosition[2] * 1000.0); // mm, lossy
+	call.has_pose = true;
+	call.pose_device_connected = newPose.deviceIsConnected;
+	call.pose_tracking_result = static_cast<int32_t>(newPose.result);
+	for (int i = 0; i < 3; ++i) {
+		call.pose_position[i] = newPose.vecPosition[i];
+		call.pose_velocity[i] = newPose.vecVelocity[i];
+	}
+	call.pose_rotation[0] = newPose.qRotation.w;
+	call.pose_rotation[1] = newPose.qRotation.x;
+	call.pose_rotation[2] = newPose.qRotation.y;
+	call.pose_rotation[3] = newPose.qRotation.z;
 	owner_.recorder().Push(std::move(call));
 }
 

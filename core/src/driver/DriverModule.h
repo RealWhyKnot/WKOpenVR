@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include <openvr_driver.h>
 
@@ -68,4 +70,6 @@ std::unique_ptr<DriverModule> CreateDriverModule();
 // CreateDriverModule never instantiated).
 void OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose);
 bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::DriverPose_t& pose);
+void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
+                              std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
 } // namespace phantom

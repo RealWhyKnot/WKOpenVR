@@ -9,6 +9,8 @@
 #include <cstring>
 #include <exception>
 #include <thread>
+#include <utility>
+#include <vector>
 
 static ServerTrackedDeviceProvider* Driver = nullptr;
 
@@ -81,6 +83,34 @@ static void PoseHookContainmentFault(uint32_t deviceId, const char* what) noexce
 	}
 }
 
+static void LogFirstPoseHook(uint32_t deviceId) noexcept
+{
+	static std::atomic<bool> s_logged{false};
+	bool expected = false;
+	if (s_logged.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+		LOG("Pose hook first TrackedDevicePoseUpdated device=%u", deviceId);
+	}
+}
+
+template <typename OriginalFunc>
+static void ForwardPhantomSyntheticPoseUpdates(OriginalFunc originalFunc, vr::IVRServerDriverHost* host,
+                                               uint32_t triggeringDevice)
+{
+	if (!Driver || !originalFunc || !host) return;
+	try {
+		const auto updates = Driver->CollectPhantomSyntheticPoseUpdates(triggeringDevice);
+		for (const auto& update : updates) {
+			originalFunc(host, update.first, update.second, (uint32_t)sizeof(vr::DriverPose_t));
+		}
+	}
+	catch (const std::exception& ex) {
+		PoseHookContainmentFault(triggeringDevice, ex.what());
+	}
+	catch (...) {
+		PoseHookContainmentFault(triggeringDevice, nullptr);
+	}
+}
+
 static Hook<void* (*)(vr::IVRDriverContext*, const char*, vr::EVRInitError*)>
     GetGenericInterfaceHook("IVRDriverContext::GetGenericInterface");
 
@@ -104,6 +134,7 @@ static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost* _this, ui
 	// can't be null in well-formed code, and address-of-reference does
 	// nothing the size check doesn't already.
 	if (unPoseStructSize == sizeof(vr::DriverPose_t)) {
+		LogFirstPoseHook(unWhichDevice);
 		auto pose = newPose;
 		bool forward = true;
 		try {
@@ -122,6 +153,7 @@ static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost* _this, ui
 		if (forward) {
 			TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, pose, unPoseStructSize);
 		}
+		ForwardPhantomSyntheticPoseUpdates(TrackedDevicePoseUpdatedHook005.originalFunc, _this, unWhichDevice);
 	}
 	else {
 		TrackedDevicePoseUpdatedHook005.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);
@@ -135,6 +167,7 @@ static void DetourTrackedDevicePoseUpdated006(vr::IVRServerDriverHost* _this, ui
 	// See DetourTrackedDevicePoseUpdated005 above for the rationale --
 	// same cleanup applied here.
 	if (unPoseStructSize == sizeof(vr::DriverPose_t)) {
+		LogFirstPoseHook(unWhichDevice);
 		auto pose = newPose;
 		bool forward = true;
 		try {
@@ -153,6 +186,7 @@ static void DetourTrackedDevicePoseUpdated006(vr::IVRServerDriverHost* _this, ui
 		if (forward) {
 			TrackedDevicePoseUpdatedHook006.originalFunc(_this, unWhichDevice, pose, unPoseStructSize);
 		}
+		ForwardPhantomSyntheticPoseUpdates(TrackedDevicePoseUpdatedHook006.originalFunc, _this, unWhichDevice);
 	}
 	else {
 		TrackedDevicePoseUpdatedHook006.originalFunc(_this, unWhichDevice, newPose, unPoseStructSize);

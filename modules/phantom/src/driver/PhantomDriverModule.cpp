@@ -16,6 +16,7 @@
 #include "DebugLogging.h"
 #include "DropoutState.h"
 #include "IkFallback.h"
+#include "PhantomReplayRecorder.h"
 #include "PassiveRoleInference.h"
 #include "PoseHistory.h"
 #include "RoleCatalog.h"
@@ -33,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -250,6 +252,7 @@ struct DeviceSlot
 	// emits a pose (synth or passthrough).
 	vr::DriverPose_t last_published{};
 	bool last_published_valid = false;
+	int64_t last_synthetic_publish_qpc = 0;
 
 	// Passive role inference: a running motion-feature accumulator for generic
 	// trackers and the latest inference output for this device. inferred_role
@@ -280,6 +283,8 @@ public:
 	// phantom:: namespace free functions in PhantomHotPath.h.
 	void OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose);
 	bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::DriverPose_t& pose);
+	void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
+	                              std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
 
 private:
 	DeviceSlot& slot(uint32_t openVRID);
@@ -287,6 +292,8 @@ private:
 	BodyCompletionInput BuildBodyCompletionInput(int64_t now_qpc) const;
 	void UpdateBodyCompletion(int64_t now_qpc);
 	bool TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const;
+	bool BuildSyntheticPose(DeviceSlot& s, int64_t qpc_ns, int64_t qpc_freq, const vr::DriverPose_t* live_pose,
+	                        vr::DriverPose_t& pose) const;
 	void RefreshVirtualRoleBlocksLocked();
 	void AccumulateInferenceSample(DeviceSlot& s);
 	void MaybeRunInference(int64_t now_qpc);
@@ -341,6 +348,7 @@ private:
 	std::mutex state_mutex_;
 
 	DeadReckoner reckoner_;
+	PhantomReplayRecorder replay_recorder_;
 	PhantomStateShmem shmem_;
 	std::atomic<int64_t> last_snapshot_qpc_{0};
 
@@ -527,6 +535,85 @@ bool PhantomModule::TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth
 	}
 	synth = PoseFromBodyCompletion(last_hmd_pose_, solved);
 	return true;
+}
+
+bool PhantomModule::BuildSyntheticPose(DeviceSlot& s, int64_t qpc_ns, int64_t qpc_freq,
+                                       const vr::DriverPose_t* live_pose, vr::DriverPose_t& pose) const
+{
+	switch (s.ladder.state()) {
+		case TrackerState::REAL:
+			if (!live_pose) return false;
+			pose = *live_pose;
+			return true;
+
+		case TrackerState::BLEND_OUT: {
+			vr::DriverPose_t synth{};
+			const bool projected = reckoner_.Project(s.history, qpc_freq, qpc_ns, synth);
+			const vr::DriverPose_t& base =
+			    (live_pose && PoseIsTrackedOk(*live_pose)) ? *live_pose : s.ladder.dropout_anchor();
+			if (projected) {
+				vr::DriverPose_t blended{};
+				BlendController::Lerp(base, synth, s.ladder.blend_alpha(qpc_ns, qpc_freq), blended);
+				blended.result = s.ladder.tracking_result_override();
+				pose = blended;
+			}
+			else {
+				pose = base;
+				pose.result = s.ladder.tracking_result_override();
+			}
+			return true;
+		}
+
+		case TrackerState::SYNTH_RECKON:
+		case TrackerState::SYNTH_IK:
+		case TrackerState::SYNTH_ML:
+		case TrackerState::OUT_OF_RANGE: {
+			vr::DriverPose_t synth{};
+			bool produced = false;
+			if (!produced && s.role != BodyRole::None && TryBodyCompletionPose(s.role, synth)) {
+				produced = true;
+			}
+			if (!produced && last_hmd_valid_ && s.role != BodyRole::None &&
+			    ik_fallback_.Solve(s.role, last_hmd_pose_, synth)) {
+				produced = true;
+			}
+			if (!produced) {
+				produced = reckoner_.Project(s.history, qpc_freq, qpc_ns, synth);
+			}
+			if (produced) {
+				synth.result = s.ladder.tracking_result_override();
+				pose = synth;
+			}
+			else if (live_pose) {
+				pose = *live_pose;
+				pose.result = s.ladder.tracking_result_override();
+			}
+			else if (s.last_published_valid) {
+				pose = s.last_published;
+				pose.result = s.ladder.tracking_result_override();
+			}
+			else {
+				return false;
+			}
+			return true;
+		}
+
+		case TrackerState::BLEND_IN:
+			if (!live_pose) return false;
+			if (s.last_published_valid) {
+				vr::DriverPose_t blended{};
+				BlendController::Lerp(s.last_published, *live_pose, s.ladder.blend_alpha(qpc_ns, qpc_freq), blended);
+				pose = blended;
+			}
+			else {
+				pose = *live_pose;
+			}
+			return true;
+
+		case TrackerState::LOST:
+		default:
+			return false;
+	}
 }
 
 void PhantomModule::AccumulateInferenceSample(DeviceSlot& s)
@@ -776,6 +863,8 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 	DeviceSlot& s = slots_[openVRID];
 	ResolveSerialIfMissing(openVRID, s);
 	const bool tracked_ok = PoseIsTrackedOk(pose);
+	replay_recorder_.RecordPose(qpc_ns, qpc_freq_, openVRID, s.serial, s.device_class, s.controller_role, s.role,
+	                            s.opted_in, pose);
 	s.last_observed = pose;
 	s.last_observed_qpc = qpc_ns;
 	s.last_observed_valid = tracked_ok;
@@ -851,61 +940,19 @@ bool PhantomModule::MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t
 			cachePublished(pose);
 			return true;
 
-		case TrackerState::BLEND_OUT: {
-			vr::DriverPose_t synth{};
-			if (reckoner_.Project(s.history, qpc_freq, qpc_ns, synth)) {
-				vr::DriverPose_t blended{};
-				BlendController::Lerp(pose, synth, s.ladder.blend_alpha(qpc_ns, qpc_freq), blended);
-				blended.result = s.ladder.tracking_result_override();
-				pose = blended;
-			}
-			cachePublished(pose);
-			return true;
-		}
-
+		case TrackerState::BLEND_OUT:
 		case TrackerState::SYNTH_RECKON:
 		case TrackerState::SYNTH_IK:
 		case TrackerState::SYNTH_ML:
-		case TrackerState::OUT_OF_RANGE: {
-			// Cascade: in-process completion -> rigid-offset IK -> dead
-			// reckoner. Each layer is optional; the cascade falls through
-			// to the next when its input is missing or below confidence.
-			// The ladder state is mostly a diagnostics hint -- the dispatch
-			// picks the best source available.
-			vr::DriverPose_t synth{};
-			bool produced = false;
-			if (!produced && s.role != BodyRole::None && TryBodyCompletionPose(s.role, synth)) {
-				produced = true;
-			}
-			if (!produced && last_hmd_valid_ && s.role != BodyRole::None &&
-			    ik_fallback_.Solve(s.role, last_hmd_pose_, synth)) {
-				produced = true;
-			}
-			if (!produced) {
-				produced = reckoner_.Project(s.history, qpc_freq, qpc_ns, synth);
-			}
-			if (produced) {
-				synth.result = s.ladder.tracking_result_override();
-				pose = synth;
-			}
-			else {
-				// No source produced a pose -- keep whatever the upstream
-				// driver gave us but stamp the override result so consumers
-				// see the degradation signal.
+		case TrackerState::OUT_OF_RANGE:
+			if (!BuildSyntheticPose(s, qpc_ns, qpc_freq, &pose, pose)) {
 				pose.result = s.ladder.tracking_result_override();
 			}
 			cachePublished(pose);
 			return true;
-		}
 
 		case TrackerState::BLEND_IN: {
-			// Lerp from the synthesised "anchor" (the last thing we
-			// published) to the freshly-arrived real pose.
-			if (s.last_published_valid) {
-				vr::DriverPose_t blended{};
-				BlendController::Lerp(s.last_published, pose, s.ladder.blend_alpha(qpc_ns, qpc_freq), blended);
-				pose = blended;
-			}
+			BuildSyntheticPose(s, qpc_ns, qpc_freq, &pose, pose);
 			cachePublished(pose);
 			return true;
 		}
@@ -915,6 +962,54 @@ bool PhantomModule::MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t
 			// Caller skips the downstream pose update entirely. SteamVR
 			// treats absence as disconnect after its own short timeout.
 			return false;
+	}
+}
+
+void PhantomModule::CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
+                                             std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
+{
+	if (qpc_freq <= 0) return;
+	if (!master_enabled_.load(std::memory_order_acquire)) return;
+
+	const int64_t min_publish_delta = std::max<int64_t>(1, qpc_freq / 90);
+	bool changed_state = false;
+
+	for (uint32_t i = 0; i < slots_.size(); ++i) {
+		if (i == triggeringOpenVRID) continue;
+		auto& s = slots_[i];
+		if (s.serial.empty() || !s.opted_in || !s.last_observed_valid) continue;
+
+		s.ladder.SetTimings(timings_);
+		s.ladder.SetIkAvailable(s.role != BodyRole::None);
+		const auto before = s.ladder.state();
+		s.ladder.Tick(qpc_ns, qpc_freq);
+		if (s.ladder.state() != before) {
+			changed_state = true;
+		}
+		if (s.ladder.state() == TrackerState::REAL || s.ladder.state() == TrackerState::BLEND_IN ||
+		    s.ladder.state() == TrackerState::LOST) {
+			continue;
+		}
+		if (s.last_synthetic_publish_qpc > 0 && (qpc_ns - s.last_synthetic_publish_qpc) < min_publish_delta) {
+			continue;
+		}
+
+		vr::DriverPose_t synth{};
+		if (!BuildSyntheticPose(s, qpc_ns, qpc_freq, nullptr, synth)) {
+			continue;
+		}
+		s.last_published = synth;
+		s.last_published_valid = true;
+		s.last_synthetic_publish_qpc = qpc_ns;
+		out.emplace_back(i, synth);
+	}
+
+	if (changed_state) {
+		const int64_t snap_window = (qpc_freq > 0) ? (qpc_freq / 10) : 0;
+		if (snap_window > 0 && qpc_ns - last_snapshot_qpc_.load(std::memory_order_relaxed) >= snap_window) {
+			last_snapshot_qpc_.store(qpc_ns, std::memory_order_relaxed);
+			PublishStateSnapshot();
+		}
 	}
 }
 
@@ -996,6 +1091,12 @@ bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::
 {
 	if (auto* m = g_active) return m->MaybeOverridePose(openVRID, qpc_ns, qpc_freq, pose);
 	return true;
+}
+
+void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
+                              std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
+{
+	if (auto* m = g_active) m->CollectSilentPoseUpdates(triggeringOpenVRID, qpc_ns, qpc_freq, out);
 }
 
 } // namespace phantom

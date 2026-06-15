@@ -194,7 +194,10 @@ static void DisableModulesFromSource(FacetrackingPlugin& plugin, const std::stri
 
 static const ModuleSource* FindSourceById(const std::string& sourceId)
 {
-	return FindSourceInCatalogue(g_state.catalogue, sourceId);
+	for (const auto& source : g_state.catalogue.sources) {
+		if (source.id == sourceId) return &source;
+	}
+	return nullptr;
 }
 
 static const InstalledModule* FindInstalledByUuid(const std::string& uuid)

@@ -60,6 +60,16 @@ struct MockCall
 	double time_offset_sec = 0.0;
 	uint32_t aux_int = 0;
 	std::string text;
+
+	// Full pose snapshot for TrackedDevicePoseUpdated. The legacy scalar
+	// fields above stay populated for older scenarios, but replay diagnostics
+	// need exact position, velocity, orientation, and tracking result.
+	bool has_pose = false;
+	bool pose_device_connected = false;
+	int32_t pose_tracking_result = 0;
+	double pose_position[3]{};
+	double pose_velocity[3]{};
+	double pose_rotation[4]{};
 };
 
 // Thread-safe append-only ledger of MockCalls. Scenarios block on
@@ -131,6 +141,12 @@ struct ScenarioContext
 	std::filesystem::path driver_root;      // sandbox_root\drivers\01wkopenvr
 	std::filesystem::path driver_resources; // sandbox_root\drivers\01wkopenvr\resources
 	HarnessLogger& log;
+	std::filesystem::path phantom_replay_path;
+	std::filesystem::path phantom_replay_report_path;
+	std::string phantom_replay_dropout_role;
+	double phantom_replay_dropout_start_ms = -1.0;
+	double phantom_replay_dropout_end_ms = -1.0;
+	double phantom_replay_speed = 1.0;
 };
 
 struct ScenarioResult
@@ -160,6 +176,7 @@ ScenarioResult RunScenario_facetracking(ScenarioContext&);
 ScenarioResult RunScenario_oscrouter(ScenarioContext&);
 ScenarioResult RunScenario_captions(ScenarioContext&);
 ScenarioResult RunScenario_phantom(ScenarioContext&);
+ScenarioResult RunScenario_phantom_replay(ScenarioContext&);
 
 // Convenience: PASS with no failure_reason; FAIL with the given message.
 ScenarioResult Pass(const std::string& name, std::chrono::milliseconds duration);

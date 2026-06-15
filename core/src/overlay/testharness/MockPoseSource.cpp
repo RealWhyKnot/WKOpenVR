@@ -47,7 +47,11 @@ void MockPoseSource::PushPose(uint32_t device_id, vr::DriverPose_t pose)
 	// poseTimeOffset is left zero so the driver treats poses as arriving now.
 	// Scenarios that care about predicted-time math set it explicitly before
 	// calling PushPose.
-	runtime_.server_driver_host().TrackedDevicePoseUpdated(device_id, pose, (uint32_t)sizeof(vr::DriverPose_t));
+	vr::IVRDriverContext* driver_context = &runtime_.context();
+	auto* host = static_cast<vr::IVRServerDriverHost*>(
+	    driver_context->GetGenericInterface(vr::IVRServerDriverHost_Version, nullptr));
+	if (!host) host = &runtime_.server_driver_host();
+	host->TrackedDevicePoseUpdated(device_id, pose, (uint32_t)sizeof(vr::DriverPose_t));
 }
 
 vr::DriverPose_t MockPoseSource::MakeIdentityPose(double x, double y, double z)

@@ -111,6 +111,7 @@ private:
 	// Snapshot of the last real pose at the moment dropout was detected, for
 	// the BLEND_OUT lerp source.
 	vr::DriverPose_t dropout_anchor_{};
+	vr::DriverPose_t last_real_pose_{};
 
 	uint32_t dropout_count_ = 0;
 	uint32_t longest_dropout_ms_ = 0;

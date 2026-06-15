@@ -39,6 +39,7 @@ void DropoutState::OnRealPoseObserved(int64_t qpc_ns, const PoseHistory& /*histo
 		// dropout, and treating those as fresh real samples pins the ladder in
 		// REAL forever.
 		last_real_qpc_ns_ = qpc_ns;
+		last_real_pose_ = observed;
 
 		// Healthy real pose. If we were recovering, finish the blend back to
 		// REAL once the BLEND_IN window has elapsed (Tick handles the time
@@ -75,6 +76,7 @@ void DropoutState::Tick(int64_t qpc_ns, int64_t qpc_freq)
 		// synth_hold_ms -- the exact frozen-tracker-wedge regression the
 		// FrozenTrackerInvariant test exists to prevent.
 		dropout_start_qpc_ns_ = last_real_qpc_ns_;
+		dropout_anchor_ = last_real_pose_;
 		++dropout_count_;
 	}
 

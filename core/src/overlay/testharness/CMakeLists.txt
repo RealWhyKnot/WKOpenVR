@@ -19,6 +19,8 @@ add_library(wkopenvr_testharness STATIC
 	InProcessDriverLoader.h
 	MockPoseSource.cpp
 	MockPoseSource.h
+	PhantomReplay.cpp
+	PhantomReplay.h
 	MockOpenVR/MockDriverContext.cpp
 	MockOpenVR/MockDriverContext.h
 	MockOpenVR/MockServerDriverHost.cpp
@@ -36,7 +38,8 @@ add_library(wkopenvr_testharness STATIC
 	Scenario_facetracking.cpp
 	Scenario_oscrouter.cpp
 	Scenario_captions.cpp
-	Scenario_phantom.cpp)
+	Scenario_phantom.cpp
+	Scenario_phantom_replay.cpp)
 
 target_include_directories(wkopenvr_testharness PUBLIC
 	${CMAKE_CURRENT_LIST_DIR}/..

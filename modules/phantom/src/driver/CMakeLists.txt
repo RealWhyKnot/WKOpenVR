@@ -24,6 +24,8 @@ add_library(openvr_pair_feature_phantom_driver STATIC
 	DropoutState.h
 	IkFallback.cpp
 	IkFallback.h
+	PhantomReplayRecorder.cpp
+	PhantomReplayRecorder.h
 	VirtualTrackerDevice.cpp
 	VirtualTrackerDevice.h
 	VirtualTrackerManager.cpp
