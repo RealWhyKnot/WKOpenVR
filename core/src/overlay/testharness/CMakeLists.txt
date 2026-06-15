@@ -45,6 +45,8 @@ target_include_directories(wkopenvr_testharness PUBLIC
 	${CMAKE_CURRENT_LIST_DIR}/..
 	${CMAKE_SOURCE_DIR}/core/src/common
 	${CMAKE_SOURCE_DIR}/lib/openvr/headers
+	${CMAKE_SOURCE_DIR}/modules/phantom/src/analysis
+	${CMAKE_SOURCE_DIR}/modules/phantom/src/driver
 	${CMAKE_SOURCE_DIR}/modules/phantom/src/common)
 
 target_link_libraries(wkopenvr_testharness PUBLIC

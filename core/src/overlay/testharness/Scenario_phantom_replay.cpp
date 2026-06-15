@@ -10,6 +10,7 @@
 #include "HarnessIpcClient.h"
 #include "HarnessScenario.h"
 #include "MockPoseSource.h"
+#include "PhantomMetrics.h"
 #include "PhantomReplay.h"
 #include "PhantomStateShmem.h"
 #include "Protocol.h"
@@ -49,6 +50,38 @@ double PositionErrorM(const vr::DriverPose_t& a, const vr::DriverPose_t& b)
 	const double dy = a.vecPosition[1] - b.vecPosition[1];
 	const double dz = a.vecPosition[2] - b.vecPosition[2];
 	return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+phantom::BodyCompletionPose ToMetricPose(const vr::DriverPose_t& pose)
+{
+	phantom::BodyCompletionPose out;
+	out.position[0] = pose.vecPosition[0];
+	out.position[1] = pose.vecPosition[1];
+	out.position[2] = pose.vecPosition[2];
+	out.rotation[0] = pose.qRotation.w;
+	out.rotation[1] = pose.qRotation.x;
+	out.rotation[2] = pose.qRotation.y;
+	out.rotation[3] = pose.qRotation.z;
+	out.velocity[0] = pose.vecVelocity[0];
+	out.velocity[1] = pose.vecVelocity[1];
+	out.velocity[2] = pose.vecVelocity[2];
+	return out;
+}
+
+phantom::BodyCompletionPose ToMetricPose(const MockCall& call)
+{
+	phantom::BodyCompletionPose out;
+	out.position[0] = call.pose_position[0];
+	out.position[1] = call.pose_position[1];
+	out.position[2] = call.pose_position[2];
+	out.rotation[0] = call.pose_rotation[0];
+	out.rotation[1] = call.pose_rotation[1];
+	out.rotation[2] = call.pose_rotation[2];
+	out.rotation[3] = call.pose_rotation[3];
+	out.velocity[0] = call.pose_velocity[0];
+	out.velocity[1] = call.pose_velocity[1];
+	out.velocity[2] = call.pose_velocity[2];
+	return out;
 }
 
 bool SendExpectSuccess(HarnessIpcClient& client, const protocol::Request& request, std::string& error)
@@ -201,6 +234,9 @@ struct ReplayMetrics
 	uint32_t hidden_out_of_range = 0;
 	double hidden_error_sum_sq = 0.0;
 	double hidden_error_max = 0.0;
+	double hidden_recovery_latency_ms = -1.0;
+	std::vector<phantom::BodyCompletionPose> hidden_truth_poses;
+	std::vector<phantom::BodyCompletionPose> hidden_output_poses;
 	uint32_t role_snapshots = 0;
 	uint32_t role_valid_sum = 0;
 	double role_confidence_sum = 0.0;
@@ -228,6 +264,9 @@ bool WriteReport(const std::filesystem::path& path, const PhantomReplayRecording
 	}
 	const double coverage = m.hidden_samples ? (double)m.hidden_outputs / (double)m.hidden_samples : 0.0;
 	const double rms = m.hidden_outputs ? std::sqrt(m.hidden_error_sum_sq / (double)m.hidden_outputs) : 0.0;
+	const auto hidden_error_stats =
+	    phantom::analysis::ComputePoseErrorStats(m.hidden_output_poses, m.hidden_truth_poses);
+	const auto hidden_continuity = phantom::analysis::ComputeContinuityStats(m.hidden_output_poses, 0.75, 120.0);
 	const double valid_avg = m.role_snapshots ? (double)m.role_valid_sum / (double)m.role_snapshots : 0.0;
 	const double conf_avg = m.role_snapshots ? m.role_confidence_sum / (double)m.role_snapshots : 0.0;
 	out << "metric,value\n";
@@ -241,6 +280,14 @@ bool WriteReport(const std::filesystem::path& path, const PhantomReplayRecording
 	out << "hidden_coverage," << FormatDouble(coverage, 4) << "\n";
 	out << "hidden_rms_error_m," << FormatDouble(rms, 4) << "\n";
 	out << "hidden_max_error_m," << FormatDouble(m.hidden_error_max, 4) << "\n";
+	out << "hidden_orientation_rms_deg," << FormatDouble(hidden_error_stats.orientation_deg.rms, 3) << "\n";
+	out << "hidden_orientation_max_deg," << FormatDouble(hidden_error_stats.orientation_deg.max, 3) << "\n";
+	out << "hidden_continuity_max_step_m," << FormatDouble(hidden_continuity.max_step_m, 4) << "\n";
+	out << "hidden_continuity_max_orientation_step_deg," << FormatDouble(hidden_continuity.max_orientation_step_deg, 3)
+	    << "\n";
+	out << "hidden_continuity_teleports," << hidden_continuity.teleport_count << "\n";
+	out << "hidden_invalid_outputs," << hidden_continuity.invalid_count << "\n";
+	out << "hidden_recovery_latency_ms," << FormatDouble(m.hidden_recovery_latency_ms, 3) << "\n";
 	out << "hidden_out_of_range," << m.hidden_out_of_range << "\n";
 	out << "completion_valid_roles_avg," << FormatDouble(valid_avg, 4) << "\n";
 	out << "completion_confidence_avg," << FormatDouble(conf_avg, 4) << "\n";
@@ -347,6 +394,15 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 
 	size_t index = 0;
 	double last_time = 0.0;
+	uint32_t hidden_openvr_device_id = UINT32_MAX;
+	for (const auto& device : replay.devices) {
+		if (device.body_role != hidden_role) continue;
+		auto it = openvr_by_replay_id.find(device.replay_id);
+		if (it != openvr_by_replay_id.end()) {
+			hidden_openvr_device_id = it->second;
+			break;
+		}
+	}
 	while (index < replay.samples.size()) {
 		const double frame_time = replay.samples[index].time_ms;
 		const double sleep_ms = std::max(0.0, (frame_time - last_time) / ctx.phantom_replay_speed);
@@ -364,7 +420,6 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 		uint64_t frame_cursor = ctx.mock.recorder().LatestSeq();
 		bool hidden_this_frame = false;
 		vr::DriverPose_t hidden_truth{};
-		uint32_t hidden_openvr_id = UINT32_MAX;
 		for (size_t i = index; i < frame_end; ++i) {
 			const auto& sample = replay.samples[i];
 			auto dev_it = devices_by_replay_id.find(sample.replay_device_id);
@@ -376,7 +431,7 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 			if (withhold) {
 				hidden_this_frame = true;
 				hidden_truth = sample.pose;
-				hidden_openvr_id = id_it->second;
+				hidden_openvr_device_id = id_it->second;
 				continue;
 			}
 			ctx.pose_source.PushPose(id_it->second, sample.pose);
@@ -388,7 +443,7 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 			const MockCall* latest = nullptr;
 			for (const auto& call : calls) {
 				if (call.seq <= frame_cursor) continue;
-				if (call.kind == MockCallKind::TrackedDevicePoseUpdated && call.device_id == hidden_openvr_id &&
+				if (call.kind == MockCallKind::TrackedDevicePoseUpdated && call.device_id == hidden_openvr_device_id &&
 				    call.has_pose) {
 					latest = &call;
 				}
@@ -403,9 +458,24 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 				const double err = PositionErrorM(output, hidden_truth);
 				metrics.hidden_error_sum_sq += err * err;
 				metrics.hidden_error_max = std::max(metrics.hidden_error_max, err);
+				metrics.hidden_truth_poses.push_back(ToMetricPose(hidden_truth));
+				metrics.hidden_output_poses.push_back(ToMetricPose(*latest));
 				if (output.result == vr::TrackingResult_Running_OutOfRange) {
 					++metrics.hidden_out_of_range;
 				}
+			}
+		}
+		else if (hidden_openvr_device_id != UINT32_MAX && metrics.hidden_recovery_latency_ms < 0.0 &&
+		         frame_time > dropout_end) {
+			const auto calls = ctx.mock.recorder().Snapshot();
+			for (const auto& call : calls) {
+				if (call.seq <= frame_cursor) continue;
+				if (call.kind != MockCallKind::TrackedDevicePoseUpdated || call.device_id != hidden_openvr_device_id ||
+				    !call.has_pose) {
+					continue;
+				}
+				metrics.hidden_recovery_latency_ms = frame_time - dropout_end;
+				break;
 			}
 		}
 
@@ -452,6 +522,9 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 	    metrics.hidden_samples ? (double)metrics.hidden_outputs / (double)metrics.hidden_samples : 0.0;
 	const double rms =
 	    metrics.hidden_outputs ? std::sqrt(metrics.hidden_error_sum_sq / (double)metrics.hidden_outputs) : 0.0;
+	const auto hidden_error_stats =
+	    phantom::analysis::ComputePoseErrorStats(metrics.hidden_output_poses, metrics.hidden_truth_poses);
+	const auto hidden_continuity = phantom::analysis::ComputeContinuityStats(metrics.hidden_output_poses, 0.75, 120.0);
 	const double valid_avg =
 	    metrics.role_snapshots ? (double)metrics.role_valid_sum / (double)metrics.role_snapshots : 0.0;
 	const double conf_avg = metrics.role_snapshots ? metrics.role_confidence_sum / (double)metrics.role_snapshots : 0.0;
@@ -459,6 +532,9 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 	ctx.log.Info("dropout hidden_role=" + metrics.hidden_role + " samples=" + std::to_string(metrics.hidden_samples) +
 	             " outputs=" + std::to_string(metrics.hidden_outputs) + " coverage=" + FormatDouble(coverage, 3) +
 	             " rms_error_m=" + FormatDouble(rms, 4) + " max_error_m=" + FormatDouble(metrics.hidden_error_max, 4) +
+	             " orient_rms_deg=" + FormatDouble(hidden_error_stats.orientation_deg.rms, 2) +
+	             " teleports=" + std::to_string(hidden_continuity.teleport_count) +
+	             " recovery_ms=" + FormatDouble(metrics.hidden_recovery_latency_ms, 1) +
 	             " out_of_range=" + std::to_string(metrics.hidden_out_of_range));
 	ctx.log.Info("completion snapshots=" + std::to_string(metrics.role_snapshots) +
 	             " valid_roles_avg=" + FormatDouble(valid_avg, 3) + " confidence_avg=" + FormatDouble(conf_avg, 3));
@@ -485,6 +561,12 @@ ScenarioResult RunScenario_phantom_replay(ScenarioContext& ctx)
 		}
 		if (rms > 0.35) {
 			return Fail("phantom_replay", duration_now(), "dropout replacement RMS error above 0.35 m");
+		}
+		if (hidden_continuity.invalid_count > 0) {
+			return Fail("phantom_replay", duration_now(), "dropout replacement produced non-finite output");
+		}
+		if (hidden_continuity.teleport_count > 0) {
+			return Fail("phantom_replay", duration_now(), "dropout replacement continuity exceeded teleport threshold");
 		}
 	}
 	if (!metrics.virtual_requested_roles.empty()) {
