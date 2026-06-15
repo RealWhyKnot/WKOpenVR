@@ -136,7 +136,7 @@ void SlerpQuat(const double a[4], const double b[4], double alpha, double out[4]
 	NormalizeQuat(out);
 }
 
-BodyCompletionCalibration ClampCalibration(BodyCompletionCalibration c)
+BodyCompletionPriors ClampPriors(BodyCompletionPriors c)
 {
 	c.floor_y_m = Clamp(c.floor_y_m, -2.0, 2.0);
 	c.height_m = Clamp(c.height_m, 1.0, 2.4);
@@ -311,12 +311,12 @@ void BodyCompletionSolver::Reset()
 BodyCompletionResult BodyCompletionSolver::Solve(const BodyCompletionInput& input)
 {
 	BodyCompletionResult result;
-	const auto cal = ClampCalibration(input.calibration);
+	const auto cal = ClampPriors(input.priors);
 	if (!input.hmd.valid) return result;
 
 	const double hmd_yaw = YawRadiansFromQuat(input.hmd.pose.rotation);
 	double body_yaw = hmd_yaw;
-	if (cal.forward_calibrated && ShouldPlantFoot(input.hmd, cal.floor_y_m)) {
+	if (cal.forward_estimated && ShouldPlantFoot(input.hmd, cal.floor_y_m)) {
 		const double speed = PlanarLen3(input.hmd.pose.velocity);
 		body_yaw = LerpAngle(cal.forward_yaw_rad, hmd_yaw, Clamp(speed / 0.35, 0.0, 1.0));
 	}

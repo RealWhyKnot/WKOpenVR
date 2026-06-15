@@ -11,6 +11,7 @@
 
 #include "BlendController.h"
 #include "BlendCurves.h"
+#include "BodyPriorEstimator.h"
 #include "BodyCompletionSolver.h"
 #include "DeadReckoner.h"
 #include "DebugLogging.h"
@@ -231,8 +232,8 @@ struct DeviceSlot
 	uint64_t serial_hash = 0;
 	bool opted_in = false;
 
-	// Body role assigned by the calibration UI. The completion solver treats
-	// fresh role-assigned trackers as measured anchors.
+	// Body role assigned by automatic detection or manual override. The
+	// completion solver treats fresh role-assigned trackers as measured anchors.
 	BodyRole role = BodyRole::None;
 
 	// Tracks whether this device is the HMD; the IK solver needs the
@@ -289,6 +290,7 @@ public:
 private:
 	DeviceSlot& slot(uint32_t openVRID);
 	void ResolveSerialIfMissing(uint32_t openVRID, DeviceSlot& s);
+	BodyPriorSample BuildBodyPriorSample(int64_t now_qpc) const;
 	BodyCompletionInput BuildBodyCompletionInput(int64_t now_qpc) const;
 	void UpdateBodyCompletion(int64_t now_qpc);
 	bool TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth) const;
@@ -311,7 +313,7 @@ private:
 	// OnRealPoseObserved (or immediately if the slot already resolved).
 	std::unordered_map<uint64_t, BodyRole> role_by_serial_hash_;
 
-	// Live HMD pose cache (post-calibration / smoothing). The IK fallback
+	// Live HMD pose cache after upstream driver transforms. The IK fallback
 	// applies role-relative offsets to this pose. Updated on every
 	// OnRealPoseObserved for the device flagged is_hmd.
 	vr::DriverPose_t last_hmd_pose_{};
@@ -327,8 +329,10 @@ private:
 	float infer_apply_threshold_ = 0.60f;
 
 	IkFallback ik_fallback_;
+	BodyPriorEstimator body_prior_estimator_;
+	BodyPriorEstimate last_body_prior_estimate_{};
 	BodyCompletionSolver body_solver_;
-	BodyCompletionCalibration body_calibration_;
+	BodyCompletionPriors body_priors_;
 	BodyCompletionResult last_body_completion_{};
 	int64_t last_body_completion_qpc_ = 0;
 	int64_t qpc_freq_ = 0;
@@ -438,10 +442,33 @@ void PhantomModule::RefreshVirtualRoleBlocksLocked()
 	}
 }
 
+BodyPriorSample PhantomModule::BuildBodyPriorSample(int64_t now_qpc) const
+{
+	BodyPriorSample sample;
+	if (last_hmd_valid_) {
+		sample.hmd = ToBodyCompletionSensorPose(last_hmd_pose_, 0);
+	}
+
+	for (const auto& s : slots_) {
+		if (s.role == BodyRole::None) continue;
+		if (static_cast<uint8_t>(s.role) >= sample.measured_roles.size()) continue;
+		if (!s.last_observed_valid) continue;
+
+		const uint32_t age_ms = AgeMsFromQpc(now_qpc, s.last_observed_qpc, qpc_freq_);
+		if (age_ms > std::max<uint32_t>(timings_.dropout_silence_ms, 300u)) continue;
+		if (s.ladder.state() != TrackerState::REAL && s.ladder.state() != TrackerState::BLEND_IN) {
+			continue;
+		}
+		sample.measured_roles[static_cast<uint8_t>(s.role)] = ToBodyCompletionSensorPose(s.last_observed, age_ms);
+	}
+
+	return sample;
+}
+
 BodyCompletionInput PhantomModule::BuildBodyCompletionInput(int64_t now_qpc) const
 {
 	BodyCompletionInput input;
-	input.calibration = body_calibration_;
+	input.priors = body_priors_;
 	if (qpc_freq_ > 0 && last_body_completion_qpc_ > 0 && now_qpc > last_body_completion_qpc_) {
 		input.dt_seconds =
 		    std::clamp(static_cast<double>(now_qpc - last_body_completion_qpc_) / static_cast<double>(qpc_freq_),
@@ -492,11 +519,17 @@ BodyCompletionInput PhantomModule::BuildBodyCompletionInput(int64_t now_qpc) con
 
 void PhantomModule::UpdateBodyCompletion(int64_t now_qpc)
 {
+	const double virtual_min_confidence = body_priors_.virtual_min_confidence;
+	if (last_hmd_valid_) {
+		body_prior_estimator_.AddSample(BuildBodyPriorSample(now_qpc));
+		last_body_prior_estimate_ = body_prior_estimator_.Estimate(virtual_min_confidence);
+		body_priors_ = last_body_prior_estimate_.priors;
+	}
 	last_body_completion_ = body_solver_.Solve(BuildBodyCompletionInput(now_qpc));
 	last_body_completion_qpc_ = now_qpc;
 	if (!openvr_pair::common::IsDebugLoggingEnabled()) return;
 
-	const auto summary = SummarizeCompletionResult(last_body_completion_, body_calibration_.virtual_min_confidence);
+	const auto summary = SummarizeCompletionResult(last_body_completion_, body_priors_.virtual_min_confidence);
 	++body_diag_ticks_;
 	body_diag_valid_roles_ += summary.valid_roles;
 	body_diag_publishable_roles_ += summary.publishable_valid_roles;
@@ -509,11 +542,14 @@ void PhantomModule::UpdateBodyCompletion(int64_t now_qpc)
 		const double ticks = body_diag_ticks_ > 0 ? static_cast<double>(body_diag_ticks_) : 1.0;
 		LOG("[phantom][diag] completion period ticks=%llu dropout_master=%u hmd_valid=%u "
 		    "virtual=(enabled=%d active=%d min_conf=%.2f) "
+		    "priors=(height=%.2f floor=%.2f forward=%.2f settled=%.2f floor_tracker=%u) "
 		    "roles=(valid_avg=%.2f publishable_avg=%.2f best=%s best_conf=%.2f best_mode=%s) "
 		    "global_conf=%.2f",
 		    static_cast<unsigned long long>(body_diag_ticks_),
 		    master_enabled_.load(std::memory_order_acquire) ? 1u : 0u, last_hmd_valid_ ? 1u : 0u,
-		    virtual_trackers_.EnabledCount(), virtual_trackers_.ActiveCount(), body_calibration_.virtual_min_confidence,
+		    virtual_trackers_.EnabledCount(), virtual_trackers_.ActiveCount(), body_priors_.virtual_min_confidence,
+		    body_priors_.height_m, body_priors_.floor_y_m, body_priors_.forward_yaw_rad,
+		    last_body_prior_estimate_.settled, last_body_prior_estimate_.floor_from_tracker ? 1u : 0u,
 		    static_cast<double>(body_diag_valid_roles_) / ticks,
 		    static_cast<double>(body_diag_publishable_roles_) / ticks, BodyRoleToKey(summary.best_role),
 		    summary.best_confidence, BodyCompletionModeLabel(summary.best_mode),
@@ -530,7 +566,7 @@ bool PhantomModule::TryBodyCompletionPose(BodyRole role, vr::DriverPose_t& synth
 	const auto idx = static_cast<uint8_t>(role);
 	if (!last_hmd_valid_ || idx >= last_body_completion_.roles.size()) return false;
 	const auto& solved = last_body_completion_.roles[idx];
-	if (!solved.valid || solved.confidence < body_calibration_.virtual_min_confidence) {
+	if (!solved.valid || solved.confidence < body_priors_.virtual_min_confidence) {
 		return false;
 	}
 	synth = PoseFromBodyCompletion(last_hmd_pose_, solved);
@@ -680,6 +716,10 @@ void PhantomModule::MaybeRunInference(int64_t now_qpc)
 		    result[k].confidence >= infer_apply_threshold_) {
 			s.role = result[k].role;
 			s.inferred_applied = true;
+			if (opt_in_by_serial_hash_.count(s.serial_hash) == 0) {
+				opt_in_by_serial_hash_[s.serial_hash] = true;
+				s.opted_in = true;
+			}
 			s.ladder.SetIkAvailable(true);
 			applied_any = true;
 			LOG("[phantom][infer] auto-adopted role=%s serial_hash=0x%016llx conf=%.2f samples=%u",
@@ -699,6 +739,8 @@ bool PhantomModule::Init(DriverModuleContext& context)
 {
 	context_ = context;
 	g_active = this;
+	body_prior_estimator_.Reset();
+	ApplyAnthropometricPriors(body_priors_);
 	virtual_trackers_.OnDriverInit();
 	virtual_trackers_.SetMasterEnabled(true);
 	LARGE_INTEGER freqLI{};
@@ -751,23 +793,9 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 		}
 		case protocol::RequestSetPhantomSolverConfig: {
 			const auto& c = request.setPhantomSolverConfig;
-			body_calibration_.floor_y_m = c.floor_y_m;
-			body_calibration_.height_m = c.height_m;
-			body_calibration_.forward_yaw_rad = c.forward_yaw_rad;
-			body_calibration_.stance_width_m = c.stance_width_m;
-			body_calibration_.shoulder_width_m = c.shoulder_width_m;
-			body_calibration_.pelvis_width_m = c.pelvis_width_m;
-			body_calibration_.upper_arm_m = c.upper_arm_m;
-			body_calibration_.lower_arm_m = c.lower_arm_m;
-			body_calibration_.upper_leg_m = c.upper_leg_m;
-			body_calibration_.lower_leg_m = c.lower_leg_m;
-			body_calibration_.virtual_min_confidence = c.virtual_min_confidence;
-			body_calibration_.forward_calibrated = (c.calibrated != 0);
-			body_solver_.Reset();
+			body_priors_.virtual_min_confidence = c.virtual_min_confidence;
 			response.type = protocol::ResponseSuccess;
-			LOG("[phantom] solver config applied: calibrated=%u height=%.2f floor=%.2f virtual_min=%.2f",
-			    (unsigned)c.calibrated, body_calibration_.height_m, body_calibration_.floor_y_m,
-			    body_calibration_.virtual_min_confidence);
+			LOG("[phantom] solver settings applied: virtual_min=%.2f", body_priors_.virtual_min_confidence);
 			return true;
 		}
 		case protocol::RequestSetPhantomDeviceOptIn: {
@@ -803,10 +831,16 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 				}
 				else {
 					role_by_serial_hash_[e.device_serial_hash] = role;
+					if (opt_in_by_serial_hash_.count(e.device_serial_hash) == 0) {
+						opt_in_by_serial_hash_[e.device_serial_hash] = true;
+					}
 				}
 				for (auto& s : slots_) {
 					if (s.serial_hash == e.device_serial_hash) {
 						s.role = role;
+						if (role != BodyRole::None && opt_in_by_serial_hash_.count(e.device_serial_hash) != 0) {
+							s.opted_in = opt_in_by_serial_hash_[e.device_serial_hash];
+						}
 						s.ladder.SetIkAvailable(s.role != BodyRole::None);
 						++applied_slots;
 					}
@@ -819,26 +853,8 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 			return true;
 		}
 		case protocol::RequestSetPhantomTrackerOffset: {
-			const auto& e = request.setPhantomTrackerOffset;
-			const BodyRole role = static_cast<BodyRole>(e.body_role);
-			std::lock_guard<std::mutex> lk(state_mutex_);
-			if (e.calibrated == 0) {
-				ik_fallback_.ClearOffset(role);
-			}
-			else {
-				ik_fallback_.SetOffset(role, e.rel_position, e.rel_rotation);
-			}
-			// Update every slot's ik_available flag in case this newly
-			// calibrated role applies to a device that already has its
-			// role assigned.
-			for (auto& s : slots_) {
-				s.ladder.SetIkAvailable(s.role != BodyRole::None);
-			}
 			response.type = protocol::ResponseSuccess;
-			LOG("[phantom][diag] offset role=%s calibrated=%u pos=(%.3f,%.3f,%.3f) "
-			    "rot=(%.3f,%.3f,%.3f,%.3f)",
-			    BodyRoleToKey(role), e.calibrated ? 1u : 0u, e.rel_position[0], e.rel_position[1], e.rel_position[2],
-			    e.rel_rotation.w, e.rel_rotation.x, e.rel_rotation.y, e.rel_rotation.z);
+			LOG("[phantom][diag] legacy tracker offset request ignored");
 			return true;
 		}
 		case protocol::RequestSetPhantomVirtualEnabled: {
@@ -896,7 +912,7 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 		// toggles so the Absent tab remains useful without enabling dropout
 		// replacement for real devices.
 		if (PhantomVirtualTrackersShouldRun(virtual_trackers_.EnabledCount())) {
-			virtual_trackers_.Tick(last_hmd_pose_, last_body_completion_, body_calibration_.virtual_min_confidence);
+			virtual_trackers_.Tick(last_hmd_pose_, last_body_completion_, body_priors_.virtual_min_confidence);
 		}
 	}
 	else {

@@ -62,7 +62,7 @@ void IkFallback::SetOffset(BodyRole role, const double rel_pos[3], const vr::Hmd
 	slot.rel_position[2] = rel_pos[2];
 	slot.rel_rotation = rel_rot;
 	QNormalize(slot.rel_rotation);
-	slot.calibrated = true;
+	slot.available = true;
 }
 
 void IkFallback::ClearOffset(BodyRole role)
@@ -82,13 +82,13 @@ bool IkFallback::HasOffset(BodyRole role) const
 {
 	const auto idx = static_cast<size_t>(role);
 	if (idx >= offsets_.size()) return false;
-	return offsets_[idx].calibrated;
+	return offsets_[idx].available;
 }
 
-bool IkFallback::AnyCalibrated() const
+bool IkFallback::AnyOffsetAvailable() const
 {
 	for (const auto& o : offsets_) {
-		if (o.calibrated) return true;
+		if (o.available) return true;
 	}
 	return false;
 }
@@ -98,7 +98,7 @@ bool IkFallback::Solve(BodyRole role, const vr::DriverPose_t& hmd_pose, vr::Driv
 	const auto idx = static_cast<size_t>(role);
 	if (idx >= offsets_.size()) return false;
 	const auto& o = offsets_[idx];
-	if (!o.calibrated) return false;
+	if (!o.available) return false;
 
 	// Apply offset: world_tracker_pos = world_hmd_pos + R_hmd * rel_pos.
 	double rotated[3];

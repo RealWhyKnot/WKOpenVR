@@ -32,7 +32,7 @@ RoleAssignment AssignmentFor(const std::vector<RoleAssignment>& result, int trac
 
 } // namespace
 
-// A clean 3-point setup (waist + two feet) maps each tracker to the right role.
+// A clean 3-point tracker set (waist + two feet) maps each tracker to the right role.
 TEST(PassiveRoleInference, AssignsThreePointSetup)
 {
 	std::vector<TrackerMotionFeatures> trackers = {
@@ -68,7 +68,7 @@ TEST(PassiveRoleInference, DoesNotSwapLeftRight)
 	EXPECT_EQ(AssignmentFor(result, 1).role, BodyRole::LeftFoot);
 }
 
-// A full six-point setup (waist, chest, two feet, two knees) all resolve.
+// A full six-point tracker set (waist, chest, two feet, two knees) all resolve.
 TEST(PassiveRoleInference, AssignsSixPointSetup)
 {
 	std::vector<TrackerMotionFeatures> trackers = {

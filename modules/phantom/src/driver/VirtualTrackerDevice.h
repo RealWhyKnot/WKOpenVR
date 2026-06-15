@@ -10,8 +10,8 @@
 namespace phantom {
 
 // Per-role virtual tracked device the umbrella driver publishes to SteamVR
-// in absent-mode (Phase 2). The pose is sourced from IkFallback on each
-// HMD-pose tick by VirtualTrackerManager; this class is otherwise a thin
+// in absent-mode. The pose is sourced from body completion on each HMD-pose
+// tick by VirtualTrackerManager; this class is otherwise a thin
 // ITrackedDeviceServerDriver shell.
 //
 // Property values follow the Valve-published vive_tracker_<role> convention

@@ -75,7 +75,7 @@ TEST(ProtocolTest, PhantomSolverConfigLayout)
 {
 	EXPECT_LE(sizeof(protocol::PhantomSolverConfig), sizeof(protocol::SetDeviceTransform));
 	protocol::PhantomSolverConfig c{};
-	EXPECT_EQ(c.calibrated, 0u);
+	EXPECT_EQ(c.legacy_flags, 0u);
 	EXPECT_DOUBLE_EQ(c.height_m, 0.0);
 	EXPECT_DOUBLE_EQ(c.virtual_min_confidence, 0.0);
 }

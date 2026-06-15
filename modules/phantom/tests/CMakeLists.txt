@@ -21,6 +21,7 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dead_reckoner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_blend_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dropout_state.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_body_prior_estimator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_body_completion_solver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_body_completion_scenarios.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dropout_scenarios.cpp

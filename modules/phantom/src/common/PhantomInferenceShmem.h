@@ -27,7 +27,7 @@ struct PhantomTrackerInput
 {
 	uint8_t role;          // BodyRole value; None = slot unused
 	uint8_t has_real_pose; // 1 if the real tracker is currently online
-	uint8_t has_offset;    // 1 if a T-pose calibration is on file
+	uint8_t has_offset;    // 1 if a compatible legacy offset is on file
 	uint8_t _pad[5];
 	// Live pose for the device when has_real_pose; otherwise the most
 	// recent observation. Frame of reference is world (SteamVR

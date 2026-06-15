@@ -43,23 +43,23 @@ TEST(PhantomUiLogic, VirtualRoleTiersReflectRisk)
 	EXPECT_EQ(phantom::ui::GetVirtualRoleTier(phantom::BodyRole::LeftFoot), phantom::ui::VirtualRoleTier::Experimental);
 }
 
-TEST(PhantomUiLogic, VirtualRoleEnableRequiresCalibration)
+TEST(PhantomUiLogic, VirtualRoleEnableDoesNotRequireManualSetup)
 {
-	const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(false, false);
-	EXPECT_FALSE(readiness.canEnable);
-	ASSERT_NE(readiness.reason, nullptr);
+	const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(false);
+	EXPECT_TRUE(readiness.canEnable);
+	EXPECT_EQ(readiness.reason, nullptr);
 }
 
 TEST(PhantomUiLogic, VirtualRoleEnableBlocksPhysicalRoleConflict)
 {
-	const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(true, true);
+	const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(true);
 	EXPECT_FALSE(readiness.canEnable);
 	ASSERT_NE(readiness.reason, nullptr);
 }
 
-TEST(PhantomUiLogic, VirtualRoleEnableAllowedWhenCalibratedAndUnclaimed)
+TEST(PhantomUiLogic, VirtualRoleEnableAllowedWhenUnclaimed)
 {
-	const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(true, false);
+	const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(false);
 	EXPECT_TRUE(readiness.canEnable);
 	EXPECT_EQ(readiness.reason, nullptr);
 }

@@ -29,7 +29,7 @@ vr::DriverPose_t MakeHmdPose(double x, double y, double z, const vr::HmdQuaterni
 TEST(IkFallbackTest, EmptyTableSolvesNothing)
 {
 	phantom::IkFallback f;
-	EXPECT_FALSE(f.AnyCalibrated());
+	EXPECT_FALSE(f.AnyOffsetAvailable());
 	vr::DriverPose_t out{};
 	vr::HmdQuaternion_t I{1, 0, 0, 0};
 	auto hmd = MakeHmdPose(0, 1.7, 0, I);
@@ -90,7 +90,7 @@ TEST(IkFallbackTest, ClearAllZerosTable)
 	vr::HmdQuaternion_t I{1, 0, 0, 0};
 	f.SetOffset(phantom::BodyRole::LeftFoot, off, I);
 	f.SetOffset(phantom::BodyRole::RightFoot, off, I);
-	EXPECT_TRUE(f.AnyCalibrated());
+	EXPECT_TRUE(f.AnyOffsetAvailable());
 	f.ClearAll();
-	EXPECT_FALSE(f.AnyCalibrated());
+	EXPECT_FALSE(f.AnyOffsetAvailable());
 }

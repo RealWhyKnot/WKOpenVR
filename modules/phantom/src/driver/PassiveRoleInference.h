@@ -13,13 +13,12 @@ namespace phantom {
 
 // Passive body-role inference.
 //
-// Instead of asking the user to stand in a T-pose and tag each tracker, this
-// watches the trackers move relative to the headset and figures out which
-// physical tracker is sitting on which body point. The signal is mostly
+// Watches trackers move relative to the headset and figures out which physical
+// tracker is sitting on which body point. The signal is mostly
 // geometric: how high a tracker rides as a fraction of head height (feet near
 // the floor, waist around mid-torso, chest high), which side of the head it
 // stays on (left vs right), and how much it bobs vertically while walking
-// (feet swing, the waist barely moves). Given the set of roles a user's setup
+// (feet swing, the waist barely moves). Given the set of roles a tracker layout
 // can have, it scores every tracker against every role's kinematic prior and
 // solves a one-to-one assignment, reporting a confidence per assignment so the
 // caller can require corroboration before trusting it.
@@ -74,7 +73,7 @@ public:
 	uint32_t SampleCount() const { return count_; }
 
 	// Decay the running sums toward zero so older samples fade out and the
-	// features track the user's current setup. Applied periodically by the
+	// features track the user's current tracker layout. Applied periodically by the
 	// driver (e.g. once per inference pass). factor in (0,1]; 1 = no decay.
 	void Decay(double factor)
 	{

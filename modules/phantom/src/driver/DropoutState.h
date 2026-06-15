@@ -60,7 +60,7 @@ public:
 	// transition fires at kReckonHoldMs; otherwise the ladder stays in
 	// SYNTH_RECKON (damped dead reckoning) until OUT_OF_RANGE / LOST.
 	// The bool is consulted on each Tick(); the caller updates it whenever
-	// a calibration arrives over IPC.
+	// role evidence or a compatible legacy offset is available.
 	void SetIkAvailable(bool v) { ik_available_ = v; }
 	bool ik_available() const { return ik_available_; }
 

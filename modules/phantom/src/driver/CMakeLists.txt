@@ -16,6 +16,7 @@ add_library(openvr_pair_feature_phantom_driver STATIC
 	PoseHistory.h
 	DeadReckoner.cpp
 	DeadReckoner.h
+	BodyPriorEstimator.h
 	BodyCompletionSolver.cpp
 	BodyCompletionSolver.h
 	BlendController.cpp

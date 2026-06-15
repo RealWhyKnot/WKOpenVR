@@ -59,8 +59,8 @@ TEST(BodyCompletionSolverTest, HmdOnlyNeutralStanceProducesCoreRoles)
 	ASSERT_TRUE(rightFoot.valid);
 	EXPECT_LT(waist.pose.position[1], input.hmd.pose.position[1]);
 	EXPECT_LT(chest.pose.position[1], input.hmd.pose.position[1]);
-	EXPECT_NEAR(leftFoot.pose.position[1], input.calibration.floor_y_m + 0.04, 1e-6);
-	EXPECT_NEAR(rightFoot.pose.position[1], input.calibration.floor_y_m + 0.04, 1e-6);
+	EXPECT_NEAR(leftFoot.pose.position[1], input.priors.floor_y_m + 0.04, 1e-6);
+	EXPECT_NEAR(rightFoot.pose.position[1], input.priors.floor_y_m + 0.04, 1e-6);
 	EXPECT_GT(chest.confidence, leftFoot.confidence);
 	EXPECT_GT(result.global_confidence, 0.0f);
 }

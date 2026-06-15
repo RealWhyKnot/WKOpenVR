@@ -44,7 +44,7 @@ struct BodyCompletionSensorPose
 	uint32_t age_ms = 0;
 };
 
-struct BodyCompletionCalibration
+struct BodyCompletionPriors
 {
 	double floor_y_m = 0.0;
 	double height_m = 1.70;
@@ -57,13 +57,13 @@ struct BodyCompletionCalibration
 	double upper_leg_m = 0.45;
 	double lower_leg_m = 0.45;
 	double virtual_min_confidence = 0.20;
-	bool forward_calibrated = false;
+	bool forward_estimated = false;
 };
 
 struct BodyCompletionInput
 {
 	double dt_seconds = 1.0 / 90.0;
-	BodyCompletionCalibration calibration;
+	BodyCompletionPriors priors;
 	BodyCompletionSensorPose hmd;
 	BodyCompletionSensorPose left_controller;
 	BodyCompletionSensorPose right_controller;

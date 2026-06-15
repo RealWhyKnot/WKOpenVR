@@ -86,16 +86,16 @@ inline BodyCompletionPose WithVelocity(BodyCompletionPose pose, const BodyComple
 	return pose;
 }
 
-inline BodyCompletionCalibration DefaultTrajectoryCalibration(const PhantomTrajectoryOptions& options)
+inline BodyCompletionPriors DefaultTrajectoryPriors(const PhantomTrajectoryOptions& options)
 {
-	BodyCompletionCalibration cal;
-	cal.floor_y_m = options.floor_y_m;
-	cal.height_m = options.height_m;
-	cal.stance_width_m = options.stance_width_m;
-	cal.shoulder_width_m = options.shoulder_width_m;
-	cal.pelvis_width_m = options.pelvis_width_m;
-	cal.forward_calibrated = true;
-	return cal;
+	BodyCompletionPriors priors;
+	priors.floor_y_m = options.floor_y_m;
+	priors.height_m = options.height_m;
+	priors.stance_width_m = options.stance_width_m;
+	priors.shoulder_width_m = options.shoulder_width_m;
+	priors.pelvis_width_m = options.pelvis_width_m;
+	priors.forward_estimated = true;
+	return priors;
 }
 
 inline void SetRole(PhantomTrajectoryFrame& frame, BodyRole role, const BodyCompletionPose& pose, bool planted = false)
@@ -232,7 +232,7 @@ inline BodyCompletionSensorPose SensorFromPose(const BodyCompletionPose& pose, b
 }
 
 inline BodyCompletionInput MakeBodyCompletionInput(const PhantomTrajectoryFrame& frame,
-                                                   const BodyCompletionCalibration& calibration,
+                                                   const BodyCompletionPriors& priors,
                                                    const std::array<bool, kBodyRoleCount>& enabled_roles,
                                                    const std::array<bool, kBodyRoleCount>& measured_roles,
                                                    bool include_left_controller = true,
@@ -240,7 +240,7 @@ inline BodyCompletionInput MakeBodyCompletionInput(const PhantomTrajectoryFrame&
 {
 	BodyCompletionInput input;
 	input.dt_seconds = frame.dt_seconds;
-	input.calibration = calibration;
+	input.priors = priors;
 	input.hmd = SensorFromPose(frame.hmd);
 	if (include_left_controller) input.left_controller = SensorFromPose(frame.left_controller);
 	if (include_right_controller) input.right_controller = SensorFromPose(frame.right_controller);

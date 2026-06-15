@@ -9,11 +9,9 @@
 
 namespace phantom {
 
-// Per-(physical-tracker) calibration captured during the T-pose wizard.
-// Stores the rigid offset from the HMD frame (translation + rotation) at
-// the moment the user held T-pose. When the tracker drops out the IK
-// fallback recomposes a synth pose by applying this offset to the
-// HMD's current pose -- the "rigid attachment to head" approximation.
+// Legacy per-role rigid offset from the HMD frame (translation + rotation).
+// The automatic body-prior path no longer writes these offsets, but the
+// fallback stays available so older payloads remain harmless.
 //
 // This is intentionally simpler than full-chain IK: it produces a
 // plausible-looking foot/waist/chest pose as long as the user's body
@@ -26,29 +24,25 @@ struct TrackerOffset
 {
 	BodyRole role = BodyRole::None;
 
-	// T-pose-captured offset of this tracker's position relative to the
-	// HMD's pose at the same instant. Stored in HMD-local coordinates
-	// (HMD-yaw-aligned, gravity-up frame).
+	// Offset of this tracker's position relative to the HMD's pose.
 	double rel_position[3] = {0, 0, 0};
 
-	// T-pose-captured rotation of this tracker relative to the HMD's
-	// rotation. Quaternion (w,x,y,z). Identity = aligned with HMD.
+	// Rotation of this tracker relative to the HMD. Quaternion (w,x,y,z).
+	// Identity = aligned with HMD.
 	vr::HmdQuaternion_t rel_rotation = {1, 0, 0, 0};
 
-	// True once a T-pose capture has populated this slot. False slots are
-	// ignored by the solver (it leaves the dead-reckoned pose in place).
-	bool calibrated = false;
+	bool available = false;
 };
 
-// Solver-side IK fallback. Configured by the overlay (T-pose wizard) via
-// IPC; consulted by PhantomDriverModule when a tracker enters SYNTH_IK.
+// Legacy solver-side IK fallback. Consulted by PhantomDriverModule only if a
+// compatible older payload populated an offset.
 class IkFallback
 {
 public:
 	IkFallback() = default;
 
-	// Mutators called from the IPC dispatcher when the overlay pushes
-	// a calibration update. Thread-safe at the per-role granularity:
+	// Mutators called from the IPC dispatcher when a legacy offset arrives.
+	// Thread-safe at the per-role granularity:
 	// the table is small enough that copying the whole struct on read is
 	// cheaper than a per-entry mutex.
 	void SetOffset(BodyRole role, const double rel_pos[3], const vr::HmdQuaternion_t& rel_rot);
@@ -57,15 +51,15 @@ public:
 
 	bool HasOffset(BodyRole role) const;
 
-	// True if at least one tracker has a calibration on file. The
+	// True if at least one tracker has an offset on file. The
 	// DropoutState ladder only transitions to SYNTH_IK when this is true;
 	// otherwise it stays in SYNTH_RECKON (dead reckoning) and the
 	// damping carries the avatar to rest.
-	bool AnyCalibrated() const;
+	bool AnyOffsetAvailable() const;
 
 	// Project the rigid offset for `role` onto the live HMD pose to
-	// produce a synth tracker pose. Returns false if no calibration is
-	// on file for the role (caller falls back to dead reckoning).
+	// produce a synth tracker pose. Returns false if no offset is on file
+	// for the role (caller falls back to dead reckoning).
 	// hmd_pose is the pose the umbrella driver most recently observed
 	// for the HMD device (after smoothing / calibration transforms).
 	bool Solve(BodyRole role, const vr::DriverPose_t& hmd_pose, vr::DriverPose_t& out_pose) const;

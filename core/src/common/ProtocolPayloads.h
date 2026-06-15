@@ -645,9 +645,8 @@ struct PhantomDeviceOptIn
 // POD payload for RequestSetPhantomDeviceRole. Maps a physical tracker's
 // serial hash to a body role (BodyRole enum; see RoleCatalog.h). The
 // overlay sends one of these per assignment, including a clearing
-// message with body_role = 0 (None) when the user un-assigns. The IK
-// fallback consults the role -> offset table; this message tells the
-// driver which OpenVR device feeds which role.
+// message with body_role = 0 (None) when the user un-assigns. The body
+// completion solver treats assigned trackers as measured anchors.
 struct PhantomDeviceRole
 {
 	uint64_t device_serial_hash;
@@ -655,16 +654,13 @@ struct PhantomDeviceRole
 	uint8_t _reserved[7];
 };
 
-// POD payload for RequestSetPhantomTrackerOffset. Carries the rigid
-// HMD-relative offset captured during the T-pose wizard for the
-// addressed body role. calibrated = 0 clears the slot; the driver
-// then falls back to dead reckoning for the role. The rotation is a
-// unit quaternion (w,x,y,z); the position is in metres in the HMD's
-// local frame at the moment of capture.
+// POD payload for RequestSetPhantomTrackerOffset. Reserved for older
+// overlays that sent rigid HMD-relative offsets. Current drivers ignore
+// this payload and infer body priors from live poses.
 struct PhantomTrackerOffset
 {
 	uint8_t body_role;
-	uint8_t calibrated;
+	uint8_t legacy_available;
 	uint8_t _pad[6];
 	double rel_position[3];
 	vr::HmdQuaternion_t rel_rotation;
@@ -682,13 +678,13 @@ struct PhantomVirtualEnabled
 	uint8_t _reserved[6];
 };
 
-// POD payload for RequestSetPhantomSolverConfig. Carries the body
-// completion calibration used by the in-process solver. Timeout ladder
-// values stay in PhantomConfig; this request is only body dimensions,
-// floor, neutral forward, and the minimum confidence for virtual roles.
+// POD payload for RequestSetPhantomSolverConfig. Current overlays use this
+// only for the minimum confidence threshold. The body-prior dimensions remain
+// in the struct for wire compatibility with older overlays, but current
+// drivers ignore them and estimate priors from live poses.
 struct PhantomSolverConfig
 {
-	uint8_t calibrated;
+	uint8_t legacy_flags;
 	uint8_t _reserved[7];
 	double floor_y_m;
 	double height_m;
@@ -786,14 +782,14 @@ struct Request
 		// grow; static_asserts below enforce it.
 		PhantomConfig setPhantomConfig;
 		PhantomDeviceOptIn setPhantomDeviceOptIn;
-		// v20: phantom Phase 1.5 calibration -- per-serial role
-		// assignment + per-role rigid offset from HMD. Both smaller
-		// than SetDeviceTransform; static_asserts pin the size.
+		// v20: phantom per-serial role assignment + reserved legacy
+		// per-role rigid offset from HMD. Both smaller than
+		// SetDeviceTransform; static_asserts pin the size.
 		PhantomDeviceRole setPhantomDeviceRole;
 		PhantomTrackerOffset setPhantomTrackerOffset;
 		// v21: phantom Phase 2 absent-mode virtual-tracker toggle.
 		PhantomVirtualEnabled setPhantomVirtualEnabled;
-		// v28: phantom in-process body completion calibration.
+		// v28: phantom in-process body completion settings.
 		PhantomSolverConfig setPhantomSolverConfig;
 		// v22: OSC router live send-port edit. Tiny (8 bytes); does not
 		// grow the union.

@@ -130,13 +130,13 @@ inline const char* VirtualRoleTierHelp(VirtualRoleTier tier)
 {
 	switch (tier) {
 		case VirtualRoleTier::Safer:
-			return "Usually safer than legs, but still requires calibration and confidence gates.";
+			return "Usually safer than legs, but still requires confidence gates.";
 		case VirtualRoleTier::Beta:
 			return "Best with real waist/feet/controller anchors. Disable it if avatar IK gets worse.";
 		case VirtualRoleTier::Experimental:
-			return "High visual risk when wrong. Use only after previewing calibration and confidence.";
+			return "High visual risk when wrong. Use only after previewing confidence.";
 	}
-	return "Use only after previewing calibration and confidence.";
+	return "Use only after previewing confidence.";
 }
 
 struct VirtualRoleReadiness
@@ -145,13 +145,10 @@ struct VirtualRoleReadiness
 	const char* reason = nullptr;
 };
 
-inline VirtualRoleReadiness EvaluateVirtualRoleReadiness(bool solverCalibrated, bool physicalRoleAssigned)
+inline VirtualRoleReadiness EvaluateVirtualRoleReadiness(bool physicalRoleAssigned)
 {
 	if (physicalRoleAssigned) {
 		return {false, "A physical tracker is already assigned to this role."};
-	}
-	if (!solverCalibrated) {
-		return {false, "Capture neutral standing before enabling estimated trackers."};
 	}
 	return {true, nullptr};
 }

@@ -14,7 +14,7 @@ namespace {
 
 std::vector<BodyCompletionPose> SolveRoleSequence(BodyCompletionSolver& solver,
                                                   const std::vector<PhantomTrajectoryFrame>& frames,
-                                                  const BodyCompletionCalibration& calibration,
+                                                  const BodyCompletionPriors& priors,
                                                   const std::array<bool, kBodyRoleCount>& enabled,
                                                   const std::array<bool, kBodyRoleCount>& measured, BodyRole role,
                                                   bool left_controller = true, bool right_controller = true)
@@ -22,8 +22,7 @@ std::vector<BodyCompletionPose> SolveRoleSequence(BodyCompletionSolver& solver,
 	std::vector<BodyCompletionPose> out;
 	out.reserve(frames.size());
 	for (const auto& frame : frames) {
-		const auto input =
-		    MakeBodyCompletionInput(frame, calibration, enabled, measured, left_controller, right_controller);
+		const auto input = MakeBodyCompletionInput(frame, priors, enabled, measured, left_controller, right_controller);
 		const auto result = solver.Solve(input);
 		const auto& role_out = result.roles[static_cast<size_t>(role)];
 		if (role_out.valid) {
@@ -41,7 +40,7 @@ TEST(BodyCompletionScenarios, PartialTrackersKeepMeasuredRolesAndFillMissingChes
 	options.motion = PhantomMotion::ForwardWalk;
 	options.frame_count = 90;
 	const auto frames = GenerateTrajectory(options);
-	const auto calibration = DefaultTrajectoryCalibration(options);
+	const auto priors = DefaultTrajectoryPriors(options);
 	const auto enabled = AllVirtualTrackerRolesEnabled();
 	const auto measured = RolesEnabled({BodyRole::Waist, BodyRole::LeftFoot, BodyRole::RightFoot});
 
@@ -49,7 +48,7 @@ TEST(BodyCompletionScenarios, PartialTrackersKeepMeasuredRolesAndFillMissingChes
 	uint32_t measured_feet = 0;
 	uint32_t filled_chest = 0;
 	for (const auto& frame : frames) {
-		const auto input = MakeBodyCompletionInput(frame, calibration, enabled, measured);
+		const auto input = MakeBodyCompletionInput(frame, priors, enabled, measured);
 		const auto result = solver.Solve(input);
 		const auto& left_foot = result.roles[static_cast<size_t>(BodyRole::LeftFoot)];
 		const auto& chest = result.roles[static_cast<size_t>(BodyRole::Chest)];
@@ -75,13 +74,13 @@ TEST(BodyCompletionScenarios, NoFbtControllerEvidenceIsMoreConfidentThanLegGuess
 	options.motion = PhantomMotion::ControllerReach;
 	options.frame_count = 120;
 	const auto frames = GenerateTrajectory(options);
-	const auto calibration = DefaultTrajectoryCalibration(options);
+	const auto priors = DefaultTrajectoryPriors(options);
 	const auto enabled = AllVirtualTrackerRolesEnabled();
 	std::array<bool, kBodyRoleCount> measured{};
 
 	BodyCompletionSolver solver;
 	for (const auto& frame : frames) {
-		const auto input = MakeBodyCompletionInput(frame, calibration, enabled, measured);
+		const auto input = MakeBodyCompletionInput(frame, priors, enabled, measured);
 		const auto result = solver.Solve(input);
 		const auto& left_elbow = result.roles[static_cast<size_t>(BodyRole::LeftElbow)];
 		const auto& left_foot = result.roles[static_cast<size_t>(BodyRole::LeftFoot)];
@@ -99,14 +98,14 @@ TEST(BodyCompletionScenarios, HmdOnlyAllAbsentStaysBelowHighConfidence)
 	options.motion = PhantomMotion::BendLean;
 	options.frame_count = 120;
 	const auto frames = GenerateTrajectory(options);
-	auto calibration = DefaultTrajectoryCalibration(options);
-	calibration.virtual_min_confidence = 0.50;
+	auto priors = BodyCompletionPriors{};
+	priors.virtual_min_confidence = 0.50;
 	const auto enabled = AllVirtualTrackerRolesEnabled();
 	std::array<bool, kBodyRoleCount> measured{};
 
 	BodyCompletionSolver solver;
 	for (const auto& frame : frames) {
-		const auto input = MakeBodyCompletionInput(frame, calibration, enabled, measured, false, false);
+		const auto input = MakeBodyCompletionInput(frame, priors, enabled, measured, false, false);
 		const auto result = solver.Solve(input);
 		ASSERT_GT(result.global_confidence, 0.0f);
 		EXPECT_LT(result.global_confidence, 0.65f);
@@ -117,10 +116,10 @@ TEST(BodyCompletionScenarios, HmdOnlyAllAbsentStaysBelowHighConfidence)
 			if (!out.valid) continue;
 			EXPECT_LT(out.confidence, 0.65f) << BodyRoleToKey(role);
 		}
-		EXPECT_FALSE(OutputWouldPublish(result.roles[static_cast<size_t>(BodyRole::LeftElbow)],
-		                                calibration.virtual_min_confidence));
-		EXPECT_FALSE(OutputWouldPublish(result.roles[static_cast<size_t>(BodyRole::RightElbow)],
-		                                calibration.virtual_min_confidence));
+		EXPECT_FALSE(
+		    OutputWouldPublish(result.roles[static_cast<size_t>(BodyRole::LeftElbow)], priors.virtual_min_confidence));
+		EXPECT_FALSE(
+		    OutputWouldPublish(result.roles[static_cast<size_t>(BodyRole::RightElbow)], priors.virtual_min_confidence));
 	}
 }
 
@@ -130,12 +129,12 @@ TEST(BodyCompletionScenarios, StandingNoFbtFeetDoNotSkateWhilePlanted)
 	options.motion = PhantomMotion::IdleStand;
 	options.frame_count = 90;
 	const auto frames = GenerateTrajectory(options);
-	const auto calibration = DefaultTrajectoryCalibration(options);
+	const auto priors = DefaultTrajectoryPriors(options);
 	const auto enabled = AllVirtualTrackerRolesEnabled();
 	std::array<bool, kBodyRoleCount> measured{};
 
 	BodyCompletionSolver solver;
-	const auto left_foot = SolveRoleSequence(solver, frames, calibration, enabled, measured, BodyRole::LeftFoot);
+	const auto left_foot = SolveRoleSequence(solver, frames, priors, enabled, measured, BodyRole::LeftFoot);
 	const auto stats = ComputeFootSkateStats(left_foot, options.floor_y_m, 0.05, 0.01);
 
 	EXPECT_GT(stats.planted_frames, 0u);

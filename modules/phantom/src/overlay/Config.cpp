@@ -58,41 +58,12 @@ PhantomConfig LoadPhantomConfig()
 		else if (std::strcmp(key, "auto_accept_roles") == 0) {
 			cfg.auto_accept_roles = (std::atoi(val) != 0);
 		}
-		else if (std::strcmp(key, "solver.calibrated") == 0) {
-			cfg.solver.calibrated = (std::atoi(val) != 0);
-		}
-		else if (std::strcmp(key, "solver.floor_y_m") == 0) {
-			cfg.solver.floor_y_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.height_m") == 0) {
-			cfg.solver.height_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.forward_yaw_rad") == 0) {
-			cfg.solver.forward_yaw_rad = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.stance_width_m") == 0) {
-			cfg.solver.stance_width_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.shoulder_width_m") == 0) {
-			cfg.solver.shoulder_width_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.pelvis_width_m") == 0) {
-			cfg.solver.pelvis_width_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.upper_arm_m") == 0) {
-			cfg.solver.upper_arm_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.lower_arm_m") == 0) {
-			cfg.solver.lower_arm_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.upper_leg_m") == 0) {
-			cfg.solver.upper_leg_m = std::strtod(val, nullptr);
-		}
-		else if (std::strcmp(key, "solver.lower_leg_m") == 0) {
-			cfg.solver.lower_leg_m = std::strtod(val, nullptr);
-		}
 		else if (std::strcmp(key, "solver.virtual_min_confidence") == 0) {
 			cfg.solver.virtual_min_confidence = std::strtod(val, nullptr);
+		}
+		else if (std::strncmp(key, "solver.", 7) == 0) {
+			// Legacy body-prior fields are now estimated in the driver.
+			continue;
 		}
 		else if (std::strcmp(key, "blend_out_ms") == 0) {
 			cfg.blend_out_ms = ParseMsClamped(val, 0, 1000);
@@ -129,32 +100,8 @@ PhantomConfig LoadPhantomConfig()
 			}
 		}
 		else if (std::strncmp(key, "role_offset.", 12) == 0) {
-			// role_offset.<role>.<field>=<value>
-			const char* rest = key + 12;
-			const char* dot = std::strchr(rest, '.');
-			if (!dot) continue;
-			std::string roleKey(rest, dot - rest);
-			const phantom::BodyRole r = phantom::BodyRoleFromKey(roleKey.c_str());
-			if (r == phantom::BodyRole::None) continue;
-			auto& o = cfg.role_offset[r];
-			const char* field = dot + 1;
-			const double d = std::strtod(val, nullptr);
-			if (std::strcmp(field, "calibrated") == 0)
-				o.calibrated = (std::atoi(val) != 0);
-			else if (std::strcmp(field, "px") == 0)
-				o.rel_position_x = d;
-			else if (std::strcmp(field, "py") == 0)
-				o.rel_position_y = d;
-			else if (std::strcmp(field, "pz") == 0)
-				o.rel_position_z = d;
-			else if (std::strcmp(field, "qw") == 0)
-				o.rel_rotation_w = d;
-			else if (std::strcmp(field, "qx") == 0)
-				o.rel_rotation_x = d;
-			else if (std::strcmp(field, "qy") == 0)
-				o.rel_rotation_y = d;
-			else if (std::strcmp(field, "qz") == 0)
-				o.rel_rotation_z = d;
+			// Legacy rigid role offsets are no longer used.
+			continue;
 		}
 	}
 	std::fclose(f);
@@ -175,22 +122,9 @@ void SavePhantomConfig(const PhantomConfig& cfg)
 	std::fprintf(f, "reckon_hold_ms=%u\n", (unsigned)cfg.reckon_hold_ms);
 	std::fprintf(f, "synth_hold_ms=%u\n", (unsigned)cfg.synth_hold_ms);
 	std::fprintf(f, "lost_hold_ms=%u\n", (unsigned)cfg.lost_hold_ms);
-	std::fprintf(f, "solver.calibrated=%d\n", cfg.solver.calibrated ? 1 : 0);
-	std::fprintf(f, "solver.floor_y_m=%.6f\n", cfg.solver.floor_y_m);
-	std::fprintf(f, "solver.height_m=%.6f\n", cfg.solver.height_m);
-	std::fprintf(f, "solver.forward_yaw_rad=%.6f\n", cfg.solver.forward_yaw_rad);
-	std::fprintf(f, "solver.stance_width_m=%.6f\n", cfg.solver.stance_width_m);
-	std::fprintf(f, "solver.shoulder_width_m=%.6f\n", cfg.solver.shoulder_width_m);
-	std::fprintf(f, "solver.pelvis_width_m=%.6f\n", cfg.solver.pelvis_width_m);
-	std::fprintf(f, "solver.upper_arm_m=%.6f\n", cfg.solver.upper_arm_m);
-	std::fprintf(f, "solver.lower_arm_m=%.6f\n", cfg.solver.lower_arm_m);
-	std::fprintf(f, "solver.upper_leg_m=%.6f\n", cfg.solver.upper_leg_m);
-	std::fprintf(f, "solver.lower_leg_m=%.6f\n", cfg.solver.lower_leg_m);
 	std::fprintf(f, "solver.virtual_min_confidence=%.6f\n", cfg.solver.virtual_min_confidence);
 	for (const auto& kv : cfg.dropout_enabled) {
-		if (kv.second) {
-			std::fprintf(f, "dropout_enabled.%s=1\n", kv.first.c_str());
-		}
+		std::fprintf(f, "dropout_enabled.%s=%d\n", kv.first.c_str(), kv.second ? 1 : 0);
 	}
 	for (const auto& kv : cfg.device_role) {
 		if (kv.second != phantom::BodyRole::None) {
@@ -208,18 +142,6 @@ void SavePhantomConfig(const PhantomConfig& cfg)
 		if (kv.second) {
 			std::fprintf(f, "virtual_enabled.%s=1\n", phantom::BodyRoleToKey(kv.first));
 		}
-	}
-	for (const auto& kv : cfg.role_offset) {
-		if (!kv.second.calibrated) continue;
-		const char* k = phantom::BodyRoleToKey(kv.first);
-		std::fprintf(f, "role_offset.%s.calibrated=1\n", k);
-		std::fprintf(f, "role_offset.%s.px=%.6f\n", k, kv.second.rel_position_x);
-		std::fprintf(f, "role_offset.%s.py=%.6f\n", k, kv.second.rel_position_y);
-		std::fprintf(f, "role_offset.%s.pz=%.6f\n", k, kv.second.rel_position_z);
-		std::fprintf(f, "role_offset.%s.qw=%.6f\n", k, kv.second.rel_rotation_w);
-		std::fprintf(f, "role_offset.%s.qx=%.6f\n", k, kv.second.rel_rotation_x);
-		std::fprintf(f, "role_offset.%s.qy=%.6f\n", k, kv.second.rel_rotation_y);
-		std::fprintf(f, "role_offset.%s.qz=%.6f\n", k, kv.second.rel_rotation_z);
 	}
 	std::fclose(f);
 }

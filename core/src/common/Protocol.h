@@ -182,12 +182,10 @@ namespace protocol {
 // the new request types.
 //
 // v20 (2026-05-16): phantom Phase 1.5. Adds RequestSetPhantomDeviceRole
-// (per-serial body-role assignment fed by the T-pose calibration
-// wizard) and RequestSetPhantomTrackerOffset (per-role rigid offset
-// from the HMD captured at T-pose). DropoutState now transitions
-// to SYNTH_IK past the reckon-hold window when any calibration is on
-// file; IkFallback rebuilds a synth pose by applying the rigid offset
-// to the live HMD pose. Both new structs are smaller than
+// (per-serial body-role assignment) and RequestSetPhantomTrackerOffset
+// (reserved legacy per-role rigid offset from the HMD). DropoutState can
+// transition to SYNTH_IK past the reckon-hold window when role evidence is
+// available. Both new structs are smaller than
 // SetDeviceTransform; static_asserts pin the union size.
 //
 // v21 (2026-05-16): phantom Phase 2 absent-mode virtual trackers. Adds
@@ -248,7 +246,7 @@ namespace protocol {
 // so paired overlay+driver install is required.
 //
 // v28 (2026-06-02): adds RequestSetPhantomSolverConfig for in-process
-// Phantom body-completion calibration. The payload is smaller than
+// Phantom body-completion settings. The payload is smaller than
 // SetDeviceTransform, so sizeof(Request) is unchanged; the bump forces
 // paired overlay+driver install.
 //
@@ -283,7 +281,11 @@ namespace protocol {
 // card; replaces the old [perf] text-line-only sampler. Unlike the feature
 // shmems this segment is created in driver Init regardless of which feature
 // flags are present.
-const uint32_t Version = 34;
+//
+// v35 (2026-06-15): Phantom body dimensions become driver-estimated priors.
+// RequestSetPhantomSolverConfig keeps its old layout but current drivers only
+// consume virtual_min_confidence.
+const uint32_t Version = 35;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -372,12 +374,10 @@ enum RequestType
 	// toggle (one message per device the user toggles).
 	RequestSetPhantomConfig,
 	RequestSetPhantomDeviceOptIn,
-	// v20 (2026-05-16): phantom Phase 1.5 calibration messages.
+	// v20 (2026-05-16): phantom Phase 1.5 role messages.
 	// SetPhantomDeviceRole maps a physical tracker's FNV-1a serial
 	// hash to a body role (waist / foot / etc.); SetPhantomTrackerOffset
-	// carries the rigid HMD-relative offset captured during the T-pose
-	// wizard. Both arrive once per tracker per calibration; the driver
-	// keeps the values until cleared.
+	// is reserved for older overlays.
 	RequestSetPhantomDeviceRole,
 	RequestSetPhantomTrackerOffset,
 	// v21 (2026-05-16): phantom Phase 2 absent-mode toggle. Per-role
@@ -400,7 +400,7 @@ enum RequestType
 	// the profile JSON itself. Driver caches the payload and reads it
 	// on the per-tick pose-update path.
 	RequestSetHeadMountConfig,
-	// v28 (2026-06-02): body-completion solver calibration and
+	// v28 (2026-06-02): body-completion solver settings and
 	// confidence threshold for Phantom virtual roles.
 	RequestSetPhantomSolverConfig,
 	// v32 (2026-06-09): SteamVR dashboard hand-tracking state from the

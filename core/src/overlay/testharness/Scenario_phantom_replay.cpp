@@ -119,17 +119,6 @@ bool ConfigurePhantom(HarnessIpcClient& client, const PhantomReplayRecording& re
 		protocol::Request req(protocol::RequestSetPhantomSolverConfig);
 		auto& cfg = req.setPhantomSolverConfig;
 		std::memset(&cfg, 0, sizeof(cfg));
-		cfg.calibrated = 1;
-		cfg.floor_y_m = 0.0;
-		cfg.height_m = 1.70;
-		cfg.forward_yaw_rad = 0.0;
-		cfg.stance_width_m = 0.30;
-		cfg.shoulder_width_m = 0.40;
-		cfg.pelvis_width_m = 0.30;
-		cfg.upper_arm_m = 0.31;
-		cfg.lower_arm_m = 0.27;
-		cfg.upper_leg_m = 0.45;
-		cfg.lower_leg_m = 0.45;
 		cfg.virtual_min_confidence = 0.20;
 		if (!SendExpectSuccess(client, req, error)) return false;
 	}

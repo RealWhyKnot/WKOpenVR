@@ -82,7 +82,7 @@ TEST(PhantomTrajectory, CanBuildBodyCompletionInputsWithMeasuredRoles)
 	const auto enabled = AllVirtualTrackerRolesEnabled();
 	auto measured = RolesEnabled({BodyRole::Waist, BodyRole::LeftFoot, BodyRole::RightFoot});
 
-	const auto input = MakeBodyCompletionInput(frames.back(), DefaultTrajectoryCalibration(options), enabled, measured);
+	const auto input = MakeBodyCompletionInput(frames.back(), DefaultTrajectoryPriors(options), enabled, measured);
 	EXPECT_TRUE(input.hmd.valid);
 	EXPECT_TRUE(input.left_controller.valid);
 	EXPECT_TRUE(input.real_roles[static_cast<size_t>(BodyRole::Waist)].valid);

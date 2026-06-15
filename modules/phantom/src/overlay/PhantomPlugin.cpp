@@ -21,7 +21,6 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
-#include <cmath>
 #include <string>
 
 namespace ui = openvr_pair::overlay::ui;
@@ -148,17 +147,6 @@ void PhantomPlugin::SendSolverConfig()
 	protocol::Request req(protocol::RequestSetPhantomSolverConfig);
 	auto& s = req.setPhantomSolverConfig;
 	std::memset(&s, 0, sizeof(s));
-	s.calibrated = cfg_.solver.calibrated ? 1u : 0u;
-	s.floor_y_m = cfg_.solver.floor_y_m;
-	s.height_m = cfg_.solver.height_m;
-	s.forward_yaw_rad = cfg_.solver.forward_yaw_rad;
-	s.stance_width_m = cfg_.solver.stance_width_m;
-	s.shoulder_width_m = cfg_.solver.shoulder_width_m;
-	s.pelvis_width_m = cfg_.solver.pelvis_width_m;
-	s.upper_arm_m = cfg_.solver.upper_arm_m;
-	s.lower_arm_m = cfg_.solver.lower_arm_m;
-	s.upper_leg_m = cfg_.solver.upper_leg_m;
-	s.lower_leg_m = cfg_.solver.lower_leg_m;
 	s.virtual_min_confidence = cfg_.solver.virtual_min_confidence;
 	try {
 		ipc_.SendBlocking(req);
@@ -204,7 +192,7 @@ void PhantomPlugin::DrawTab(openvr_pair::overlay::ShellContext& context)
 	ui::TabBarScope tabs("PhantomTabs");
 	if (tabs) {
 		ui::DrawTabItem("Dropouts", [&] { DrawDropoutsTab(); });
-		ui::DrawTabItem("Calibration", [&] { DrawCalibrationTab(); });
+		ui::DrawTabItem("Body", [&] { DrawBodyTab(); });
 		ui::DrawTabItem("Absent", [&] { DrawAbsentTab(); });
 		ui::DrawTabItem("Diagnostics", [&] { DrawDiagnosticsTab(); });
 		ui::DrawTabItem("Advanced", [&] { DrawAdvancedTab(); });
@@ -526,86 +514,6 @@ uint64_t Fnv1a64Local(const std::string& s)
 	return h;
 }
 
-// Quaternion conjugate (== inverse for a unit quaternion).
-vr::HmdQuaternion_t QConj(const vr::HmdQuaternion_t& q)
-{
-	return {q.w, -q.x, -q.y, -q.z};
-}
-
-vr::HmdQuaternion_t QMul(const vr::HmdQuaternion_t& a, const vr::HmdQuaternion_t& b)
-{
-	vr::HmdQuaternion_t r;
-	r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
-	r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
-	r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
-	r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
-	return r;
-}
-
-// HmdMatrix34_t (column-major 3x4 with column 3 = translation) -> position
-// + quaternion. Matches the convention used by GetDeviceToAbsoluteTrackingPose.
-void DecomposeMatrix34(const vr::HmdMatrix34_t& m, double pos[3], vr::HmdQuaternion_t& q)
-{
-	pos[0] = m.m[0][3];
-	pos[1] = m.m[1][3];
-	pos[2] = m.m[2][3];
-	// Standard rotation-matrix to quaternion. The matrix's upper-left 3x3
-	// is the rotation; we read it as row-major-3x3 directly.
-	const double m00 = m.m[0][0], m01 = m.m[0][1], m02 = m.m[0][2];
-	const double m10 = m.m[1][0], m11 = m.m[1][1], m12 = m.m[1][2];
-	const double m20 = m.m[2][0], m21 = m.m[2][1], m22 = m.m[2][2];
-	const double trace = m00 + m11 + m22;
-	if (trace > 0.0) {
-		const double s = std::sqrt(trace + 1.0) * 2.0;
-		q.w = 0.25 * s;
-		q.x = (m21 - m12) / s;
-		q.y = (m02 - m20) / s;
-		q.z = (m10 - m01) / s;
-	}
-	else if (m00 > m11 && m00 > m22) {
-		const double s = std::sqrt(1.0 + m00 - m11 - m22) * 2.0;
-		q.w = (m21 - m12) / s;
-		q.x = 0.25 * s;
-		q.y = (m01 + m10) / s;
-		q.z = (m02 + m20) / s;
-	}
-	else if (m11 > m22) {
-		const double s = std::sqrt(1.0 + m11 - m00 - m22) * 2.0;
-		q.w = (m02 - m20) / s;
-		q.x = (m01 + m10) / s;
-		q.y = 0.25 * s;
-		q.z = (m12 + m21) / s;
-	}
-	else {
-		const double s = std::sqrt(1.0 + m22 - m00 - m11) * 2.0;
-		q.w = (m10 - m01) / s;
-		q.x = (m02 + m20) / s;
-		q.y = (m12 + m21) / s;
-		q.z = 0.25 * s;
-	}
-}
-
-void QRotateInverse(const vr::HmdQuaternion_t& q, const double v[3], double out[3])
-{
-	// Rotate v by q^-1 (= conjugate for unit q). Standard formula via
-	// q^-1 * v * q expressed without intermediate quaternions.
-	const auto qi = QConj(q);
-	const double ux = qi.x, uy = qi.y, uz = qi.z, s = qi.w;
-	const double tx = 2.0 * (uy * v[2] - uz * v[1]);
-	const double ty = 2.0 * (uz * v[0] - ux * v[2]);
-	const double tz = 2.0 * (ux * v[1] - uy * v[0]);
-	out[0] = v[0] + s * tx + (uy * tz - uz * ty);
-	out[1] = v[1] + s * ty + (uz * tx - ux * tz);
-	out[2] = v[2] + s * tz + (ux * ty - uy * tx);
-}
-
-double YawRadiansFromQuat(const vr::HmdQuaternion_t& q)
-{
-	const double siny = 2.0 * (q.w * q.y + q.x * q.z);
-	const double cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
-	return std::atan2(siny, cosy);
-}
-
 const char* SolverModeLabel(uint8_t mode)
 {
 	switch (mode) {
@@ -663,29 +571,6 @@ void PhantomPlugin::SendDeviceRole(const std::string& serial, phantom::BodyRole 
 	}
 }
 
-void PhantomPlugin::SendTrackerOffset(phantom::BodyRole role, const PhantomRoleOffset& offset)
-{
-	if (!ipc_.IsConnected()) return;
-	protocol::Request req(protocol::RequestSetPhantomTrackerOffset);
-	auto& o = req.setPhantomTrackerOffset;
-	o.body_role = static_cast<uint8_t>(role);
-	o.calibrated = offset.calibrated ? 1u : 0u;
-	std::memset(o._pad, 0, sizeof(o._pad));
-	o.rel_position[0] = offset.rel_position_x;
-	o.rel_position[1] = offset.rel_position_y;
-	o.rel_position[2] = offset.rel_position_z;
-	o.rel_rotation.w = offset.rel_rotation_w;
-	o.rel_rotation.x = offset.rel_rotation_x;
-	o.rel_rotation.y = offset.rel_rotation_y;
-	o.rel_rotation.z = offset.rel_rotation_z;
-	try {
-		ipc_.SendBlocking(req);
-	}
-	catch (const std::exception& e) {
-		connectError_ = e.what();
-	}
-}
-
 void PhantomPlugin::SendVirtualEnabled(phantom::BodyRole role, bool enabled)
 {
 	if (!ipc_.IsConnected()) return;
@@ -706,166 +591,15 @@ void PhantomPlugin::ReplayDriverState()
 	if (!ipc_.IsConnected()) return;
 	SendConfig();
 	for (const auto& kv : cfg_.dropout_enabled) {
-		if (kv.second) SendDeviceOptIn(kv.first, true);
+		SendDeviceOptIn(kv.first, kv.second);
 	}
-	ReplayCalibration();
-}
-
-void PhantomPlugin::ReplayCalibration()
-{
-	if (!ipc_.IsConnected()) return;
 	SendSolverConfig();
 	for (const auto& kv : cfg_.device_role) {
 		SendDeviceRole(kv.first, kv.second);
 	}
-	for (const auto& kv : cfg_.role_offset) {
-		if (kv.second.calibrated) SendTrackerOffset(kv.first, kv.second);
-	}
 	for (const auto& kv : cfg_.virtual_enabled) {
 		if (kv.second) SendVirtualEnabled(kv.first, true);
 	}
-}
-
-void PhantomPlugin::CaptureNeutralStanding()
-{
-	auto* vrSystem = vr::VRSystem();
-	if (!vrSystem) {
-		lastSolverCalibrationSummary_ = "VR system not available; neutral pose not captured.";
-		return;
-	}
-
-	vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount]{};
-	vrSystem->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding,
-	                                          /*predictedSecondsToPhotonsFromNow=*/0.0f, poses,
-	                                          vr::k_unMaxTrackedDeviceCount);
-
-	uint32_t hmdId = vr::k_unTrackedDeviceIndexInvalid;
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
-		if (vrSystem->GetTrackedDeviceClass(id) == vr::TrackedDeviceClass_HMD && poses[id].bPoseIsValid &&
-		    poses[id].eTrackingResult == vr::TrackingResult_Running_OK) {
-			hmdId = id;
-			break;
-		}
-	}
-	if (hmdId == vr::k_unTrackedDeviceIndexInvalid) {
-		lastSolverCalibrationSummary_ = "HMD not tracked; neutral pose not captured.";
-		return;
-	}
-
-	double hmdPos[3];
-	vr::HmdQuaternion_t hmdRot;
-	DecomposeMatrix34(poses[hmdId].mDeviceToAbsoluteTracking, hmdPos, hmdRot);
-
-	cfg_.solver.calibrated = true;
-	cfg_.solver.floor_y_m = 0.0;
-	cfg_.solver.height_m = std::clamp(hmdPos[1] - cfg_.solver.floor_y_m, 1.0, 2.4);
-	cfg_.solver.forward_yaw_rad = YawRadiansFromQuat(hmdRot);
-
-	const double h = cfg_.solver.height_m;
-	cfg_.solver.stance_width_m = std::clamp(h * 0.165, 0.10, 0.70);
-	cfg_.solver.shoulder_width_m = std::clamp(h * 0.225, 0.20, 0.70);
-	cfg_.solver.pelvis_width_m = std::clamp(h * 0.165, 0.15, 0.60);
-	cfg_.solver.upper_arm_m = std::clamp(h * 0.176, 0.15, 0.55);
-	cfg_.solver.lower_arm_m = std::clamp(h * 0.159, 0.15, 0.55);
-	cfg_.solver.upper_leg_m = std::clamp(h * 0.265, 0.20, 0.70);
-	cfg_.solver.lower_leg_m = std::clamp(h * 0.265, 0.20, 0.70);
-
-	SendSolverConfig();
-	SavePhantomConfig(cfg_);
-
-	char tmp[128];
-	std::snprintf(tmp, sizeof(tmp), "Neutral standing captured: height %.2f m, forward %.2f rad.", cfg_.solver.height_m,
-	              cfg_.solver.forward_yaw_rad);
-	lastSolverCalibrationSummary_ = tmp;
-}
-
-void PhantomPlugin::CaptureTPose()
-{
-	auto* vrSystem = vr::VRSystem();
-	if (!vrSystem) {
-		lastCalibrationSummary_ = "VR system not available; tracking poses not captured.";
-		return;
-	}
-
-	vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount]{};
-	vrSystem->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding,
-	                                          /*predictedSecondsToPhotonsFromNow=*/0.0f, poses,
-	                                          vr::k_unMaxTrackedDeviceCount);
-
-	// Locate the HMD (Class_HMD). Without it we have no reference frame for
-	// the IK fallback's rigid offsets.
-	uint32_t hmdId = vr::k_unTrackedDeviceIndexInvalid;
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
-		if (vrSystem->GetTrackedDeviceClass(id) == vr::TrackedDeviceClass_HMD && poses[id].bPoseIsValid &&
-		    poses[id].eTrackingResult == vr::TrackingResult_Running_OK) {
-			hmdId = id;
-			break;
-		}
-	}
-	if (hmdId == vr::k_unTrackedDeviceIndexInvalid) {
-		lastCalibrationSummary_ = "HMD not tracked; calibration aborted.";
-		return;
-	}
-
-	double hmdPos[3];
-	vr::HmdQuaternion_t hmdRot;
-	DecomposeMatrix34(poses[hmdId].mDeviceToAbsoluteTracking, hmdPos, hmdRot);
-
-	int captured = 0;
-	int skipped = 0;
-	char buffer[vr::k_unMaxPropertyStringSize];
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
-		const auto cls = vrSystem->GetTrackedDeviceClass(id);
-		if (cls == vr::TrackedDeviceClass_Invalid || cls == vr::TrackedDeviceClass_HMD) {
-			continue;
-		}
-		if (!poses[id].bPoseIsValid || poses[id].eTrackingResult != vr::TrackingResult_Running_OK) {
-			continue;
-		}
-		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-		vrSystem->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, sizeof(buffer), &err);
-		if (err != vr::TrackedProp_Success || buffer[0] == 0) continue;
-		const std::string serial = buffer;
-
-		const auto roleIt = cfg_.device_role.find(serial);
-		if (roleIt == cfg_.device_role.end() || roleIt->second == phantom::BodyRole::None) {
-			++skipped;
-			continue;
-		}
-
-		double trkPos[3];
-		vr::HmdQuaternion_t trkRot;
-		DecomposeMatrix34(poses[id].mDeviceToAbsoluteTracking, trkPos, trkRot);
-
-		const double delta[3] = {
-		    trkPos[0] - hmdPos[0],
-		    trkPos[1] - hmdPos[1],
-		    trkPos[2] - hmdPos[2],
-		};
-		double rel[3];
-		QRotateInverse(hmdRot, delta, rel);
-		const vr::HmdQuaternion_t relRot = QMul(QConj(hmdRot), trkRot);
-
-		PhantomRoleOffset off{};
-		off.calibrated = true;
-		off.rel_position_x = rel[0];
-		off.rel_position_y = rel[1];
-		off.rel_position_z = rel[2];
-		off.rel_rotation_w = relRot.w;
-		off.rel_rotation_x = relRot.x;
-		off.rel_rotation_y = relRot.y;
-		off.rel_rotation_z = relRot.z;
-
-		cfg_.role_offset[roleIt->second] = off;
-		SendTrackerOffset(roleIt->second, off);
-		++captured;
-	}
-
-	SavePhantomConfig(cfg_);
-	char tmp[128];
-	std::snprintf(tmp, sizeof(tmp), "Captured %d role%s; skipped %d unassigned tracker%s.", captured,
-	              captured == 1 ? "" : "s", skipped, skipped == 1 ? "" : "s");
-	lastCalibrationSummary_ = tmp;
 }
 
 void PhantomPlugin::DrawAutoDetectPanel()
@@ -976,6 +710,10 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			if (ImGui::Button("Accept")) {
 				cfg_.device_role[serial] = inferredRole;
 				cfg_.role_manual[serial] = false; // sourced from detection
+				if (cfg_.dropout_enabled.count(serial) == 0) {
+					cfg_.dropout_enabled[serial] = true;
+					SendDeviceOptIn(serial, true);
+				}
 				SendDeviceRole(serial, inferredRole);
 				SavePhantomConfig(cfg_);
 			}
@@ -1000,6 +738,10 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			                                            savedIsManual, conf, kAutoAcceptConfidence)) {
 				cfg_.device_role[serial] = inferredRole;
 				cfg_.role_manual[serial] = false; // sourced from detection
+				if (cfg_.dropout_enabled.count(serial) == 0) {
+					cfg_.dropout_enabled[serial] = true;
+					SendDeviceOptIn(serial, true);
+				}
 				SendDeviceRole(serial, inferredRole);
 				SavePhantomConfig(cfg_);
 			}
@@ -1013,59 +755,22 @@ void PhantomPlugin::DrawAutoDetectPanel()
 	});
 }
 
-void PhantomPlugin::DrawCalibrationTab()
+void PhantomPlugin::DrawBodyTab()
 {
 	ImGui::Spacing();
 	DrawAutoDetectPanel();
 	ImGui::Spacing();
-	ui::DrawTextWrapped("Automatic detection above is the main path. The controls below are optional: "
-	                    "capture neutral standing for headset/controller body completion, or assign a "
-	                    "tracker by hand to override or seed a detection.");
-	ImGui::Spacing();
 
-	ui::DrawPanel("Neutral standing", [&] {
-		if (ImGui::Button("Capture neutral standing")) {
-			CaptureNeutralStanding();
-		}
-		ui::TooltipForLastItem("Stand upright, face forward, and click. Uses the current HMD pose "
-		                       "to set height, floor, forward direction, and starting proportions.");
-		if (!lastSolverCalibrationSummary_.empty()) {
-			ImGui::Spacing();
-			ui::DrawStatusText(lastSolverCalibrationSummary_.c_str(), ui::StatusTone::Ok);
-		}
-	});
-
-	ui::DrawPanel("Body proportions", [&] {
-		ui::DrawSettingTable("PhantomBody", 150.0f, [&](ui::SettingTableScope& tbl) {
-			auto solverRow = [&](const char* label, const char* id, double& v, float lo, float hi, const char* fmt) {
-				ui::SettingRow(tbl, label, [&] {
-					float tmp = static_cast<float>(v);
-					ImGui::SetNextItemWidth(-FLT_MIN);
-					if (ImGui::SliderFloat(id, &tmp, lo, hi, fmt)) {
-						v = static_cast<double>(std::clamp(tmp, lo, hi));
-						cfg_.solver.calibrated = true;
-						SendSolverConfig();
-						SavePhantomConfig(cfg_);
-					}
-				});
-			};
-			solverRow("Height", "##height", cfg_.solver.height_m, 1.0f, 2.4f, "%.2f m");
-			solverRow("Floor Y", "##floory", cfg_.solver.floor_y_m, -1.0f, 1.0f, "%.2f m");
-			solverRow("Stance width", "##stance", cfg_.solver.stance_width_m, 0.10f, 0.70f, "%.2f m");
-			solverRow("Shoulder width", "##shoulder", cfg_.solver.shoulder_width_m, 0.20f, 0.70f, "%.2f m");
-			solverRow("Pelvis width", "##pelvis", cfg_.solver.pelvis_width_m, 0.15f, 0.60f, "%.2f m");
-			solverRow("Upper arm", "##uparm", cfg_.solver.upper_arm_m, 0.15f, 0.55f, "%.2f m");
-			solverRow("Lower arm", "##loarm", cfg_.solver.lower_arm_m, 0.15f, 0.55f, "%.2f m");
-			solverRow("Upper leg", "##upleg", cfg_.solver.upper_leg_m, 0.20f, 0.70f, "%.2f m");
-			solverRow("Lower leg", "##loleg", cfg_.solver.lower_leg_m, 0.20f, 0.70f, "%.2f m");
-		});
+	ui::DrawPanel("Body priors", [&] {
+		ui::DrawTextWrapped("Phantom estimates body proportions automatically from the headset, controllers, "
+		                    "and any assigned physical trackers. It falls back to conservative defaults while "
+		                    "the estimate warms up.");
 	});
 
 	ui::DrawPanel("Estimation gate", [&] {
 		float tmp = static_cast<float>(cfg_.solver.virtual_min_confidence);
 		if (ImGui::SliderFloat("Minimum confidence", &tmp, 0.0f, 1.0f, "%.2f")) {
 			cfg_.solver.virtual_min_confidence = static_cast<double>(std::clamp(tmp, 0.0f, 1.0f));
-			cfg_.solver.calibrated = true;
 			SendSolverConfig();
 			SavePhantomConfig(cfg_);
 		}
@@ -1112,7 +817,7 @@ void PhantomPlugin::DrawCalibrationTab()
 			const auto roleIt = cfg_.device_role.find(serial);
 			phantom::BodyRole cur = (roleIt != cfg_.device_role.end()) ? roleIt->second : phantom::BodyRole::None;
 
-			ImGui::PushID(("cal_" + serial).c_str());
+			ImGui::PushID(("body_" + serial).c_str());
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextUnformatted(model.empty() ? "(unknown model)" : model.c_str());
@@ -1138,6 +843,10 @@ void PhantomPlugin::DrawCalibrationTab()
 						else {
 							cfg_.device_role[serial] = r;
 							cfg_.role_manual[serial] = true; // hand-picked
+							if (cfg_.dropout_enabled.count(serial) == 0) {
+								cfg_.dropout_enabled[serial] = true;
+								SendDeviceOptIn(serial, true);
+							}
 						}
 						SendDeviceRole(serial, r);
 						SavePhantomConfig(cfg_);
@@ -1152,40 +861,6 @@ void PhantomPlugin::DrawCalibrationTab()
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
 			ui::DrawEmptyState("No assignable trackers detected.");
-		}
-	});
-
-	ui::DrawPanel("Tracker mounting offsets", [&] {
-		if (ImGui::Button("Capture T-pose now")) {
-			CaptureTPose();
-		}
-		ui::TooltipForLastItem("Stand in a T-pose (arms out, body upright, head level) and click.\n"
-		                       "Captures the rigid mounting offset of every assigned physical\n"
-		                       "tracker. Reassigning a role or moving a tracker means re-capturing.");
-		if (!lastCalibrationSummary_.empty()) {
-			ImGui::Spacing();
-			ui::DrawStatusText(lastCalibrationSummary_.c_str(), ui::StatusTone::Ok);
-		}
-	});
-
-	ui::DrawPanel("Calibration status", [&] {
-		if (cfg_.role_offset.empty()) {
-			ui::DrawEmptyState("No roles calibrated yet.");
-			return;
-		}
-		ui::TableScope table("PhantomCalStatus", 2,
-		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
-		if (!table) return;
-		ui::SetupStretchColumn("Role", 1.0f);
-		ui::SetupStretchColumn("Status", 1.0f);
-		ImGui::TableHeadersRow();
-		for (const auto& kv : cfg_.role_offset) {
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(phantom::BodyRoleLabel(kv.first));
-			ImGui::TableSetColumnIndex(1);
-			ui::DrawStatusCell(kv.second.calibrated ? "Calibrated" : "Not captured",
-			                   kv.second.calibrated ? ui::StatusTone::Ok : ui::StatusTone::Idle);
 		}
 	});
 }
@@ -1224,8 +899,7 @@ void PhantomPlugin::DrawAbsentTab()
 		for (auto role : roles) {
 			bool enabled = cfg_.virtual_enabled.count(role) ? cfg_.virtual_enabled[role] : false;
 			const auto tier = phantom::ui::GetVirtualRoleTier(role);
-			const auto readiness =
-			    phantom::ui::EvaluateVirtualRoleReadiness(cfg_.solver.calibrated, physicalRoleAssigned(role));
+			const auto readiness = phantom::ui::EvaluateVirtualRoleReadiness(physicalRoleAssigned(role));
 			const bool disableToggle = !enabled && !readiness.canEnable;
 
 			ImGui::TableNextRow();
