@@ -73,6 +73,7 @@ jobs:
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-UpdateModuleReleaseChangelog.ps1
           ./.github/scripts/Test-NightlyBetaPlan.ps1
 
       - name: Test release notes generator
@@ -619,6 +620,10 @@ jobs:
           if (Test-Path -LiteralPath $cleanupPath) { Remove-Item -LiteralPath $cleanupPath -Force }
           New-Item -ItemType File -Path $cleanupPath -Force | Out-Null
           "cleanup_path=$cleanupPath" >> $env:GITHUB_OUTPUT
+          $moduleChangelogPath = Join-Path $env:RUNNER_TEMP 'module-release-changelogs.jsonl'
+          if (Test-Path -LiteralPath $moduleChangelogPath) { Remove-Item -LiteralPath $moduleChangelogPath -Force }
+          New-Item -ItemType File -Path $moduleChangelogPath -Force | Out-Null
+          "changelog_items_path=$moduleChangelogPath" >> $env:GITHUB_OUTPUT
 
           $moduleReleases = @(
             [pscustomobject]@{ Feature = 'Calibration';  DisplayName = 'Space Calibrator'; Repo = 'RealWhyKnot/WKOpenVR-SpaceCalibrator'; Path = $env:INSTALLER_CALIBRATION }
@@ -656,7 +661,9 @@ jobs:
               "Run this Setup.exe to install WKOpenVR and enable $($item.DisplayName).",
               "Other WKOpenVR modules can be enabled from the Modules tab or by running another module installer.",
               "",
-              "SHA256: $hash"
+              "SHA256: $hash",
+              "",
+              "Changelog: https://github.com/$($item.Repo)/blob/main/CHANGELOG.md"
             )
             $notes = [string]::Join([System.Environment]::NewLine, $notesLines) + [System.Environment]::NewLine
             $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -697,10 +704,128 @@ jobs:
               throw "Uploaded asset digest mismatch for $($file.Name): expected $expectedDigest got $assetDigest"
             }
             Write-Host "Verified uploaded asset digest: $assetDigest"
+
+            $releaseUrl = "https://github.com/$($item.Repo)/releases/tag/$tag"
+            [pscustomobject]@{
+              Repo = $item.Repo
+              DisplayName = $item.DisplayName
+              Tag = $tag
+              Version = $version
+              InstallerName = $file.Name
+              Sha256 = $hash
+              ReleaseUrl = $releaseUrl
+            } | ConvertTo-Json -Compress | Add-Content -LiteralPath $moduleChangelogPath
+
             $published++
           }
 
           if ($published -eq 0) { throw "No module releases were published." }
+
+      - name: Update module release-page changelogs
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN }}
+          CHANGELOG_ITEMS_PATH: ${{ steps.publish.outputs.changelog_items_path }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "MIRROR_RELEASE_TOKEN secret is required to update module release-page changelogs."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CHANGELOG_ITEMS_PATH) -or -not (Test-Path -LiteralPath $env:CHANGELOG_ITEMS_PATH)) {
+            Write-Host "No module release-page changelog items were produced."
+            return
+          }
+
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          $lines = @(Get-Content -LiteralPath $env:CHANGELOG_ITEMS_PATH | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          if ($lines.Count -eq 0) {
+            Write-Host "No module release-page changelog items were produced."
+            return
+          }
+
+          foreach ($line in $lines) {
+            $item = $line | ConvertFrom-Json
+            $repo = [string]$item.Repo
+            $safeName = ($repo -replace '[^A-Za-z0-9_.-]', '_')
+            $existingPath = Join-Path $env:RUNNER_TEMP "$safeName-CHANGELOG.md"
+            $updatedPath = Join-Path $env:RUNNER_TEMP "$safeName-CHANGELOG.updated.md"
+
+            $refJson = & gh api "repos/$repo/git/ref/heads/main"
+            if ($LASTEXITCODE -ne 0) { throw "Could not read main ref for $repo." }
+            $expectedOid = [string]($refJson | ConvertFrom-Json).object.sha
+            if ([string]::IsNullOrWhiteSpace($expectedOid)) { throw "Could not resolve main head for $repo." }
+
+            $contentJson = & gh api "repos/$repo/contents/CHANGELOG.md?ref=main" 2>$null
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($contentJson)) {
+              $content = ($contentJson | ConvertFrom-Json).content
+              $bytes = [Convert]::FromBase64String(($content -replace '\s', ''))
+              [System.IO.File]::WriteAllBytes($existingPath, $bytes)
+            } else {
+              [System.IO.File]::WriteAllText($existingPath, "", $utf8NoBom)
+            }
+
+            Copy-Item -LiteralPath $existingPath -Destination $updatedPath -Force
+            ./.github/scripts/Update-ModuleReleaseChangelog.ps1 `
+              -ChangelogPath $updatedPath `
+              -DisplayName ([string]$item.DisplayName) `
+              -Tag ([string]$item.Tag) `
+              -Version ([string]$item.Version) `
+              -InstallerName ([string]$item.InstallerName) `
+              -Sha256 ([string]$item.Sha256) `
+              -ReleaseUrl ([string]$item.ReleaseUrl)
+
+            $oldBytes = [System.IO.File]::ReadAllBytes($existingPath)
+            $newBytes = [System.IO.File]::ReadAllBytes($updatedPath)
+            if ([Convert]::ToBase64String($oldBytes) -eq [Convert]::ToBase64String($newBytes)) {
+              Write-Host "$repo CHANGELOG.md already contains $($item.Tag)."
+              continue
+            }
+
+            $changelogB64 = [Convert]::ToBase64String($newBytes)
+            $payloadPath = Join-Path $env:RUNNER_TEMP "$safeName-changelog-payload.json"
+            $payload = @{
+              query = "mutation(`$input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: `$input) { commit { oid url } } }"
+              variables = @{
+                input = @{
+                  branch = @{
+                    repositoryNameWithOwner = $repo
+                    branchName = "main"
+                  }
+                  message = @{
+                    headline = "docs(changelog): add $($item.Tag) release notes [skip changelog]"
+                    body = "Published installer changelog for $($item.Tag)."
+                  }
+                  fileChanges = @{
+                    additions = @(
+                      @{
+                        path = "CHANGELOG.md"
+                        contents = $changelogB64
+                      }
+                    )
+                  }
+                  expectedHeadOid = $expectedOid
+                }
+              }
+            } | ConvertTo-Json -Depth 12
+            [System.IO.File]::WriteAllText($payloadPath, $payload, $utf8NoBom)
+
+            $response = & gh api graphql --input $payloadPath
+            if ($LASTEXITCODE -ne 0) { throw "createCommitOnBranch failed for $repo." }
+            $result = $response | ConvertFrom-Json
+            if ($result.errors) {
+              throw "createCommitOnBranch returned GraphQL errors for ${repo}: $($result.errors | ConvertTo-Json -Compress)"
+            }
+            $newOid = [string]$result.data.createCommitOnBranch.commit.oid
+            if ([string]::IsNullOrWhiteSpace($newOid)) {
+              throw "createCommitOnBranch did not return a commit oid for $repo."
+            }
+
+            $verified = & gh api "repos/$repo/commits/$newOid" --jq '.commit.verification.verified'
+            if ($LASTEXITCODE -ne 0 -or $verified -ne "true") {
+              throw "Commit $newOid on $repo is not verified."
+            }
+            Write-Host "Updated $repo CHANGELOG.md: $newOid"
+          }
 
       - name: Push promoted changelog back to main (verified)
         if: ${{ steps.beta.outputs.is_beta != 'true' }}
