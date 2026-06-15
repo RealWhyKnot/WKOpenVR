@@ -243,18 +243,16 @@ std::vector<uint8_t> SnapshotCurrentChaperone();
 // Returns false if snapshot bytes don't parse.
 bool RestoreChaperoneFromSnapshot(const std::vector<uint8_t>& snapshot);
 
-// Floor-protection: hold the SteamVR standing-zero floor against runtime resets.
-// On a Quest + lighthouse (space-cal) rig the Oculus runtime re-asserts its own
-// zeroed standing-zero after a chaperone reload (e.g. the ReloadInfo a boundary
-// push triggers), wiping a floor the user set. SetFloorStandingZeroTarget records
-// the standing-zero we committed for the floor; PushToChaperone folds that
-// re-assert into the boundary push, and TickFloorStandingZeroWatchdog re-commits
-// it whenever the live standing-zero drifts away. Keeps the standing-zero
-// mechanism (the same call OpenVR Advanced Settings uses).
+// Floor ownership: record the standing-zero committed for a floor apply, fold it
+// into WKOpenVR's own boundary commits, and refresh that stored target when
+// SteamVR reports origin-changing chaperone events. This keeps floor writes
+// one-shot and avoids re-committing over other tools' recenter logic.
 void SetFloorStandingZeroTarget(const vr::HmdMatrix34_t& standingZeroToRaw);
 void ClearFloorStandingZeroTarget();
 bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out);
-void TickFloorStandingZeroWatchdog();
+bool IsObservedChaperoneEvent(uint32_t eventType);
+bool ShouldRebaseFloorTargetForChaperoneEvent(uint32_t eventType, bool originatedByLocalCommit, bool floorTargetActive);
+void TickFloorStandingZeroEvents();
 
 PolygonBounds ComputePolygonBoundsXZ(const std::vector<BoundaryVertex>& v);
 

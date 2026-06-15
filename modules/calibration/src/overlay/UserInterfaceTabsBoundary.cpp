@@ -974,9 +974,9 @@ bool ApplyFloorFromStandingContactPose(const Eigen::Affine3d& standingContactPos
 		openvr_pair::common::DiagnosticLog("boundary-floor", "%s", fbuf);
 		return false;
 	}
-	// Hold this standing-zero against runtime resets -- a boundary push's
-	// ReloadInfo otherwise lets the Oculus runtime wipe it (see the watchdog in
-	// Boundary.cpp). This is what makes "set floor, then draw a boundary" stick.
+	// Record the one-shot standing-zero so WKOpenVR's own boundary commit can
+	// include it. Later recenter/chaperone events refresh this target instead of
+	// re-committing over the other owner.
 	wkopenvr::boundary::SetFloorStandingZeroTarget(committedZero);
 	// Track the cumulative shift applied to the standing-zero so Reset undoes it.
 	CalCtx.floorOffsetMetersY = previousOffset + measuredStandingY;
@@ -1692,10 +1692,9 @@ void LogPersistentBoundaryStatusOnChange(size_t vertexCount)
 	openvr_pair::common::DiagnosticLog("boundary", "%s", lbuf);
 }
 
-// Always-on applied boundary. The headset runtime owns the chaperone and ignores
-// our perimeter push, so when a boundary is enabled and we're not actively
-// capturing we draw it ourselves as a single translucent filled floor with a thin
-// outline (no per-vertex icons) as the safety reference.
+// Always-on applied boundary. Headset runtimes can replace the native chaperone,
+// so when a boundary is enabled and we're not actively capturing we draw it
+// ourselves as a single translucent filled floor with a thin outline.
 void TickPersistentBoundaryOverlay()
 {
 	if (!CalCtx.boundary.enabled || CalCtx.boundary.vertices.size() < 3) {
@@ -1766,10 +1765,7 @@ void CCal_TickBoundaryCapture()
 	const bool captureActive = s_capture.state() == wkopenvr::boundary::CaptureState::Active;
 	if (!captureActive && !s_floorCapture.active()) {
 		TickPersistentBoundaryOverlay();
-		// Hold the SteamVR floor against runtime resets while idle. Runs only
-		// when not capturing, so it can't disturb a live working-set preview;
-		// no-op unless a floor target is active.
-		wkopenvr::boundary::TickFloorStandingZeroWatchdog();
+		wkopenvr::boundary::TickFloorStandingZeroEvents();
 		return;
 	}
 

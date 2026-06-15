@@ -18,6 +18,10 @@
 namespace wkopenvr::boundary {
 
 static bool ChaperoneSetupOk();
+static void MarkLocalChaperoneWrite(const char* source);
+static void LogChaperoneApplyDiagnostics(const char* source, bool committed,
+                                         const vr::HmdMatrix34_t* beforeStandingZero,
+                                         const vr::HmdMatrix34_t* afterStandingZero);
 
 // ---------------------------------------------------------------------------
 // Area helpers
@@ -283,9 +287,8 @@ bool ApplySteamVrFloorOffset(double measuredFloorYStanding, char* errorBuffer, s
 	const vr::HmdMatrix34_t after = OffsetStandingZeroPoseForFloor(before, measuredFloorYStanding);
 	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&after);
 	const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
-	if (committed && vr::VRChaperone()) {
-		vr::VRChaperone()->ReloadInfo();
-	}
+	if (committed) MarkLocalChaperoneWrite("floor_apply");
+	LogChaperoneApplyDiagnostics("floor_apply", committed, &before, &after);
 	if (committed) {
 		setup->RevertWorkingCopy();
 	}
@@ -908,24 +911,14 @@ static bool SetWorkingBoundary(vr::IVRChaperoneSetup* setup,
 		Metrics::WriteLogAnnotation(lbuf);
 		return false;
 	}
-	setup->SetWorkingPlayAreaSize(output.workingSet.playAreaX, output.workingSet.playAreaZ);
-	setup->SetWorkingPerimeter(output.workingSet.perimeter.data(),
-	                           static_cast<uint32_t>(output.workingSet.perimeter.size()));
 	setup->SetWorkingCollisionBoundsInfo(output.workingSet.collisionBounds.data(),
 	                                     static_cast<uint32_t>(output.workingSet.collisionBounds.size()));
+	setup->SetWorkingPlayAreaSize(output.workingSet.playAreaX, output.workingSet.playAreaZ);
 	return true;
 }
 
 // ---------------------------------------------------------------------------
-// Floor-protection: hold the SteamVR standing-zero floor against runtime resets.
-//
-// On a Quest + lighthouse (space-cal) rig the Oculus runtime owns the universe
-// and re-asserts its own (zeroed) standing-zero after a chaperone reload -- and a
-// boundary push calls ReloadInfo, so drawing a boundary wipes a floor the user
-// just set. Rather than fight the runtime with a parallel offset, we keep the
-// standing-zero mechanism (the same call OpenVR Advanced Settings uses) and hold
-// it: record the standing-zero committed for the floor, fold that re-assert into
-// every boundary push, and re-commit it whenever the live standing-zero drifts.
+// Floor ownership: one-shot writes plus event-aware rebasing.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -933,19 +926,12 @@ namespace {
 bool g_floorTargetActive = false;
 vr::HmdMatrix34_t g_floorTargetZero = {};
 
-// Watchdog cadence: read the live standing-zero a few times a second; re-commit
-// at most twice a second so a stubborn runtime can't drive a per-frame flicker
-// war; emit a low-rate heartbeat so a session log shows whether the floor holds.
-constexpr double kFloorWatchdogCheckIntervalSec = 0.33; // ~3 Hz
-constexpr double kFloorReassertDebounceSec = 0.5;       // <=2 Hz re-commit
-constexpr double kFloorWatchdogHeartbeatSec = 5.0;      // ~0.2 Hz log
-constexpr double kFloorDriftToleranceM = 0.02;          // 2 cm
-constexpr int kFloorReassertStreakWarn = 5;
+constexpr double kLocalChaperoneEventWindowSec = 2.0;
+constexpr uint32_t kLocalChaperoneEventBudget = 6;
 
-double g_floorWatchdogLastCheck = 0.0;
-double g_floorWatchdogLastReassert = 0.0;
-double g_floorWatchdogLastHeartbeat = 0.0;
-int g_floorWatchdogReassertStreak = 0;
+double g_localChaperoneWriteExpiresAt = 0.0;
+uint32_t g_localChaperoneEventBudget = 0;
+std::string g_localChaperoneWriteSource;
 
 double NowSecondsSteady()
 {
@@ -961,21 +947,152 @@ double StandingZeroTranslationDeltaM(const vr::HmdMatrix34_t& a, const vr::HmdMa
 	return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+const char* ChaperoneEventName(uint32_t eventType)
+{
+	switch (eventType) {
+		case vr::VREvent_ChaperoneUniverseHasChanged:
+			return "ChaperoneUniverseHasChanged";
+		case vr::VREvent_ChaperoneSettingsHaveChanged:
+			return "ChaperoneSettingsHaveChanged";
+		case vr::VREvent_SeatedZeroPoseReset:
+			return "SeatedZeroPoseReset";
+		case vr::VREvent_ChaperoneFlushCache:
+			return "ChaperoneFlushCache";
+		case vr::VREvent_ChaperoneRoomSetupStarting:
+			return "ChaperoneRoomSetupStarting";
+		case vr::VREvent_ChaperoneRoomSetupFinished:
+			return "ChaperoneRoomSetupCommitted";
+		case vr::VREvent_StandingZeroPoseReset:
+			return "StandingZeroPoseReset";
+		default:
+			return "Other";
+	}
+}
+
+bool ConsumeLocalChaperoneWrite(uint32_t eventType, double now, const char** sourceOut)
+{
+	if (!IsObservedChaperoneEvent(eventType)) return false;
+	if (g_localChaperoneEventBudget == 0 || now > g_localChaperoneWriteExpiresAt) {
+		g_localChaperoneEventBudget = 0;
+		g_localChaperoneWriteSource.clear();
+		return false;
+	}
+	--g_localChaperoneEventBudget;
+	if (sourceOut) *sourceOut = g_localChaperoneWriteSource.c_str();
+	return true;
+}
+
+void LogObservedChaperoneEvent(uint32_t eventType, bool originatedByLocalCommit, const char* source)
+{
+	char lbuf[224];
+	snprintf(lbuf, sizeof lbuf, "[boundary] chaperone event: type=%u name=%s origin=%s source=%s", eventType,
+	         ChaperoneEventName(eventType), originatedByLocalCommit ? "wkopenvr" : "external",
+	         (source && source[0]) ? source : "none");
+	Metrics::WriteLogAnnotation(lbuf);
+}
+
+void RebaseFloorTargetFromWorkingCopy(uint32_t eventType)
+{
+	if (!g_floorTargetActive || !ChaperoneSetupOk()) return;
+
+	auto* setup = vr::VRChaperoneSetup();
+	setup->RevertWorkingCopy();
+
+	vr::HmdMatrix34_t live{};
+	if (!setup->GetWorkingStandingZeroPoseToRawTrackingPose(&live)) {
+		char fbuf[160];
+		snprintf(fbuf, sizeof fbuf, "[boundary-floor] rebase skipped: event=%u get_standing_zero_failed", eventType);
+		Metrics::WriteLogAnnotation(fbuf);
+		return;
+	}
+
+	const double driftM = StandingZeroTranslationDeltaM(live, g_floorTargetZero);
+	g_floorTargetZero = live;
+
+	char lbuf[224];
+	snprintf(lbuf, sizeof lbuf,
+	         "[boundary-floor] target rebased: event=%u name=%s drift_mm=%.1f target_y=%.4f source=external", eventType,
+	         ChaperoneEventName(eventType), driftM * 1000.0, g_floorTargetZero.m[1][3]);
+	Metrics::WriteLogAnnotation(lbuf);
+}
+
 } // namespace
+
+static void MarkLocalChaperoneWrite(const char* source)
+{
+	g_localChaperoneWriteExpiresAt = NowSecondsSteady() + kLocalChaperoneEventWindowSec;
+	g_localChaperoneEventBudget = kLocalChaperoneEventBudget;
+	g_localChaperoneWriteSource = (source && source[0]) ? source : "unknown";
+}
+
+static void LogChaperoneApplyDiagnostics(const char* source, bool committed,
+                                         const vr::HmdMatrix34_t* beforeStandingZero,
+                                         const vr::HmdMatrix34_t* afterStandingZero)
+{
+	auto* setup = vr::VRChaperoneSetup();
+
+	uint32_t liveQuadCount = 0;
+	const bool liveQuadsOk = setup && setup->GetLiveCollisionBoundsInfo(nullptr, &liveQuadCount);
+
+	float playAreaX = 0.0f;
+	float playAreaZ = 0.0f;
+	const bool playAreaOk = setup && setup->GetWorkingPlayAreaSize(&playAreaX, &playAreaZ);
+
+	int calibrationState = -1;
+	if (vr::VRChaperone()) {
+		calibrationState = static_cast<int>(vr::VRChaperone()->GetCalibrationState());
+	}
+
+	int driverImport = -1;
+	int settingsErrValue = -1;
+	if (vr::VRSettings()) {
+		vr::EVRSettingsError settingsErr = vr::VRSettingsError_None;
+		const bool value = vr::VRSettings()->GetBool(vr::k_pch_CollisionBounds_Section,
+		                                             vr::k_pch_CollisionBounds_EnableDriverImport, &settingsErr);
+		settingsErrValue = static_cast<int>(settingsErr);
+		if (settingsErr == vr::VRSettingsError_None) {
+			driverImport = value ? 1 : 0;
+		}
+	}
+
+	uint64_t universeId = 0;
+	int universeErrValue = -1;
+	if (vr::VRSystem()) {
+		vr::ETrackedPropertyError universeErr = vr::TrackedProp_Success;
+		universeId = vr::VRSystem()->GetUint64TrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,
+		                                                            vr::Prop_CurrentUniverseId_Uint64, &universeErr);
+		universeErrValue = static_cast<int>(universeErr);
+	}
+
+	const double beforeY = beforeStandingZero ? beforeStandingZero->m[1][3] : std::numeric_limits<double>::quiet_NaN();
+	const double afterY = afterStandingZero ? afterStandingZero->m[1][3] : std::numeric_limits<double>::quiet_NaN();
+
+	char lbuf[512];
+	snprintf(lbuf, sizeof lbuf,
+	         "[boundary] chaperone apply diag: source=%s commit=%d before_y=%.4f after_y=%.4f live_quads_ok=%d "
+	         "live_quads=%u working_play_ok=%d working_play=(%.3f,%.3f) calibration_state=%d "
+	         "enable_driver_import=%d settings_err=%d hmd_universe=%llu hmd_universe_err=%d",
+	         (source && source[0]) ? source : "unknown", committed ? 1 : 0, beforeY, afterY, liveQuadsOk ? 1 : 0,
+	         liveQuadCount, playAreaOk ? 1 : 0, playAreaX, playAreaZ, calibrationState, driverImport, settingsErrValue,
+	         static_cast<unsigned long long>(universeId), universeErrValue);
+	Metrics::WriteLogAnnotation(lbuf);
+
+	if (driverImport == 1) {
+		Metrics::WriteLogAnnotation(
+		    "[boundary] enableDriverBoundsImport=1; runtime driver import can replace SteamVR chaperone until native "
+		    "SteamVR chaperone ownership is selected and SteamVR is restarted");
+	}
+}
 
 void SetFloorStandingZeroTarget(const vr::HmdMatrix34_t& standingZeroToRaw)
 {
 	g_floorTargetZero = standingZeroToRaw;
 	g_floorTargetActive = true;
-	g_floorWatchdogReassertStreak = 0;
-	g_floorWatchdogLastReassert = 0.0;
-	g_floorWatchdogLastHeartbeat = 0.0;
 }
 
 void ClearFloorStandingZeroTarget()
 {
 	g_floorTargetActive = false;
-	g_floorWatchdogReassertStreak = 0;
 }
 
 bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out)
@@ -985,62 +1102,56 @@ bool GetFloorStandingZeroTarget(vr::HmdMatrix34_t* out)
 	return true;
 }
 
-void TickFloorStandingZeroWatchdog()
+bool IsObservedChaperoneEvent(uint32_t eventType)
 {
-	if (!g_floorTargetActive) return;
-	if (!ChaperoneSetupOk()) return;
-
-	const double now = NowSecondsSteady();
-	if (g_floorWatchdogLastCheck > 0.0 && now >= g_floorWatchdogLastCheck &&
-	    now - g_floorWatchdogLastCheck < kFloorWatchdogCheckIntervalSec) {
-		return;
+	switch (eventType) {
+		case vr::VREvent_ChaperoneUniverseHasChanged:
+		case vr::VREvent_ChaperoneSettingsHaveChanged:
+		case vr::VREvent_SeatedZeroPoseReset:
+		case vr::VREvent_ChaperoneFlushCache:
+		case vr::VREvent_ChaperoneRoomSetupStarting:
+		case vr::VREvent_ChaperoneRoomSetupFinished:
+		case vr::VREvent_StandingZeroPoseReset:
+			return true;
+		default:
+			return false;
 	}
-	g_floorWatchdogLastCheck = now;
+}
 
-	auto* setup = vr::VRChaperoneSetup();
-	setup->RevertWorkingCopy();
-	vr::HmdMatrix34_t live;
-	if (!setup->GetWorkingStandingZeroPoseToRawTrackingPose(&live)) return;
-
-	const double driftM = StandingZeroTranslationDeltaM(live, g_floorTargetZero);
-
-	if (g_floorWatchdogLastHeartbeat <= 0.0 || now - g_floorWatchdogLastHeartbeat >= kFloorWatchdogHeartbeatSec) {
-		g_floorWatchdogLastHeartbeat = now;
-		char hbuf[192];
-		snprintf(hbuf, sizeof hbuf,
-		         "[boundary-floor] floor_state live_y=%.4f expected_y=%.4f drift_mm=%.1f reasserts=%d", live.m[1][3],
-		         g_floorTargetZero.m[1][3], driftM * 1000.0, g_floorWatchdogReassertStreak);
-		Metrics::WriteLogAnnotation(hbuf);
+bool ShouldRebaseFloorTargetForChaperoneEvent(uint32_t eventType, bool originatedByLocalCommit, bool floorTargetActive)
+{
+	(void)originatedByLocalCommit;
+	if (!floorTargetActive) return false;
+	switch (eventType) {
+		case vr::VREvent_ChaperoneUniverseHasChanged:
+		case vr::VREvent_SeatedZeroPoseReset:
+		case vr::VREvent_ChaperoneFlushCache:
+		case vr::VREvent_ChaperoneRoomSetupFinished:
+		case vr::VREvent_StandingZeroPoseReset:
+			return true;
+		default:
+			return false;
 	}
+}
 
-	if (driftM <= kFloorDriftToleranceM) {
-		g_floorWatchdogReassertStreak = 0; // floor is holding
-		return;
-	}
+void TickFloorStandingZeroEvents()
+{
+	if (!g_floorTargetActive && g_localChaperoneEventBudget == 0) return;
 
-	// Debounce re-commits; the streak counter makes a flicker war visible.
-	if (g_floorWatchdogLastReassert > 0.0 && now - g_floorWatchdogLastReassert < kFloorReassertDebounceSec) {
-		return;
-	}
-	g_floorWatchdogLastReassert = now;
+	auto* system = vr::VRSystem();
+	if (!system) return;
 
-	// Re-commit only the standing-zero; the reverted working copy already holds
-	// the live bounds, so they are preserved. No ReloadInfo (matches the floor
-	// apply path) -- ReloadInfo is what nudges the runtime to re-sync.
-	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&g_floorTargetZero);
-	const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
-	++g_floorWatchdogReassertStreak;
+	vr::VREvent_t ev{};
+	while (system->PollNextEvent(&ev, sizeof(ev))) {
+		if (!IsObservedChaperoneEvent(ev.eventType)) continue;
 
-	char lbuf[224];
-	snprintf(
-	    lbuf, sizeof lbuf,
-	    "[boundary-floor] reasserted drift_mm=%.1f live_y=%.4f target_y=%.4f committed=%d streak=%d source=watchdog",
-	    driftM * 1000.0, live.m[1][3], g_floorTargetZero.m[1][3], committed ? 1 : 0, g_floorWatchdogReassertStreak);
-	Metrics::WriteLogAnnotation(lbuf);
-
-	if (g_floorWatchdogReassertStreak == kFloorReassertStreakWarn) {
-		Metrics::WriteLogAnnotation("[boundary-floor] standing-zero keeps resetting after re-assert -- the runtime is "
-		                            "overriding the floor; the driver-side floor offset is the durable fallback");
+		const double now = NowSecondsSteady();
+		const char* localSource = nullptr;
+		const bool local = ConsumeLocalChaperoneWrite(ev.eventType, now, &localSource);
+		LogObservedChaperoneEvent(ev.eventType, local, localSource);
+		if (ShouldRebaseFloorTargetForChaperoneEvent(ev.eventType, local, g_floorTargetActive)) {
+			RebaseFloorTargetFromWorkingCopy(ev.eventType);
+		}
 	}
 }
 
@@ -1070,23 +1181,32 @@ bool PushToChaperone(const std::vector<BoundaryVertex>& standingUniverseVertices
 		Metrics::WriteLogAnnotation(lbuf);
 	}
 
-	if (!SetWorkingBoundary(setup, standingUniverseVertices, floorY, ceilingY)) {
+	ChaperoneOutput output = BuildChaperoneOutput(standingUniverseVertices, floorY, ceilingY);
+	if (!output.ready()) {
+		char lbuf[192];
+		snprintf(lbuf, sizeof lbuf, "[boundary] chaperone output rejected: status=%d reason=%s",
+		         static_cast<int>(output.status), output.reason ? output.reason : "");
+		Metrics::WriteLogAnnotation(lbuf);
 		Metrics::WriteLogAnnotation("[boundary] chaperone push failed: invalid_working_set");
 		return false;
 	}
-	// Re-assert the floor standing-zero inside this SAME transaction so a boundary
-	// push can't drop a floor the user set (OVRAS commits bounds + standing-zero
-	// together). TickFloorStandingZeroWatchdog covers any later runtime reset.
-	{
-		vr::HmdMatrix34_t floorZero;
-		if (GetFloorStandingZeroTarget(&floorZero)) {
-			setup->SetWorkingStandingZeroPoseToRawTrackingPose(&floorZero);
-		}
+
+	vr::HmdMatrix34_t beforeZero{};
+	const bool beforeZeroOk = setup->GetWorkingStandingZeroPoseToRawTrackingPose(&beforeZero);
+	vr::HmdMatrix34_t floorZero{};
+	const bool hasFloorZero = GetFloorStandingZeroTarget(&floorZero);
+
+	setup->SetWorkingCollisionBoundsInfo(output.workingSet.collisionBounds.data(),
+	                                     static_cast<uint32_t>(output.workingSet.collisionBounds.size()));
+	if (hasFloorZero) {
+		setup->SetWorkingStandingZeroPoseToRawTrackingPose(&floorZero);
 	}
+	setup->SetWorkingPlayAreaSize(output.workingSet.playAreaX, output.workingSet.playAreaZ);
+
 	const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
-	if (committed && vr::VRChaperone()) {
-		vr::VRChaperone()->ReloadInfo();
-	}
+	if (committed) MarkLocalChaperoneWrite("boundary_push");
+	LogChaperoneApplyDiagnostics("boundary_push", committed, beforeZeroOk ? &beforeZero : nullptr,
+	                             hasFloorZero ? &floorZero : nullptr);
 	if (committed) {
 		setup->RevertWorkingCopy();
 	}
@@ -1422,6 +1542,8 @@ bool RestoreChaperoneFromSnapshot(const std::vector<uint8_t>& snapshot)
 
 	auto* setup = vr::VRChaperoneSetup();
 	setup->RevertWorkingCopy();
+	vr::HmdMatrix34_t beforeZero{};
+	const bool beforeZeroOk = setup->GetWorkingStandingZeroPoseToRawTrackingPose(&beforeZero);
 	if (parsed.hasPlayArea) {
 		setup->SetWorkingPlayAreaSize(parsed.playAreaX, parsed.playAreaZ);
 	}
@@ -1440,9 +1562,9 @@ bool RestoreChaperoneFromSnapshot(const std::vector<uint8_t>& snapshot)
 	}
 
 	const bool committed = setup->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
-	if (committed && vr::VRChaperone()) {
-		vr::VRChaperone()->ReloadInfo();
-	}
+	if (committed) MarkLocalChaperoneWrite("restore_snapshot");
+	LogChaperoneApplyDiagnostics("restore_snapshot", committed, beforeZeroOk ? &beforeZero : nullptr,
+	                             parsed.hasStandingZero ? &parsed.standingZeroToRaw : nullptr);
 	setup->RevertWorkingCopy();
 	char lbuf[224];
 	snprintf(

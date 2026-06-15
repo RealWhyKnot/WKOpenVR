@@ -1514,10 +1514,10 @@ TEST(BoundaryPreviewTest, UsesOpenGlTextureUploadForHmdPreview)
 
 TEST(BoundaryFloorTest, StandingZeroTargetStoresAndClears)
 {
-	// Contract the floor watchdog (TickFloorStandingZeroWatchdog) and the
-	// boundary push (PushToChaperone) rely on: the standing-zero committed for
-	// the floor is recorded, returned, and cleared. The watchdog re-commits this
-	// target when the live standing-zero drifts; clearing it stops the watchdog.
+	// Contract the boundary push and event observer rely on: the standing-zero
+	// committed for the floor is recorded, returned, and cleared. The observer
+	// refreshes this target after chaperone/zero-pose changes instead of
+	// re-committing it.
 	using wkopenvr::boundary::ClearFloorStandingZeroTarget;
 	using wkopenvr::boundary::GetFloorStandingZeroTarget;
 	using wkopenvr::boundary::SetFloorStandingZeroTarget;
@@ -1538,6 +1538,58 @@ TEST(BoundaryFloorTest, StandingZeroTargetStoresAndClears)
 
 	ClearFloorStandingZeroTarget();
 	EXPECT_FALSE(GetFloorStandingZeroTarget(&out));
+}
+
+TEST(BoundaryFloorTest, ChaperoneEventObserverFiltersRelevantEvents)
+{
+	using wkopenvr::boundary::IsObservedChaperoneEvent;
+
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_ChaperoneUniverseHasChanged));
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_ChaperoneSettingsHaveChanged));
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_SeatedZeroPoseReset));
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_ChaperoneFlushCache));
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_ChaperoneRoomSetupStarting));
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_ChaperoneRoomSetupFinished));
+	EXPECT_TRUE(IsObservedChaperoneEvent(vr::VREvent_StandingZeroPoseReset));
+	EXPECT_FALSE(IsObservedChaperoneEvent(vr::VREvent_Quit));
+}
+
+TEST(BoundaryFloorTest, OriginEventsRebaseFloorTarget)
+{
+	using wkopenvr::boundary::ShouldRebaseFloorTargetForChaperoneEvent;
+
+	EXPECT_FALSE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_StandingZeroPoseReset,
+	                                                      /*originatedByLocalCommit=*/false,
+	                                                      /*floorTargetActive=*/false));
+	EXPECT_TRUE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_StandingZeroPoseReset,
+	                                                     /*originatedByLocalCommit=*/true,
+	                                                     /*floorTargetActive=*/true));
+
+	EXPECT_TRUE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_StandingZeroPoseReset,
+	                                                     /*originatedByLocalCommit=*/false,
+	                                                     /*floorTargetActive=*/true));
+	EXPECT_TRUE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_SeatedZeroPoseReset,
+	                                                     /*originatedByLocalCommit=*/false,
+	                                                     /*floorTargetActive=*/true));
+	EXPECT_TRUE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_ChaperoneUniverseHasChanged,
+	                                                     /*originatedByLocalCommit=*/false,
+	                                                     /*floorTargetActive=*/true));
+	EXPECT_TRUE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_ChaperoneFlushCache,
+	                                                     /*originatedByLocalCommit=*/false,
+	                                                     /*floorTargetActive=*/true));
+	EXPECT_TRUE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_ChaperoneRoomSetupFinished,
+	                                                     /*originatedByLocalCommit=*/false,
+	                                                     /*floorTargetActive=*/true));
+
+	EXPECT_FALSE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_ChaperoneSettingsHaveChanged,
+	                                                      /*originatedByLocalCommit=*/false,
+	                                                      /*floorTargetActive=*/true));
+	EXPECT_FALSE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_ChaperoneRoomSetupStarting,
+	                                                      /*originatedByLocalCommit=*/false,
+	                                                      /*floorTargetActive=*/true));
+	EXPECT_FALSE(ShouldRebaseFloorTargetForChaperoneEvent(vr::VREvent_Quit,
+	                                                      /*originatedByLocalCommit=*/false,
+	                                                      /*floorTargetActive=*/true));
 }
 
 TEST(BoundaryPreviewTest, StatusExposesInitialUploadDiagnostics)
