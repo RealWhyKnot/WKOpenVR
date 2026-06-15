@@ -187,7 +187,7 @@ std::string VirtualRoleFromSerial(const std::string& serial)
 	if (serial.rfind(prefix, 0) != 0) return {};
 	const size_t last_dash = serial.rfind('-');
 	if (last_dash == std::string::npos || last_dash <= prefix.size()) return {};
-	const std::string role = serial.substr(prefix.size(), last_dash - prefix.size());
+	std::string role = serial.substr(prefix.size(), last_dash - prefix.size());
 	if (phantom::BodyRoleToControllerType(phantom::BodyRoleFromKey(role.c_str())) == nullptr) return {};
 	return role;
 }

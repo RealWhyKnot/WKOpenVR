@@ -63,6 +63,7 @@ TEST(PhantomTrajectory, FootSkateMetricIsZeroWhenFootIsLocked)
 	options.frame_count = 60;
 	const auto frames = GenerateTrajectory(options);
 	std::vector<BodyCompletionPose> left_foot;
+	left_foot.reserve(frames.size());
 	for (const auto& frame : frames) {
 		left_foot.push_back(frame.roles[static_cast<size_t>(BodyRole::LeftFoot)]);
 	}
