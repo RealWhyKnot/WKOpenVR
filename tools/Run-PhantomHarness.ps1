@@ -5,6 +5,7 @@ param(
 	# Scenario specs:
 	#   role:start_ms:end_ms
 	#   name:role:start_ms:end_ms
+	# Use role "none" for virtual-tracker-only no-FBT replays.
 	[string[]]$Scenario = @(),
 
 	# Output directory for per-scenario metric CSVs and captured logs.
