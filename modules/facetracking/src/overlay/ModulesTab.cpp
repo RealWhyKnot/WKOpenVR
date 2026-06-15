@@ -47,20 +47,6 @@ struct ModulesTabState
 
 static ModulesTabState g_state;
 
-static const ModuleSource* FindSourceInCatalogue(const SourcesCatalogue& cat, const std::string& sourceId)
-{
-	for (const auto& src : cat.sources)
-		if (src.id == sourceId) return &src;
-	return nullptr;
-}
-
-static bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModule& mod)
-{
-	if (!mod.prerelease) return true;
-	const ModuleSource* source = FindSourceInCatalogue(cat, mod.source_id);
-	return source && source->include_prerelease;
-}
-
 static void RefreshIfStale()
 {
 	uint64_t now = GetTickCount64();
@@ -433,7 +419,7 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 		if (sourcesTable) {
 			SetupStretchColumn("Label");
 			SetupFixedColumn("Kind", 70.0f);
-			SetupFixedColumn("Betas", 54.0f);
+			SetupFixedColumn("Pre-release", 132.0f);
 			SetupFixedColumn("Status", 130.0f);
 			SetupFixedColumn("Actions", 180.0f);
 			DrawTableHeader();
@@ -461,7 +447,8 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 				if (isRegistry) {
 					bool includePrerelease = src.include_prerelease;
 					ImGui::BeginDisabled(syncing);
-					if (ImGui::Checkbox(("##ft_src_beta_" + src.id).c_str(), &includePrerelease)) {
+					if (ImGui::Checkbox(("Show pre-release##ft_src_prerelease_" + src.id).c_str(),
+					                    &includePrerelease)) {
 						src.include_prerelease = includePrerelease;
 						SaveSourcesCatalogue(g_state.catalogue);
 						g_state.last_scan_tick = 0;
@@ -471,7 +458,7 @@ static void DrawSourcesSection(FacetrackingPlugin& plugin)
 						}
 					}
 					ImGui::EndDisabled();
-					TooltipForLastItem("Show prerelease module versions from this source.");
+					TooltipForLastItem("Show pre-release module versions from this source.");
 				}
 				else {
 					ImGui::TextDisabled("-");

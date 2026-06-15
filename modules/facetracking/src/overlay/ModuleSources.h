@@ -124,6 +124,10 @@ SourcesCatalogue EnsureSourcesCatalogue();
 // Look up a source label for display ("Legacy registry", "Folder: foo", ...).
 std::string SourceLabel(const SourcesCatalogue& cat, const std::string& source_id);
 
+// Stable releases are always visible. Pre-release modules require an explicit
+// opt-in on the source that produced the cached entry.
+bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModule& mod);
+
 // ---- disk-scan ----------------------------------------------------------
 
 // Walk the modules dir and return all installed modules.  Does NOT require

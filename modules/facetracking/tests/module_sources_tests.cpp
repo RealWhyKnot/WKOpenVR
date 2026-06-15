@@ -106,6 +106,32 @@ TEST(ModuleSources, PersistsPrereleaseSourceOptIn)
 	std::filesystem::remove_all(temp, ec);
 }
 
+TEST(ModuleSources, FiltersAvailablePrereleaseModulesBySourceOptIn)
+{
+	facetracking::SourcesCatalogue cat;
+	facetracking::ModuleSource source;
+	source.id = "source-a";
+	cat.sources.push_back(source);
+
+	facetracking::AvailableModule stable;
+	stable.uuid = "stable-module";
+	stable.source_id = "source-a";
+	EXPECT_TRUE(facetracking::ShouldShowAvailableModule(cat, stable));
+
+	facetracking::AvailableModule prerelease;
+	prerelease.uuid = "beta-module";
+	prerelease.source_id = "source-a";
+	prerelease.prerelease = true;
+	EXPECT_FALSE(facetracking::ShouldShowAvailableModule(cat, prerelease));
+
+	prerelease.source_id = "missing-source";
+	EXPECT_FALSE(facetracking::ShouldShowAvailableModule(cat, prerelease));
+
+	prerelease.source_id = "source-a";
+	cat.sources.front().include_prerelease = true;
+	EXPECT_TRUE(facetracking::ShouldShowAvailableModule(cat, prerelease));
+}
+
 TEST(ModuleSources, LoadsAvailablePrereleaseMetadata)
 {
 	auto temp = MakeSourceTempDir();

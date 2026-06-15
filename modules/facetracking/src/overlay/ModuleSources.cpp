@@ -220,6 +220,15 @@ std::string SourceLabel(const SourcesCatalogue& cat, const std::string& source_i
 	return source_id.empty() ? "Unknown" : source_id;
 }
 
+bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModule& mod)
+{
+	if (!mod.prerelease) return true;
+	for (const auto& src : cat.sources) {
+		if (src.id == mod.source_id) return src.include_prerelease;
+	}
+	return false;
+}
+
 // ---- disk scan ----------------------------------------------------------
 
 std::vector<InstalledModule> ScanInstalledModules()
