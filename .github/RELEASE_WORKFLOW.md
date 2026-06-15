@@ -54,7 +54,7 @@ Each module release gets a small generated body:
 Run this Setup.exe to install WKOpenVR and enable <Module Name>.
 Other WKOpenVR modules can be enabled from the Modules tab or by running another module installer.
 
-SHA256: <hash>
+Release SHA256 hashes are attached as `<integrity TSV>`.
 ```
 
 The source repo release-note generator remains tested for source-repo notes

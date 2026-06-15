@@ -10,10 +10,7 @@
     1. Title (h1: "<repo> <tag>")
     2. What's Changed (auto-changelog from the commit slice between prev tag
        and this tag; bucketed by conventional-commit prefix)
-    3. File integrity (two-row Markdown table covering the umbrella zip and
-       the matching Setup.exe; per-file hashes inside the zip are deliberately
-       not listed any more -- the body had grown past one screen of scroll
-       and the inner hashes were rarely consulted)
+    3. File integrity (pointer to the attached integrity TSV asset)
     4. More (from .github/release-template/links.md, with token substitution)
     5. Install (fresh) (from .github/release-template/install.md)
     6. Uninstall (from .github/release-template/uninstall.md)
@@ -99,6 +96,12 @@
 .PARAMETER SetupSha256
   SHA256 of the installer. Used by the File integrity section.
 
+.PARAMETER IntegrityName
+  Name of the attached TSV file containing release artifact SHA256 rows.
+
+.PARAMETER ReleaseTitle
+  Optional product name for the H1. Defaults to the repository short name.
+
 .PARAMETER AllowEmpty
   Skip the empty-slice guard. Use only for the very first release on a repo
   where there is no prior tag and the tag-range trick yields nothing
@@ -122,6 +125,8 @@ param(
     [string] $SetupName   = $null,
     [long]   $SetupSize   = 0,
     [string] $SetupSha256 = $null,
+    [string] $IntegrityName = $null,
+    [string] $ReleaseTitle = $null,
     [switch] $AllowEmpty,
     [switch] $SkipScrub
 )
@@ -425,8 +430,9 @@ function Read-TemplateSection([string] $name, [string] $dir, [hashtable] $tokenM
 }
 
 $sb = [System.Text.StringBuilder]::new()
-if ($repoShort) {
-    [void]$sb.AppendLine("# $repoShort $Tag")
+$titleText = if ($ReleaseTitle) { $ReleaseTitle } else { $repoShort }
+if ($titleText) {
+    [void]$sb.AppendLine("# $titleText $Tag")
     [void]$sb.AppendLine()
 }
 [void]$sb.AppendLine("## What's Changed")
@@ -458,27 +464,16 @@ if ($Repo -and $prevTag) {
 }
 
 # --- File integrity ---
-# Two-row Markdown table covering the umbrella zip + Setup.exe. The zip itself
-# is hashed by the Package step in release.yml; the Setup.exe is hashed by the
-# Build NSIS installer step. Both pairs (path/size/sha) are passed in. If any
-# value is missing (running locally without a build, or the workflow wiring is
-# incomplete), the section is skipped with a warning so the operator notices.
-$includeIntegrity = $ZipPath -and $ZipSha256 -and $ZipSize -gt 0 `
-    -and $SetupPath -and $SetupSha256 -and $SetupSize -gt 0
+# Release hashes are published as a separate TSV asset. Older callers can still
+# pass artifact hash inputs; the body intentionally does not print them.
+$includeIntegrity = -not [string]::IsNullOrWhiteSpace($IntegrityName)
 if ($includeIntegrity) {
     [void]$sb.AppendLine()
     [void]$sb.AppendLine("## File integrity")
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine("Verify with ``Get-FileHash <file> -Algorithm SHA256`` on PowerShell.")
-    [void]$sb.AppendLine()
-    [void]$sb.AppendLine("| File | Size | SHA256 |")
-    [void]$sb.AppendLine("|---|---|---|")
-    $zipNameForLine   = if ($zipNameToken) { $zipNameToken } else { Split-Path -Leaf $ZipPath }
-    $setupNameForLine = if ($SetupName)    { $SetupName }    else { Split-Path -Leaf $SetupPath }
-    [void]$sb.AppendLine(("| ``{0}`` | {1} | ``{2}`` |" -f $zipNameForLine,   (Format-Bytes $ZipSize),   $ZipSha256.ToUpper()))
-    [void]$sb.AppendLine(("| ``{0}`` | {1} | ``{2}`` |" -f $setupNameForLine, (Format-Bytes $SetupSize), $SetupSha256.ToUpper()))
+    [void]$sb.AppendLine("Release SHA256 hashes are attached as ``$IntegrityName``.")
 } elseif ($ZipPath -or $ZipSha256 -or $SetupPath -or $SetupSha256) {
-    Write-Host "::warning::File-integrity section skipped: -ZipPath, -ZipSize, -ZipSha256, -SetupPath, -SetupSize, and -SetupSha256 must all be set. Got ZipPath='$ZipPath' ZipSize=$ZipSize ZipSha256='$ZipSha256' SetupPath='$SetupPath' SetupSize=$SetupSize SetupSha256='$SetupSha256'."
+    Write-Host "::warning::File-integrity section skipped: -IntegrityName must be set when release artifact hashes are provided."
 }
 
 # --- Templated evergreen sections ---

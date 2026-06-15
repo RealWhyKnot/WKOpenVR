@@ -657,20 +657,23 @@ jobs:
 
             $file = Get-Item -LiteralPath $installerPath
             $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash
-            $notesPath = Join-Path $env:RUNNER_TEMP ("release-notes-" + $item.Feature + ".md")
-            $notesLines = @(
-              "# $($item.DisplayName) $tag",
-              "",
-              "$($item.DisplayName) installer for WKOpenVR $version.",
-              "",
-              "Run this Setup.exe to install WKOpenVR and enable $($item.DisplayName).",
-              "Other WKOpenVR modules can be enabled from the Modules tab or by running another module installer.",
-              "",
-              "SHA256: $hash",
-              "",
-              "Changelog: https://github.com/$($item.Repo)/blob/main/CHANGELOG.md"
+            $integrityName = $file.Name -replace '\.exe$', '.integrity.tsv'
+            $integrityPath = Join-Path $env:RUNNER_TEMP $integrityName
+            $integrityRows = @(
+              "path`tbytes`tsha256",
+              "$($file.Name)`t$($file.Length)`t$($hash.ToUpperInvariant())"
             )
-            $notes = [string]::Join([System.Environment]::NewLine, $notesLines) + [System.Environment]::NewLine
+            [System.IO.File]::WriteAllLines($integrityPath, [string[]]$integrityRows, [System.Text.UTF8Encoding]::new($false))
+
+            $notesPath = Join-Path $env:RUNNER_TEMP ("release-notes-" + $item.Feature + ".md")
+            $notesOutput = & ./.github/scripts/Generate-ReleaseNotes.ps1 `
+              -Tag $tag `
+              -Repo '${{ github.repository }}' `
+              -ReleaseTitle ([string]$item.DisplayName) `
+              -IntegrityName $integrityName
+            if ($LASTEXITCODE -ne 0) { throw "Generate-ReleaseNotes.ps1 failed for $($item.Repo)." }
+            if (-not $notesOutput) { throw "Generate-ReleaseNotes.ps1 returned empty output for $($item.Repo)." }
+            $notes = ($notesOutput -join [System.Environment]::NewLine) + [System.Environment]::NewLine
             $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
             [System.IO.File]::WriteAllText($notesPath, $notes, $utf8NoBom)
 
@@ -685,7 +688,7 @@ jobs:
             $extra = @()
             if ('${{ steps.beta.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
             Write-Host "Publishing $($file.Name) to $($item.Repo) ($($file.Length) bytes) sha256=$hash"
-            gh release create $tag --repo $item.Repo --target main --title $tag --notes-file $notesPath @extra $installerPath
+            gh release create $tag --repo $item.Repo --target main --title $tag --notes-file $notesPath @extra $installerPath $integrityPath
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed for $($item.Repo)" }
 
             $expectedDigest = "sha256:$($hash.ToLowerInvariant())"
@@ -708,6 +711,11 @@ jobs:
             if ($assetDigest.ToLowerInvariant() -ne $expectedDigest) {
               throw "Uploaded asset digest mismatch for $($file.Name): expected $expectedDigest got $assetDigest"
             }
+            $releaseJson = gh api "repos/$($item.Repo)/releases/tags/$tag"
+            if ($LASTEXITCODE -ne 0 -or -not $releaseJson) { throw "Could not re-read release $tag on $($item.Repo)." }
+            $release = $releaseJson | ConvertFrom-Json
+            $integrityAsset = $release.assets | Where-Object { $_.name -eq $integrityName } | Select-Object -First 1
+            if (-not $integrityAsset) { throw "Integrity TSV did not attach to $tag on $($item.Repo): $integrityName" }
             Write-Host "Verified uploaded asset digest: $assetDigest"
 
             $releaseUrl = "https://github.com/$($item.Repo)/releases/tag/$tag"
@@ -718,6 +726,7 @@ jobs:
               Version = $version
               InstallerName = $file.Name
               Sha256 = $hash
+              IntegrityName = $integrityName
               ReleaseUrl = $releaseUrl
             } | ConvertTo-Json -Compress | Add-Content -LiteralPath $moduleChangelogPath
 
@@ -777,6 +786,7 @@ jobs:
               -Version ([string]$item.Version) `
               -InstallerName ([string]$item.InstallerName) `
               -Sha256 ([string]$item.Sha256) `
+              -IntegrityName ([string]$item.IntegrityName) `
               -ReleaseUrl ([string]$item.ReleaseUrl)
 
             $oldBytes = [System.IO.File]::ReadAllBytes($existingPath)

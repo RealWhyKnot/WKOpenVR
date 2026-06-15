@@ -37,6 +37,7 @@ try {
         -Version '2026.6.15.0' `
         -InstallerName 'WKOpenVR-Smoothing-v2026.6.15.0-Setup.exe' `
         -Sha256 'ABCDEF1234' `
+        -IntegrityName 'WKOpenVR-Smoothing-v2026.6.15.0.integrity.tsv' `
         -ReleaseUrl 'https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/tag/v2026.6.15.0' `
         -ReleaseDate '2026-06-15'
     if ($LASTEXITCODE -ne 0) { throw "Initial changelog update failed." }
@@ -46,7 +47,8 @@ try {
     Assert-Contains -Text $text -Expected '## Unreleased'
     Assert-Contains -Text $text -Expected '## v2026.6.15.0 -- 2026-06-15'
     Assert-Contains -Text $text -Expected 'WKOpenVR-Smoothing-v2026.6.15.0-Setup.exe'
-    Assert-Contains -Text $text -Expected 'abcdef1234'
+    Assert-Contains -Text $text -Expected 'WKOpenVR-Smoothing-v2026.6.15.0.integrity.tsv'
+    Assert-NotContains -Text $text -Unexpected 'ABCDEF1234'
 
     & $Updater `
         -ChangelogPath $changelog `
@@ -55,12 +57,13 @@ try {
         -Version '2026.6.15.0' `
         -InstallerName 'WKOpenVR-Smoothing-v2026.6.15.0-Setup.exe' `
         -Sha256 '9999999999' `
+        -IntegrityName 'WKOpenVR-Smoothing-v2026.6.15.0.integrity.tsv' `
         -ReleaseUrl 'https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/tag/v2026.6.15.0' `
         -ReleaseDate '2026-06-15'
     if ($LASTEXITCODE -ne 0) { throw "Idempotent changelog update failed." }
 
     $text = Read-TestText -Path $changelog
-    Assert-Contains -Text $text -Expected '9999999999'
+    Assert-NotContains -Text $text -Unexpected '9999999999'
     Assert-NotContains -Text $text -Unexpected 'abcdef1234'
 
     & $Updater `
@@ -70,6 +73,7 @@ try {
         -Version '2026.6.16.0' `
         -InstallerName 'WKOpenVR-Smoothing-v2026.6.16.0-Setup.exe' `
         -Sha256 '1111111111' `
+        -IntegrityName 'WKOpenVR-Smoothing-v2026.6.16.0.integrity.tsv' `
         -ReleaseUrl 'https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/tag/v2026.6.16.0' `
         -ReleaseDate '2026-06-16'
     if ($LASTEXITCODE -ne 0) { throw "Second changelog update failed." }

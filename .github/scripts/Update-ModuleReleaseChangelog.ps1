@@ -24,6 +24,9 @@ param(
     [string] $Sha256,
 
     [Parameter(Mandatory = $true)]
+    [string] $IntegrityName,
+
+    [Parameter(Mandatory = $true)]
     [string] $ReleaseUrl,
 
     [string] $ReleaseDate = (Get-Date -Format 'yyyy-MM-dd')
@@ -77,7 +80,7 @@ function New-ReleaseSection {
         '### Released',
         "- Published $DisplayName installer for WKOpenVR $Version.",
         "- Installer: ``$InstallerName``",
-        "- SHA256: ``$($Sha256.ToLowerInvariant())``",
+        "- Integrity: ``$IntegrityName``",
         "- Release: <$ReleaseUrl>",
         '',
         '---',

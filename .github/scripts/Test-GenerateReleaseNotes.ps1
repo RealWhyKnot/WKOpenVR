@@ -101,11 +101,16 @@ try {
         -Tag v2026.5.3.0 `
         -Repo RealWhyKnot/WKOpenVR `
         -TemplateDir $TemplateDir `
+        -ReleaseTitle 'Space Calibrator' `
+        -IntegrityName 'WKOpenVR-Calibration-v2026.5.3.0.integrity.tsv' `
         -SkipScrub) -join "`n"
 
+    Assert-Contains -Text $StableNotes -Expected '# Space Calibrator v2026.5.3.0'
     Assert-Contains -Text $StableNotes -Expected 'fix(calibration): beta hold state'
     Assert-Contains -Text $StableNotes -Expected 'fix(driver): stable source blend'
     Assert-Contains -Text $StableNotes -Expected 'compare/v2026.5.1.0...v2026.5.3.0'
+    Assert-Contains -Text $StableNotes -Expected 'WKOpenVR-Calibration-v2026.5.3.0.integrity.tsv'
+    Assert-NotContains -Text $StableNotes -Unexpected '| SHA256 |'
     Assert-NotContains -Text $StableNotes -Unexpected 'compare/v2026.5.2.0-beta...v2026.5.3.0'
 
     $BetaNotes = (& $Generator `
