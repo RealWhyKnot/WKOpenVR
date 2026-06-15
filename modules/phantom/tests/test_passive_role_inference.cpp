@@ -140,8 +140,8 @@ TEST(PassiveRoleInference, FewSamplesAreLowConfidence)
 	EXPECT_LT(fewConf, 0.35f);
 }
 
-// One role cannot be assigned to two trackers; the weaker match is pushed to
-// its next-best role.
+// One role cannot be assigned to two trackers; a weaker leftover match must
+// not become high-confidence just because the best role was already claimed.
 TEST(PassiveRoleInference, AssignmentsAreOneToOne)
 {
 	std::vector<TrackerMotionFeatures> trackers = {
@@ -155,6 +155,9 @@ TEST(PassiveRoleInference, AssignmentsAreOneToOne)
 	BodyRole b = AssignmentFor(result, 1).role;
 	EXPECT_NE(a, b);
 	EXPECT_TRUE(a == BodyRole::Waist || b == BodyRole::Waist);
+	if (a != BodyRole::None && b != BodyRole::None) {
+		EXPECT_LT(std::min(AssignmentFor(result, 0).confidence, AssignmentFor(result, 1).confidence), 0.60f);
+	}
 }
 
 // The accumulator turns raw poses into the expected normalized features and
@@ -192,4 +195,31 @@ TEST(PassiveRoleInference, AccumulatorLeftSideIsNegative)
 
 	TrackerMotionFeatures f = acc.Compute();
 	EXPECT_LT(f.lateral_norm, 0.0);
+}
+
+TEST(PassiveRoleInference, WrongHeightCannotAutoAdoptAsTorso)
+{
+	std::vector<TrackerMotionFeatures> trackers = {
+	    Feat(0.06, 0.12, 0.45), // a foot-like tracker
+	};
+	std::vector<BodyRole> roles = {BodyRole::Waist, BodyRole::Chest};
+
+	auto result = InferRoles(trackers, roles);
+	const auto assignment = AssignmentFor(result, 0);
+	EXPECT_TRUE(assignment.role == BodyRole::None || assignment.confidence < 0.60f);
+}
+
+TEST(PassiveRoleInference, MidlineFeetDoNotBecomeHighConfidenceWrongSide)
+{
+	std::vector<TrackerMotionFeatures> trackers = {
+	    Feat(0.06, -0.01, 0.45),
+	    Feat(0.06, 0.01, 0.45),
+	};
+	std::vector<BodyRole> roles = {BodyRole::LeftFoot, BodyRole::RightFoot};
+
+	auto result = InferRoles(trackers, roles);
+	for (int i = 0; i < 2; ++i) {
+		const auto assignment = AssignmentFor(result, i);
+		EXPECT_LT(assignment.confidence, 0.60f) << "tracker " << i;
+	}
 }

@@ -15,18 +15,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(PH_DRIVER_SRC "${CMAKE_SOURCE_DIR}/modules/phantom/src/driver")
 set(PH_COMMON_SRC "${CMAKE_SOURCE_DIR}/modules/phantom/src/common")
 set(PH_OVERLAY_SRC "${CMAKE_SOURCE_DIR}/modules/phantom/src/overlay")
+set(PH_ANALYSIS_SRC "${CMAKE_SOURCE_DIR}/modules/phantom/src/analysis")
 
 add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dead_reckoner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_blend_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dropout_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_body_completion_solver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_body_completion_scenarios.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dropout_scenarios.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_frozen_tracker_invariant.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_ik_fallback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_role_catalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_inference_shmem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_passive_role_inference.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_ui_logic.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_metrics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_trajectory.cpp
     # Compile the driver-side sources directly so the test binary does not
     # have to link the full driver DLL (which would drag in MinHook,
     # OpenVR runtime, IPC, etc.).
@@ -43,6 +48,7 @@ target_include_directories(phantom_tests
     PRIVATE ${PH_DRIVER_SRC}
     PRIVATE ${PH_COMMON_SRC}
     PRIVATE ${PH_OVERLAY_SRC}
+    PRIVATE ${PH_ANALYSIS_SRC}
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers

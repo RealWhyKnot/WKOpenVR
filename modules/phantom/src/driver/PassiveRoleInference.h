@@ -266,11 +266,13 @@ inline std::vector<RoleAssignment> InferRoles(const std::vector<TrackerMotionFea
 			continue;
 		}
 
-		// Second-best cost for this tracker among still-unused roles, for the
-		// ambiguity margin.
+		// Second-best cost for this tracker among all other active roles, for
+		// the ambiguity margin. Include roles already claimed by earlier
+		// trackers so a forced leftover assignment does not become falsely
+		// high-confidence just because no alternatives remain available.
 		double second_cost = std::numeric_limits<double>::infinity();
 		for (size_t r = 0; r < active.size(); ++r) {
-			if (static_cast<int>(r) == pr.role || role_used[r]) {
+			if (static_cast<int>(r) == pr.role) {
 				continue;
 			}
 			second_cost = std::min(second_cost, RoleCost(trackers[pr.tracker], active[r], params));
