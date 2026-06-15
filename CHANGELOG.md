@@ -214,6 +214,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **runtime:** Repair phantom and diagnostic gates (f06e188)
 - **calibration:** Restore relative lock and smoothing sync (af45b60)
 - **calibration:** Stabilize drift breaker and headset lock controls (7bdc700)
+- **oscrouter:** Avoid stale shutdown safety disable (bcf4f22)
 
 ---
 
