@@ -104,8 +104,9 @@ SafetyGateResult ApplySafetyGate(bool& enabled, const module_registry::ModuleInf
 	const auto assessment = openvr_pair::common::module_safety::AssessLaunch(*spec);
 	result.assessment = assessment;
 	if (assessment.had_stale_suspect) {
-		LOG("Module safety: stale guarded-operation marker for '%s' suspect_count=%u auto_disabled=%d", spec->slug,
-		    assessment.suspect_unclean_count, assessment.auto_disabled ? 1 : 0);
+		LOG("Module safety: stale guarded-operation marker for '%s' reason='%s' suspect_count=%u auto_disabled=%d",
+		    spec->slug, assessment.suspect_reason.c_str(), assessment.suspect_unclean_count,
+		    assessment.auto_disabled ? 1 : 0);
 	}
 	else if (assessment.had_stale_active) {
 		LOG("Module safety: stale active marker for '%s' active_count=%u auto_disabled=%d", spec->slug,

@@ -17,6 +17,7 @@ struct LaunchAssessment
 	bool auto_disabled = false;
 	unsigned active_unclean_count = 0;
 	unsigned suspect_unclean_count = 0;
+	std::string suspect_reason;
 	std::string reason;
 };
 

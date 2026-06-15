@@ -144,6 +144,124 @@ struct PubPipeClientDiagnostics
 	}
 };
 
+enum class PipeReadResult
+{
+	Ok,
+	Disconnected,
+	Canceled,
+	Failed,
+};
+
+bool IsPipeDisconnectError(DWORD err)
+{
+	return err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED || err == ERROR_HANDLE_EOF ||
+	       err == ERROR_NO_DATA;
+}
+
+PipeReadResult ReadPipeExactInterruptible(HANDLE pipe, void* buffer, DWORD size, std::atomic<bool>& stop,
+                                          DWORD* errorOut)
+{
+	if (errorOut) *errorOut = ERROR_SUCCESS;
+	uint8_t* out = static_cast<uint8_t*>(buffer);
+	DWORD total = 0;
+
+	while (total < size) {
+		if (stop.load(std::memory_order_acquire)) {
+			if (errorOut) *errorOut = ERROR_OPERATION_ABORTED;
+			return PipeReadResult::Canceled;
+		}
+
+		HANDLE event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+		if (!event) {
+			if (errorOut) *errorOut = GetLastError();
+			return PipeReadResult::Failed;
+		}
+
+		OVERLAPPED ov{};
+		ov.hEvent = event;
+		DWORD transferred = 0;
+		BOOL ok = ReadFile(pipe, out + total, size - total, nullptr, &ov);
+		DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+
+		if (!ok && err == ERROR_IO_PENDING) {
+			for (;;) {
+				if (stop.load(std::memory_order_acquire)) {
+					CancelIoEx(pipe, &ov);
+					if (!GetOverlappedResult(pipe, &ov, &transferred, TRUE)) {
+						err = GetLastError();
+						if (err != ERROR_OPERATION_ABORTED && !IsPipeDisconnectError(err)) {
+							CloseHandle(event);
+							if (errorOut) *errorOut = err;
+							return PipeReadResult::Failed;
+						}
+					}
+					CloseHandle(event);
+					if (errorOut) *errorOut = ERROR_OPERATION_ABORTED;
+					return PipeReadResult::Canceled;
+				}
+
+				const DWORD wait = WaitForSingleObject(event, 50);
+				if (wait == WAIT_OBJECT_0) {
+					if (!GetOverlappedResult(pipe, &ov, &transferred, FALSE)) {
+						err = GetLastError();
+						CloseHandle(event);
+						if (err == ERROR_OPERATION_ABORTED) {
+							if (errorOut) *errorOut = err;
+							return PipeReadResult::Canceled;
+						}
+						if (IsPipeDisconnectError(err)) {
+							if (errorOut) *errorOut = err;
+							return PipeReadResult::Disconnected;
+						}
+						if (errorOut) *errorOut = err;
+						return PipeReadResult::Failed;
+					}
+					break;
+				}
+				if (wait == WAIT_TIMEOUT) continue;
+
+				CancelIoEx(pipe, &ov);
+				GetOverlappedResult(pipe, &ov, &transferred, TRUE);
+				CloseHandle(event);
+				if (errorOut) *errorOut = GetLastError();
+				return PipeReadResult::Failed;
+			}
+		}
+		else if (ok) {
+			if (!GetOverlappedResult(pipe, &ov, &transferred, FALSE)) {
+				err = GetLastError();
+				CloseHandle(event);
+				if (err == ERROR_OPERATION_ABORTED) {
+					if (errorOut) *errorOut = err;
+					return PipeReadResult::Canceled;
+				}
+				if (IsPipeDisconnectError(err)) {
+					if (errorOut) *errorOut = err;
+					return PipeReadResult::Disconnected;
+				}
+				if (errorOut) *errorOut = err;
+				return PipeReadResult::Failed;
+			}
+		}
+		else {
+			CloseHandle(event);
+			if (errorOut) *errorOut = err;
+			if (err == ERROR_OPERATION_ABORTED) return PipeReadResult::Canceled;
+			if (IsPipeDisconnectError(err)) return PipeReadResult::Disconnected;
+			return PipeReadResult::Failed;
+		}
+
+		CloseHandle(event);
+		if (transferred == 0) {
+			if (errorOut) *errorOut = ERROR_BROKEN_PIPE;
+			return PipeReadResult::Disconnected;
+		}
+		total += transferred;
+	}
+
+	return PipeReadResult::Ok;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -217,13 +335,20 @@ bool OscRouter::Init(DriverModuleContext& ctx)
 
 void OscRouter::Shutdown()
 {
+	OR_LOG("OscRouter: shutdown begin", 0);
 	g_activeRouter.store(nullptr, std::memory_order_release);
 
 	stop_.store(true, std::memory_order_release);
 	queueCv_.notify_all();
 
-	if (sendWorker_.joinable()) sendWorker_.join();
-	if (pubPipeWorker_.joinable()) pubPipeWorker_.join();
+	if (sendWorker_.joinable()) {
+		OR_LOG("OscRouter: joining send worker", 0);
+		sendWorker_.join();
+	}
+	if (pubPipeWorker_.joinable()) {
+		OR_LOG("OscRouter: joining pub-pipe worker", 0);
+		pubPipeWorker_.join();
+	}
 
 	sender_.Close();
 	statsShmem_.Close();
@@ -536,11 +661,12 @@ void OscRouter::PubPipeWorkerMain()
 	    openvr_pair::common::modules::ModuleId::OscRouter, "osc-pub-pipe");
 	OR_LOG("OscRouter pub-pipe worker started");
 
-	// Each client connection is handled synchronously in a blocking read loop.
+	// Each client connection is handled by one worker using interruptible
+	// overlapped reads.
 	// With PIPE_UNLIMITED_INSTANCES the kernel can accept concurrent clients;
 	// for v1 we handle one at a time per thread -- sidecars are few and their
 	// publish rate is bounded (~120 Hz face tracking). A single thread is
-	// simpler and avoids the overlapped-IO complexity for fire-and-forget.
+	// enough for the fire-and-forget stream.
 
 	while (!stop_.load(std::memory_order_acquire)) {
 		HANDLE pipe = CreateNamedPipeA(
@@ -562,15 +688,30 @@ void OscRouter::PubPipeWorkerMain()
 			break;
 		}
 
-		ConnectNamedPipe(pipe, &ov);
-		DWORD err = GetLastError();
+		const BOOL connected = ConnectNamedPipe(pipe, &ov);
+		DWORD err = connected ? ERROR_SUCCESS : GetLastError();
 		if (err == ERROR_IO_PENDING) {
 			DWORD r = WaitForSingleObject(ov.hEvent, 500);
 			if (r != WAIT_OBJECT_0) {
 				// Timeout or error -- no client yet; loop.
+				CancelIoEx(pipe, &ov);
+				DWORD ignored = 0;
+				GetOverlappedResult(pipe, &ov, &ignored, TRUE);
 				CloseHandle(ov.hEvent);
 				DisconnectNamedPipe(pipe);
 				CloseHandle(pipe);
+				continue;
+			}
+			DWORD ignored = 0;
+			if (!GetOverlappedResult(pipe, &ov, &ignored, FALSE)) {
+				err = GetLastError();
+				if (!stop_) {
+					OR_LOG("OscRouter pub-pipe ConnectNamedPipe completion failed: %u", (unsigned)err);
+				}
+				CloseHandle(ov.hEvent);
+				DisconnectNamedPipe(pipe);
+				CloseHandle(pipe);
+				if (!stop_) Sleep(50);
 				continue;
 			}
 		}
@@ -594,20 +735,38 @@ void OscRouter::PubPipeWorkerMain()
 		// that follows is length-prefixed; reading another source id per frame
 		// consumes the next frame's length and corrupts every subsequent packet
 		// from sidecars that keep the pipe open.
-		DWORD got = 0;
-		if (!ReadFile(pipe, source_id, 32, &got, nullptr) || got != 32) {
-			client.RecordReadBreak(pubPipeReadBreaks_);
+		DWORD readError = ERROR_SUCCESS;
+		PipeReadResult readResult = ReadPipeExactInterruptible(pipe, source_id, 32, stop_, &readError);
+		if (readResult == PipeReadResult::Ok) {
+			client.RememberSource(source_id);
+		}
+		else if (readResult == PipeReadResult::Canceled) {
+			OR_LOG("OscRouter pub-pipe read canceled during shutdown", 0);
 		}
 		else {
-			client.RememberSource(source_id);
+			if (readResult == PipeReadResult::Failed) {
+				OR_LOG("OscRouter pub-pipe source read failed: %u", (unsigned)readError);
+			}
+			client.RecordReadBreak(pubPipeReadBreaks_);
 		}
 
 		// Read frames from this client until it disconnects or stop_.
 		while (!stop_.load(std::memory_order_acquire) && client.source_logged) {
 			// Read 4-byte LE frame length.
 			uint8_t lenBuf[4];
-			if (!ReadFile(pipe, lenBuf, 4, &got, nullptr) || got != 4) {
-				client.RecordReadBreak(pubPipeReadBreaks_);
+			readError = ERROR_SUCCESS;
+			readResult = ReadPipeExactInterruptible(pipe, lenBuf, 4, stop_, &readError);
+			if (readResult != PipeReadResult::Ok) {
+				if (readResult == PipeReadResult::Canceled) {
+					OR_LOG("OscRouter pub-pipe read canceled during shutdown", 0);
+				}
+				else {
+					if (readResult == PipeReadResult::Failed) {
+						OR_LOG("OscRouter pub-pipe length read failed source='%.32s' error=%u", client.SourceForLog(),
+						       (unsigned)readError);
+					}
+					client.RecordReadBreak(pubPipeReadBreaks_);
+				}
 				break;
 			}
 			uint32_t frameLen = (uint32_t)lenBuf[0] | ((uint32_t)lenBuf[1] << 8) | ((uint32_t)lenBuf[2] << 16) |
@@ -620,17 +779,19 @@ void OscRouter::PubPipeWorkerMain()
 
 			// Read the OSC frame.
 			uint8_t frameBuf[kSendQueueEntryMaxSize];
-			DWORD total = 0;
-			while (total < frameLen && !stop_) {
-				DWORD chunk = 0;
-				if (!ReadFile(pipe, frameBuf + total, frameLen - total, &chunk, nullptr)) {
-					total = 0;
-					break;
+			readError = ERROR_SUCCESS;
+			readResult = ReadPipeExactInterruptible(pipe, frameBuf, frameLen, stop_, &readError);
+			if (readResult != PipeReadResult::Ok) {
+				if (readResult == PipeReadResult::Canceled) {
+					OR_LOG("OscRouter pub-pipe read canceled during shutdown", 0);
 				}
-				total += chunk;
-			}
-			if (total != frameLen) {
-				client.RecordReadBreak(pubPipeReadBreaks_);
+				else {
+					if (readResult == PipeReadResult::Failed) {
+						OR_LOG("OscRouter pub-pipe frame read failed source='%.32s' error=%u", client.SourceForLog(),
+						       (unsigned)readError);
+					}
+					client.RecordReadBreak(pubPipeReadBreaks_);
+				}
 				break;
 			}
 

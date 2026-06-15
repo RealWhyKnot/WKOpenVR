@@ -101,11 +101,52 @@ TEST_F(ModuleSafetyTest, StaleSuspectMarkerAutoDisablesModule)
 	EXPECT_TRUE(assessment.had_stale_suspect);
 	EXPECT_TRUE(assessment.auto_disabled);
 	EXPECT_EQ(assessment.suspect_unclean_count, 1u);
+	EXPECT_EQ(assessment.suspect_reason, "pose_pipeline");
 	EXPECT_EQ(assessment.reason, "unclean_exit_during_module_operation");
 	EXPECT_FALSE(module_safety::HasActiveMarker(*spec));
 	EXPECT_FALSE(module_safety::HasSuspectMarker(*spec));
 	EXPECT_TRUE(module_safety::HasAutoDisabledMarker(*spec));
 	EXPECT_EQ(module_safety::AutoDisabledReason(*spec), "unclean_exit_during_module_operation");
+}
+
+TEST_F(ModuleSafetyTest, StaleShutdownSuspectMarkerRecordsConcernWithoutImmediateDisable)
+{
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_oscrouter.flag");
+	ASSERT_NE(spec, nullptr);
+
+	EXPECT_TRUE(module_safety::MarkActive(*spec));
+	EXPECT_TRUE(module_safety::MarkSuspect(*spec, "shutdown"));
+
+	const module_safety::LaunchAssessment assessment = module_safety::AssessLaunch(*spec);
+	EXPECT_TRUE(assessment.had_stale_active);
+	EXPECT_TRUE(assessment.had_stale_suspect);
+	EXPECT_FALSE(assessment.auto_disabled);
+	EXPECT_EQ(assessment.suspect_unclean_count, 1u);
+	EXPECT_EQ(assessment.suspect_reason, "shutdown");
+	EXPECT_TRUE(assessment.reason.empty());
+	EXPECT_FALSE(module_safety::HasActiveMarker(*spec));
+	EXPECT_FALSE(module_safety::HasSuspectMarker(*spec));
+	EXPECT_FALSE(module_safety::HasAutoDisabledMarker(*spec));
+}
+
+TEST_F(ModuleSafetyTest, StaleFlagRemovedSuspectMarkerRecordsConcernWithoutImmediateDisable)
+{
+	const module_safety::ModuleSpec* spec = module_safety::FindByFlagFileName("enable_captions.flag");
+	ASSERT_NE(spec, nullptr);
+
+	EXPECT_TRUE(module_safety::MarkActive(*spec));
+	EXPECT_TRUE(module_safety::MarkSuspect(*spec, "flag_removed"));
+
+	const module_safety::LaunchAssessment assessment = module_safety::AssessLaunch(*spec);
+	EXPECT_TRUE(assessment.had_stale_active);
+	EXPECT_TRUE(assessment.had_stale_suspect);
+	EXPECT_FALSE(assessment.auto_disabled);
+	EXPECT_EQ(assessment.suspect_unclean_count, 1u);
+	EXPECT_EQ(assessment.suspect_reason, "flag_removed");
+	EXPECT_TRUE(assessment.reason.empty());
+	EXPECT_FALSE(module_safety::HasActiveMarker(*spec));
+	EXPECT_FALSE(module_safety::HasSuspectMarker(*spec));
+	EXPECT_FALSE(module_safety::HasAutoDisabledMarker(*spec));
 }
 
 TEST_F(ModuleSafetyTest, RepeatedStaleActiveMarkersAutoDisableAfterBackoff)
@@ -163,6 +204,7 @@ TEST_F(ModuleSafetyTest, ClearAutoDisabledForFlagReenablesModule)
 	EXPECT_FALSE(module_safety::HasActiveMarker(*spec));
 	EXPECT_FALSE(module_safety::HasSuspectMarker(*spec));
 	EXPECT_TRUE(module_safety::HasAutoDisabledMarker(*spec));
+	EXPECT_EQ(module_safety::AutoDisabledReason(*spec), "test_fault");
 
 	EXPECT_TRUE(module_safety::ClearAutoDisabledForFlag("enable_phantom.flag"));
 	EXPECT_FALSE(module_safety::HasActiveMarker(*spec));

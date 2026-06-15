@@ -17,16 +17,22 @@ set(OR_OVERLAY_SRC "${CMAKE_SOURCE_DIR}/modules/oscrouter/src/overlay")
 
 add_executable(oscrouter_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/router_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/router_shutdown_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_oscrouter_ui_logic.cpp)
 
 target_include_directories(oscrouter_tests
     PRIVATE ${OR_DRIVER_SRC}
     PRIVATE ${OR_OVERLAY_SRC}
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
+    PRIVATE ${CMAKE_SOURCE_DIR}/core/src/driver
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers)
 
-target_link_libraries(oscrouter_tests PRIVATE GTest::gtest_main)
+target_link_libraries(oscrouter_tests PRIVATE
+    GTest::gtest_main
+    openvr_pair_common
+    openvr_pair_feature_oscrouter_driver
+    Ws2_32)
 
 target_compile_definitions(oscrouter_tests PRIVATE
     NOMINMAX

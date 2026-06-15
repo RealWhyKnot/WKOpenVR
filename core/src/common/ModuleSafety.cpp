@@ -138,6 +138,11 @@ CrashCounters ReadCounters(const ModuleSpec& spec)
 	return counters;
 }
 
+bool IsCleanupOnlySuspectReason(std::string_view reason)
+{
+	return reason == "shutdown" || reason == "flag_removed";
+}
+
 bool WriteCounters(const ModuleSpec& spec, const CrashCounters& counters)
 {
 	std::string body;
@@ -310,7 +315,10 @@ LaunchAssessment AssessLaunch(const ModuleSpec& spec, bool allowActiveOnlyAutoDi
 	CrashCounters counters = ReadCounters(spec);
 	if (result.had_stale_suspect) {
 		++counters.suspect_unclean;
-		result.reason = "unclean_exit_during_module_operation";
+		result.suspect_reason = ReadField(ReadTextFile(SuspectMarkerPath(spec, false)), "reason=");
+		if (!IsCleanupOnlySuspectReason(result.suspect_reason)) {
+			result.reason = "unclean_exit_during_module_operation";
+		}
 	}
 	else {
 		++counters.active_unclean;
