@@ -775,10 +775,13 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 	if (openVRID >= slots_.size()) return;
 	DeviceSlot& s = slots_[openVRID];
 	ResolveSerialIfMissing(openVRID, s);
+	const bool tracked_ok = PoseIsTrackedOk(pose);
 	s.last_observed = pose;
 	s.last_observed_qpc = qpc_ns;
-	s.last_observed_valid = PoseIsTrackedOk(pose);
-	s.history.Push(qpc_ns, pose);
+	s.last_observed_valid = tracked_ok;
+	if (tracked_ok) {
+		s.history.Push(qpc_ns, pose);
+	}
 	s.ladder.SetTimings(timings_);
 	s.ladder.SetIkAvailable(s.role != BodyRole::None);
 	s.ladder.OnRealPoseObserved(qpc_ns, s.history, pose);

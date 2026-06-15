@@ -32,14 +32,14 @@ inline int64_t QpcMs(int64_t dt_ns, int64_t qpc_freq)
 
 void DropoutState::OnRealPoseObserved(int64_t qpc_ns, const PoseHistory& /*history*/, const vr::DriverPose_t& observed)
 {
-	// A pose flagged Running_OK is a "real" observation. Other tracking
-	// results (Running_OutOfRange, Calibrating_*) trigger silence detection
-	// on the very next Tick, since they indicate the driver does not have a
-	// trustworthy pose. We still record qpc to give the silence detector
-	// current data; the result transition will move us into BLEND_OUT.
-	last_real_qpc_ns_ = qpc_ns;
-
 	if (observed.result == vr::TrackingResult_Running_OK && observed.poseIsValid && observed.deviceIsConnected) {
+		// A pose flagged Running_OK is a "real" observation. Other tracking
+		// results (Running_OutOfRange, Calibrating_*) must not reset this
+		// timestamp; some drivers keep emitting bad poses at frame rate during
+		// dropout, and treating those as fresh real samples pins the ladder in
+		// REAL forever.
+		last_real_qpc_ns_ = qpc_ns;
+
 		// Healthy real pose. If we were recovering, finish the blend back to
 		// REAL once the BLEND_IN window has elapsed (Tick handles the time
 		// transition; here we just remember that a fresh real pose arrived).

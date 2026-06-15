@@ -22,6 +22,14 @@ vr::DriverPose_t MakeRealPose()
 	return p;
 }
 
+vr::DriverPose_t MakeOutOfRangePose()
+{
+	vr::DriverPose_t p = MakeRealPose();
+	p.poseIsValid = false;
+	p.result = vr::TrackingResult_Running_OutOfRange;
+	return p;
+}
+
 int64_t Ms(int64_t ms)
 {
 	return ms * (kQpcFreq / 1000);
@@ -100,4 +108,23 @@ TEST(DropoutStateTest, BlendInOnRecovery)
 
 	s.Tick(Ms(t.dropout_silence_ms + t.blend_out_ms + t.blend_in_ms + 100), kQpcFreq);
 	EXPECT_EQ(s.state(), phantom::TrackerState::REAL);
+}
+
+TEST(DropoutStateTest, InvalidPoseStreamDoesNotPinStateInReal)
+{
+	phantom::PoseHistory hist;
+	phantom::DropoutState s;
+	auto t = phantom::LadderTimings::Defaults();
+	s.SetTimings(t);
+
+	s.OnRealPoseObserved(Ms(0), hist, MakeRealPose());
+
+	const auto invalid = MakeOutOfRangePose();
+	for (uint32_t ms = 10; ms <= t.dropout_silence_ms + 10; ms += 10) {
+		s.OnRealPoseObserved(Ms(ms), hist, invalid);
+		s.Tick(Ms(ms), kQpcFreq);
+	}
+
+	EXPECT_EQ(s.state(), phantom::TrackerState::BLEND_OUT);
+	EXPECT_EQ(s.dropout_count(), 1u);
 }

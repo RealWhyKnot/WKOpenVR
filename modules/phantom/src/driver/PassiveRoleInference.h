@@ -146,12 +146,12 @@ inline const std::array<RolePrior, 8>& DefaultRolePriors()
 	static const std::array<RolePrior, 8> kPriors = {{
 	    {BodyRole::Waist, 0.53, 0.00, 0.10},
 	    {BodyRole::Chest, 0.74, 0.00, 0.10},
-	    {BodyRole::LeftFoot, 0.06, -0.06, 0.45},
-	    {BodyRole::RightFoot, 0.06, 0.06, 0.45},
-	    {BodyRole::LeftKnee, 0.28, -0.06, 0.30},
-	    {BodyRole::RightKnee, 0.28, 0.06, 0.30},
-	    {BodyRole::LeftElbow, 0.63, -0.13, 0.25},
-	    {BodyRole::RightElbow, 0.63, 0.13, 0.25},
+	    {BodyRole::LeftFoot, 0.06, -0.12, 0.45},
+	    {BodyRole::RightFoot, 0.06, 0.12, 0.45},
+	    {BodyRole::LeftKnee, 0.28, -0.10, 0.30},
+	    {BodyRole::RightKnee, 0.28, 0.10, 0.30},
+	    {BodyRole::LeftElbow, 0.63, -0.18, 0.25},
+	    {BodyRole::RightElbow, 0.63, 0.18, 0.25},
 	}};
 	return kPriors;
 }
@@ -276,7 +276,7 @@ inline std::vector<RoleAssignment> InferRoles(const std::vector<TrackerMotionFea
 			second_cost = std::min(second_cost, RoleCost(trackers[pr.tracker], active[r], params));
 		}
 		if (!std::isfinite(second_cost)) {
-			second_cost = pr.cost + params.margin_scale; // last role left: treat as clearly chosen
+			second_cost = pr.cost + params.margin_scale * 3.0; // last role left: treat as clearly chosen
 		}
 
 		const float confidence = AssignmentConfidence(pr.cost, second_cost, trackers[pr.tracker].sample_count, params);

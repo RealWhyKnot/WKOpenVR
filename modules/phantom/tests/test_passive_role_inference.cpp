@@ -92,6 +92,29 @@ TEST(PassiveRoleInference, AssignsSixPointSetup)
 	EXPECT_EQ(AssignmentFor(result, 5).role, BodyRole::RightKnee);
 }
 
+TEST(PassiveRoleInference, CleanFullBodySetupClearsAutoAcceptThreshold)
+{
+	std::vector<TrackerMotionFeatures> trackers = {
+	    Feat(0.53, 0.00, 0.10),  // waist
+	    Feat(0.74, 0.00, 0.10),  // chest
+	    Feat(0.06, -0.12, 0.45), // left foot
+	    Feat(0.06, 0.12, 0.45),  // right foot
+	    Feat(0.28, -0.10, 0.30), // left knee
+	    Feat(0.28, 0.10, 0.30),  // right knee
+	    Feat(0.63, -0.18, 0.25), // left elbow
+	    Feat(0.63, 0.18, 0.25),  // right elbow
+	};
+	std::vector<BodyRole> roles = {BodyRole::Waist,    BodyRole::Chest,     BodyRole::LeftFoot,  BodyRole::RightFoot,
+	                               BodyRole::LeftKnee, BodyRole::RightKnee, BodyRole::LeftElbow, BodyRole::RightElbow};
+
+	auto result = InferRoles(trackers, roles);
+
+	for (int i = 0; i < 8; ++i) {
+		EXPECT_EQ(AssignmentFor(result, i).role, roles[static_cast<size_t>(i)]);
+		EXPECT_GE(AssignmentFor(result, i).confidence, 0.70f) << "tracker " << i;
+	}
+}
+
 // A foot held near the centreline is ambiguous between left and right, so it
 // should come back low-confidence (reported as None) rather than guessing.
 TEST(PassiveRoleInference, AmbiguousLateralIsLowConfidence)
