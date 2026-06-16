@@ -4,6 +4,7 @@ param(
   [string] $Tag = "",
   [string] $ReleaseStatePath = "",
   [string] $Today = "",
+  [datetime] $NowUtc = ([datetime]::UtcNow),
   [string] $OutputJsonPath = ""
 )
 
@@ -41,6 +42,25 @@ function Test-GitTagExists {
 
   & git rev-parse --verify --quiet "refs/tags/$Name^{commit}" *> $null
   return ($LASTEXITCODE -eq 0)
+}
+
+function Get-CentralTimeZone {
+  foreach ($id in @("Central Standard Time", "America/Chicago")) {
+    try { return [System.TimeZoneInfo]::FindSystemTimeZoneById($id) }
+    catch { }
+  }
+  throw "Could not resolve the America/Chicago release time zone."
+}
+
+function Get-ReleaseDateStamp {
+  param([datetime] $NowUtc, [string] $Format)
+
+  $utc = $NowUtc
+  if ($utc.Kind -ne [System.DateTimeKind]::Utc) {
+    $utc = $utc.ToUniversalTime()
+  }
+  $central = [System.TimeZoneInfo]::ConvertTimeFromUtc($utc, (Get-CentralTimeZone))
+  return $central.ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
 function Normalize-RepoPath {
@@ -222,10 +242,13 @@ function Get-ChangedFilesSinceTag {
 }
 
 function Get-NextBetaTag {
-  param([string] $DateStamp)
+  param(
+    [string] $DateStamp,
+    [datetime] $CurrentUtc
+  )
 
   if ([string]::IsNullOrWhiteSpace($DateStamp)) {
-    $DateStamp = (Get-Date).ToUniversalTime().ToString("yyyy.M.d", [System.Globalization.CultureInfo]::InvariantCulture)
+    $DateStamp = Get-ReleaseDateStamp -NowUtc $CurrentUtc -Format "yyyy.M.d"
   }
 
   $escapedDate = [regex]::Escape($DateStamp)
@@ -350,7 +373,7 @@ try {
   }
 
   if ([string]::IsNullOrWhiteSpace($Tag)) {
-    $nextTag = Get-NextBetaTag -DateStamp $Today
+    $nextTag = Get-NextBetaTag -DateStamp $Today -CurrentUtc $NowUtc
   } else {
     $nextTag = $Tag
   }
