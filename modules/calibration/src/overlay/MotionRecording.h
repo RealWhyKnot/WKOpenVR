@@ -29,6 +29,14 @@
 
 namespace spacecal::replay {
 
+enum class ReplayRelocSource
+{
+	Auto,
+	Annotation,
+	Column,
+	Proxy,
+};
+
 // One replayable tick. Produced by parsing a v2 log row.
 struct ReplayRow
 {
@@ -76,6 +84,9 @@ struct LoadedRecording
 	std::vector<ReplayRow> rows;
 	std::string sourcePath; // path passed to LoadRecording, for display
 	std::string error;      // populated on failure; rows will be empty.
+	std::vector<double> relocalizationAnnotationTimes;
+	bool hasRelocDetectedColumn = false;
+	int relocDetectedRowCount = 0;
 	// True when the v4 raw-HMD + head-tracker columns are present, so the
 	// locked-snap A/B path can run. v2/v3 recordings leave this false and the
 	// replay reports "locked_snap_replay_requires_v4" instead of counting snaps.
@@ -178,6 +189,7 @@ struct ReplayOptions
 	// this marks a relocalization for the quarantine/breaker, derived purely from
 	// the recorded ref/target poses, so v3 recordings (no raw HMD pose) work too.
 	double relocProxyJumpM = 0.05;
+	ReplayRelocSource relocSource = ReplayRelocSource::Auto;
 
 	// Toggle 4 (locked-style snap recovery). When on AND the recording is v4 (raw
 	// HMD + head-tracker columns present), the replay reproduces the live snap
@@ -225,6 +237,8 @@ struct ReplayResult
 	int samplesQuarantined = 0;
 	int freezeEngagements = 0;
 	int snapReanchors = 0;
+	int relocEvents = 0;
+	std::string relocSource = "off";
 	// Locked-snap A/B status: "off" (toggle not requested), "applied" (ran on a v4
 	// recording), or "locked_snap_replay_requires_v4" (requested but the recording
 	// lacks the raw HMD + head-tracker columns, so snapReanchors stays 0).

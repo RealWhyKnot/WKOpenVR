@@ -26,6 +26,14 @@ TEST(RelocGuardTest, InsideWindowQuarantines)
 	EXPECT_TRUE(rg::ShouldQuarantineSample(9.5, 9.5, 1.0)); // age 0 is inside
 }
 
+TEST(RelocGuardTest, MatchingDetectorAndSamplerClockQuarantines)
+{
+	const double detectorNow = 42.25;
+	const double samplerNow = detectorNow + 0.25;
+
+	EXPECT_TRUE(rg::ShouldQuarantineSample(samplerNow, detectorNow, 1.0));
+}
+
 TEST(RelocGuardTest, AtWindowEdgeReleases)
 {
 	// age == window is the half-open boundary: released (resume sampling).

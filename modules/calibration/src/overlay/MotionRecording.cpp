@@ -241,6 +241,40 @@ bool ReadPoseColumns(const std::vector<std::string>& fields, int idxTx, int idxT
 	return true;
 }
 
+bool ParseAnnotationTimestamp(const std::string& line, const char* marker, double& out)
+{
+	if (line.rfind("# [", 0) != 0) return false;
+	if (line.find(marker) == std::string::npos) return false;
+	const std::size_t start = 3;
+	const std::size_t end = line.find(']', start);
+	if (end == std::string::npos || end <= start) return false;
+	const std::string ts = line.substr(start, end - start);
+	return ReadDouble(ts, out);
+}
+
+ReplayRelocSource ResolveRelocSource(const LoadedRecording& rec, ReplayRelocSource requested)
+{
+	if (requested != ReplayRelocSource::Auto) return requested;
+	if (!rec.relocalizationAnnotationTimes.empty()) return ReplayRelocSource::Annotation;
+	if (rec.hasRelocDetectedColumn) return ReplayRelocSource::Column;
+	return ReplayRelocSource::Proxy;
+}
+
+const char* ReplayRelocSourceName(ReplayRelocSource source)
+{
+	switch (source) {
+		case ReplayRelocSource::Auto:
+			return "auto";
+		case ReplayRelocSource::Annotation:
+			return "annotation";
+		case ReplayRelocSource::Column:
+			return "column";
+		case ReplayRelocSource::Proxy:
+			return "proxy";
+	}
+	return "unknown";
+}
+
 } // namespace
 
 LoadedRecording LoadRecording(const std::string& path)
@@ -262,6 +296,10 @@ LoadedRecording LoadRecording(const std::string& path)
 		RTrim(line);
 		if (line.empty()) continue;
 		if (line.rfind('#', 0) == 0) {
+			double relocTime = 0.0;
+			if (ParseAnnotationTimestamp(line, "hmd_relocalization_detected", relocTime)) {
+				rec.relocalizationAnnotationTimes.push_back(relocTime);
+			}
 			if (line.find("spacecal_log_v4") != std::string::npos) {
 				formatVersion = 4;
 				continue;
@@ -375,6 +413,7 @@ LoadedRecording LoadRecording(const std::string& path)
 	const int idxHeadQy = ColIndex(cols, "head_tracker_qy");
 	const int idxHeadQz = ColIndex(cols, "head_tracker_qz");
 	const int idxRelocDetected = ColIndex(cols, "reloc_detected");
+	rec.hasRelocDetectedColumn = idxRelocDetected >= 0;
 	// The locked-snap A/B needs both the HMD jump and the head-tracker displacement,
 	// so it's only enabled when both pose blocks (and the valid flag) are present.
 	const bool hasLockedSnapColumns = idxHmdTx >= 0 && idxHeadTx >= 0 && idxHeadTrackerValid >= 0;
@@ -397,7 +436,13 @@ LoadedRecording LoadRecording(const std::string& path)
 	while (std::getline(in, line)) {
 		RTrim(line);
 		if (line.empty()) continue;
-		if (line.rfind('#', 0) == 0) continue;
+		if (line.rfind('#', 0) == 0) {
+			double relocTime = 0.0;
+			if (ParseAnnotationTimestamp(line, "hmd_relocalization_detected", relocTime)) {
+				rec.relocalizationAnnotationTimes.push_back(relocTime);
+			}
+			continue;
+		}
 
 		const auto fields = SplitCsv(line);
 		if ((int)fields.size() < (int)header.size()) {
@@ -490,8 +535,9 @@ LoadedRecording LoadRecording(const std::string& path)
 				row.headTrackerValid = ReadPoseColumns(fields, idxHeadTx, idxHeadTy, idxHeadTz, idxHeadQw, idxHeadQx,
 				                                       idxHeadQy, idxHeadQz, row.headTracker);
 			}
-			row.relocDetected = ReadOptionalBool(fields, idxRelocDetected, false);
 		}
+		row.relocDetected = ReadOptionalBool(fields, idxRelocDetected, false);
+		if (row.relocDetected) ++rec.relocDetectedRowCount;
 
 		rec.rows.push_back(std::move(row));
 	}
@@ -533,6 +579,9 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	std::deque<double> madFloorWindow;
 	std::vector<double> allMad;
 	bool driftFrozen = false;
+	const ReplayRelocSource relocSource = ResolveRelocSource(rec, opts.relocSource);
+	res.relocSource = ReplayRelocSourceName(relocSource);
+	std::size_t nextAnnotationIndex = 0;
 
 	// Toggle 4 (locked-style snap recovery) replay state. We track the previous
 	// row's HMD and head-tracker world translations so each row's HMD jump and
@@ -675,8 +724,23 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		tgtW.linear() = s.target.rot;
 		tgtW.translation() = s.target.trans;
 		const Eigen::AffineCompact3d rel = refW.inverse() * tgtW;
-		if (havePrevRel && (rel.translation() - prevRel.translation()).norm() > opts.relocProxyJumpM) {
+		if (relocSource == ReplayRelocSource::Annotation) {
+			while (nextAnnotationIndex < rec.relocalizationAnnotationTimes.size() &&
+			       rec.relocalizationAnnotationTimes[nextAnnotationIndex] <= row.timestamp) {
+				lastRelocTime = rec.relocalizationAnnotationTimes[nextAnnotationIndex];
+				++nextAnnotationIndex;
+				++res.relocEvents;
+			}
+		}
+		else if (relocSource == ReplayRelocSource::Column) {
+			if (row.relocDetected) {
+				lastRelocTime = row.timestamp;
+				++res.relocEvents;
+			}
+		}
+		else if (havePrevRel && (rel.translation() - prevRel.translation()).norm() > opts.relocProxyJumpM) {
 			lastRelocTime = row.timestamp;
+			++res.relocEvents;
 		}
 		prevRel = rel;
 		havePrevRel = true;

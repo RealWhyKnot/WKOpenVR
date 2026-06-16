@@ -1819,7 +1819,8 @@ void CalibrationTick(double time)
 	// shares is populated with the previous tick's poses (the relocalization
 	// detector compares against THIS tick's poses; the universe-shift
 	// detector cares about pose changes between consecutive ticks).
-	TickHmdRelocalizationDetector(time);
+	ctx.relocDetectedThisTick = false;
+	TickHmdRelocalizationDetector(glfwGetTime());
 
 	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
 		ctx.ClearLogOnMessage();
@@ -3311,10 +3312,10 @@ void CalibrationTick(double time)
 			}
 		}
 
-		// reloc_detected: the HMD relocalization detector (TickHmdRelocalizationDetector,
-		// run earlier this tick on the same `time` clock) stamps ctx.lastRelocDetectedTime
-		// when it fires, so an exact match means it fired on this row.
-		lockedSnap.relocDetected = (ctx.lastRelocDetectedTime == time);
+		// reloc_detected: the HMD relocalization detector ran earlier this tick.
+		// Use an explicit per-tick flag instead of exact timestamp equality so
+		// the v4 replay column survives clock changes and floating-point jitter.
+		lockedSnap.relocDetected = ctx.relocDetectedThisTick;
 
 		Metrics::SetTickLockedSnapInputs(lockedSnap);
 	}

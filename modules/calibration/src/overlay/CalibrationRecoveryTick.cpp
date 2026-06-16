@@ -799,6 +799,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 			// Read in CalibrationPoseSampling::CollectSample; no-op unless the
 			// quarantine toggle is on. Same glfwGetTime() clock as the sampler.
 			CalCtx.lastRelocDetectedTime = now;
+			CalCtx.relocDetectedThisTick = true;
 		}
 	}
 

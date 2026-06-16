@@ -106,6 +106,21 @@ TrackingStyle EnvTrackingStyle(const char* name, TrackingStyle fallback)
 	return fallback;
 }
 
+replay::ReplayRelocSource EnvRelocSource(const char* name, replay::ReplayRelocSource fallback)
+{
+	const char* raw = std::getenv(name);
+	if (!raw) return fallback;
+	std::string value = TrimAscii(raw);
+	for (char& c : value) {
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	if (value == "auto") return replay::ReplayRelocSource::Auto;
+	if (value == "annotation" || value == "annotations") return replay::ReplayRelocSource::Annotation;
+	if (value == "column" || value == "reloc_detected") return replay::ReplayRelocSource::Column;
+	if (value == "proxy" || value == "relative" || value == "relpose") return replay::ReplayRelocSource::Proxy;
+	return fallback;
+}
+
 std::size_t EnvSize(const char* name, std::size_t fallback)
 {
 	const char* raw = std::getenv(name);
@@ -335,6 +350,28 @@ void WriteMinimalV3Recording(const std::filesystem::path& path, int rowCount)
 		const double t = static_cast<double>(i) / 60.0;
 		const double refX = 0.01 * (i % 5);
 		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15) << ",1.60,0.0,1,0,0,0,Continuous\n";
+	}
+}
+
+void WriteRelocSourceV4Recording(const std::filesystem::path& path, bool includeAnnotation, bool includeColumnEvent,
+                                 bool includeProxyJump)
+{
+	std::ofstream out(path);
+	ASSERT_TRUE(out) << path.string();
+	out << "# spacecal_log_v4\n";
+	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
+	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase,reloc_detected\n";
+	out.precision(17);
+	for (int i = 0; i < 5; ++i) {
+		const double t = static_cast<double>(i) * 0.5;
+		if (includeAnnotation && i == 2) {
+			out << "# [0.75] hmd_relocalization_detected: dx=0.051 dy=0.000 dz=0.000 dt=0.050\n";
+		}
+		const double refX = 0.01 * static_cast<double>(i);
+		const double targetJump = includeProxyJump && i >= 2 ? 1.0 : 0.0;
+		const int reloc = includeColumnEvent && i == 2 ? 1 : 0;
+		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15 + targetJump) << ",1.60,0.0,1,0,0,0,Continuous,"
+		    << reloc << "\n";
 	}
 }
 
@@ -602,6 +639,69 @@ TEST(MotionRecordingReplayTest, LockedSnapRequiresV4OnV3Recording)
 	EXPECT_EQ(0, result.snapReanchors);
 }
 
+TEST(MotionRecordingReplayTest, AnnotationRelocSourceDrivesQuarantineWithoutProxy)
+{
+	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_reloc_annotation.csv";
+	WriteRelocSourceV4Recording(path, /*includeAnnotation=*/true, /*includeColumnEvent=*/false,
+	                            /*includeProxyJump=*/false);
+
+	const auto recording = replay::LoadRecording(path.string());
+	ASSERT_TRUE(recording.error.empty()) << recording.error;
+	ASSERT_EQ(1u, recording.relocalizationAnnotationTimes.size());
+	EXPECT_TRUE(recording.hasRelocDetectedColumn);
+	EXPECT_EQ(0, recording.relocDetectedRowCount);
+
+	replay::ReplayOptions options;
+	options.applyRelocQuarantine = true;
+	options.relocSource = replay::ReplayRelocSource::Annotation;
+	const auto result = replay::RunReplay(recording, options);
+
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_EQ("annotation", result.relocSource);
+	EXPECT_EQ(1, result.relocEvents);
+	EXPECT_EQ(2, result.samplesQuarantined);
+}
+
+TEST(MotionRecordingReplayTest, AutoRelocSourcePrefersAnnotationOverProxy)
+{
+	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_reloc_auto.csv";
+	WriteRelocSourceV4Recording(path, /*includeAnnotation=*/true, /*includeColumnEvent=*/false,
+	                            /*includeProxyJump=*/true);
+
+	const auto recording = replay::LoadRecording(path.string());
+	ASSERT_TRUE(recording.error.empty()) << recording.error;
+
+	replay::ReplayOptions options;
+	options.applyRelocQuarantine = true;
+	options.relocSource = replay::ReplayRelocSource::Auto;
+	const auto result = replay::RunReplay(recording, options);
+
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_EQ("annotation", result.relocSource);
+	EXPECT_EQ(1, result.relocEvents);
+	EXPECT_EQ(2, result.samplesQuarantined);
+}
+
+TEST(MotionRecordingReplayTest, ColumnRelocSourceUsedWhenAnnotationsAbsent)
+{
+	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_reloc_column.csv";
+	WriteRelocSourceV4Recording(path, /*includeAnnotation=*/false, /*includeColumnEvent=*/true,
+	                            /*includeProxyJump=*/false);
+
+	const auto recording = replay::LoadRecording(path.string());
+	ASSERT_TRUE(recording.error.empty()) << recording.error;
+
+	replay::ReplayOptions options;
+	options.applyRelocQuarantine = true;
+	options.relocSource = replay::ReplayRelocSource::Auto;
+	const auto result = replay::RunReplay(recording, options);
+
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_EQ("column", result.relocSource);
+	EXPECT_EQ(1, result.relocEvents);
+	EXPECT_EQ(2, result.samplesQuarantined);
+}
+
 TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 {
 	const char* enabled = std::getenv("WKOPENVR_REPLAY_RECORDINGS");
@@ -632,6 +732,7 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.bsMaxStepMm = EnvDouble("WKOPENVR_REPLAY_BOUNDED_SOLVE_STEP_MM", baseOptions.bsMaxStepMm);
 	baseOptions.bsCommonMode = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE", baseOptions.bsCommonMode);
 	baseOptions.relocProxyJumpM = EnvDouble("WKOPENVR_REPLAY_RELOC_PROXY_M", baseOptions.relocProxyJumpM);
+	baseOptions.relocSource = EnvRelocSource("WKOPENVR_REPLAY_RELOC_SOURCE", baseOptions.relocSource);
 	// Toggle 4 (locked-style snap recovery). Needs a v4 recording; on v3 input the
 	// replay reports locked_snap=locked_snap_replay_requires_v4 and counts zero.
 	baseOptions.applyLockedSnap = EnvFlag("WKOPENVR_REPLAY_LOCKED_SNAP", baseOptions.applyLockedSnap);
@@ -673,7 +774,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
 			          << " samples_quarantined=" << result.samplesQuarantined
 			          << " freeze_engagements=" << result.freezeEngagements
-			          << " snap_reanchors=" << result.snapReanchors << " locked_snap=" << result.lockedSnapStatus
+			          << " snap_reanchors=" << result.snapReanchors << " reloc_events=" << result.relocEvents
+			          << " reloc_source=" << result.relocSource << " locked_snap=" << result.lockedSnapStatus
 			          << " tracking_style=" << static_cast<int>(options.trackingStyle)
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
 			PrintQualitySummary(input.name, sampleWindow, result);

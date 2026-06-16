@@ -326,9 +326,10 @@ struct CalibrationContext
 	// post-snap shifted pose pairs do not enter the solve.
 	bool experimentalRelocQuarantineEnabled = false;
 	double experimentalRelocQuarantineSec = 1.0;
-	// Runtime: session-clock time of the most recent relocalization detection,
-	// armed by the reloc detector. -1e9 = none seen yet. Not persisted.
+	// Runtime: glfwGetTime() of the most recent relocalization detection, armed
+	// by the reloc detector. -1e9 = none seen yet. Not persisted.
 	double lastRelocDetectedTime = -1e9;
+	bool relocDetectedThisTick = false;
 
 	// Toggle 2 -- drift circuit-breaker: auto-freeze the relative pose when its
 	// MAD runs away past K*floor or an absolute cap (automating the manual
@@ -771,6 +772,7 @@ struct CalibrationContext
 		// settings and intentionally NOT reset here -- only the runaway state).
 		driftBreakerFrozen = false;
 		lastRelocDetectedTime = -1e9;
+		relocDetectedThisTick = false;
 		targetInvalidEwma = 0.0;
 		autoLockHistory.clear();
 		autoLockEffectivelyLocked = false;
