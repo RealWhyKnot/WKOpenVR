@@ -102,6 +102,25 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
 	}
 	$Catalog["drift_breaker"] = New-Scenario "drift_breaker" @{ WKOPENVR_REPLAY_DRIFT_BREAKER = "1" }
+	$Catalog["quarantine_drift"] = New-Scenario "quarantine_drift" @{
+		WKOPENVR_REPLAY_QUARANTINE = "1"
+		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
+	}
+	$Catalog["bounded_drift"] = New-Scenario "bounded_drift" @{
+		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
+	}
+	$Catalog["quarantine_bounded_drift"] = New-Scenario "quarantine_bounded_drift" @{
+		WKOPENVR_REPLAY_QUARANTINE = "1"
+		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
+	}
 	$Catalog["locked_snap"] = New-Scenario "locked_snap" @{
 		WKOPENVR_REPLAY_LOCKED_SNAP = "1"
 		WKOPENVR_REPLAY_TRACKING_STYLE = "locked"
@@ -197,10 +216,33 @@ foreach ($Window in $SampleWindow) {
 
 $Catalog = Get-ScenarioCatalog
 if ($Scenario.Count -eq 0) {
-	$Scenario = @("baseline", "quarantine", "bounded_full", "quarantine_bounded", "drift_breaker", "locked_snap", "all")
+	$Scenario = @(
+		"baseline",
+		"quarantine",
+		"bounded_full",
+		"quarantine_bounded",
+		"drift_breaker",
+		"quarantine_drift",
+		"bounded_drift",
+		"quarantine_bounded_drift",
+		"locked_snap",
+		"all"
+	)
 	if ($IncludeProxyComparison) {
 		$Scenario += "quarantine_proxy"
 	}
+}
+else {
+	$ExpandedScenario = @()
+	foreach ($Name in $Scenario) {
+		foreach ($Part in ([string]$Name -split ",")) {
+			$Trimmed = $Part.Trim()
+			if (-not [string]::IsNullOrWhiteSpace($Trimmed)) {
+				$ExpandedScenario += $Trimmed
+			}
+		}
+	}
+	$Scenario = $ExpandedScenario
 }
 
 $Scenarios = @()
@@ -282,8 +324,15 @@ try {
 	foreach ($Item in $Scenarios) {
 		Write-Host ("== Calibration replay: {0} ==" -f $Item.Name)
 		Set-ReplayEnvironment $BaseEnv $Item.Env
-		$Output = & $TestExe --gtest_filter=*ReplayLocalRecordingsWhenRequested --gtest_brief=1 2>&1
-		$ExitCode = $LASTEXITCODE
+		$PreviousErrorActionPreference = $ErrorActionPreference
+		$ErrorActionPreference = "Continue"
+		try {
+			$Output = & $TestExe --gtest_filter=*ReplayLocalRecordingsWhenRequested --gtest_brief=1 2>&1
+			$ExitCode = $LASTEXITCODE
+		}
+		finally {
+			$ErrorActionPreference = $PreviousErrorActionPreference
+		}
 		$ReplayLines = @($Output | Where-Object { $_ -is [string] -and $_.StartsWith("[replay] ") })
 		if ($ReplayLines.Count -eq 0) {
 			$Tail = (($Output | Select-Object -Last 20) -join [Environment]::NewLine)
