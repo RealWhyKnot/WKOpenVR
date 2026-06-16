@@ -222,6 +222,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Bridge invalid pose dropouts (39150cb)
 - **facetracking:** Hide prerelease modules unless opted in (ac3f2cd)
 - **ci:** Satisfy changed-source tidy checks (8738ea9)
+- **release:** Use central date for release automation (f1b2814)
 
 ---
 
