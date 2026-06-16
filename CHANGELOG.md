@@ -105,6 +105,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **overlay:** Skip UI rebuild when no surface is visible (82e033a)
 - **overlay:** Trim per-tick persistence, IPC, and log churn (a8978dd)
 - **diagnostics:** Log pollers and reloc_tick on change, not every tick (e917728)
+- tools(calibration): summarize experiment logs (6f82e13)
+- tools(calibration): add live experiment profile helper (6af37a4)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -223,6 +225,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Hide prerelease modules unless opted in (ac3f2cd)
 - **ci:** Satisfy changed-source tidy checks (8738ea9)
 - **release:** Use central date for release automation (f1b2814)
+- **calibration:** Align relocalization quarantine timing (e31efd2)
 
 ---
 
