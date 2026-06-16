@@ -29,7 +29,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $ReleaseUrl,
 
-    [string] $ReleaseDate = (Get-Date -Format 'yyyy-MM-dd')
+    [string] $ReleaseDate = '',
+    [datetime] $NowUtc = ([datetime]::UtcNow)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +55,25 @@ function Write-TextUtf8 {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
     [System.IO.File]::WriteAllText($Path, $Content, $Utf8NoBom)
+}
+
+function Get-CentralTimeZone {
+    foreach ($id in @('Central Standard Time', 'America/Chicago')) {
+        try { return [System.TimeZoneInfo]::FindSystemTimeZoneById($id) }
+        catch { }
+    }
+    throw 'Could not resolve the America/Chicago release time zone.'
+}
+
+function Get-ReleaseDateStamp {
+    param([datetime] $NowUtc, [string] $Format)
+
+    $utc = $NowUtc
+    if ($utc.Kind -ne [System.DateTimeKind]::Utc) {
+        $utc = $utc.ToUniversalTime()
+    }
+    $central = [System.TimeZoneInfo]::ConvertTimeFromUtc($utc, (Get-CentralTimeZone))
+    return $central.ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
 function New-SeedChangelog {
@@ -133,6 +153,10 @@ function Find-TaggedSectionRange {
     }
 
     return @{ Start = $start; End = $end }
+}
+
+if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
+    $ReleaseDate = Get-ReleaseDateStamp -NowUtc $NowUtc -Format 'yyyy-MM-dd'
 }
 
 $content = Read-TextUtf8 -Path $ChangelogPath

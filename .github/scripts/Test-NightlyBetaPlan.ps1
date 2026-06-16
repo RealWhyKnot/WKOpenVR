@@ -92,7 +92,8 @@ function Invoke-Plan {
     [string] $RepoRoot,
     [string] $ReleaseStatePath,
     [string] $Tag = "",
-    [string] $Today = ""
+    [string] $Today = "",
+    [datetime] $NowUtc = ([datetime]::Parse("2026-06-16T01:30:00Z"))
   )
 
   $outputPath = Join-Path $RepoRoot "plan.json"
@@ -107,6 +108,7 @@ function Invoke-Plan {
   if (-not [string]::IsNullOrWhiteSpace($Today)) {
     $arguments["Today"] = $Today
   }
+  $arguments["NowUtc"] = $NowUtc
 
   & $Planner @arguments | Out-Host
   if ($LASTEXITCODE -ne 0) {
@@ -190,6 +192,15 @@ try {
   Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "change captions after stable release") | Out-Null
   $plan = Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -Today "2026.6.9"
   Assert-Equal -Actual $plan.next_tag -Expected "v2026.6.9.1-beta" -Message "Next beta tag should increment after a same-day stable release"
+
+  $repo = New-TestRepo
+  [void] $tempRoots.Add($repo)
+  $state = Write-ReleaseState -RepoRoot $repo -Tag "v2026.6.1.0"
+  Write-TestFile -Path (Join-Path $repo "modules/smoothing/source.txt") -Content "smoothing after utc rollover`n"
+  Invoke-TestGit -RepoRoot $repo -Arguments @("add", ".") | Out-Null
+  Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "change smoothing after utc rollover") | Out-Null
+  $plan = Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -NowUtc ([datetime]::Parse("2026-06-16T01:30:00Z"))
+  Assert-Equal -Actual $plan.next_tag -Expected "v2026.6.15.0-beta" -Message "Default beta tag date should use Central release date"
 
   $repo = New-TestRepo
   [void] $tempRoots.Add($repo)

@@ -39,8 +39,8 @@ try {
         -Sha256 'ABCDEF1234' `
         -IntegrityName 'WKOpenVR-Smoothing-v2026.6.15.0.integrity.tsv' `
         -ReleaseUrl 'https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/tag/v2026.6.15.0' `
-        -ReleaseDate '2026-06-15'
-    if ($LASTEXITCODE -ne 0) { throw "Initial changelog update failed." }
+        -NowUtc ([datetime]::Parse('2026-06-16T01:30:00Z'))
+    if (-not $?) { throw "Initial changelog update failed." }
 
     $text = Read-TestText -Path $changelog
     Assert-Contains -Text $text -Expected '# Changelog'
@@ -59,8 +59,8 @@ try {
         -Sha256 '9999999999' `
         -IntegrityName 'WKOpenVR-Smoothing-v2026.6.15.0.integrity.tsv' `
         -ReleaseUrl 'https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/tag/v2026.6.15.0' `
-        -ReleaseDate '2026-06-15'
-    if ($LASTEXITCODE -ne 0) { throw "Idempotent changelog update failed." }
+        -NowUtc ([datetime]::Parse('2026-06-16T01:30:00Z'))
+    if (-not $?) { throw "Idempotent changelog update failed." }
 
     $text = Read-TestText -Path $changelog
     Assert-NotContains -Text $text -Unexpected '9999999999'
@@ -76,7 +76,7 @@ try {
         -IntegrityName 'WKOpenVR-Smoothing-v2026.6.16.0.integrity.tsv' `
         -ReleaseUrl 'https://github.com/RealWhyKnot/WKOpenVR-Smoothing/releases/tag/v2026.6.16.0' `
         -ReleaseDate '2026-06-16'
-    if ($LASTEXITCODE -ne 0) { throw "Second changelog update failed." }
+    if (-not $?) { throw "Second changelog update failed." }
 
     $text = Read-TestText -Path $changelog
     if ($text.IndexOf('## v2026.6.16.0 -- 2026-06-16') -gt $text.IndexOf('## v2026.6.15.0 -- 2026-06-15')) {
