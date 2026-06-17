@@ -31,6 +31,10 @@ constexpr double kDefaultQuarantineSec = 1.0;
 // the window behaves as "toggle off" rather than quarantining every sample.
 constexpr double kMinQuarantineSec = 0.0;
 
+// Once the candidate relative-pose MAD is back near the settled floor, the
+// quarantine can release before the full time window elapses.
+constexpr double kDefaultClearMult = 1.5;
+
 // True when `now` falls inside the quarantine window opened by the most recent
 // relocalization at `lastRelocTime`.
 //

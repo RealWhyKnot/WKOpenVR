@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <sstream>
@@ -28,6 +29,27 @@
 #include "TrackingStyle.h"
 
 namespace {
+
+class ScopedEnvVar
+{
+public:
+	ScopedEnvVar(const char* name, const char* value) : m_name(name)
+	{
+		const char* old = std::getenv(name);
+		if (old) {
+			m_hadOld = true;
+			m_old = old;
+		}
+		_putenv_s(m_name.c_str(), value);
+	}
+
+	~ScopedEnvVar() { _putenv_s(m_name.c_str(), m_hadOld ? m_old.c_str() : ""); }
+
+private:
+	std::string m_name;
+	std::string m_old;
+	bool m_hadOld = false;
+};
 
 // Build a minimal v0 / v1 / v2 / v3 JSON payload programmatically. Real
 // production profiles have many more keys; for the migration tests we only
@@ -63,6 +85,7 @@ std::string MakeMinimalProfile(int schemaVersion, const std::string& extraKeys =
 // ---------------------------------------------------------------------------
 TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 {
+	ScopedEnvVar hiddenExperiments("WKOPENVR_CALIBRATION_EXPERIMENT_DIAGNOSTICS", "0");
 	CalibrationContext src;
 	src.referenceTrackingSystem = "lighthouse";
 	src.targetTrackingSystem = "oculus";
@@ -118,17 +141,54 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_FALSE(dst.floorEnabled);
 	EXPECT_TRUE(dst.experimentalRelocQuarantineEnabled);
 	EXPECT_DOUBLE_EQ(dst.experimentalRelocQuarantineSec, 2.0);
-	EXPECT_TRUE(dst.experimentalDriftBreakerEnabled);
+	EXPECT_FALSE(dst.experimentalDriftBreakerEnabled);
 	EXPECT_DOUBLE_EQ(dst.experimentalDriftBreakerMadMult, 6.0);
 	EXPECT_DOUBLE_EQ(dst.experimentalDriftBreakerAbsCapMm, 80.0);
 	EXPECT_TRUE(dst.experimentalBoundedSolveEnabled);
-	EXPECT_TRUE(dst.experimentalBoundedSolvePrior);
+	EXPECT_FALSE(dst.experimentalBoundedSolvePrior);
 	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolvePriorLambda, 0.3);
 	EXPECT_TRUE(dst.experimentalBoundedSolveSlew);
 	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolveMaxStepMm, 40.0);
 	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolveMaxStepDeg, 3.0);
 	EXPECT_TRUE(dst.experimentalBoundedSolveCommonMode);
 	EXPECT_TRUE(dst.experimentalLockedSnapRecoveryEnabled);
+}
+
+TEST(ConfigurationTest, HiddenExperimentalFieldsLoadOnlyWithDiagnosticOverride)
+{
+	const std::string extra = "\"experimental_drift_breaker\":true,"
+	                          "\"experimental_bounded_solve\":true,"
+	                          "\"experimental_bounded_solve_prior\":true,"
+	                          "\"experimental_bounded_solve_slew\":false,"
+	                          "\"experimental_bounded_solve_common_mode\":false";
+
+	{
+		ScopedEnvVar hiddenExperiments("WKOPENVR_CALIBRATION_EXPERIMENT_DIAGNOSTICS", "0");
+		CalibrationContext ctx;
+		std::stringstream io(MakeMinimalProfile(/*schemaVersion=*/7, extra));
+		ParseProfile(ctx, io);
+
+		EXPECT_TRUE(ctx.validProfile);
+		EXPECT_FALSE(ctx.experimentalDriftBreakerEnabled);
+		EXPECT_TRUE(ctx.experimentalBoundedSolveEnabled);
+		EXPECT_FALSE(ctx.experimentalBoundedSolvePrior);
+		EXPECT_TRUE(ctx.experimentalBoundedSolveSlew);
+		EXPECT_TRUE(ctx.experimentalBoundedSolveCommonMode);
+	}
+
+	{
+		ScopedEnvVar hiddenExperiments("WKOPENVR_CALIBRATION_EXPERIMENT_DIAGNOSTICS", "1");
+		CalibrationContext ctx;
+		std::stringstream io(MakeMinimalProfile(/*schemaVersion=*/7, extra));
+		ParseProfile(ctx, io);
+
+		EXPECT_TRUE(ctx.validProfile);
+		EXPECT_TRUE(ctx.experimentalDriftBreakerEnabled);
+		EXPECT_TRUE(ctx.experimentalBoundedSolveEnabled);
+		EXPECT_TRUE(ctx.experimentalBoundedSolvePrior);
+		EXPECT_FALSE(ctx.experimentalBoundedSolveSlew);
+		EXPECT_FALSE(ctx.experimentalBoundedSolveCommonMode);
+	}
 }
 
 // ---------------------------------------------------------------------------

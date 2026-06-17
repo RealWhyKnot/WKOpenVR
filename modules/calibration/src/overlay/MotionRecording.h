@@ -1,6 +1,6 @@
 #pragma once
 
-// Loads a captured "spacecal_log_v2/v3/v4" CSV (the same file format the debug logger
+// Loads a captured "spacecal_log_v2/v3/v4/v5" CSV (the same file format the debug logger
 // emits to %LocalAppDataLow%\SpaceCalibrator\Logs\) into memory and replays it
 // through a fresh CalibrationCalc. The intent: a user records a problematic
 // motion sequence, we ship a fix, the user replays the same recording against
@@ -8,12 +8,14 @@
 //
 // Parsing is column-name based, so adding new columns to the live log is
 // backward compatible; only the raw-pose columns are required. The header line
-// must begin with `# spacecal_log_v2`, `# spacecal_log_v3`, or
-// `# spacecal_log_v4`; older v1 captures lacked the raw poses and can't be
-// replayed. v3 adds per-row sample-health columns so replay can evaluate
-// tracking contamination instead of assuming every restored sample was healthy.
+// must begin with `# spacecal_log_v2`, `# spacecal_log_v3`,
+// `# spacecal_log_v4`, or `# spacecal_log_v5`; older v1 captures lacked the
+// raw poses and can't be replayed. v3 adds per-row sample-health columns so
+// replay can evaluate tracking contamination instead of assuming every restored
+// sample was healthy.
 // v4 adds the raw HMD + head-mount tracker poses and a reloc flag so the
-// locked-style snap-recovery toggle can be A/B-confirmed offline.
+// locked-style snap-recovery toggle can be A/B-confirmed offline. v5 adds a
+// per-row experimental_flags bitmask.
 
 #include "CalibrationCalc.h"
 #include "TrackingStyle.h" // TrackingStyle enum for the locked-snap replay option
@@ -56,6 +58,8 @@ struct ReplayRow
 	bool hasHmdPose = false;       // raw HMD pose column present + parsed this row
 	bool headTrackerValid = false; // head-mount tracker reported a running pose this row
 	bool relocDetected = false;    // HMD relocalization detector fired this row
+	bool hasExperimentalFlags = false;
+	uint32_t experimentalFlags = 0;
 };
 
 // Parsed file metadata: header annotations the live logger emits up-front
@@ -91,6 +95,7 @@ struct LoadedRecording
 	// locked-snap A/B path can run. v2/v3 recordings leave this false and the
 	// replay reports "locked_snap_replay_requires_v4" instead of counting snaps.
 	bool hasLockedSnapColumns = false;
+	bool hasExperimentalFlagsColumn = false;
 };
 
 // Parse a v2 log file from disk. Returns LoadedRecording with `error` empty
@@ -237,7 +242,13 @@ struct ReplayResult
 	int samplesQuarantined = 0;
 	int freezeEngagements = 0;
 	int snapReanchors = 0;
+	int lockedSnapHmdJumps = 0;
+	int lockedSnapTrackerInvalid = 0;
+	int lockedSnapCorroborated = 0;
 	int relocEvents = 0;
+	int solverSamplesPushed = 0;
+	double solverSampleRatio = 1.0;
+	bool sampleStarved = false;
 	std::string relocSource = "off";
 	// Locked-snap A/B status: "off" (toggle not requested), "applied" (ran on a v4
 	// recording), or "locked_snap_replay_requires_v4" (requested but the recording

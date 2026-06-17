@@ -177,8 +177,7 @@ function Set-ExperimentalDefaults {
 	}
 	if ($Bounded) {
 		Set-ProfileValue $Profile "experimental_bounded_solve" $true
-		Set-ProfileValue $Profile "experimental_bounded_solve_prior" $true
-		Set-ProfileValue $Profile "experimental_bounded_solve_prior_lambda" 0.2
+		Set-ProfileValue $Profile "experimental_bounded_solve_prior" $false
 		Set-ProfileValue $Profile "experimental_bounded_solve_slew" $true
 		Set-ProfileValue $Profile "experimental_bounded_solve_max_step_mm" 50.0
 		Set-ProfileValue $Profile "experimental_bounded_solve_max_step_deg" 2.0
@@ -196,6 +195,12 @@ function Apply-Scenario {
 		"quarantine" { Set-ExperimentalDefaults $Profile $true $false $false $false }
 		"bounded" { Set-ExperimentalDefaults $Profile $false $false $true $false }
 		"bounded_full" { Set-ExperimentalDefaults $Profile $false $false $true $false }
+		"bounded_prior" {
+			Set-ExperimentalDefaults $Profile $false $false $false $false
+			Set-ProfileValue $Profile "experimental_bounded_solve" $true
+			Set-ProfileValue $Profile "experimental_bounded_solve_prior" $true
+			Set-ProfileValue $Profile "experimental_bounded_solve_prior_lambda" 0.2
+		}
 		"quarantine_bounded" { Set-ExperimentalDefaults $Profile $true $false $true $false }
 		"drift" { Set-ExperimentalDefaults $Profile $false $true $false $false }
 		"drift_breaker" { Set-ExperimentalDefaults $Profile $false $true $false $false }

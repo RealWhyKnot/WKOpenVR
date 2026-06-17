@@ -1,5 +1,6 @@
 #include "Configuration.h"
-#include "BoundaryRePush.h"     // ScheduleBoundaryStartupPush -- startup push on load.
+#include "BoundaryRePush.h" // ScheduleBoundaryStartupPush -- startup push on load.
+#include "CalibrationExperimentFlags.h"
 #include "CalibrationMetrics.h" // WriteLogAnnotation -- profile_loaded_calibration
                                 // diagnostic line on launch.
 #include "TrackingStyle.h"
@@ -87,6 +88,19 @@ static const char* HeadMountSampleSourceName(HeadMountSampleSource source)
 // Persists for the lifetime of the process (a second SaveProfile clears the
 // corruption, so the banner is only shown after a load, not during normal use).
 bool g_chaperoneGeometrySizeMismatch = false;
+
+static void NormalizeExperimentalOptions(CalibrationContext& ctx)
+{
+	const bool diagnostics = spacecal::calibration_experiments::HiddenExperimentsEnabled();
+	if (!diagnostics) {
+		ctx.experimentalDriftBreakerEnabled = false;
+		ctx.experimentalBoundedSolvePrior = false;
+	}
+	if (ctx.experimentalBoundedSolveEnabled && !diagnostics) {
+		ctx.experimentalBoundedSolveSlew = true;
+		ctx.experimentalBoundedSolveCommonMode = true;
+	}
+}
 
 // Forward-migrate an already-parsed profile object in place from `from_version`
 // up to kProfileSchemaVersion. Called between JSON parse and field population.
@@ -707,6 +721,7 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.experimentalBoundedSolveCommonMode = obj["experimental_bounded_solve_common_mode"].get<bool>();
 	if (obj["experimental_locked_snap_recovery"].is<bool>())
 		ctx.experimentalLockedSnapRecoveryEnabled = obj["experimental_locked_snap_recovery"].get<bool>();
+	NormalizeExperimentalOptions(ctx);
 
 	if (obj["scale"].is<double>()) {
 		ctx.calibratedScale = obj["scale"].get<double>();

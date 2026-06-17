@@ -1,6 +1,7 @@
 #include "Calibration.h"
 #include "CalibrationProgress.h"
 #include "CalibrationAutoSpeed.h"
+#include "CalibrationExperimentFlags.h"
 #include "CalibrationOneShotDiagnostics.h"
 #include "CalibrationInternal.h"
 #include "CalibrationDevicePoseUtils.h"
@@ -944,7 +945,9 @@ void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& re
 	// a one-way override read by ResolveLockMode; it never touches the AUTO
 	// pending-flip queue, so it composes with the detector rather than fighting
 	// it. Reuses translStdDev / autoLockMadFloor just computed above.
-	if (!experimentalDriftBreakerEnabled) {
+	const bool driftBreakerEffective =
+	    experimentalDriftBreakerEnabled && spacecal::calibration_experiments::HiddenExperimentsEnabled();
+	if (!driftBreakerEffective) {
 		if (driftBreakerFrozen) {
 			driftBreakerFrozen = false;
 			ResolveLockMode();
@@ -2732,13 +2735,18 @@ void CalibrationTick(double time)
 		calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
 		// Experimental robust/bounded-solve guards, plumbed per-tick (mirrors the
 		// lockRelativePosition wiring below). Defaults keep these off -> no change.
+		const bool hiddenExperimentDiagnostics = spacecal::calibration_experiments::HiddenExperimentsEnabled();
 		calibration.boundedSolveEnabled = CalCtx.experimentalBoundedSolveEnabled;
-		calibration.boundedSolvePrior = CalCtx.experimentalBoundedSolvePrior;
+		calibration.boundedSolvePrior = CalCtx.experimentalBoundedSolveEnabled && hiddenExperimentDiagnostics &&
+		                                CalCtx.experimentalBoundedSolvePrior;
 		calibration.boundedSolvePriorLambda = CalCtx.experimentalBoundedSolvePriorLambda;
-		calibration.boundedSolveSlew = CalCtx.experimentalBoundedSolveSlew;
+		calibration.boundedSolveSlew = CalCtx.experimentalBoundedSolveEnabled &&
+		                               (CalCtx.experimentalBoundedSolveSlew || !hiddenExperimentDiagnostics);
 		calibration.boundedSolveMaxStepM = CalCtx.experimentalBoundedSolveMaxStepMm / 1000.0;
 		calibration.boundedSolveMaxStepRad = CalCtx.experimentalBoundedSolveMaxStepDeg * 0.017453292519943295;
-		calibration.boundedSolveCommonMode = CalCtx.experimentalBoundedSolveCommonMode;
+		calibration.boundedSolveCommonMode =
+		    CalCtx.experimentalBoundedSolveEnabled &&
+		    (CalCtx.experimentalBoundedSolveCommonMode || !hiddenExperimentDiagnostics);
 		const bool blockStaleRelPose =
 		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
@@ -3309,6 +3317,29 @@ void CalibrationTick(double time)
 		lockedSnap.relocDetected = ctx.relocDetectedThisTick;
 
 		Metrics::SetTickLockedSnapInputs(lockedSnap);
+
+		uint32_t experimentalFlags = 0;
+		const bool hiddenExperimentDiagnostics = spacecal::calibration_experiments::HiddenExperimentsEnabled();
+		auto setExperimentFlag = [&](spacecal::calibration_experiments::ExperimentFlag flag, bool enabled) {
+			if (enabled) experimentalFlags |= static_cast<uint32_t>(flag);
+		};
+		setExperimentFlag(spacecal::calibration_experiments::HeadsetOffsetAutoCorrect,
+		                  ctx.headMount.experimentalAutoCorrectOffset);
+		setExperimentFlag(spacecal::calibration_experiments::RelocQuarantine, ctx.experimentalRelocQuarantineEnabled);
+		setExperimentFlag(spacecal::calibration_experiments::DriftBreaker,
+		                  ctx.experimentalDriftBreakerEnabled && hiddenExperimentDiagnostics);
+		if (ctx.experimentalBoundedSolveEnabled) {
+			setExperimentFlag(spacecal::calibration_experiments::BoundedSolve, true);
+			setExperimentFlag(spacecal::calibration_experiments::BoundedSolvePrior,
+			                  hiddenExperimentDiagnostics && ctx.experimentalBoundedSolvePrior);
+			setExperimentFlag(spacecal::calibration_experiments::BoundedSolveSlew,
+			                  ctx.experimentalBoundedSolveSlew || !hiddenExperimentDiagnostics);
+			setExperimentFlag(spacecal::calibration_experiments::BoundedSolveCommonMode,
+			                  ctx.experimentalBoundedSolveCommonMode || !hiddenExperimentDiagnostics);
+		}
+		setExperimentFlag(spacecal::calibration_experiments::LockedSnapRecovery,
+		                  ctx.experimentalLockedSnapRecoveryEnabled);
+		Metrics::SetTickExperimentalFlags(experimentalFlags);
 	}
 
 	Metrics::WriteLogEntry();

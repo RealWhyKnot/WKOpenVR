@@ -169,6 +169,7 @@ struct TickRawPoses
 static TickRawPoses g_tickRaw;
 static ReplaySampleDiagnostics g_tickSample;
 static ReplayLockedSnapInputs g_tickLockedSnap;
+static uint32_t g_tickExperimentalFlags = 0;
 
 static const char* TickPhaseName(TickPhase p)
 {
@@ -209,6 +210,11 @@ void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics)
 void SetTickLockedSnapInputs(const ReplayLockedSnapInputs& inputs)
 {
 	g_tickLockedSnap = inputs;
+}
+
+void SetTickExperimentalFlags(uint32_t flags)
+{
+	g_tickExperimentalFlags = flags;
 }
 
 struct CsvField
@@ -502,6 +508,9 @@ static const CsvField fields[] = {
 	     s << g_tickLockedSnap.headTrackerRot.z();
      }},
     {"reloc_detected", [](auto& s) { s << (g_tickLockedSnap.relocDetected ? 1 : 0); }},
+
+    // --- v5 columns: experimental option state -----------------------------
+    {"experimental_flags", [](auto& s) { s << g_tickExperimentalFlags; }},
 };
 #endif
 
@@ -695,11 +704,12 @@ static bool OpenLogFile()
 		// Wire-format version annotation. v2 added per-tick raw reference + target
 		// poses (ref_t{x,y,z}, ref_q{w,x,y,z}, tgt_*) and tick_phase; v3 added the
 		// sample-health columns; v4 added the locked-snap corroboration inputs (raw
-		// HMD pose, head-mount tracker pose + valid flag, reloc_detected). New
+		// HMD pose, head-mount tracker pose + valid flag, reloc_detected); v5 added
+		// the experimental_flags bitmask. New
 		// columns are strictly appended, so the replay parser still loads v2/v3.
 		// The harness rejects logs that don't begin with this banner so older
 		// captures fail loud rather than being read with the wrong column layout.
-		header << "# spacecal_log_v4\n";
+		header << "# spacecal_log_v5\n";
 	}
 	else
 #endif
@@ -717,7 +727,7 @@ static bool OpenLogFile()
 	header << "# debug_logging_effective=1\n";
 	header << "# replay_recording="
 #if WKOPENVR_BUILD_IS_DEV
-	       << (enableReplayCsv ? "enabled format=spacecal_log_v4" : "disabled")
+	       << (enableReplayCsv ? "enabled format=spacecal_log_v5" : "disabled")
 #else
 	       << "not_compiled"
 #endif
@@ -951,6 +961,7 @@ void WriteLogEntry()
 	}
 	g_tickSample = ReplaySampleDiagnostics{};
 	g_tickLockedSnap = ReplayLockedSnapInputs{};
+	g_tickExperimentalFlags = 0;
 #endif
 }
 

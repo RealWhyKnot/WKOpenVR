@@ -1,5 +1,6 @@
 #include "CalibrationPoseSampling.h"
 
+#include "AutoLockHysteresis.h"
 #include "CalibrationInternal.h"
 #include "CalibrationMetrics.h"
 #include "ControllerInput.h"
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <set>
 #include <string>
 #include <vector>
@@ -242,6 +244,17 @@ void RecordRejectedReplaySampleDiagnostics(const vr::DriverPose_t& reference, co
 	diag.refZeroPose = PoseLooksZero(reference);
 	diag.targetZeroPose = PoseLooksZero(target);
 	Metrics::SetTickReplaySampleDiagnostics(diag);
+}
+
+bool CandidateRelPoseMadMm(const CalibrationContext& ctx, const Eigen::AffineCompact3d& rel, double& outMadMm)
+{
+	std::deque<Eigen::AffineCompact3d> window = ctx.autoLockHistory;
+	window.push_back(rel);
+	while (window.size() > spacecal::autolock::kHistoryMax)
+		window.pop_front();
+	if (window.size() < spacecal::autolock::kSamplesNeeded) return false;
+	outMadMm = spacecal::autolock::RobustTranslDeviation(window) * 1000.0;
+	return true;
 }
 
 PoseHealthProbe ProbePoseHealth(int deviceId, const Pose& pose, const LARGE_INTEGER& sampleTime,
@@ -647,15 +660,31 @@ bool CollectSample(const CalibrationContext& ctx)
 	collectedSample.targetPoseUnchanged = targetHealth.unchanged;
 	collectedSample.trackingPoseStale = refHealth.stale || targetHealth.stale;
 	collectedSample.trackingPoseJump = refHealth.jump || targetHealth.jump;
+
+	Eigen::AffineCompact3d refWorld = Eigen::AffineCompact3d::Identity();
+	refWorld.linear() = refPose.rot;
+	refWorld.translation() = refPose.trans;
+	Eigen::AffineCompact3d tgtWorld = Eigen::AffineCompact3d::Identity();
+	tgtWorld.linear() = tgtPose.rot;
+	tgtWorld.translation() = tgtPose.trans;
+	const Eigen::AffineCompact3d candidateRel = refWorld.inverse() * tgtWorld;
+
 	// Post-relocalization sample quarantine (experimental, default off). After a
 	// detected HMD relocalization the inside-out world frame has shifted; drop
 	// samples for a short settle window so the shifted pose pairs never enter the
-	// solve OR the AUTO-lock MAD window. Returning true (not false) keeps the rest
-	// of the tick -- solve on the unchanged buffer, detectors, heartbeat -- live;
-	// only the new poisoned sample is withheld.
-	if (ctx.experimentalRelocQuarantineEnabled &&
-	    spacecal::reloc_guard::ShouldQuarantineSample(glfwGetTime(), ctx.lastRelocDetectedTime,
-	                                                  ctx.experimentalRelocQuarantineSec)) {
+	// solve OR the AUTO-lock MAD window. The early-release path tests this
+	// candidate against the existing relative-pose window, so a non-poisoned row
+	// can resume immediately while a shifted row falls back to the time window.
+	bool quarantineActive = false;
+	if (ctx.experimentalRelocQuarantineEnabled) {
+		double candidateMadMm = 0.0;
+		const bool haveCandidateMad = CandidateRelPoseMadMm(ctx, candidateRel, candidateMadMm);
+		quarantineActive = spacecal::reloc_guard::QuarantineActive(
+		    glfwGetTime(), ctx.lastRelocDetectedTime, ctx.experimentalRelocQuarantineSec,
+		    haveCandidateMad ? candidateMadMm : 0.0, haveCandidateMad ? ctx.autoLockMadFloor * 1000.0 : 0.0,
+		    spacecal::reloc_guard::kDefaultClearMult);
+	}
+	if (quarantineActive) {
 		RecordReplaySampleDiagnostics(collectedSample, false);
 		static double s_lastQuarantineLog = -1e9;
 		const double nowLog = glfwGetTime();
@@ -683,12 +712,6 @@ bool CollectSample(const CalibrationContext& ctx)
 	// rigidity check is independent of the math's current solution --
 	// the detector measures whether the two devices physically move
 	// together, not whether the calibration thinks they do.
-	Eigen::AffineCompact3d refWorld = Eigen::AffineCompact3d::Identity();
-	refWorld.linear() = ConvertPose(reference).rot;
-	refWorld.translation() = ConvertPose(reference).trans;
-	Eigen::AffineCompact3d tgtWorld = Eigen::AffineCompact3d::Identity();
-	tgtWorld.linear() = ConvertPose(target).rot;
-	tgtWorld.translation() = ConvertPose(target).trans;
 	const_cast<CalibrationContext&>(ctx).UpdateAutoLockDetector(refWorld, tgtWorld);
 
 	// Push motion-coverage metrics for the live sample buffer. The Calibration

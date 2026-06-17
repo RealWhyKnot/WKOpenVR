@@ -266,6 +266,10 @@ void SetTickReplaySampleDiagnostics(const ReplaySampleDiagnostics& diagnostics);
 // doesn't set it emits the additive defaults (identity HMD, invalid head tracker).
 void SetTickLockedSnapInputs(const ReplayLockedSnapInputs& inputs);
 
+// Set the v5 experimental option bitmask for the next WriteLogEntry() call.
+// See CalibrationExperimentFlags.h for bit definitions.
+void SetTickExperimentalFlags(uint32_t flags);
+
 void WriteLogAnnotation(const char* s);
 
 // True when diagnostic logging is enabled. Cheap gate (mirrors `enableLogs`, the

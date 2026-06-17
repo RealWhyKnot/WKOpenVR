@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 param(
-	# spacecal_log_v2/v3/v4 recording to replay. Defaults to the newest retained
+	# spacecal_log_v2/v3/v4/v5 recording to replay. Defaults to the newest retained
 	# %LocalAppDataLow%\WKOpenVR\Logs\spacecal_log.*.txt capture.
 	[string]$RecordingPath = "",
 
@@ -12,6 +12,15 @@ param(
 
 	# Continuous sample window(s) to replay. Keep 200 for live-shaped comparisons.
 	[int[]]$SampleWindow = @(200),
+
+	# Periodic shadow-quality interval for replay summaries. Use 0 only for fast legacy comparisons.
+	[int]$QualityInterval = 10,
+
+	# Disable holdout quality scoring while still collecting periodic quality reports.
+	[switch]$NoHoldout,
+
+	# Match the old matrix behavior: quality_interval=0 and holdout=0.
+	[switch]$FastLegacyMetrics,
 
 	# Include the legacy relative-pose proxy source as a diagnostic comparison.
 	[switch]$IncludeProxyComparison,
@@ -90,14 +99,16 @@ function Get-ScenarioCatalog {
 	$Catalog["quarantine"] = New-Scenario "quarantine" @{ WKOPENVR_REPLAY_QUARANTINE = "1" }
 	$Catalog["bounded_full"] = New-Scenario "bounded_full" @{
 		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
+	}
+	$Catalog["bounded_prior"] = New-Scenario "bounded_prior" @{
+		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
+		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
 	}
 	$Catalog["quarantine_bounded"] = New-Scenario "quarantine_bounded" @{
 		WKOPENVR_REPLAY_QUARANTINE = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
 	}
@@ -109,7 +120,6 @@ function Get-ScenarioCatalog {
 	$Catalog["bounded_drift"] = New-Scenario "bounded_drift" @{
 		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
 	}
@@ -117,7 +127,6 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_QUARANTINE = "1"
 		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
 	}
@@ -129,7 +138,6 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_QUARANTINE = "1"
 		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
 		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
 		WKOPENVR_REPLAY_LOCKED_SNAP = "1"
@@ -195,9 +203,23 @@ function Parse-ReplayLine {
 		FinalErrorMm = $Values["final_error_mm"]
 		MedianRelPoseMadMm = $Values["median_relpose_mad_mm"]
 		FinalRelPoseMadMm = $Values["final_relpose_mad_mm"]
+		HoldoutRmsMm = $Values["holdout_rms_mm"]
+		HoldoutP90Mm = $Values["holdout_p90_mm"]
+		HoldoutP95Mm = $Values["holdout_p95_mm"]
+		HoldoutPass = $Values["holdout_pass"]
+		QualityReports = $Values["quality_reports"]
+		ShadowWouldAccept = $Values["shadow_accepts"]
+		ShadowWouldReject = $Values["shadow_rejects"]
+		ShadowRejectReasons = $Values["shadow_reject_reasons"]
 		SamplesQuarantined = $Values["samples_quarantined"]
+		SolverSampleRows = $Values["solver_sample_rows"]
+		SolverSampleRatio = $Values["solver_sample_ratio"]
+		SampleStarved = $Values["sample_starved"]
 		FreezeEngagements = $Values["freeze_engagements"]
 		SnapReanchors = $Values["snap_reanchors"]
+		LockedSnapHmdJumps = $Values["locked_snap_hmd_jumps"]
+		LockedSnapTrackerInvalid = $Values["locked_snap_tracker_invalid"]
+		LockedSnapCorroborated = $Values["locked_snap_corroborated"]
 		RelocEvents = $Values["reloc_events"]
 		RelocSource = $Values["reloc_source"]
 		FinalShadowReason = $Values["final_shadow_reason"]
@@ -212,6 +234,13 @@ foreach ($Window in $SampleWindow) {
 	if ($Window -lt 0) {
 		throw "SampleWindow values must be zero or positive."
 	}
+}
+if ($QualityInterval -lt 0) {
+	throw "QualityInterval must be zero or positive."
+}
+if ($FastLegacyMetrics) {
+	$QualityInterval = 0
+	$NoHoldout = $true
 }
 
 $Catalog = Get-ScenarioCatalog
@@ -311,8 +340,8 @@ $BaseEnv = @{
 	WKOPENVR_REPLAY_RECORDINGS = "1"
 	WKOPENVR_REPLAY_PATHS = $Recording
 	WKOPENVR_REPLAY_SAMPLE_WINDOWS = (($SampleWindow | ForEach-Object { [string]$_ }) -join ";")
-	WKOPENVR_REPLAY_QUALITY_INTERVAL = "0"
-	WKOPENVR_REPLAY_HOLDOUT = "0"
+	WKOPENVR_REPLAY_QUALITY_INTERVAL = [string]$QualityInterval
+	WKOPENVR_REPLAY_HOLDOUT = $(if ($NoHoldout) { "0" } else { "1" })
 }
 
 Write-Host "Recording: $Recording"
@@ -342,9 +371,10 @@ try {
 			$Parsed = Parse-ReplayLine $Line $Item.Name $ExitCode
 			if ($Parsed) {
 				$Results += $Parsed
-				Write-Host ("{0}: final_error_mm={1} median_mad_mm={2} final_mad_mm={3} quarantined={4} freeze={5} snaps={6} reloc={7}/{8} reason={9}" -f
-					$Item.Name, $Parsed.FinalErrorMm, $Parsed.MedianRelPoseMadMm, $Parsed.FinalRelPoseMadMm,
-					$Parsed.SamplesQuarantined, $Parsed.FreezeEngagements, $Parsed.SnapReanchors,
+				Write-Host ("{0}: final_error_mm={1} holdout_rms_mm={2} median_mad_mm={3} final_mad_mm={4} quarantined={5} solver_ratio={6} starved={7} freeze={8} snaps={9} reloc={10}/{11} reason={12}" -f
+					$Item.Name, $Parsed.FinalErrorMm, $Parsed.HoldoutRmsMm, $Parsed.MedianRelPoseMadMm,
+					$Parsed.FinalRelPoseMadMm, $Parsed.SamplesQuarantined, $Parsed.SolverSampleRatio,
+					$Parsed.SampleStarved, $Parsed.FreezeEngagements, $Parsed.SnapReanchors,
 					$Parsed.RelocEvents, $Parsed.RelocSource, $Parsed.FinalShadowReason)
 			}
 		}
@@ -360,12 +390,12 @@ finally {
 $Results | Sort-Object Scenario, Window | Export-Csv -LiteralPath $OutputCsv -NoTypeInformation
 
 Write-Host ""
-Write-Host "Scenario,Window,FinalErrorMm,MedianRelPoseMadMm,FinalRelPoseMadMm,Quarantined,Freeze,Snaps,RelocEvents,RelocSource,FinalReason"
+Write-Host "Scenario,Window,FinalErrorMm,HoldoutRmsMm,MedianRelPoseMadMm,FinalRelPoseMadMm,Quarantined,SolverSampleRatio,SampleStarved,Freeze,Snaps,RelocEvents,RelocSource,FinalReason"
 foreach ($Result in $Results) {
-	Write-Host ("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10}" -f $Result.Scenario, $Result.Window,
-		$Result.FinalErrorMm, $Result.MedianRelPoseMadMm, $Result.FinalRelPoseMadMm, $Result.SamplesQuarantined,
-		$Result.FreezeEngagements, $Result.SnapReanchors, $Result.RelocEvents, $Result.RelocSource,
-		$Result.FinalShadowReason)
+	Write-Host ("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13}" -f $Result.Scenario, $Result.Window,
+		$Result.FinalErrorMm, $Result.HoldoutRmsMm, $Result.MedianRelPoseMadMm, $Result.FinalRelPoseMadMm,
+		$Result.SamplesQuarantined, $Result.SolverSampleRatio, $Result.SampleStarved, $Result.FreezeEngagements,
+		$Result.SnapReanchors, $Result.RelocEvents, $Result.RelocSource, $Result.FinalShadowReason)
 }
 
 Write-Host ""

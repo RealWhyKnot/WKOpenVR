@@ -198,6 +198,18 @@ void AddReasonCount(std::vector<ReplayReasonCount>& counts, const std::string& r
 	counts.push_back(std::move(entry));
 }
 
+bool CandidateRelPoseMadMm(const std::deque<Eigen::AffineCompact3d>& currentWindow,
+                           const Eigen::AffineCompact3d& candidate, double& outMadMm)
+{
+	std::deque<Eigen::AffineCompact3d> window = currentWindow;
+	window.push_back(candidate);
+	while (window.size() > spacecal::autolock::kHistoryMax)
+		window.pop_front();
+	if (window.size() < spacecal::autolock::kSamplesNeeded) return false;
+	outMadMm = spacecal::autolock::RobustTranslDeviation(window) * 1000.0;
+	return true;
+}
+
 // Map a recorded tick_phase string to the CalibrationState the locked-snap gate
 // consults. Only Continuous / ContinuousStandby make the gentle re-anchor
 // eligible; every other phase maps to None (ineligible), matching the live
@@ -300,6 +312,10 @@ LoadedRecording LoadRecording(const std::string& path)
 			if (ParseAnnotationTimestamp(line, "hmd_relocalization_detected", relocTime)) {
 				rec.relocalizationAnnotationTimes.push_back(relocTime);
 			}
+			if (line.find("spacecal_log_v5") != std::string::npos) {
+				formatVersion = 5;
+				continue;
+			}
 			if (line.find("spacecal_log_v4") != std::string::npos) {
 				formatVersion = 4;
 				continue;
@@ -313,7 +329,7 @@ LoadedRecording LoadRecording(const std::string& path)
 				continue;
 			}
 			if (line.find("spacecal_log_v") != std::string::npos) {
-				rec.error = "Recording is not v2/v3/v4 (saw '" + line + "'). Replay needs v2 or newer.";
+				rec.error = "Recording is not v2/v3/v4/v5 (saw '" + line + "'). Replay needs v2 or newer.";
 				return rec;
 			}
 			// Pull metadata KVs out of the header annotations the live logger emits.
@@ -346,7 +362,7 @@ LoadedRecording LoadRecording(const std::string& path)
 		return rec;
 	}
 	if (formatVersion < 2) {
-		rec.error = "Recording missing '# spacecal_log_v2'/'v3'/'v4' banner; v1 logs lack raw poses.";
+		rec.error = "Recording missing '# spacecal_log_v2'/'v3'/'v4'/'v5' banner; v1 logs lack raw poses.";
 		return rec;
 	}
 	rec.formatVersion = formatVersion;
@@ -413,7 +429,9 @@ LoadedRecording LoadRecording(const std::string& path)
 	const int idxHeadQy = ColIndex(cols, "head_tracker_qy");
 	const int idxHeadQz = ColIndex(cols, "head_tracker_qz");
 	const int idxRelocDetected = ColIndex(cols, "reloc_detected");
+	const int idxExperimentalFlags = ColIndex(cols, "experimental_flags");
 	rec.hasRelocDetectedColumn = idxRelocDetected >= 0;
+	rec.hasExperimentalFlagsColumn = idxExperimentalFlags >= 0;
 	// The locked-snap A/B needs both the HMD jump and the head-tracker displacement,
 	// so it's only enabled when both pose blocks (and the valid flag) are present.
 	const bool hasLockedSnapColumns = idxHmdTx >= 0 && idxHeadTx >= 0 && idxHeadTrackerValid >= 0;
@@ -538,6 +556,10 @@ LoadedRecording LoadRecording(const std::string& path)
 		}
 		row.relocDetected = ReadOptionalBool(fields, idxRelocDetected, false);
 		if (row.relocDetected) ++rec.relocDetectedRowCount;
+		if (idxExperimentalFlags >= 0) {
+			row.hasExperimentalFlags = true;
+			row.experimentalFlags = static_cast<uint32_t>(ReadOptionalInt(fields, idxExperimentalFlags, 0));
+		}
 
 		rec.rows.push_back(std::move(row));
 	}
@@ -651,8 +673,13 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 					const double headTrackerDeltaM = (row.headTrackerValid && haveLockedPrevHeadTracker)
 					                                     ? (row.headTracker.trans - prevHeadTrackerTrans).norm()
 					                                     : -1.0; // negative = no valid head-tracker reading
+					if (hmdDeltaM >= spacecal::snap_suppression::kSnapHmdJumpM) {
+						++res.lockedSnapHmdJumps;
+						if (headTrackerDeltaM < 0.0) ++res.lockedSnapTrackerInvalid;
+					}
 					const bool snapCorroborated = spacecal::snap_suppression::IsJumpClassifiedAsSnap(
 					    HeadMountMode::DriverSynth, hmdDeltaM, headTrackerDeltaM);
+					if (snapCorroborated) ++res.lockedSnapCorroborated;
 					if (spacecal::locked_snap::GentleSnapAllowedInLockedStyle(opts.trackingStyle, /*toggleOn=*/true,
 					                                                          snapCorroborated,
 					                                                          ReplayRowStateFromPhase(row.tickPhase))) {
@@ -745,11 +772,21 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		prevRel = rel;
 		havePrevRel = true;
 
-		// Toggle 1: drop this sample for the settle window after a proxy
-		// relocalization. Mirrors the live CollectSample gate -- the dropped
-		// sample never enters the solver or the MAD window below.
-		if (opts.applyRelocQuarantine &&
-		    spacecal::reloc_guard::ShouldQuarantineSample(row.timestamp, lastRelocTime, opts.quarantineSec)) {
+		// Toggle 1: drop this sample for the settle window after a relocalization.
+		// If the candidate relative-pose window has already returned to the settled
+		// floor, release early; otherwise the dropped sample never enters the solver
+		// or the MAD window below.
+		bool quarantineActive = false;
+		if (opts.applyRelocQuarantine) {
+			double candidateMadMm = 0.0;
+			const bool haveCandidateMad = CandidateRelPoseMadMm(relWindow, rel, candidateMadMm);
+			const double floorMm =
+			    !madFloorWindow.empty() ? *std::min_element(madFloorWindow.begin(), madFloorWindow.end()) : 0.0;
+			quarantineActive = spacecal::reloc_guard::QuarantineActive(
+			    row.timestamp, lastRelocTime, opts.quarantineSec, haveCandidateMad ? candidateMadMm : 0.0,
+			    haveCandidateMad ? floorMm : 0.0, spacecal::reloc_guard::kDefaultClearMult);
+		}
+		if (quarantineActive) {
 			++res.samplesQuarantined;
 			tick.rejectReason = "quarantined";
 			res.trace.push_back(std::move(tick));
@@ -757,6 +794,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		}
 
 		calc.PushSample(s);
+		++res.solverSamplesPushed;
 		if (boundedContinuous) {
 			while (calc.SampleCount() > continuousWindow) {
 				calc.ShiftSample();
@@ -863,6 +901,11 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	}
 
 	res.rowsReplayed = (int)rec.rows.size();
+	const int observedRows = res.sampleRowsObserved > 0 ? res.sampleRowsObserved : res.rowsReplayed;
+	if (observedRows > 0) {
+		res.solverSampleRatio = static_cast<double>(res.solverSamplesPushed) / static_cast<double>(observedRows);
+	}
+	res.sampleStarved = opts.applyRelocQuarantine && observedRows > 0 && res.solverSampleRatio < 0.50;
 	res.finalTransformValid = calc.isValid();
 	if (calc.isValid()) {
 		res.finalTransform = calc.Transformation();

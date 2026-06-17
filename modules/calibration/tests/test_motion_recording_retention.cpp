@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "MotionRecording.h"
+#include "CalibrationExperimentFlags.h"
 #include "Win32Text.h"
 
 #include <algorithm>
@@ -198,6 +199,18 @@ double Percent(int count, int total)
 	return total > 0 ? (100.0 * static_cast<double>(count) / static_cast<double>(total)) : 0.0;
 }
 
+std::string EncodeReplayReasonCounts(const std::vector<replay::ReplayReasonCount>& reasons)
+{
+	std::string out;
+	for (const auto& reason : reasons) {
+		if (!out.empty()) out += ";";
+		out += reason.reason.empty() ? "unknown" : reason.reason;
+		out += ":";
+		out += std::to_string(reason.count);
+	}
+	return out.empty() ? "none" : out;
+}
+
 struct QualityTraceSummary
 {
 	int reports = 0;
@@ -353,6 +366,29 @@ void WriteMinimalV3Recording(const std::filesystem::path& path, int rowCount)
 	}
 }
 
+void WriteExperimentalFlagsV5Recording(const std::filesystem::path& path)
+{
+	std::ofstream out(path);
+	ASSERT_TRUE(out) << path.string();
+	out << "# spacecal_log_v5\n";
+	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
+	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase,"
+	       "hmd_tx,hmd_ty,hmd_tz,hmd_qw,hmd_qx,hmd_qy,hmd_qz,"
+	       "head_tracker_valid,head_tracker_tx,head_tracker_ty,head_tracker_tz,"
+	       "head_tracker_qw,head_tracker_qx,head_tracker_qy,head_tracker_qz,reloc_detected,"
+	       "experimental_flags\n";
+	const uint32_t flags =
+	    spacecal::calibration_experiments::RelocQuarantine | spacecal::calibration_experiments::BoundedSolve |
+	    spacecal::calibration_experiments::BoundedSolveSlew | spacecal::calibration_experiments::BoundedSolveCommonMode;
+	out.precision(17);
+	for (int i = 0; i < 8; ++i) {
+		const double t = static_cast<double>(i) / 60.0;
+		const double refX = 0.01 * static_cast<double>(i);
+		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15)
+		    << ",1.60,0.0,1,0,0,0,Continuous,0,1.60,0.0,1,0,0,0,0,0,0,0,1,0,0,0,0," << flags << "\n";
+	}
+}
+
 void WriteRelocSourceV4Recording(const std::filesystem::path& path, bool includeAnnotation, bool includeColumnEvent,
                                  bool includeProxyJump)
 {
@@ -373,6 +409,27 @@ void WriteRelocSourceV4Recording(const std::filesystem::path& path, bool include
 		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15 + targetJump) << ",1.60,0.0,1,0,0,0,Continuous,"
 		    << reloc << "\n";
 	}
+}
+
+replay::LoadedRecording MakeStableRelativePoseRecording(int rowCount, double annotationTime)
+{
+	replay::LoadedRecording recording;
+	recording.formatVersion = 5;
+	if (annotationTime >= 0.0) {
+		recording.relocalizationAnnotationTimes.push_back(annotationTime);
+	}
+	recording.rows.reserve(static_cast<std::size_t>(rowCount));
+	for (int i = 0; i < rowCount; ++i) {
+		replay::ReplayRow row;
+		row.timestamp = static_cast<double>(i) / 30.0;
+		row.ref.rot.setIdentity();
+		row.target.rot.setIdentity();
+		row.ref.trans = Eigen::Vector3d(0.002 * static_cast<double>(i % 7), 1.60, 0.001 * static_cast<double>(i % 5));
+		const double relNoise = 0.001 * std::sin(static_cast<double>(i) * 0.35);
+		row.target.trans = row.ref.trans + Eigen::Vector3d(0.15 + relNoise, 0.0, -0.05);
+		recording.rows.push_back(std::move(row));
+	}
+	return recording;
 }
 
 } // namespace
@@ -453,6 +510,106 @@ TEST(MotionRecordingReplayTest, ContinuousReplayCapsSampleWindow)
 	EXPECT_LE(result.maxSamplesInWindow, 25);
 }
 
+TEST(MotionRecordingReplayTest, LoadsV5ExperimentalFlagsAndKeepsV4Compatible)
+{
+	const std::filesystem::path v5Path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v5_flags.csv";
+	std::filesystem::remove(v5Path);
+	WriteExperimentalFlagsV5Recording(v5Path);
+
+	const auto v5 = replay::LoadRecording(v5Path.string());
+	std::filesystem::remove(v5Path);
+	ASSERT_TRUE(v5.error.empty()) << v5.error;
+	ASSERT_EQ(5, v5.formatVersion);
+	ASSERT_TRUE(v5.hasExperimentalFlagsColumn);
+	ASSERT_FALSE(v5.rows.empty());
+	EXPECT_TRUE(v5.rows.front().hasExperimentalFlags);
+	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::RelocQuarantine);
+	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::BoundedSolveSlew);
+	EXPECT_EQ(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::DriftBreaker);
+
+	const std::filesystem::path v4Path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_flags_compat.csv";
+	std::filesystem::remove(v4Path);
+	WriteLockedSnapV4Recording(v4Path, /*rowCount=*/8, /*flipRow=*/-1, /*flipDistanceM=*/0.0);
+
+	const auto v4 = replay::LoadRecording(v4Path.string());
+	std::filesystem::remove(v4Path);
+	ASSERT_TRUE(v4.error.empty()) << v4.error;
+	EXPECT_EQ(4, v4.formatVersion);
+	EXPECT_FALSE(v4.hasExperimentalFlagsColumn);
+	ASSERT_FALSE(v4.rows.empty());
+	EXPECT_FALSE(v4.rows.front().hasExperimentalFlags);
+	EXPECT_EQ(0u, v4.rows.front().experimentalFlags);
+}
+
+TEST(MotionRecordingReplayTest, FormatsExperimentalToggleAnnotations)
+{
+	const char* optionNames[] = {
+	    "headset_offset_auto_correct",
+	    "reloc_quarantine",
+	    "drift_breaker",
+	    "bounded_solve",
+	    "bounded_solve_prior",
+	    "bounded_solve_slew",
+	    "bounded_solve_common_mode",
+	    "locked_snap_recovery",
+	};
+	for (const char* optionName : optionNames) {
+		EXPECT_EQ(std::string(optionName) + "_toggled: source=ui enabled=1",
+		          spacecal::calibration_experiments::ToggleAnnotation(optionName, true));
+		EXPECT_EQ(std::string(optionName) + "_toggled: source=ui enabled=0",
+		          spacecal::calibration_experiments::ToggleAnnotation(optionName, false));
+	}
+}
+
+TEST(MotionRecordingReplayTest, RelPoseMadIsInvariantForNonSampleSelectionGuards)
+{
+	const auto recording = MakeStableRelativePoseRecording(/*rowCount=*/90, /*annotationTime=*/-1.0);
+
+	replay::ReplayOptions base;
+	base.continuous = true;
+	base.maxContinuousSamples = 30;
+	base.qualityReportInterval = 0;
+
+	const auto baseline = replay::RunReplay(recording, base);
+	ASSERT_TRUE(baseline.succeeded) << baseline.error;
+
+	replay::ReplayOptions bounded = base;
+	bounded.applyBoundedSolve = true;
+	bounded.bsSlew = true;
+	bounded.bsCommonMode = true;
+	const auto boundedResult = replay::RunReplay(recording, bounded);
+	ASSERT_TRUE(boundedResult.succeeded) << boundedResult.error;
+
+	replay::ReplayOptions drift = base;
+	drift.applyDriftBreaker = true;
+	const auto driftResult = replay::RunReplay(recording, drift);
+	ASSERT_TRUE(driftResult.succeeded) << driftResult.error;
+
+	EXPECT_DOUBLE_EQ(baseline.medianRelPoseMadMm, boundedResult.medianRelPoseMadMm);
+	EXPECT_DOUBLE_EQ(baseline.finalRelPoseMadMm, boundedResult.finalRelPoseMadMm);
+	EXPECT_DOUBLE_EQ(baseline.medianRelPoseMadMm, driftResult.medianRelPoseMadMm);
+	EXPECT_DOUBLE_EQ(baseline.finalRelPoseMadMm, driftResult.finalRelPoseMadMm);
+}
+
+TEST(MotionRecordingReplayTest, QuarantineReleasesEarlyWhenCandidateMadIsSettled)
+{
+	const auto recording = MakeStableRelativePoseRecording(/*rowCount=*/90, /*annotationTime=*/1.0);
+
+	replay::ReplayOptions options;
+	options.applyRelocQuarantine = true;
+	options.relocSource = replay::ReplayRelocSource::Annotation;
+	options.quarantineSec = 1.0;
+	options.qualityReportInterval = 0;
+
+	const auto result = replay::RunReplay(recording, options);
+
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_EQ("annotation", result.relocSource);
+	EXPECT_EQ(1, result.relocEvents);
+	EXPECT_EQ(0, result.samplesQuarantined);
+	EXPECT_FALSE(result.sampleStarved);
+}
+
 TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
 {
 	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v3_sample_health.csv";
@@ -512,6 +669,7 @@ TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
 	replay::ReplayOptions options;
 	options.continuous = false;
 	options.qualityReportInterval = 10;
+	options.includeHoldoutQuality = true;
 	const auto result = replay::RunReplay(recording, options);
 
 	EXPECT_TRUE(result.succeeded) << result.error;
@@ -532,6 +690,9 @@ TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
 	EXPECT_GE(result.finalQuality.zeroPoseSampleCount, 1);
 	EXPECT_GE(result.finalQuality.unchangedPoseSampleCount, 1);
 	EXPECT_GE(result.finalQuality.highMotionSampleCount, 1);
+	EXPECT_GE(result.finalQuality.holdoutRmsMm, 0.0);
+	EXPECT_GE(result.finalQuality.holdoutP90Mm, 0.0);
+	EXPECT_GE(result.finalQuality.holdoutP95Mm, 0.0);
 }
 
 TEST(MotionRecordingReplayTest, LockedSnapReanchorsOnV4UniverseFlip)
@@ -769,13 +930,25 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " unchanged=" << result.sampleRowsUnchanged << " high_motion=" << result.sampleRowsHighMotion
 			          << " quality_reports=" << result.qualityReports << " shadow_accepts=" << result.shadowWouldAccept
 			          << " shadow_rejects=" << result.shadowWouldReject
+			          << " shadow_reject_reasons=" << EncodeReplayReasonCounts(result.shadowRejectReasons)
+			          << " holdout_rms_mm=" << result.finalQuality.holdoutRmsMm
+			          << " holdout_p90_mm=" << result.finalQuality.holdoutP90Mm
+			          << " holdout_p95_mm=" << result.finalQuality.holdoutP95Mm
+			          << " holdout_pass=" << (result.finalQuality.holdoutPass ? 1 : 0)
 			          << " peak_relpose_mad_mm=" << result.peakRelPoseMadMm
 			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
 			          << " samples_quarantined=" << result.samplesQuarantined
+			          << " solver_sample_rows=" << result.solverSamplesPushed
+			          << " solver_sample_ratio=" << result.solverSampleRatio
+			          << " sample_starved=" << (result.sampleStarved ? 1 : 0)
 			          << " freeze_engagements=" << result.freezeEngagements
-			          << " snap_reanchors=" << result.snapReanchors << " reloc_events=" << result.relocEvents
-			          << " reloc_source=" << result.relocSource << " locked_snap=" << result.lockedSnapStatus
+			          << " snap_reanchors=" << result.snapReanchors
+			          << " locked_snap_hmd_jumps=" << result.lockedSnapHmdJumps
+			          << " locked_snap_tracker_invalid=" << result.lockedSnapTrackerInvalid
+			          << " locked_snap_corroborated=" << result.lockedSnapCorroborated
+			          << " reloc_events=" << result.relocEvents << " reloc_source=" << result.relocSource
+			          << " locked_snap=" << result.lockedSnapStatus
 			          << " tracking_style=" << static_cast<int>(options.trackingStyle)
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
 			PrintQualitySummary(input.name, sampleWindow, result);
