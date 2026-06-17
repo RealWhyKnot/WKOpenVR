@@ -16,6 +16,7 @@ enum class ModuleId
 	Captions,
 	Phantom,
 	QuestApp,
+	DynamicResolution,
 };
 
 struct ModuleInfo

@@ -134,6 +134,20 @@ constexpr ModuleInfo kModules[] = {
         false,
         false,
     },
+    {
+        ModuleId::DynamicResolution,
+        "dynamicres",
+        "enable_dynamicres.flag",
+        L"enable_dynamicres.flag",
+        nullptr,
+        nullptr,
+        "Dynamic Resolution",
+        L"Dynamic Resolution",
+        L"--launch=dynamicres",
+        "",
+        false,
+        false,
+    },
 };
 constexpr size_t kDriverSafetyModuleCount = 8;
 static_assert(kModules[0].participates_in_driver_safety);
@@ -145,6 +159,7 @@ static_assert(kModules[5].participates_in_driver_safety);
 static_assert(kModules[6].participates_in_driver_safety);
 static_assert(kModules[7].participates_in_driver_safety);
 static_assert(!kModules[8].participates_in_driver_safety);
+static_assert(!kModules[9].participates_in_driver_safety);
 
 bool EqualAscii(std::string_view a, std::string_view b)
 {

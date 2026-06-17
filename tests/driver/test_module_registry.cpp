@@ -14,7 +14,7 @@ TEST(ModuleRegistry, ContainsAllRegisteredModules)
 	size_t count = 0;
 	const module_registry::ModuleInfo* modules = module_registry::All(&count);
 	ASSERT_NE(modules, nullptr);
-	EXPECT_EQ(count, 9u);
+	EXPECT_EQ(count, 10u);
 
 	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::Calibration), nullptr);
 	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::Smoothing), nullptr);
@@ -25,6 +25,7 @@ TEST(ModuleRegistry, ContainsAllRegisteredModules)
 	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::Captions), nullptr);
 	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::Phantom), nullptr);
 	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::QuestApp), nullptr);
+	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::DynamicResolution), nullptr);
 }
 
 TEST(ModuleRegistry, ExposesStableDashboardInputMetadata)
@@ -75,6 +76,22 @@ TEST(ModuleRegistry, QuestAppIsUserVisibleButNotDriverSafetyManaged)
 	ASSERT_NE(module, nullptr);
 
 	EXPECT_EQ(std::string_view(module->flag_file), "enable_questapp.flag");
+	EXPECT_EQ(std::string_view(module->pipe_name), "");
+	EXPECT_FALSE(module->requires_osc_router);
+	EXPECT_FALSE(module->participates_in_driver_safety);
+	EXPECT_EQ(module_safety::FindByFlagFileName(module->flag_file), nullptr);
+}
+
+TEST(ModuleRegistry, DynamicResolutionIsOverlayOnly)
+{
+	const auto* module = module_registry::FindById(module_registry::ModuleId::DynamicResolution);
+	ASSERT_NE(module, nullptr);
+
+	EXPECT_EQ(std::string_view(module->slug), "dynamicres");
+	EXPECT_EQ(std::string_view(module->flag_file), "enable_dynamicres.flag");
+	EXPECT_EQ(std::wstring_view(module->flag_file_wide), L"enable_dynamicres.flag");
+	EXPECT_EQ(std::string_view(module->display_name), "Dynamic Resolution");
+	EXPECT_EQ(std::wstring_view(module->shortcut_argument), L"--launch=dynamicres");
 	EXPECT_EQ(std::string_view(module->pipe_name), "");
 	EXPECT_FALSE(module->requires_osc_router);
 	EXPECT_FALSE(module->participates_in_driver_safety);
