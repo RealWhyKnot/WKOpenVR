@@ -69,6 +69,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Add floor ownership state machine (4fd0cf9)
 - **phantom:** Infer body priors automatically (3f7e1d4)
 - **phantom:** Add replay-driven tracker harness (deda132)
+- **dynamicres:** Add gpu-bound resolution scaling (da9f257)
+- **facetracking:** Add global expression tuning (4fc17d7)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -226,6 +228,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **ci:** Satisfy changed-source tidy checks (8738ea9)
 - **release:** Use central date for release automation (f1b2814)
 - **calibration:** Align relocalization quarantine timing (e31efd2)
+- **calibration:** Split locked-head smoothing and disable boundary writes (15d6eec)
 
 ---
 
