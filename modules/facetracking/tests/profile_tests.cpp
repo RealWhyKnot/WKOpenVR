@@ -206,6 +206,151 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsScaleMinAndMax)
 	std::filesystem::remove_all(temp, ec);
 }
 
+TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsSparseValues)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.global_shape_tuning[26].scale_percent = 80;  // JawOpen
+	store.current.global_shape_tuning[45].scale_percent = 60;  // MouthSmileLeft
+	store.current.global_shape_tuning[46].scale_percent = 150; // MouthSmileRight
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	const picojson::value* tuning = openvr_pair::common::json::ValueAt(saved, "global_shape_tuning");
+	ASSERT_NE(tuning, nullptr);
+	ASSERT_TRUE(tuning->is<picojson::object>());
+	const auto& shapeObj = tuning->get<picojson::object>();
+	EXPECT_EQ(shapeObj.at("JawOpen").get<double>(), 80.0);
+	EXPECT_EQ(shapeObj.at("MouthSmileLeft").get<double>(), 60.0);
+	EXPECT_EQ(shapeObj.at("MouthSmileRight").get<double>(), 150.0);
+	EXPECT_EQ(shapeObj.find("MouthSadLeft"), shapeObj.end());
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	EXPECT_EQ(loaded.current.global_shape_tuning[26].scale_percent, 80);
+	EXPECT_EQ(loaded.current.global_shape_tuning[45].scale_percent, 60);
+	EXPECT_EQ(loaded.current.global_shape_tuning[46].scale_percent, 150);
+	EXPECT_TRUE(IsDefaultFaceShapeTuningValue(loaded.current.global_shape_tuning[47]));
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsScaleMinAndMax)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.global_shape_tuning[8].scale_percent = 175; // EyeWideLeft
+	store.current.global_shape_tuning[8].min_percent = 10;
+	store.current.global_shape_tuning[8].max_percent = 70;
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	const picojson::value* tuning = openvr_pair::common::json::ValueAt(saved, "global_shape_tuning");
+	ASSERT_NE(tuning, nullptr);
+	ASSERT_TRUE(tuning->is<picojson::object>());
+	const auto& shapeObj = tuning->get<picojson::object>();
+	ASSERT_TRUE(shapeObj.at("EyeWideLeft").is<picojson::object>());
+	const auto& valueObj = shapeObj.at("EyeWideLeft").get<picojson::object>();
+	EXPECT_EQ(valueObj.at("scale").get<double>(), 175.0);
+	EXPECT_EQ(valueObj.at("min").get<double>(), 10.0);
+	EXPECT_EQ(valueObj.at("max").get<double>(), 70.0);
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	EXPECT_EQ(loaded.current.global_shape_tuning[8].scale_percent, 175);
+	EXPECT_EQ(loaded.current.global_shape_tuning[8].min_percent, 10);
+	EXPECT_EQ(loaded.current.global_shape_tuning[8].max_percent, 70);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, GlobalShapeTuningOmitsAllDefaultEntries)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.global_shape_tuning = DefaultFaceShapeScales();
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	EXPECT_EQ(openvr_pair::common::json::ValueAt(saved, "global_shape_tuning"), nullptr);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, MissingGlobalShapeTuningLoadsDefault)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+	WriteText(path, "{\n  \"output_osc_enabled\": true\n}\n");
+
+	FacetrackingProfileStore store;
+	ASSERT_TRUE(store.Load());
+	EXPECT_TRUE(IsDefaultFaceShapeScales(store.current.global_shape_tuning));
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, GlobalAndAvatarShapeTuningCoexist)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.global_shape_tuning[26].scale_percent = 70;
+	FaceShapeScaleArray avatar = DefaultFaceShapeScales();
+	avatar[26].scale_percent = 140;
+	store.current.avatar_shape_tuning["avtr_test"] = avatar;
+	ASSERT_TRUE(store.Save());
+
+	picojson::value saved = ReadProfileJson(path);
+	EXPECT_NE(openvr_pair::common::json::ValueAt(saved, "global_shape_tuning"), nullptr);
+	EXPECT_NE(openvr_pair::common::json::ValueAt(saved, "avatar_shape_tuning"), nullptr);
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	EXPECT_EQ(loaded.current.global_shape_tuning[26].scale_percent, 70);
+	const FaceShapeScaleArray* loadedAvatar = FindShapeTuningForAvatar(loaded.current, "avtr_test");
+	ASSERT_NE(loadedAvatar, nullptr);
+	EXPECT_EQ((*loadedAvatar)[26].scale_percent, 140);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, CombineShapeTuningUsesAvatarOverridesOverGlobal)
+{
+	FaceShapeScaleArray global = DefaultFaceShapeScales();
+	FaceShapeScaleArray avatar = DefaultFaceShapeScales();
+
+	global[26].scale_percent = 70;
+	global[45].scale_percent = 80;
+	global[45].min_percent = 10;
+	global[45].max_percent = 90;
+	avatar[45].scale_percent = 150;
+
+	const FaceShapeScaleArray combined = CombineShapeTuning(global, avatar);
+	EXPECT_EQ(combined[26].scale_percent, 70);
+	EXPECT_EQ(combined[45].scale_percent, 150);
+	EXPECT_EQ(combined[45].min_percent, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT);
+	EXPECT_EQ(combined[45].max_percent, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT);
+	EXPECT_TRUE(IsDefaultFaceShapeTuningValue(combined[46]));
+}
+
 TEST(FacetrackingProfiles, AvatarShapeMetadataRoundTrips)
 {
 	auto temp = MakeProfileTempDir();

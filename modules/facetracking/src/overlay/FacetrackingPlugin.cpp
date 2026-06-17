@@ -75,6 +75,19 @@ uint32_t CountShapeOverrides(const FaceShapeScaleArray& values)
 	return count;
 }
 
+FaceShapeScaleArray AvatarShapeTuningOrDefault(const FacetrackingProfile& profile, const std::string& key)
+{
+	const FaceShapeScaleArray* values = FindShapeTuningForAvatar(profile, key);
+	return values ? *values : DefaultFaceShapeScales();
+}
+
+bool AvatarOverridesShape(const FacetrackingProfile& profile, const std::string& key, uint32_t index)
+{
+	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return false;
+	const FaceShapeScaleArray* values = FindShapeTuningForAvatar(profile, key);
+	return values && !IsDefaultFaceShapeTuningValue((*values)[index]);
+}
+
 } // namespace
 
 FacetrackingPlugin::FacetrackingPlugin()
@@ -390,6 +403,11 @@ uint32_t FacetrackingPlugin::AvatarOverrideCount(const std::string& key) const
 	return values ? CountShapeOverrides(*values) : 0;
 }
 
+uint32_t FacetrackingPlugin::GlobalOverrideCount() const
+{
+	return CountShapeOverrides(profile_.current.global_shape_tuning);
+}
+
 void FacetrackingPlugin::RenameAvatarTuningKey(const std::string& key, const std::string& name)
 {
 	const std::string normalized = NormalizeAvatarShapeTuningKey(key);
@@ -431,26 +449,53 @@ void FacetrackingPlugin::PushShapeTuningToDriver()
 	}
 
 	const std::string avatarKey = CurrentAvatarTuningKey();
-	const FaceShapeScaleArray* values = FindShapeTuningForAvatar(profile_.current, avatarKey);
+	const FaceShapeScaleArray avatarValues = AvatarShapeTuningOrDefault(profile_.current, avatarKey);
+	const FaceShapeScaleArray effectiveValues = CombineShapeTuning(profile_.current.global_shape_tuning, avatarValues);
 	try {
 		if (!SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX, DefaultFaceShapeTuningValue())) {
 			return;
 		}
 
 		uint32_t overrides = 0;
-		if (values) {
-			for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-				const FaceShapeTuningValue value = ClampFaceShapeTuningValue((*values)[i]);
-				if (IsDefaultFaceShapeTuningValue(value)) continue;
-				if (!SendShapeTuningRequest(static_cast<uint16_t>(i), value)) return;
-				++overrides;
-			}
+		for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+			const FaceShapeTuningValue value = ClampFaceShapeTuningValue(effectiveValues[i]);
+			if (IsDefaultFaceShapeTuningValue(value)) continue;
+			if (!SendShapeTuningRequest(static_cast<uint16_t>(i), value)) return;
+			++overrides;
 		}
-		FT_LOG_OVL("[ipc] shape tuning pushed: avatar='%s' overrides=%u", avatarKey.c_str(), (unsigned)overrides);
+		FT_LOG_OVL("[ipc] shape tuning pushed: avatar='%s' effective_overrides=%u avatar_overrides=%u "
+		           "global_overrides=%u",
+		           avatarKey.c_str(), (unsigned)overrides, (unsigned)CountShapeOverrides(avatarValues),
+		           (unsigned)GlobalOverrideCount());
 	}
 	catch (const std::exception& e) {
 		last_error_ = std::string("IPC error: ") + e.what();
 		FT_LOG_OVL("[ipc] PushShapeTuningToDriver failed: %s", e.what());
+	}
+}
+
+void FacetrackingPlugin::SetGlobalShapeTuning(uint32_t index, FaceShapeTuningValue value)
+{
+	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return;
+	value = ClampFaceShapeTuningValue(value);
+
+	FaceShapeTuningValue& current = profile_.current.global_shape_tuning[index];
+	const FaceShapeTuningValue old = ClampFaceShapeTuningValue(current);
+	if (old.scale_percent == value.scale_percent && old.min_percent == value.min_percent &&
+	    old.max_percent == value.max_percent) {
+		return;
+	}
+
+	current = value;
+	const std::string avatarKey = CurrentAvatarTuningKey();
+	if (AvatarOverridesShape(profile_.current, avatarKey, index)) return;
+
+	try {
+		SendShapeTuningRequest(static_cast<uint16_t>(index), value);
+	}
+	catch (const std::exception& e) {
+		last_error_ = std::string("IPC error: ") + e.what();
+		FT_LOG_OVL("[ipc] SetGlobalShapeTuning failed: %s", e.what());
 	}
 }
 
@@ -471,7 +516,10 @@ void FacetrackingPlugin::SetAvatarShapeTuning(const std::string& avatarKey, uint
 
 	if (normalized == CurrentAvatarTuningKey()) {
 		try {
-			SendShapeTuningRequest(static_cast<uint16_t>(index), value);
+			const FaceShapeScaleArray avatarValues = AvatarShapeTuningOrDefault(profile_.current, normalized);
+			const FaceShapeTuningValue effective =
+			    CombineShapeTuningValue(profile_.current.global_shape_tuning[index], avatarValues[index]);
+			SendShapeTuningRequest(static_cast<uint16_t>(index), effective);
 		}
 		catch (const std::exception& e) {
 			last_error_ = std::string("IPC error: ") + e.what();
@@ -497,14 +545,14 @@ void FacetrackingPlugin::ResetAvatarShapeTuning(const std::string& avatarKey)
 	profile_.current.avatar_shape_tuning.erase(normalized);
 
 	if (normalized == CurrentAvatarTuningKey()) {
-		try {
-			SendShapeTuningRequest(protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX, DefaultFaceShapeTuningValue());
-		}
-		catch (const std::exception& e) {
-			last_error_ = std::string("IPC error: ") + e.what();
-			FT_LOG_OVL("[ipc] ResetAvatarShapeTuning failed: %s", e.what());
-		}
+		PushShapeTuningToDriver();
 	}
+}
+
+void FacetrackingPlugin::ResetGlobalShapeTuning()
+{
+	profile_.current.global_shape_tuning = DefaultFaceShapeScales();
+	PushShapeTuningToDriver();
 }
 
 void FacetrackingPlugin::SetCurrentAvatarShapeScale(uint32_t index, int percent)

@@ -43,6 +43,7 @@ struct TuningTabState
 	std::string rename_key;
 	int group = 0;
 	bool modified_only = false;
+	bool edit_global = false;
 };
 
 static TuningTabState g_state;
@@ -146,6 +147,20 @@ bool AvatarMatchesFilter(FacetrackingPlugin& plugin, const std::string& key)
 		if (ContainsNoCase(metadata->config_path.c_str(), g_state.avatar_filter)) return true;
 	}
 	return false;
+}
+
+bool ActiveAvatarOverridesShape(FacetrackingPlugin& plugin, uint32_t index)
+{
+	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return false;
+	const FaceShapeScaleArray* values =
+	    FindShapeTuningForAvatar(plugin.Profile().current, plugin.CurrentAvatarTuningKey());
+	return values && !IsDefaultFaceShapeTuningValue((*values)[index]);
+}
+
+bool GlobalOverridesShape(FacetrackingPlugin& plugin, uint32_t index)
+{
+	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return false;
+	return !IsDefaultFaceShapeTuningValue(plugin.Profile().current.global_shape_tuning[index]);
 }
 
 std::vector<uint32_t> VisibleShapeIndices(const FaceShapeScaleArray& values)
@@ -285,6 +300,7 @@ void DrawAvatarProfiles(FacetrackingPlugin& plugin)
 
 			ImGui::TableSetColumnIndex(1);
 			if (ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+				g_state.edit_global = false;
 				plugin.SelectAvatarTuningKey(key);
 				selectedKey = key;
 				SyncRenameBuffer(plugin, key);
@@ -428,29 +444,94 @@ void DrawSelectedAvatarDetails(FacetrackingPlugin& plugin, const std::string& se
 	}
 }
 
+void DrawTuningScopeSelector()
+{
+	ImGui::TextDisabled("Edit scope");
+	ImGui::SameLine();
+	if (ImGui::RadioButton("Global (all avatars)##ft_tuning_scope_global", g_state.edit_global)) {
+		g_state.edit_global = true;
+	}
+	TooltipForLastItem("Tune the baseline used by every avatar.");
+	ImGui::SameLine();
+	if (ImGui::RadioButton("Avatar profile##ft_tuning_scope_avatar", !g_state.edit_global)) {
+		g_state.edit_global = false;
+	}
+	TooltipForLastItem("Tune the selected avatar; these values override Global for this avatar.");
+}
+
+void DrawGlobalTuningDetails(FacetrackingPlugin& plugin)
+{
+	ImGui::Spacing();
+	ImGui::SeparatorText("Selected profile");
+
+	ImGui::TextUnformatted("Global (all avatars)");
+	ImGui::SameLine();
+	DrawStatusText("Global", StatusTone::Info);
+	TooltipForLastItem("Global values apply to every avatar unless that avatar overrides the same expression.");
+
+	TableScope detailsTable("ft_global_profile_details", 3, ImGuiTableFlags_SizingStretchProp);
+	if (!detailsTable) return;
+
+	SetupFixedColumn("Label", 86.0f);
+	SetupStretchColumn("Value");
+	SetupFixedColumn("Action", 68.0f);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextDisabled("Scope");
+	ImGui::TableSetColumnIndex(1);
+	DrawStatusText("All avatars", StatusTone::Info);
+	ImGui::TableSetColumnIndex(2);
+	ImGui::TextDisabled("-");
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextDisabled("Active");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(plugin.CurrentAvatarLabel().c_str());
+	ImGui::TableSetColumnIndex(2);
+	ImGui::TextDisabled("-");
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextDisabled("Overrides");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::Text("%u", (unsigned)plugin.GlobalOverrideCount());
+	ImGui::TableSetColumnIndex(2);
+	ImGui::TextDisabled("-");
+}
+
 } // namespace
 
 void DrawTuningTab(FacetrackingPlugin& plugin)
 {
-	DrawSectionHeading("Avatar tuning");
+	DrawSectionHeading("Expression tuning");
 
 	const std::string activeKey = plugin.CurrentAvatarTuningKey();
 	ImGui::Text("Active: %s", plugin.CurrentAvatarLabel().c_str());
 	ImGui::SameLine();
 	ImGui::TextDisabled("%s", plugin.AvatarLastUsedLabel(activeKey).c_str());
 
+	DrawTuningScopeSelector();
 	DrawAvatarProfiles(plugin);
 
 	std::string selectedKey = plugin.SelectedAvatarTuningKey();
-	DrawSelectedAvatarDetails(plugin, selectedKey);
+	if (g_state.edit_global) {
+		DrawGlobalTuningDetails(plugin);
+	}
+	else {
+		DrawSelectedAvatarDetails(plugin, selectedKey);
+	}
 	selectedKey = plugin.SelectedAvatarTuningKey();
 
+	const bool editGlobal = g_state.edit_global;
 	const FaceShapeScaleArray* stored = FindShapeTuningForAvatar(plugin.Profile().current, selectedKey);
-	FaceShapeScaleArray values = stored ? *stored : DefaultFaceShapeScales();
+	FaceShapeScaleArray values =
+	    editGlobal ? plugin.Profile().current.global_shape_tuning : (stored ? *stored : DefaultFaceShapeScales());
 
-	ImGui::SeparatorText("Expression scales");
+	ImGui::SeparatorText(editGlobal ? "Global expression scales" : "Avatar expression scales");
 
-	const uint32_t overrideCount = plugin.AvatarOverrideCount(selectedKey);
+	const uint32_t overrideCount = editGlobal ? plugin.GlobalOverrideCount() : plugin.AvatarOverrideCount(selectedKey);
 	const int groupCount = static_cast<int>(sizeof(kGroupLabels) / sizeof(kGroupLabels[0]));
 	g_state.group = std::clamp(g_state.group, 0, groupCount - 1);
 	std::vector<uint32_t> visibleIndices = VisibleShapeIndices(values);
@@ -460,21 +541,33 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 	ImGui::TextDisabled("Visible: %u", (unsigned)visibleIndices.size());
 	ImGui::SameLine();
 	ImGui::BeginDisabled(overrideCount == 0);
-	if (ImGui::SmallButton("Reset avatar##ft_shape_reset_avatar")) {
-		plugin.ResetAvatarShapeTuning(selectedKey);
+	if (ImGui::SmallButton(editGlobal ? "Reset global##ft_shape_reset_global"
+	                                  : "Reset avatar##ft_shape_reset_avatar")) {
+		if (editGlobal) {
+			plugin.ResetGlobalShapeTuning();
+		}
+		else {
+			plugin.ResetAvatarShapeTuning(selectedKey);
+		}
 		plugin.Profile().Save();
 		values = DefaultFaceShapeScales();
 		visibleIndices = VisibleShapeIndices(values);
 	}
 	ImGui::EndDisabled();
-	TooltipForLastItem("Reset every expression scale for the selected avatar.");
+	TooltipForLastItem(editGlobal ? "Reset every global expression scale."
+	                              : "Reset every expression scale for the selected avatar.");
 
 	ImGui::SameLine();
 	ImGui::BeginDisabled(visibleIndices.empty());
 	if (ImGui::SmallButton("Reset visible##ft_shape_reset_visible")) {
 		for (uint32_t index : visibleIndices) {
 			values[index] = DefaultFaceShapeTuningValue();
-			plugin.SetAvatarShapeTuning(selectedKey, index, values[index]);
+			if (editGlobal) {
+				plugin.SetGlobalShapeTuning(index, values[index]);
+			}
+			else {
+				plugin.SetAvatarShapeTuning(selectedKey, index, values[index]);
+			}
 		}
 		plugin.Profile().Save();
 		visibleIndices = VisibleShapeIndices(values);
@@ -513,7 +606,7 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 
 	const auto& telemetry = plugin.driver_telemetry_.Snapshot();
 	const bool liveValuesAvailable =
-	    selectedKey == activeKey && telemetry.valid && !telemetry.stale && telemetry.shape_values_valid;
+	    (editGlobal || selectedKey == activeKey) && telemetry.valid && !telemetry.stale && telemetry.shape_values_valid;
 
 	ImGuiTableFlags flags =
 	    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
@@ -536,6 +629,14 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextUnformatted(name);
 			DrawStatusText(ShapeScaleStateLabel(tuning), ShapeScaleStateTone(tuning));
+			if (editGlobal && ActiveAvatarOverridesShape(plugin, i)) {
+				DrawStatusText("Avatar override", StatusTone::Warn);
+				TooltipForLastItem("The active avatar overrides this global value.");
+			}
+			else if (!editGlobal && IsDefaultFaceShapeTuningValue(tuning) && GlobalOverridesShape(plugin, i)) {
+				DrawStatusText("Global", StatusTone::Info);
+				TooltipForLastItem("This avatar inherits the global value for this expression.");
+			}
 
 			ImGui::TableSetColumnIndex(1);
 			DrawShapeValueMeter(telemetry.pre_tuning_expressions[i], telemetry.post_tuning_expressions[i],
@@ -559,7 +660,12 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 				tuning.max_percent = maxValue;
 				tuning = ClampFaceShapeTuningValue(tuning);
 				values[i] = tuning;
-				plugin.SetAvatarShapeTuning(selectedKey, i, tuning);
+				if (editGlobal) {
+					plugin.SetGlobalShapeTuning(i, tuning);
+				}
+				else {
+					plugin.SetAvatarShapeTuning(selectedKey, i, tuning);
+				}
 			}
 			if (saveAfterEdit) plugin.Profile().Save();
 
@@ -567,7 +673,12 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 			if (IsShapeModified(tuning)) {
 				if (ImGui::SmallButton("Reset")) {
 					values[i] = DefaultFaceShapeTuningValue();
-					plugin.SetAvatarShapeTuning(selectedKey, i, values[i]);
+					if (editGlobal) {
+						plugin.SetGlobalShapeTuning(i, values[i]);
+					}
+					else {
+						plugin.SetAvatarShapeTuning(selectedKey, i, values[i]);
+					}
 					plugin.Profile().Save();
 				}
 			}

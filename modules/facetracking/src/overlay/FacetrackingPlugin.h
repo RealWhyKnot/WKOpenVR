@@ -73,10 +73,13 @@ public:
 	void SelectAvatarTuningKey(const std::string& key);
 	std::string AvatarDisplayLabel(const std::string& key) const;
 	std::string AvatarLastUsedLabel(const std::string& key) const;
+	uint32_t GlobalOverrideCount() const;
 	uint32_t AvatarOverrideCount(const std::string& key) const;
 	void RenameAvatarTuningKey(const std::string& key, const std::string& name);
+	void SetGlobalShapeTuning(uint32_t index, FaceShapeTuningValue value);
 	void SetAvatarShapeTuning(const std::string& avatarKey, uint32_t index, FaceShapeTuningValue value);
 	void SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent);
+	void ResetGlobalShapeTuning();
 	void ResetAvatarShapeTuning(const std::string& avatarKey);
 
 private:

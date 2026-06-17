@@ -25,6 +25,8 @@ FaceShapeTuningValue ClampFaceShapeTuningValue(FaceShapeTuningValue value);
 bool IsDefaultFaceShapeTuningValue(const FaceShapeTuningValue& value);
 std::string NormalizeAvatarShapeTuningKey(std::string key);
 bool IsDefaultFaceShapeScales(const FaceShapeScaleArray& values);
+FaceShapeTuningValue CombineShapeTuningValue(const FaceShapeTuningValue& global, const FaceShapeTuningValue& avatar);
+FaceShapeScaleArray CombineShapeTuning(const FaceShapeScaleArray& global, const FaceShapeScaleArray& avatar);
 
 struct AvatarShapeTuningMetadata
 {
@@ -79,8 +81,9 @@ struct FacetrackingProfile
 	// multi-run has a stable priority.
 	std::vector<std::string> enabled_module_uuids;
 
-	// Per-avatar expression output scales. Values are percentages in [0, 200],
-	// with 100 meaning pass-through. Stored sparse in JSON by expression name.
+	// Expression output scales. Values are percentages in [0, 200], with 100
+	// meaning pass-through. Stored sparse in JSON by expression name.
+	FaceShapeScaleArray global_shape_tuning = DefaultFaceShapeScales();
 	std::map<std::string, FaceShapeScaleArray> avatar_shape_tuning;
 	std::map<std::string, AvatarShapeTuningMetadata> avatar_shape_metadata;
 
