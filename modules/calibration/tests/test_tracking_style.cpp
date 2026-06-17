@@ -37,7 +37,7 @@ TEST(TrackingStyleTest, PresetMappingMatchesSupportedStyles)
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);
 	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
 	EXPECT_TRUE(TrackingStyleRunsContinuous(ctx.trackingStyle));
-	EXPECT_TRUE(TrackingStyleShowsBoundarySetup(ctx.trackingStyle));
+	EXPECT_FALSE(TrackingStyleShowsBoundarySetup(ctx.trackingStyle));
 
 	ApplyTrackingStylePreset(ctx, TrackingStyle::HardTrackerLock);
 	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::DriverSynth);

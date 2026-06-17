@@ -37,6 +37,7 @@ void CCal_SendHeadMountConfig()
 	p.offsetCalibrated = hm.offsetCalibrated;
 	p.allowRawHmdFallback = hm.allowRawHmdFallback;
 	p.lockedHeadsetSmoothing = hm.lockedHeadsetSmoothing;
+	p.lockedHeadsetRotationSmoothing = hm.lockedHeadsetRotationSmoothing;
 	const auto timing = wkopenvr::headmount::ClampDriverSynthTimingConfig(hm.driverSynthTiming);
 	p.driverSynthStaleLimitMs = static_cast<uint16_t>(timing.staleLimitMs);
 	p.driverSynthGraceHoldMs = static_cast<uint16_t>(timing.graceHoldMs);
@@ -261,7 +262,7 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 			int lockedSmoothing = (int)hm.lockedHeadsetSmoothing;
 			ImGui::SetNextItemWidth(200.0f);
 			const char* smoothFmt = lockedSmoothing > 0 ? "%d" : "off";
-			if (ImGui::SliderInt("Smooth locked headset", &lockedSmoothing, 0, 100, smoothFmt)) {
+			if (ImGui::SliderInt("Smooth locked position", &lockedSmoothing, 0, 100, smoothFmt)) {
 				if (lockedSmoothing < 0) lockedSmoothing = 0;
 				if (lockedSmoothing > 100) lockedSmoothing = 100;
 				hm.lockedHeadsetSmoothing = (uint8_t)lockedSmoothing;
@@ -269,8 +270,22 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 				CCal_SendHeadMountConfig();
 			}
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Speed-adaptive low-pass on the headset pose while the head-mounted tracker\n"
+				ImGui::SetTooltip("Speed-adaptive low-pass on headset position while the head-mounted tracker\n"
 				                  "drives it. Higher = steadier at rest; real head motion stays responsive. 0 = off.");
+			}
+			int lockedRotationSmoothing = (int)hm.lockedHeadsetRotationSmoothing;
+			ImGui::SetNextItemWidth(200.0f);
+			const char* rotSmoothFmt = lockedRotationSmoothing > 0 ? "%d" : "off";
+			if (ImGui::SliderInt("Smooth locked rotation", &lockedRotationSmoothing, 0, 100, rotSmoothFmt)) {
+				if (lockedRotationSmoothing < 0) lockedRotationSmoothing = 0;
+				if (lockedRotationSmoothing > 100) lockedRotationSmoothing = 100;
+				hm.lockedHeadsetRotationSmoothing = (uint8_t)lockedRotationSmoothing;
+				SaveProfile(CalCtx);
+				CCal_SendHeadMountConfig();
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Speed-adaptive low-pass on headset rotation while the head-mounted tracker\n"
+				                  "drives it. Lower values reduce rotational lag. 0 = off.");
 			}
 			DrawDriverSynthTimingPanel(hm);
 		}

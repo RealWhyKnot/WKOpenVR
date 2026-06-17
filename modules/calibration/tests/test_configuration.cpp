@@ -77,7 +77,7 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	src.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
 	ApplyTrackingStylePreset(src, TrackingStyle::LockedWithRecovery);
 	src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
-	src.floorOffsetMetersY = -0.4375; // non-default; must round-trip
+	src.floorOffsetMetersY = -0.4375; // boundary/floor persistence is disabled
 	// Experimental drift-fighting toggles (non-default; must round-trip).
 	src.experimentalRelocQuarantineEnabled = true;
 	src.experimentalRelocQuarantineSec = 2.0;
@@ -114,7 +114,8 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
 	EXPECT_EQ(dst.trackingStyle, TrackingStyle::LockedWithRecovery);
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
-	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, -0.4375);
+	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, 0.0);
+	EXPECT_FALSE(dst.floorEnabled);
 	EXPECT_TRUE(dst.experimentalRelocQuarantineEnabled);
 	EXPECT_DOUBLE_EQ(dst.experimentalRelocQuarantineSec, 2.0);
 	EXPECT_TRUE(dst.experimentalDriftBreakerEnabled);
@@ -335,6 +336,21 @@ TEST(ConfigurationTest, MigrateV5ExplicitRecoveryStyleRestoresRawHmdFallback)
 	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::DriverSynth);
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);
 	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+}
+
+TEST(ConfigurationTest, MissingLockedHeadsetRotationSmoothingDefaultsFromPosition)
+{
+	std::string json = MakeMinimalProfile(
+	    /*schemaVersion=*/7,
+	    "\"head_mount\":{\"mode\":3,\"tracker_serial\":\"LHR-HMD\",\"tracker_tracking_system\":\"lighthouse\","
+	    "\"locked_headset_smoothing\":65}");
+
+	CalibrationContext ctx;
+	std::stringstream io(json);
+	ParseProfile(ctx, io);
+
+	EXPECT_EQ(ctx.headMount.lockedHeadsetSmoothing, 65u);
+	EXPECT_EQ(ctx.headMount.lockedHeadsetRotationSmoothing, 50u);
 }
 
 TEST(ConfigurationTest, ResolvedSpeedUsesContinuousSettingOnlyInContinuousMode)
@@ -590,7 +606,7 @@ TEST(ConfigurationTest, SaveStampsCurrentSchemaVersion)
 	EXPECT_NE(io.str().find("schema_version"), std::string::npos) << "Saved JSON should contain a schema_version key";
 }
 
-TEST(ConfigurationTest, BoundaryStandingSpaceRoundTrips)
+TEST(ConfigurationTest, BoundaryStandingSpaceIsNotPersisted)
 {
 	CalibrationContext src;
 	src.referenceTrackingSystem = "lighthouse";
@@ -610,17 +626,16 @@ TEST(ConfigurationTest, BoundaryStandingSpaceRoundTrips)
 	std::stringstream io;
 	WriteProfile(src, io);
 
-	EXPECT_NE(io.str().find("standing_space"), std::string::npos);
+	EXPECT_EQ(io.str().find("standing_space"), std::string::npos);
+	EXPECT_EQ(io.str().find("\"boundary\""), std::string::npos);
 
 	CalibrationContext dst;
 	std::stringstream reload(io.str());
 	ParseProfile(dst, reload);
 
 	ASSERT_TRUE(dst.validProfile);
-	EXPECT_TRUE(dst.boundary.standingSpace);
-	EXPECT_TRUE(dst.boundary.enabled);
-	ASSERT_EQ(dst.boundary.vertices.size(), 4u);
-	EXPECT_NEAR(dst.boundary.ceilingY, 2.4, 1e-9);
+	EXPECT_FALSE(dst.boundary.enabled);
+	EXPECT_TRUE(dst.boundary.vertices.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +682,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.autoCorrectOffset = false;
 	src.headMount.experimentalAutoCorrectOffset = true;
 	src.headMount.lockedHeadsetSmoothing = 65;
+	src.headMount.lockedHeadsetRotationSmoothing = 35;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
 	src.headMount.driverSynthTiming.graceHoldMs = 1400;
 	src.headMount.driverSynthTiming.blendToFallbackMs = 900;
@@ -704,6 +720,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
+	EXPECT_EQ(dst.headMount.lockedHeadsetRotationSmoothing, 35);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.staleLimitMs, 120);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.graceHoldMs, 1400);
 	EXPECT_EQ(dst.headMount.driverSynthTiming.blendToFallbackMs, 900);
@@ -720,16 +737,10 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	qDst.normalize();
 	EXPECT_NEAR(std::abs(qSrc.dot(qDst)), 1.0, 1e-6) << "headFromTracker rotation must round-trip";
 
-	EXPECT_TRUE(dst.boundary.enabled);
-	EXPECT_NEAR(dst.boundary.floorY, -0.05, 1e-9);
-	EXPECT_NEAR(dst.boundary.ceilingY, 2.3, 1e-9);
-	ASSERT_EQ(dst.boundary.vertices.size(), 2u);
-	EXPECT_NEAR(dst.boundary.vertices[0].x, 1.0, 1e-9);
-	EXPECT_NEAR(dst.boundary.vertices[1].z, 0.5, 1e-9);
-	ASSERT_EQ(dst.boundary.priorChaperone.size(), 4u);
-	EXPECT_EQ(dst.boundary.priorChaperone[0], 0xDE);
-	EXPECT_EQ(dst.boundary.priorChaperone[3], 0xEF);
-	EXPECT_TRUE(dst.boundary.priorChaperoneCaptured);
+	EXPECT_FALSE(dst.boundary.enabled);
+	EXPECT_TRUE(dst.boundary.vertices.empty());
+	EXPECT_TRUE(dst.boundary.priorChaperone.empty());
+	EXPECT_FALSE(dst.boundary.priorChaperoneCaptured);
 }
 
 // Skip-if-default: the new sections must NOT appear in the JSON

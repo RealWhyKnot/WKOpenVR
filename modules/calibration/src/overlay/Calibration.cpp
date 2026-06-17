@@ -1144,10 +1144,6 @@ void CalibrationContext::ResolveLockMode()
 	}
 }
 
-// Auto-speed resolver. Reads recent calibration fit error and picks the buffer
-// size that should give a stable result without bogging down convergence.
-// Sticky: requires the new bucket to be right for ~5 consecutive evaluations
-// before switching so transient noise doesn't oscillate the sample-buffer size.
 CalibrationContext::Speed CalibrationContext::ResolvedCalibrationSpeed() const
 {
 	const Speed requestedSpeed = ActiveCalibrationSpeed();
@@ -1162,38 +1158,31 @@ CalibrationContext::Speed CalibrationContext::ResolvedCalibrationSpeed() const
 	// the user can pick SLOW or VERY_SLOW explicitly if they want a larger
 	// buffer.
 	if (state != CalibrationState::Continuous && state != CalibrationState::ContinuousStandby) {
+		autoSpeedState = {};
+		lastAutoSpeedDecision = {};
 		return FAST;
 	}
 
-	// Sticky state. Mutable-via-cast is fine here -- these are pure caches.
-	static Speed s_lastResolved = SLOW; // safe default before first sample
-	static Speed s_pendingResolved = SLOW;
-	static int s_pendingTicks = 0;
-	constexpr int kRequiredStableTicks = 5; // ~5 samples of consistency
-	const double observedFitRmsMm = spacecal::calibration_speed::SelectObservedFitRmsMm(
-	    Metrics::error_rawComputed.last(), Metrics::error_currentCal.last());
-	const auto bucket = spacecal::calibration_speed::BucketForObservedFitRmsMm(observedFitRmsMm);
-	const Speed candidate = bucket == spacecal::calibration_speed::AutoSpeedBucket::Fast   ? FAST
-	                        : bucket == spacecal::calibration_speed::AutoSpeedBucket::Slow ? SLOW
-	                                                                                       : VERY_SLOW;
+	namespace cs = spacecal::calibration_speed;
+	const cs::AutoSpeedPhase prevPhase = autoSpeedState.phase;
+	const double correctionFitRmsMm =
+	    cs::SelectObservedFitRmsMm(Metrics::error_currentCal.last(), Metrics::error_byRelPose.last());
+	const double freshFitRmsMm = Metrics::error_rawComputed.last();
+	const auto decision = cs::ResolveAutoSpeed(autoSpeedState, correctionFitRmsMm, freshFitRmsMm);
+	autoSpeedState = decision.state;
+	lastAutoSpeedDecision = decision;
 
-	if (candidate == s_lastResolved) {
-		s_pendingResolved = candidate;
-		s_pendingTicks = 0;
-	}
-	else if (candidate == s_pendingResolved) {
-		++s_pendingTicks;
-		if (s_pendingTicks >= kRequiredStableTicks) {
-			s_lastResolved = candidate;
-			s_pendingTicks = 0;
-		}
-	}
-	else {
-		s_pendingResolved = candidate;
-		s_pendingTicks = 1;
+	if (decision.state.phase != prevPhase) {
+		Metrics::LogAnnotationf("auto_speed_phase: prev=%s now=%s reducible_mm=%.3f current_fit_mm=%.3f"
+		                        " fresh_fit_mm=%.3f dwell=%d",
+		                        cs::AutoSpeedPhaseName(prevPhase), cs::AutoSpeedPhaseName(decision.state.phase),
+		                        decision.reducibleMm, decision.correctionFitMm, decision.freshFitMm,
+		                        decision.state.settleTicks);
 	}
 
-	return s_lastResolved;
+	return decision.bucket == cs::AutoSpeedBucket::Fast   ? FAST
+	       : decision.bucket == cs::AutoSpeedBucket::Slow ? SLOW
+	                                                      : VERY_SLOW;
 }
 SCIPCClient Driver;
 protocol::DriverPoseShmem shmem;
@@ -1260,6 +1249,8 @@ void StartCalibration(const char* reason)
 	Metrics::error_currentCal.Clear();
 	Metrics::error_byRelPose.Clear();
 	Metrics::error_rawComputed.Clear();
+	CalCtx.autoSpeedState = {};
+	CalCtx.lastAutoSpeedDecision = {};
 	Metrics::jitterRef.Clear();
 	Metrics::jitterTarget.Clear();
 	Metrics::posOffset_currentCal.Clear();
@@ -3322,15 +3313,9 @@ void CalibrationTick(double time)
 
 	Metrics::WriteLogEntry();
 
-	// Feed controller poses into the boundary capture state machine. No-op
-	// when not in the Active capture state.
-	CCal_TickBoundaryCapture();
-
-	// Safety boundary: re-push chaperone geometry if the calibration transform
-	// has drifted since the last push (throttled to 1 Hz). Runs every tick so
-	// the 1-Hz gate inside TickBoundaryRePush handles timing. No-op when
-	// boundary.enabled is false.
-	TickBoundaryRePush(time);
+	// Boundary/floor subsystem disabled.
+	// CCal_TickBoundaryCapture();
+	// TickBoundaryRePush(time);
 
 	if (CalCtx.state != CalibrationState::Continuous) {
 		ctx.state = CalibrationState::None;
@@ -3346,6 +3331,9 @@ void CalibrationTick(double time)
 
 void LoadChaperoneBounds()
 {
+	// Boundary/floor subsystem disabled.
+	return;
+#if 0
 	vr::VRChaperoneSetup()->RevertWorkingCopy();
 
 	uint32_t quadCount = 0;
@@ -3357,10 +3345,14 @@ void LoadChaperoneBounds()
 	vr::VRChaperoneSetup()->GetWorkingPlayAreaSize(&CalCtx.chaperone.playSpaceSize.v[0],
 	                                               &CalCtx.chaperone.playSpaceSize.v[1]);
 	CalCtx.chaperone.valid = true;
+#endif
 }
 
 void ApplyChaperoneBounds()
 {
+	// Boundary/floor subsystem disabled.
+	return;
+#if 0
 	vr::VRChaperoneSetup()->RevertWorkingCopy();
 	vr::VRChaperoneSetup()->SetWorkingCollisionBoundsInfo(&CalCtx.chaperone.geometry[0],
 	                                                      (uint32_t)CalCtx.chaperone.geometry.size());
@@ -3368,6 +3360,7 @@ void ApplyChaperoneBounds()
 	vr::VRChaperoneSetup()->SetWorkingPlayAreaSize(CalCtx.chaperone.playSpaceSize.v[0],
 	                                               CalCtx.chaperone.playSpaceSize.v[1]);
 	vr::VRChaperoneSetup()->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+#endif
 }
 
 void DebugApplyRandomOffset()

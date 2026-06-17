@@ -285,7 +285,12 @@ namespace protocol {
 // v35 (2026-06-15): Phantom body dimensions become driver-estimated priors.
 // RequestSetPhantomSolverConfig keeps its old layout but current drivers only
 // consume virtual_min_confidence.
-const uint32_t Version = 35;
+//
+// v36 (2026-06-17): SetHeadMountConfig carries lockedHeadsetRotationSmoothing
+// (0..100, 0 = off) separately from lockedHeadsetSmoothing. Consumes the final
+// existing _pad byte so the payload size does not change, but still requires a
+// paired overlay+driver install.
+const uint32_t Version = 36;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

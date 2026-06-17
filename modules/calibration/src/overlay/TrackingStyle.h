@@ -65,7 +65,8 @@ inline bool HmdPoseEventRecoveryEligible(CalibrationState state, TrackingStyle s
 
 inline bool TrackingStyleShowsBoundarySetup(TrackingStyle style)
 {
-	return style == TrackingStyle::LockedWithRecovery;
+	(void)style;
+	return false;
 }
 
 inline TrackingStyle TrackingStyleFromRaw(int raw, TrackingStyle fallback = TrackingStyle::Manual)

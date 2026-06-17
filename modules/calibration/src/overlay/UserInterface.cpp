@@ -332,8 +332,7 @@ void BuildContinuousCalDisplay()
 	// Tab bar layout. User-facing categories:
 	//   - Basic:     the currently-running calibration -- device status, action
 	//                buttons, common settings.
-	//   - Play Space: head-mounted tracker setup, safety boundary drawing,
-	//                 and Quest Guardian controls in one room-scale flow.
+	//   - Play Space: head-mounted tracker setup.
 	//   - Graphs:    live plots for users who want to watch the math.
 	//   - Advanced:  technical knobs (speed, alignment thresholds,
 	//                tuning); the only place to override AUTO defaults.
@@ -436,9 +435,8 @@ inline const char* GetPrettyTrackingSystemName(const std::string& value)
 
 // One-shot mode's Settings tab. Trimmed to what a one-shot user actually
 // touches: outlier rejection, universe-shift correction, calibration speed,
-// chaperone bounds, maintenance. Continuous-only knobs (Lock relative
-// position, Recalibrate on movement, recalibration threshold, alignment
-// thresholds) live on the continuous Basic /
+// maintenance. Continuous-only knobs (Lock relative position, Recalibrate on
+// movement, recalibration threshold, alignment thresholds) live on the continuous Basic /
 // Advanced tabs where they actually do something.
 //
 // The reasoning for having both this AND CCal_BasicInfo's Common settings
@@ -527,42 +525,40 @@ static void OneShot_DrawSettings()
 	}
 	ImGui::EndGroupPanel();
 
-	// Chaperone -- moved here from BuildMenu for the same reason. Copy/Paste
-	// + auto-apply checkbox; Paste only meaningful when the profile already
-	// has stored bounds.
-	spacecal::ui::DrawChaperoneLoadFailedBanner();
-	ImGui::Spacing();
-	ImGui::BeginGroupPanel("Chaperone bounds", panelSize);
-	{
-		ImGui::BeginDisabled(!IsVRReady());
-		if (ImGui::Button("Copy chaperone bounds to profile")) {
-			LoadChaperoneBounds();
-			SaveProfile(CalCtx);
-		}
-		ImGui::EndDisabled();
-		if (!IsVRReady() && ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Waiting for SteamVR.");
-		}
-		if (CalCtx.chaperone.valid) {
-			ImGui::SameLine();
-			ImGui::BeginDisabled(!IsVRReady());
-			if (ImGui::Button("Paste chaperone bounds")) {
-				ApplyChaperoneBounds();
-			}
-			ImGui::EndDisabled();
-			if (!IsVRReady() && ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Waiting for SteamVR.");
-			}
-
-			if (ImGui::Checkbox("Paste automatically when geometry resets", &CalCtx.chaperone.autoApply)) {
-				SaveProfile(CalCtx);
-			}
-		}
-		else {
-			ImGui::TextDisabled("(No bounds saved in profile yet -- press Copy first.)");
-		}
-	}
-	ImGui::EndGroupPanel();
+	// Boundary/floor subsystem disabled.
+	// spacecal::ui::DrawChaperoneLoadFailedBanner();
+	// ImGui::Spacing();
+	// ImGui::BeginGroupPanel("Chaperone bounds", panelSize);
+	// {
+	// 	ImGui::BeginDisabled(!IsVRReady());
+	// 	if (ImGui::Button("Copy chaperone bounds to profile")) {
+	// 		LoadChaperoneBounds();
+	// 		SaveProfile(CalCtx);
+	// 	}
+	// 	ImGui::EndDisabled();
+	// 	if (!IsVRReady() && ImGui::IsItemHovered()) {
+	// 		ImGui::SetTooltip("Waiting for SteamVR.");
+	// 	}
+	// 	if (CalCtx.chaperone.valid) {
+	// 		ImGui::SameLine();
+	// 		ImGui::BeginDisabled(!IsVRReady());
+	// 		if (ImGui::Button("Paste chaperone bounds")) {
+	// 			ApplyChaperoneBounds();
+	// 		}
+	// 		ImGui::EndDisabled();
+	// 		if (!IsVRReady() && ImGui::IsItemHovered()) {
+	// 			ImGui::SetTooltip("Waiting for SteamVR.");
+	// 		}
+	//
+	// 		if (ImGui::Checkbox("Paste automatically when geometry resets", &CalCtx.chaperone.autoApply)) {
+	// 			SaveProfile(CalCtx);
+	// 		}
+	// 	}
+	// 	else {
+	// 		ImGui::TextDisabled("(No bounds saved in profile yet -- press Copy first.)");
+	// 	}
+	// }
+	// ImGui::EndGroupPanel();
 
 	// (Recenter playspace removed: in the lighthouse-anchored boundary model
 	// the chaperone is built from boundary vertices in lighthouse space and
@@ -883,8 +879,7 @@ void BuildMenu(bool runningInOverlay)
 			}
 		}
 
-		// (Chaperone Copy/Paste buttons + autoApply moved to the Settings
-		// tab as the "Chaperone bounds" group panel.)
+		// Boundary/floor subsystem disabled.
 		// (Calibration Speed picker moved to the Settings tab as the
 		// "Calibration speed" group panel.)
 		// Both used to render inline here, stacking on top of the action

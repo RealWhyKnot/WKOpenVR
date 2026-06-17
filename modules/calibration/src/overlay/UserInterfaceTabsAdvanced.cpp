@@ -231,12 +231,11 @@ void CCal_DrawSettings()
 					SaveProfile(CalCtx);
 				}
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip(
-					    "Pick the speed automatically based on calibration fit RMS.\n"
-					    "<5mm -> Fast.  5-10mm -> Slow.  >10mm -> Very Slow.\n"
-					    "Re-evaluates while continuous calibration runs; sticky so it doesn't oscillate.\n"
-					    "Recommended for continuous mode. (One-shot mode hides Auto because\n"
-					    "it has no second chance to switch.)");
+					ImGui::SetTooltip("Pick the speed automatically from correction error and fresh-fit RMS.\n"
+					                  "Uses Fast while the current calibration is fixably off, then sizes\n"
+					                  "the buffer by the settled noise floor.\n"
+					                  "Recommended for continuous mode. (One-shot mode hides Auto because\n"
+					                  "it has no second chance to switch.)");
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Fast          ", speed == CalibrationContext::FAST)) {
@@ -270,17 +269,16 @@ void CCal_DrawSettings()
 				// Show the resolved speed when AUTO is on so the user understands
 				// what the program decided. Faded text so it doesn't draw the eye.
 				if (speed == CalibrationContext::AUTO) {
-					const auto resolved = CalCtx.ResolvedCalibrationSpeed();
-					const char* resolvedName = resolved == CalibrationContext::FAST        ? "Fast"
-					                           : resolved == CalibrationContext::SLOW      ? "Slow"
-					                           : resolved == CalibrationContext::VERY_SLOW ? "Very Slow"
-					                                                                       : "?";
-					const double fitRmsMm = spacecal::calibration_speed::SelectObservedFitRmsMm(
-					    Metrics::error_rawComputed.last(), Metrics::error_currentCal.last());
-					const bool haveFitRms = spacecal::calibration_speed::IsUsableFitRmsMm(fitRmsMm);
+					namespace cs = spacecal::calibration_speed;
+					const auto decision = CalCtx.lastAutoSpeedDecision;
+					const char* resolvedName = cs::AutoSpeedBucketName(decision.bucket);
+					const bool haveFresh = cs::IsUsableFitRmsMm(decision.freshFitMm);
+					const bool haveCorrection = cs::IsUsableFitRmsMm(decision.correctionFitMm);
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-					if (haveFitRms) {
-						ImGui::Text("    Currently resolved to: %s  (fit RMS %.2f mm)", resolvedName, fitRmsMm);
+					if (haveFresh || haveCorrection) {
+						ImGui::Text("    %s (%s): fresh %.2f mm, reducible %.2f mm", resolvedName,
+						            cs::AutoSpeedPhaseName(decision.state.phase),
+						            haveFresh ? decision.freshFitMm : -1.0, decision.reducibleMm);
 					}
 					else {
 						ImGui::Text("    Currently resolved to: %s  (waiting for first fit)", resolvedName);

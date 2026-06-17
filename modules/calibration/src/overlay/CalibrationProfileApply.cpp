@@ -542,16 +542,15 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		}
 	}
 
-	if (ctx.enabled && ctx.chaperone.valid && ctx.chaperone.autoApply) {
-		uint32_t quadCount = 0;
-		vr::VRChaperoneSetup()->GetLiveCollisionBoundsInfo(nullptr, &quadCount);
-
-		// Heuristic: when SteamVR resets to a blank-ish chaperone, it uses empty geometry,
-		// but manual adjustments (e.g. via a play space mover) will not touch geometry.
-		if (quadCount != ctx.chaperone.geometry.size()) {
-			ApplyChaperoneBounds();
-		}
-	}
+	// Boundary/floor subsystem disabled.
+	// if (ctx.enabled && ctx.chaperone.valid && ctx.chaperone.autoApply) {
+	// 	uint32_t quadCount = 0;
+	// 	vr::VRChaperoneSetup()->GetLiveCollisionBoundsInfo(nullptr, &quadCount);
+	//
+	// 	if (quadCount != ctx.chaperone.geometry.size()) {
+	// 		ApplyChaperoneBounds();
+	// 	}
+	// }
 
 	// Consume the one-shot auto-recovery snap flag -- only after every per-ID
 	// payload in this cycle has been sent, so the snap reaches all devices.

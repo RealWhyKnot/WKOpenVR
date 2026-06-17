@@ -13,6 +13,7 @@
 
 #include "Protocol.h"
 #include "HeadMountDriverSynthConfig.h"
+#include "CalibrationAutoSpeed.h"
 #include "WarmRestart.h" // ValidationOutcome enum
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
@@ -180,8 +181,9 @@ struct HeadMountConfig
 	bool experimentalAutoCorrectOffset = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
-	// head-mounted tracker (0..100, 0 = off). Tames lighthouse jitter.
+	// head-mounted tracker (0..100, 0 = off). Tames lighthouse position jitter.
 	uint8_t lockedHeadsetSmoothing = 0;
+	uint8_t lockedHeadsetRotationSmoothing = 0;
 	wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming;
 	// Runtime-resolved OpenVR device ID; not persisted. -1 means unresolved.
 	// Set each AssignTargets() call by matching trackerSerial + trackerTrackingSystem.
@@ -658,6 +660,8 @@ struct CalibrationContext
 	// calibration wait on a sticky speed resolver.
 	Speed oneShotCalibrationSpeed = FAST;
 	Speed continuousCalibrationSpeed = AUTO;
+	mutable spacecal::calibration_speed::AutoSpeedState autoSpeedState;
+	mutable spacecal::calibration_speed::AutoSpeedDecision lastAutoSpeedDecision;
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
@@ -774,6 +778,8 @@ struct CalibrationContext
 		lastRelocDetectedTime = -1e9;
 		relocDetectedThisTick = false;
 		targetInvalidEwma = 0.0;
+		autoSpeedState = {};
+		lastAutoSpeedDecision = {};
 		autoLockHistory.clear();
 		autoLockEffectivelyLocked = false;
 		autoLockHasPendingFlip = false;
@@ -890,16 +896,10 @@ struct CalibrationContext
 		           : oneShotCalibrationSpeed;
 	}
 
-	// Resolve the user's selected speed to a concrete FAST/SLOW/VERY_SLOW. When
-	// the user picks AUTO, use the recent calibration fit RMS as the buffer-size
-	// hint:
-	//   - clean to typical fits (<5mm RMS) get FAST so calibration converges
-	//     quickly. Covers tracker-on-HMD and most lighthouse setups.
-	//   - moderately noisy fits (5-10mm RMS) get SLOW
-	//   - genuinely noisy / reflective rooms / drifty IMU (>10mm RMS) get VERY_SLOW
-	// This is sticky-by-default: we only re-evaluate every few seconds and
-	// require the new bucket to have been right for a while before switching,
-	// so the buffer size doesn't oscillate during transient noise.
+	// Resolve the user's selected speed to a concrete FAST/SLOW/VERY_SLOW. AUTO
+	// uses a two-phase policy: recover quickly while the current calibration is
+	// materially worse than the fresh fit, then size the buffer by the settled
+	// noise floor.
 	Speed ResolvedCalibrationSpeed() const;
 
 	size_t SampleCount()

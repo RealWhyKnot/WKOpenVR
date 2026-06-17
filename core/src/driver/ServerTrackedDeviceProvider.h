@@ -389,7 +389,8 @@ private:
 		bool hideTracker = true;
 		bool offsetCalibrated = false;
 		bool allowRawHmdFallback = true;
-		uint8_t lockedHeadsetSmoothing = 0; // 0..100, 0 = off; smooths the synth HMD pose
+		uint8_t lockedHeadsetSmoothing = 0;         // 0..100, 0 = off; synth HMD position smoothing
+		uint8_t lockedHeadsetRotationSmoothing = 0; // 0..100, 0 = off; synth HMD rotation smoothing
 		wkopenvr::headmount::DriverSynthTimingConfig driverSynthTiming;
 	};
 	mutable std::mutex m_headMountStateMutex;
@@ -508,7 +509,7 @@ private:
 	// tracker's orientation jitter is the main discomfort when locked; the
 	// one-euro release keeps real head motion responsive. smoothness == 0 leaves
 	// the pose untouched and reseeds the filter.
-	void ApplyLockedHeadsetSmoothing(vr::DriverPose_t& pose, uint8_t smoothness);
+	void ApplyLockedHeadsetSmoothing(vr::DriverPose_t& pose, uint8_t positionSmoothness, uint8_t rotationSmoothness);
 #if WKOPENVR_BUILD_IS_DEV
 	void UpdateSmartSmoothingShadow(uint32_t openVRID, DeviceTransform& device, const vr::DriverPose_t& rawPose,
 	                                const vr::DriverPose_t& livePose) const;

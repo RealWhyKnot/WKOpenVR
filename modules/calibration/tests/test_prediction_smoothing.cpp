@@ -262,6 +262,28 @@ TEST(PredictionSmoothingTest, SmartParamsMakeHundredStrongerButNonzero)
 	EXPECT_LT(p100.posBetaHzPerMps, 24.0);
 }
 
+TEST(PredictionSmoothingTest, LockedHeadsetParamsClampRotationCutoff)
+{
+	const auto shared = prediction::smart_shadow::BuildParams(100);
+	const auto split = prediction::smart_shadow::BuildParams(100, 100);
+
+	EXPECT_NEAR(shared.rotMinCutoffHz, 0.75, 1e-12);
+	EXPECT_NEAR(split.posMinCutoffHz, shared.posMinCutoffHz, 1e-12);
+	EXPECT_GE(split.rotMinCutoffHz, prediction::smart_shadow::kLockedHeadsetRotationMinCutoffHz);
+}
+
+TEST(PredictionSmoothingTest, LockedHeadsetParamsUseSeparateAxisSmoothness)
+{
+	const auto split = prediction::smart_shadow::BuildParams(80, 20);
+	const auto pos = prediction::smart_shadow::BuildParams(80);
+	const auto rot = prediction::smart_shadow::BuildParams(20);
+
+	EXPECT_NEAR(split.posMinCutoffHz, pos.posMinCutoffHz, 1e-12);
+	EXPECT_NEAR(split.posBetaHzPerMps, pos.posBetaHzPerMps, 1e-12);
+	EXPECT_NEAR(split.rotMinCutoffHz, rot.rotMinCutoffHz, 1e-12);
+	EXPECT_NEAR(split.rotBetaHzPerRadps, rot.rotBetaHzPerRadps, 1e-12);
+}
+
 TEST(PredictionSmoothingTest, ReleasedPredictionFactorMovesTowardPassThrough)
 {
 	using prediction::smart_shadow::ReleasedPredictionFactor;

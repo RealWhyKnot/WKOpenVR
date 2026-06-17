@@ -1317,7 +1317,8 @@ void DrawBoundarySection(ImVec2 panelSize)
 	{
 		openvr_pair::overlay::ui::PanelScope panel("Step 2: Safety boundary", panelSize);
 		if (s_floorCapture.active() || s_capture.state() == wkopenvr::boundary::CaptureState::Active) {
-			::CCal_TickBoundaryCapture();
+			// Boundary/floor subsystem disabled.
+			// ::CCal_TickBoundaryCapture();
 		}
 		s_floorOwnershipStatus = wkopenvr::boundary::GetFloorOwnershipStatus();
 		const auto& pal = openvr_pair::overlay::ui::GetPalette();
@@ -1507,9 +1508,10 @@ void DrawBoundarySection(ImVec2 panelSize)
 				if (!CalCtx.boundary.enabled) {
 					if (ImGui::Button("Apply boundary")) {
 						CalCtx.boundary.enabled = true;
-						ScheduleBoundaryStartupPush();
-						std::string pushError;
-						PushTargetBoundaryToChaperone(pushError);
+						// Boundary/floor subsystem disabled.
+						// ScheduleBoundaryStartupPush();
+						// std::string pushError;
+						// PushTargetBoundaryToChaperone(pushError);
 						SaveProfile(CalCtx);
 					}
 					if (ImGui::IsItemHovered()) {
@@ -1797,6 +1799,8 @@ void CCal_InvalidateBoundaryFloorSourceCache()
 
 void CCal_TickBoundaryCapture()
 {
+	// Boundary/floor subsystem disabled.
+#if 0
 	const bool captureActive = s_capture.state() == wkopenvr::boundary::CaptureState::Active;
 	if (!captureActive && !s_floorCapture.active()) {
 		TickPersistentBoundaryOverlay();
@@ -2024,6 +2028,7 @@ void CCal_TickBoundaryCapture()
 		}
 	}
 	TickBoundaryPreviewForCapture(&previewCursor);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -2037,16 +2042,15 @@ void CCal_DrawBoundaryTab()
 	// Top-level framing: this tab is one continuous story, not three
 	// independent feature islands. Each step depends on the previous one,
 	// and the disabled-state copy nudges the user forward.
-	ImGui::TextDisabled(TrackingStyleShowsBoundarySetup(CalCtx.trackingStyle)
-	                        ? "Headset tracker, safety boundary, and Quest App handoff."
-	                        : "Headset tracker setup.");
+	ImGui::TextDisabled("Headset tracker setup.");
 	ImGui::Spacing();
 
 	CCal_DrawHeadMountSection(panelSize);
-	if (TrackingStyleShowsBoundarySetup(CalCtx.trackingStyle)) {
-		ImGui::Spacing();
-		DrawBoundarySection(panelSize);
-		ImGui::Spacing();
-		DrawQuestAppPointerSection(panelSize);
-	}
+	// Boundary/floor subsystem disabled.
+	// if (TrackingStyleShowsBoundarySetup(CalCtx.trackingStyle)) {
+	// 	ImGui::Spacing();
+	// 	DrawBoundarySection(panelSize);
+	// 	ImGui::Spacing();
+	// 	DrawQuestAppPointerSection(panelSize);
+	// }
 }

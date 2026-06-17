@@ -212,12 +212,13 @@ void SmoothingPlugin::DrawPredictionTab()
 			ImGui::TextColored(pal.statusInfo, "[continuous calibration target, locked]");
 		}
 		else if (isHeadsetSynthesisTracker) {
-			ImGui::TextColored(pal.statusInfo, "[locked headset smoothing]");
+			ImGui::TextColored(pal.statusInfo, "[locked headset position smoothing]");
 		}
 
 		const bool sliderDisabled = isLocked || (isHeadsetSynthesisTracker && !haveLockedHeadsetSmoothing);
 		ImGui::BeginDisabled(sliderDisabled);
-		const char* sliderLabel = isHeadsetSynthesisTracker ? "locked headset smoothing##slider" : "smoothness##slider";
+		const char* sliderLabel =
+		    isHeadsetSynthesisTracker ? "locked headset position smoothing##slider" : "smoothness##slider";
 		if (ImGui::SliderInt(sliderLabel, &smoothness, 0, 100, "%d%%")) {
 			smoothness = wkopenvr::smoothing_prediction::ClampSmoothness(smoothness);
 			if (isHeadsetSynthesisTracker) {

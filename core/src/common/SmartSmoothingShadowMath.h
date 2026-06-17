@@ -9,6 +9,7 @@
 namespace prediction::smart_shadow {
 
 constexpr double kPi = 3.1415926535897932384626433832795;
+constexpr double kLockedHeadsetRotationMinCutoffHz = 8.0;
 
 inline double Clamp(double value, double lo, double hi)
 {
@@ -115,6 +116,27 @@ inline Params BuildParams(uint8_t smoothness)
 	p.releaseScale = Lerp(1.0, 0.40, topEnd);
 	p.linMovingSpeed = Lerp(p.linMovingSpeed, 0.60, topEnd);
 	p.angMovingSpeed = Lerp(p.angMovingSpeed, 2.00, topEnd);
+	return p;
+}
+
+inline Params BuildParams(uint8_t positionSmoothness, uint8_t rotationSmoothness)
+{
+	const double posS01 = Clamp(static_cast<double>(positionSmoothness) / 100.0, 0.0, 1.0);
+	const double posInv = 1.0 - posS01;
+	const double posTopEnd = SmoothStep(85.0, 100.0, static_cast<double>(positionSmoothness));
+	const double rotS01 = Clamp(static_cast<double>(rotationSmoothness) / 100.0, 0.0, 1.0);
+	const double rotInv = 1.0 - rotS01;
+	const double rotTopEnd = SmoothStep(85.0, 100.0, static_cast<double>(rotationSmoothness));
+
+	Params p;
+	p.posMinCutoffHz = Lerp(0.45 + 16.0 * std::pow(posInv, 1.8), 0.25, posTopEnd);
+	p.rotMinCutoffHz = std::max(kLockedHeadsetRotationMinCutoffHz, 0.75 + 18.0 * std::pow(rotInv, 1.6));
+	p.posBetaHzPerMps = Lerp(6.0, 24.0, posS01) * Lerp(1.0, 0.55, posTopEnd);
+	p.rotBetaHzPerRadps = Lerp(1.5, 4.5, rotS01) * Lerp(1.0, 0.65, rotTopEnd);
+	p.basePredictionFactor = prediction::SmoothnessToFactor(positionSmoothness);
+	p.releaseScale = Lerp(1.0, 0.40, posTopEnd);
+	p.linMovingSpeed = Lerp(p.linMovingSpeed, 0.60, posTopEnd);
+	p.angMovingSpeed = Lerp(p.angMovingSpeed, 2.00, rotTopEnd);
 	return p;
 }
 
