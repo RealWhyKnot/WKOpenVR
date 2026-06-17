@@ -71,6 +71,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Add replay-driven tracker harness (deda132)
 - **dynamicres:** Add gpu-bound resolution scaling (da9f257)
 - **facetracking:** Add global expression tuning (4fc17d7)
+- **calibration:** Add experiment replay diagnostics (3c0b1b2)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
