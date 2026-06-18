@@ -72,6 +72,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dynamicres:** Add gpu-bound resolution scaling (da9f257)
 - **facetracking:** Add global expression tuning (4fc17d7)
 - **calibration:** Add experiment replay diagnostics (3c0b1b2)
+- **dynamicres:** Release scale on cpu-bound headroom (fbe05c2)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -230,6 +231,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **release:** Use central date for release automation (f1b2814)
 - **calibration:** Align relocalization quarantine timing (e31efd2)
 - **calibration:** Split locked-head smoothing and disable boundary writes (15d6eec)
+- **dynamicres:** Improve adaptive scaling (34333f8)
 
 ---
 
