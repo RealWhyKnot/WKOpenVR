@@ -115,17 +115,10 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 		if (key == "min_scale_fraction")
 			profile.settings.minScaleFraction =
 			    ClampScaleFraction(ParseDouble(value, profile.settings.minScaleFraction));
-		else if (key == "streaming_min_scale_fraction")
-			profile.settings.streamingMinScaleFraction =
-			    ClampScaleFraction(ParseDouble(value, profile.settings.streamingMinScaleFraction));
 		else if (key == "step_fraction")
 			profile.settings.stepFraction = std::clamp(ParseDouble(value, profile.settings.stepFraction), 0.01, 0.25);
 		else if (key == "allow_raise_back")
 			profile.settings.allowRaiseBack = ParseBool(value);
-		else if (key == "act_under_streaming")
-			profile.settings.actUnderStreaming = ParseBool(value);
-		else if (key == "conservative_streaming")
-			profile.settings.conservativeStreaming = ParseBool(value);
 		else if (key == "restore_pending")
 			profile.restore.restorePending = ParseBool(value);
 		else if (key == "baseline_scale")
@@ -143,11 +136,8 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 void WriteDynamicResolutionProfile(const DynamicResolutionProfile& profile, std::ostream& out)
 {
 	WritePair(out, "min_scale_fraction", profile.settings.minScaleFraction);
-	WritePair(out, "streaming_min_scale_fraction", profile.settings.streamingMinScaleFraction);
 	WritePair(out, "step_fraction", profile.settings.stepFraction);
 	WritePair(out, "allow_raise_back", profile.settings.allowRaiseBack);
-	WritePair(out, "act_under_streaming", profile.settings.actUnderStreaming);
-	WritePair(out, "conservative_streaming", profile.settings.conservativeStreaming);
 	WritePair(out, "restore_pending", profile.restore.restorePending);
 	WritePair(out, "baseline_scale", profile.restore.baselineScale);
 	WritePair(out, "baseline_manual_override", profile.restore.baselineManualOverride);

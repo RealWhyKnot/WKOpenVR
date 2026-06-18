@@ -2,7 +2,6 @@
 
 #include "DynamicResolutionLogic.h"
 #include "DynamicResolutionProfile.h"
-#include "DynamicResolutionStreaming.h"
 #include "FeaturePlugin.h"
 
 #include <array>
@@ -47,9 +46,7 @@ private:
 	bool CollectTiming(DynamicResolutionTiming& outTiming);
 	double ReadFrameBudgetMs();
 	SceneState ReadSceneState() const;
-	bool DetectStreamingHeadset() const;
-	void RefreshStreamingState(bool streamingDetected);
-	void UpdateStatus(const DynamicResolutionControllerOutput& output, bool streamingDetected);
+	void UpdateStatus(const DynamicResolutionControllerOutput& output);
 	void SaveProfile();
 	void DrawSettings();
 	void DrawStatus();
@@ -62,13 +59,10 @@ private:
 	bool haveLastFrameIndex_ = false;
 	bool externalOverride_ = false;
 	bool disabledForScene_ = false;
-	bool streamingDetected_ = false;
-	bool streamingCodecAllowsAction_ = false;
 	bool displayFrequencyFallback_ = false;
 	double lastLiveScale_ = 1.0;
 	double lastTargetScale_ = 1.0;
 	double lastFrameBudgetMs_ = 1000.0 / 90.0;
-	VirtualDesktopStreamerSettings virtualDesktopSettings_;
 	ResolutionAction lastActionCode_ = ResolutionAction::None;
 	std::string lastAction_ = "None";
 	std::string lastReason_ = "Waiting";

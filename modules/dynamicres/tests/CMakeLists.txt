@@ -17,10 +17,8 @@ set(DYNAMICRES_OVERLAY_SRC "${CMAKE_SOURCE_DIR}/modules/dynamicres/src/overlay")
 add_executable(dynamicres_tests
 	test_dynamic_resolution_logic.cpp
 	test_dynamic_resolution_profile.cpp
-	test_dynamic_resolution_streaming.cpp
 	${DYNAMICRES_OVERLAY_SRC}/DynamicResolutionLogic.cpp
-	${DYNAMICRES_OVERLAY_SRC}/DynamicResolutionProfile.cpp
-	${DYNAMICRES_OVERLAY_SRC}/DynamicResolutionStreaming.cpp)
+	${DYNAMICRES_OVERLAY_SRC}/DynamicResolutionProfile.cpp)
 
 target_include_directories(dynamicres_tests PRIVATE
 	${DYNAMICRES_OVERLAY_SRC}

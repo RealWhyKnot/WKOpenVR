@@ -27,19 +27,16 @@ enum class ResolutionAction
 struct DynamicResolutionSettings
 {
 	double minScaleFraction = 0.60;
-	double streamingMinScaleFraction = 0.75;
-	double stepFraction = 0.05;
+	double stepFraction = 0.15;
 	double lowerGpuBudgetFraction = 0.88;
 	double cpuGpuBudgetFraction = 0.70;
-	double headroomGpuBudgetFraction = 0.72;
-	int windowSize = 8;
-	int lowerRequiredTicks = 4;
-	int raiseRequiredTicks = 12;
-	int settleTicks = 2;
+	double headroomGpuBudgetFraction = 0.70;
+	int windowSize = 6;
+	int lowerRequiredTicks = 3;
+	int raiseRequiredTicks = 3;
+	int settleTicks = 0;
 	int noEffectLimit = 3;
 	bool allowRaiseBack = true;
-	bool actUnderStreaming = false;
-	bool conservativeStreaming = true;
 };
 
 struct DynamicResolutionTiming
@@ -75,8 +72,6 @@ struct DynamicResolutionControllerInput
 	double baselineScale = 1.0;
 	double currentScale = 1.0;
 	bool sceneRunning = true;
-	bool streamingDetected = false;
-	bool streamingCodecAllowsAction = false;
 	bool externalOverride = false;
 };
 
@@ -86,7 +81,6 @@ struct DynamicResolutionControllerOutput
 	double targetScale = 1.0;
 	std::string reason;
 	DynamicResolutionClassification classification;
-	bool actingBlocked = false;
 };
 
 double ClampScaleFraction(double value);
@@ -108,8 +102,11 @@ public:
 private:
 	DynamicResolutionClassification Classify(const DynamicResolutionTiming& timing,
 	                                         const DynamicResolutionSettings& settings);
-	double FloorFor(const DynamicResolutionSettings& settings, double baselineScale, bool streamingDetected) const;
-	double StepFor(const DynamicResolutionSettings& settings, bool streamingDetected) const;
+	double FloorFor(const DynamicResolutionSettings& settings, double baselineScale) const;
+	double RaiseStepFor(const DynamicResolutionSettings& settings,
+	                    const DynamicResolutionClassification& classification) const;
+	double LowerStepFor(const DynamicResolutionSettings& settings,
+	                    const DynamicResolutionClassification& classification) const;
 
 	std::deque<DynamicResolutionTiming> samples_;
 	ResolutionPressure lastPressure_ = ResolutionPressure::Waiting;
@@ -119,6 +116,7 @@ private:
 	bool effectCheckPending_ = false;
 	double lastLowerAppGpuMs_ = 0.0;
 	double lastWrittenScale_ = 0.0;
+	ResolutionAction activeDirection_ = ResolutionAction::None;
 };
 
 } // namespace wkopenvr::dynamicres

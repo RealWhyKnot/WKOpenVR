@@ -21,30 +21,6 @@ namespace {
 
 using openvr_pair::overlay::ui::StatusTone;
 
-std::string LowerAscii(std::string value)
-{
-	for (char& ch : value) {
-		ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-	}
-	return value;
-}
-
-bool ContainsVirtualDesktop(std::string value)
-{
-	value = LowerAscii(std::move(value));
-	return value.find("virtualdesktop") != std::string::npos || value.find("virtual desktop") != std::string::npos;
-}
-
-std::string DeviceStringProperty(vr::ETrackedDeviceProperty prop)
-{
-	vr::IVRSystem* system = vr::VRSystem();
-	if (!system) return {};
-	char buffer[vr::k_unMaxPropertyStringSize] = {};
-	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-	system->GetStringTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, prop, buffer, sizeof(buffer), &err);
-	return err == vr::TrackedProp_Success ? std::string(buffer) : std::string();
-}
-
 StatusTone ToneForPressure(ResolutionPressure pressure)
 {
 	switch (pressure) {
@@ -75,25 +51,6 @@ StatusTone ToneForAction(ResolutionAction action)
 		default:
 			return StatusTone::Idle;
 	}
-}
-
-StatusTone ToneForStreaming(bool streamingDetected, bool codecAllowsAction,
-                            const VirtualDesktopStreamerSettings& settings)
-{
-	if (!streamingDetected) return StatusTone::Idle;
-	if (codecAllowsAction) return StatusTone::Ok;
-	if (!settings.settingsFilePresent || !settings.parsed) return StatusTone::Warn;
-	return StatusTone::Warn;
-}
-
-std::string StreamingStatusText(bool streamingDetected, bool codecAllowsAction,
-                                const VirtualDesktopStreamerSettings& settings)
-{
-	if (!streamingDetected) return "Not detected";
-	std::string label = VirtualDesktopCodecLabel(settings);
-	if (codecAllowsAction) return label + " allowed";
-	if (!settings.settingsFilePresent || !settings.parsed) return label;
-	return label + " blocked";
 }
 
 void LogDynamicRes(const char* fmt, ...)
@@ -184,21 +141,16 @@ void DynamicResolutionPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 
 	const bool external =
 	    profile_.restore.lastWrittenScale > 0.0 && ScaleDiffers(liveScale, profile_.restore.lastWrittenScale, 0.01);
-	streamingDetected_ = DetectStreamingHeadset();
-	RefreshStreamingState(streamingDetected_);
-
 	DynamicResolutionControllerInput input;
 	input.timing = timing;
 	input.baselineScale = profile_.restore.baselineScale;
 	input.currentScale = liveScale;
 	input.sceneRunning = true;
-	input.streamingDetected = streamingDetected_;
-	input.streamingCodecAllowsAction = streamingCodecAllowsAction_;
 	input.externalOverride = external || externalOverride_;
 
 	const DynamicResolutionControllerOutput output = controller_.Evaluate(input, profile_.settings);
 	lastClassification_ = output.classification;
-	UpdateStatus(output, streamingDetected_);
+	UpdateStatus(output);
 
 	switch (output.action) {
 		case ResolutionAction::Lower:
@@ -442,28 +394,7 @@ DynamicResolutionPlugin::SceneState DynamicResolutionPlugin::ReadSceneState() co
 	return scene;
 }
 
-bool DynamicResolutionPlugin::DetectStreamingHeadset() const
-{
-	return ContainsVirtualDesktop(DeviceStringProperty(vr::Prop_ManufacturerName_String)) ||
-	       ContainsVirtualDesktop(DeviceStringProperty(vr::Prop_ModelNumber_String)) ||
-	       ContainsVirtualDesktop(DeviceStringProperty(vr::Prop_TrackingSystemName_String)) ||
-	       ContainsVirtualDesktop(DeviceStringProperty(vr::Prop_RegisteredDeviceType_String)) ||
-	       ContainsVirtualDesktop(DeviceStringProperty(vr::Prop_DriverVersion_String));
-}
-
-void DynamicResolutionPlugin::RefreshStreamingState(bool streamingDetected)
-{
-	streamingCodecAllowsAction_ = false;
-	if (!streamingDetected) {
-		virtualDesktopSettings_ = {};
-		return;
-	}
-
-	virtualDesktopSettings_ = LoadVirtualDesktopStreamerSettings();
-	streamingCodecAllowsAction_ = VirtualDesktopCodecAllowsDefaultAction(virtualDesktopSettings_);
-}
-
-void DynamicResolutionPlugin::UpdateStatus(const DynamicResolutionControllerOutput& output, bool streamingDetected)
+void DynamicResolutionPlugin::UpdateStatus(const DynamicResolutionControllerOutput& output)
 {
 	lastActionCode_ = output.action;
 	lastAction_ = ResolutionActionLabel(output.action);
@@ -471,13 +402,8 @@ void DynamicResolutionPlugin::UpdateStatus(const DynamicResolutionControllerOutp
 	if (!output.reason.empty()) {
 		lastReason_ = output.reason;
 	}
-	else if (output.actingBlocked)
-		lastReason_ = "Streaming guard";
 	else {
 		lastReason_ = ResolutionPressureLabel(output.classification.pressure);
-	}
-	if (streamingDetected && output.action != ResolutionAction::None) {
-		lastReason_ += " (streaming)";
 	}
 }
 
@@ -499,19 +425,11 @@ void DynamicResolutionPlugin::DrawSettings()
 				    SaveProfile();
 			    }
 		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Streaming floor", [&] {
-			    float value = static_cast<float>(profile_.settings.streamingMinScaleFraction * 100.0);
-			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
-			            "##dynamicres_streaming_floor", &value, 50.0f, 100.0f, "%.0f%%",
-			            "Minimum scale used when a streaming headset is detected.")) {
-				    profile_.settings.streamingMinScaleFraction = ClampScaleFraction(value / 100.0);
-				    SaveProfile();
-			    }
-		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Step size", [&] {
 			    float value = static_cast<float>(profile_.settings.stepFraction * 100.0);
-			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip("##dynamicres_step", &value, 1.0f, 10.0f, "%.0f%%",
-			                                                         "Maximum scale change per controller step.")) {
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_step", &value, 1.0f, 25.0f, "%.0f%%",
+			            "Maximum adaptive scale change per controller step.")) {
 				    profile_.settings.stepFraction = std::clamp(value / 100.0, 0.01, 0.25);
 				    SaveProfile();
 			    }
@@ -520,27 +438,8 @@ void DynamicResolutionPlugin::DrawSettings()
 			    bool value = profile_.settings.allowRaiseBack;
 			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
 			            "##dynamicres_raise_back", &value,
-			            "Allows slow return toward the original SteamVR scale after sustained GPU headroom.")) {
+			            "Allows return toward the original SteamVR scale after GPU headroom.")) {
 				    profile_.settings.allowRaiseBack = value;
-				    SaveProfile();
-			    }
-		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Act while streaming", [&] {
-			    bool value = profile_.settings.actUnderStreaming;
-			    if (openvr_pair::overlay::ui::CheckboxWithTooltip("##dynamicres_act_streaming", &value,
-			                                                      "Allows action with any Virtual Desktop codec. "
-			                                                      "H.264/H.264+ can act automatically; codec and "
-			                                                      "bitrate stay untouched.")) {
-				    profile_.settings.actUnderStreaming = value;
-				    SaveProfile();
-			    }
-		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Streaming guard", [&] {
-			    bool value = profile_.settings.conservativeStreaming;
-			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
-			            "##dynamicres_conservative_streaming", &value,
-			            "Uses smaller steps and a higher floor for streaming headsets.")) {
-				    profile_.settings.conservativeStreaming = value;
 				    SaveProfile();
 			    }
 		    });
@@ -580,16 +479,6 @@ void DynamicResolutionPlugin::DrawStatus()
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Missed frames", [&] {
 			    ImGui::Text("%d of %d samples", lastClassification_.unstableSamples, lastClassification_.sampleCount);
-		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Virtual Desktop", [&] {
-			    const std::string text =
-			        StreamingStatusText(streamingDetected_, streamingCodecAllowsAction_, virtualDesktopSettings_);
-			    openvr_pair::overlay::ui::DrawStatusCell(
-			        text.c_str(),
-			        ToneForStreaming(streamingDetected_, streamingCodecAllowsAction_, virtualDesktopSettings_), false);
-		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "VD settings", [&] {
-			    ImGui::TextUnformatted("C:\\ProgramData\\Virtual Desktop\\StreamerSettings.json");
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Restore", [&] {
 			    const bool pending = profile_.restore.restorePending;

@@ -6,9 +6,7 @@ add_library(openvr_pair_feature_dynamicres_overlay STATIC
 	DynamicResolutionPlugin.cpp
 	DynamicResolutionPlugin.h
 	DynamicResolutionProfile.cpp
-	DynamicResolutionProfile.h
-	DynamicResolutionStreaming.cpp
-	DynamicResolutionStreaming.h)
+	DynamicResolutionProfile.h)
 
 target_include_directories(openvr_pair_feature_dynamicres_overlay PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}

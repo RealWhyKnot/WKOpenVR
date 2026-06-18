@@ -11,6 +11,13 @@ constexpr uint32_t kReprojectionReasonCpu = 0x01;
 constexpr uint32_t kReprojectionReasonGpu = 0x02;
 constexpr uint32_t kReprojectionMotion = 0x08;
 constexpr uint32_t kActualReprojectionMask = kReprojectionReasonCpu | kReprojectionReasonGpu | kReprojectionMotion;
+constexpr int kMinActSamples = 3;
+constexpr double kRaiseTargetUtil = 0.78;
+constexpr double kLowerTargetUtil = 0.80;
+constexpr double kRaiseGain = 0.60;
+constexpr double kLowerGain = 0.80;
+constexpr double kMinStep = 0.03;
+constexpr double kMaxAdaptiveStep = 0.25;
 
 double Median(std::vector<double> values)
 {
@@ -23,7 +30,29 @@ double Median(std::vector<double> values)
 
 int MinWindowSamples(const DynamicResolutionSettings& settings)
 {
-	return std::max(3, std::min(settings.windowSize, 5));
+	return std::max(1, std::min(settings.windowSize, kMinActSamples));
+}
+
+int RaiseUnstableTolerance(const DynamicResolutionSettings& settings)
+{
+	return std::max(1, std::max(1, settings.windowSize) / 4);
+}
+
+double Utilization(const DynamicResolutionClassification& classification)
+{
+	const double budget = std::max(1.0, classification.frameBudgetMs);
+	return std::max(0.0, classification.medianAppGpuMs) / budget;
+}
+
+double StepCap(const DynamicResolutionSettings& settings)
+{
+	return std::clamp(settings.stepFraction, 0.01, kMaxAdaptiveStep);
+}
+
+double ClampAdaptiveStep(double rawStep, double cap)
+{
+	const double minStep = std::min(kMinStep, cap);
+	return std::clamp(std::isfinite(rawStep) ? rawStep : minStep, minStep, cap);
 }
 
 } // namespace
@@ -103,6 +132,7 @@ void DynamicResolutionController::Reset()
 	effectCheckPending_ = false;
 	lastLowerAppGpuMs_ = 0.0;
 	lastWrittenScale_ = 0.0;
+	activeDirection_ = ResolutionAction::None;
 }
 
 DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const DynamicResolutionControllerInput& input,
@@ -134,12 +164,6 @@ DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const Dy
 		pressureTicks_ = 1;
 	}
 
-	if (input.streamingDetected && !settings.actUnderStreaming && !input.streamingCodecAllowsAction) {
-		out.actingBlocked = true;
-		out.reason = "streaming headset";
-		return out;
-	}
-
 	if (settleTicksRemaining_ > 0) {
 		--settleTicksRemaining_;
 		out.reason = "settling";
@@ -164,21 +188,29 @@ DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const Dy
 
 	const double baseline = std::max(0.1, input.baselineScale);
 	const double current = std::clamp(input.currentScale, 0.1, std::max(2.0, baseline));
-	const double floor = FloorFor(settings, baseline, input.streamingDetected);
-	const double step = StepFor(settings, input.streamingDetected);
+	const double floor = FloorFor(settings, baseline);
+	if (out.classification.sampleCount >= MinWindowSamples(settings) &&
+	    out.classification.pressure != ResolutionPressure::GpuBound &&
+	    out.classification.pressure != ResolutionPressure::Headroom) {
+		activeDirection_ = ResolutionAction::None;
+	}
 
 	if (out.classification.pressure == ResolutionPressure::GpuBound &&
-	    pressureTicks_ >= std::max(1, settings.lowerRequiredTicks) && current > floor + 0.005) {
+	    pressureTicks_ >=
+	        (activeDirection_ == ResolutionAction::Lower ? 1 : std::max(1, settings.lowerRequiredTicks)) &&
+	    current > floor + 0.005) {
 		out.action = ResolutionAction::Lower;
-		out.targetScale = std::max(floor, current * (1.0 - step));
+		out.targetScale = std::max(floor, current * (1.0 - LowerStepFor(settings, out.classification)));
 		out.reason = "GPU-bound";
 		return out;
 	}
 
 	if (settings.allowRaiseBack && out.classification.pressure == ResolutionPressure::Headroom &&
-	    pressureTicks_ >= std::max(1, settings.raiseRequiredTicks) && current < baseline - 0.005) {
+	    pressureTicks_ >=
+	        (activeDirection_ == ResolutionAction::Raise ? 1 : std::max(1, settings.raiseRequiredTicks)) &&
+	    current < baseline - 0.005) {
 		out.action = ResolutionAction::Raise;
-		out.targetScale = std::min(baseline, current * (1.0 + step));
+		out.targetScale = std::min(baseline, current * (1.0 + RaiseStepFor(settings, out.classification)));
 		out.reason = "GPU headroom";
 		return out;
 	}
@@ -191,8 +223,12 @@ void DynamicResolutionController::NoteWrite(ResolutionAction action, double writ
                                             const DynamicResolutionSettings& settings)
 {
 	lastWrittenScale_ = writtenScale;
+	samples_.clear();
 	settleTicksRemaining_ = std::max(0, settings.settleTicks);
 	pressureTicks_ = 0;
+	lastPressure_ = ResolutionPressure::Waiting;
+	activeDirection_ =
+	    (action == ResolutionAction::Lower || action == ResolutionAction::Raise) ? action : ResolutionAction::None;
 	if (action == ResolutionAction::Lower) {
 		lastLowerAppGpuMs_ =
 		    classification.medianAppGpuMs > 0.0 ? classification.medianAppGpuMs : classification.appGpuMs;
@@ -233,20 +269,19 @@ DynamicResolutionClassification DynamicResolutionController::Classify(const Dyna
 	}
 
 	const double budget = std::max(1.0, out.frameBudgetMs);
-	const bool cpuOnlyReason = out.cpuReasonSamples > 0 && out.gpuReasonSamples == 0;
-	const bool gpuReasonOrUnknown = out.gpuReasonSamples > 0 || out.cpuReasonSamples == 0;
-	if (out.unstableSamples > 0 && cpuOnlyReason) {
-		out.pressure = ResolutionPressure::CpuBound;
-	}
-	else if (out.unstableSamples > 0 && gpuReasonOrUnknown &&
-	         out.medianAppGpuMs >= budget * settings.lowerGpuBudgetFraction) {
+	const bool highGpu = out.medianAppGpuMs >= budget * settings.lowerGpuBudgetFraction;
+	const bool lowGpu = out.medianAppGpuMs <= budget * settings.headroomGpuBudgetFraction;
+	const bool explicitGpuReason = out.gpuReasonSamples > 0;
+	const int raiseUnstableTolerance = RaiseUnstableTolerance(settings);
+
+	if (out.unstableSamples > 0 && explicitGpuReason && highGpu) {
 		out.pressure = ResolutionPressure::GpuBound;
 	}
-	else if (out.unstableSamples > 0 && out.medianAppGpuMs <= budget * settings.cpuGpuBudgetFraction) {
-		out.pressure = ResolutionPressure::CpuBound;
-	}
-	else if (out.unstableSamples == 0 && out.medianAppGpuMs <= budget * settings.headroomGpuBudgetFraction) {
+	else if (lowGpu && out.gpuReasonSamples == 0 && out.unstableSamples <= raiseUnstableTolerance) {
 		out.pressure = ResolutionPressure::Headroom;
+	}
+	else if (out.unstableSamples > 0) {
+		out.pressure = ResolutionPressure::CpuBound;
 	}
 	else {
 		out.pressure = ResolutionPressure::Waiting;
@@ -254,23 +289,22 @@ DynamicResolutionClassification DynamicResolutionController::Classify(const Dyna
 	return out;
 }
 
-double DynamicResolutionController::FloorFor(const DynamicResolutionSettings& settings, double baselineScale,
-                                             bool streamingDetected) const
+double DynamicResolutionController::FloorFor(const DynamicResolutionSettings& settings, double baselineScale) const
 {
-	double fraction = ClampScaleFraction(settings.minScaleFraction);
-	if (streamingDetected && settings.conservativeStreaming) {
-		fraction = std::max(fraction, ClampScaleFraction(settings.streamingMinScaleFraction));
-	}
+	const double fraction = ClampScaleFraction(settings.minScaleFraction);
 	return std::max(0.1, baselineScale * fraction);
 }
 
-double DynamicResolutionController::StepFor(const DynamicResolutionSettings& settings, bool streamingDetected) const
+double DynamicResolutionController::RaiseStepFor(const DynamicResolutionSettings& settings,
+                                                 const DynamicResolutionClassification& classification) const
 {
-	double step = std::clamp(settings.stepFraction, 0.01, 0.25);
-	if (streamingDetected && settings.conservativeStreaming) {
-		step *= 0.5;
-	}
-	return step;
+	return ClampAdaptiveStep(kRaiseGain * (kRaiseTargetUtil - Utilization(classification)), StepCap(settings));
+}
+
+double DynamicResolutionController::LowerStepFor(const DynamicResolutionSettings& settings,
+                                                 const DynamicResolutionClassification& classification) const
+{
+	return ClampAdaptiveStep(kLowerGain * (Utilization(classification) - kLowerTargetUtil), StepCap(settings));
 }
 
 } // namespace wkopenvr::dynamicres

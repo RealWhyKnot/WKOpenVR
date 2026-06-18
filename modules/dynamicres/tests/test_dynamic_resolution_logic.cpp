@@ -42,7 +42,7 @@ dynamicres::DynamicResolutionSettings FastSettings()
 	settings.raiseRequiredTicks = 2;
 	settings.settleTicks = 0;
 	settings.noEffectLimit = 2;
-	settings.stepFraction = 0.10;
+	settings.stepFraction = 0.15;
 	return settings;
 }
 
@@ -80,7 +80,8 @@ TEST(DynamicResolutionLogic, ClassifiesGpuBoundAndLowersAfterDwell)
 
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
-	EXPECT_NEAR(out.targetScale, 0.9, 1e-6);
+	EXPECT_LT(out.targetScale, 1.0);
+	EXPECT_GE(out.targetScale, settings.minScaleFraction);
 }
 
 TEST(DynamicResolutionLogic, CpuBoundMissesDoNotLowerResolution)
@@ -160,64 +161,117 @@ TEST(DynamicResolutionLogic, HeadroomRaisesOnlyTowardBaseline)
 	EXPECT_LE(out.targetScale, 1.0);
 }
 
-TEST(DynamicResolutionLogic, StreamingConservativeModeUsesHigherFloorAndSmallerStep)
+TEST(DynamicResolutionLogic, RaiseStepScalesWithHeadroom)
 {
-	dynamicres::DynamicResolutionController controller;
 	auto settings = FastSettings();
-	settings.actUnderStreaming = true;
-	settings.minScaleFraction = 0.50;
-	settings.streamingMinScaleFraction = 0.80;
-	settings.conservativeStreaming = true;
+	settings.raiseRequiredTicks = 1;
 
-	dynamicres::DynamicResolutionControllerInput input = Input(9.5, true, 0.82);
-	input.streamingDetected = true;
+	dynamicres::DynamicResolutionController deepHeadroom;
+	dynamicres::DynamicResolutionController shallowHeadroom;
+	dynamicres::DynamicResolutionControllerOutput deepOut;
+	dynamicres::DynamicResolutionControllerOutput shallowOut;
 
-	dynamicres::DynamicResolutionControllerOutput out;
-	for (int i = 0; i < 5; ++i) {
-		input.timing.reprojectionFlags = kReprojectionReasonGpu;
-		out = controller.Evaluate(input, settings);
-	}
-
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
-	EXPECT_NEAR(out.targetScale, 0.80, 1e-6);
-}
-
-TEST(DynamicResolutionLogic, StreamingActionIsBlockedByDefault)
-{
-	dynamicres::DynamicResolutionController controller;
-	auto settings = FastSettings();
-	settings.actUnderStreaming = false;
-
-	auto input = Input(9.5, true, 1.0, kReprojectionReasonGpu);
-	input.streamingDetected = true;
-
-	dynamicres::DynamicResolutionControllerOutput out;
 	for (int i = 0; i < 4; ++i) {
-		out = controller.Evaluate(input, settings);
+		deepOut = deepHeadroom.Evaluate(Input(3.0, false, 0.70), settings);
+		shallowOut = shallowHeadroom.Evaluate(Input(6.8, false, 0.70), settings);
 	}
 
-	EXPECT_TRUE(out.actingBlocked);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
-	EXPECT_EQ(out.reason, "streaming headset");
+	ASSERT_EQ(deepOut.action, dynamicres::ResolutionAction::Raise);
+	ASSERT_EQ(shallowOut.action, dynamicres::ResolutionAction::Raise);
+	EXPECT_GT(deepOut.targetScale - 0.70, shallowOut.targetScale - 0.70);
 }
 
-TEST(DynamicResolutionLogic, StreamingCodecAllowlistCanActWhenStreamingDefaultIsOff)
+TEST(DynamicResolutionLogic, RaiseToleratesOccasionalNonGpuHitch)
 {
 	dynamicres::DynamicResolutionController controller;
-	auto settings = FastSettings();
-	settings.actUnderStreaming = false;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
 
-	auto input = Input(9.5, true, 1.0, kReprojectionReasonGpu);
-	input.streamingDetected = true;
-	input.streamingCodecAllowsAction = true;
+	out = controller.Evaluate(Input(4.0, false, 0.8), settings);
+	out = controller.Evaluate(Input(4.0, true, 0.8, kReprojectionReasonCpu), settings);
+	out = controller.Evaluate(Input(4.0, false, 0.8), settings);
+	out = controller.Evaluate(Input(4.0, false, 0.8), settings);
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::Headroom);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Raise);
+}
+
+TEST(DynamicResolutionLogic, DoesNotRaiseDuringSustainedNonGpuStall)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
 
 	dynamicres::DynamicResolutionControllerOutput out;
-	for (int i = 0; i < 5; ++i) {
-		out = controller.Evaluate(input, settings);
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(4.0, true, 0.8, kReprojectionReasonCpu), settings);
 	}
 
-	EXPECT_FALSE(out.actingBlocked);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, DoesNotLowerOnNonGpuStall)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+
+	dynamicres::DynamicResolutionControllerOutput out;
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(9.5, true, 1.0, kReprojectionReasonCpu), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, AmbiguousHighGpuMissesDoNotLower)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+
+	dynamicres::DynamicResolutionControllerOutput out;
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(9.5, true, 1.0), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, RaiseRecoversToBaselineWithinTickBudget)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	double currentScale = 0.60;
+
+	for (int tick = 0; tick < 16 && currentScale < 0.995; ++tick) {
+		const auto out = controller.Evaluate(Input(4.0, false, currentScale), settings);
+		if (out.action == dynamicres::ResolutionAction::Raise) {
+			currentScale = out.targetScale;
+			controller.NoteWrite(out.action, currentScale, out.classification, settings);
+		}
+	}
+
+	EXPECT_NEAR(currentScale, 1.0, 0.005);
+}
+
+TEST(DynamicResolutionLogic, WriteClearsSampleWindow)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	for (int i = 0; i < 5; ++i) {
+		out = controller.Evaluate(Input(9.5, true, 1.0, kReprojectionReasonGpu), settings);
+	}
+	ASSERT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	controller.NoteWrite(out.action, out.targetScale, out.classification, settings);
+
+	out = controller.Evaluate(Input(4.0, false, out.targetScale), settings);
+
+	EXPECT_EQ(out.classification.sampleCount, 1);
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::Waiting);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
 TEST(DynamicResolutionLogic, ExternalOverrideBacksOffWithoutWriting)
@@ -246,7 +300,7 @@ TEST(DynamicResolutionLogic, NoEffectLoweringRequestsRestore)
 	ASSERT_EQ(out.action, dynamicres::ResolutionAction::Lower);
 	controller.NoteWrite(out.action, out.targetScale, out.classification, settings);
 
-	for (int i = 0; i < 1; ++i) {
+	for (int i = 0; i < 3; ++i) {
 		out = controller.Evaluate(Input(9.5, true, 0.9, kReprojectionReasonGpu), settings);
 	}
 
