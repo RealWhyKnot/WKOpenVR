@@ -9,6 +9,7 @@ namespace {
 constexpr uint32_t kReprojectionReasonCpu = 0x01;
 constexpr uint32_t kReprojectionReasonGpu = 0x02;
 constexpr uint32_t kReprojectionAsync = 0x04;
+constexpr uint32_t kReprojectionMotion = 0x08;
 
 dynamicres::DynamicResolutionTiming Timing(double appGpuMs, bool unstable, uint32_t reprojectionFlags = 0)
 {
@@ -40,6 +41,7 @@ dynamicres::DynamicResolutionSettings FastSettings()
 	settings.windowSize = 4;
 	settings.lowerRequiredTicks = 2;
 	settings.raiseRequiredTicks = 2;
+	settings.cpuReleaseTicks = 4;
 	settings.settleTicks = 0;
 	settings.noEffectLimit = 2;
 	settings.stepFraction = 0.15;
@@ -114,6 +116,21 @@ TEST(DynamicResolutionLogic, CpuReasonWithInflatedTotalSpanDoesNotLower)
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 	EXPECT_LT(out.classification.medianAppGpuMs, 5.0);
+}
+
+TEST(DynamicResolutionLogic, CpuBoundAtBaselineDoesNotChangeScale)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(4.0, true, 1.0, kReprojectionReasonCpu), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_TRUE(out.classification.gpuHasHeadroom);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
 TEST(DynamicResolutionLogic, AsyncReprojectionModeAloneDoesNotCountAsUnstable)
@@ -196,7 +213,7 @@ TEST(DynamicResolutionLogic, RaiseToleratesOccasionalNonGpuHitch)
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Raise);
 }
 
-TEST(DynamicResolutionLogic, DoesNotRaiseDuringSustainedNonGpuStall)
+TEST(DynamicResolutionLogic, CpuBoundWithGpuHeadroomRaisesTowardBaseline)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
@@ -207,6 +224,40 @@ TEST(DynamicResolutionLogic, DoesNotRaiseDuringSustainedNonGpuStall)
 	}
 
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_TRUE(out.classification.gpuHasHeadroom);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Raise);
+	EXPECT_GT(out.targetScale, 0.8);
+	EXPECT_LE(out.targetScale, 1.0);
+}
+
+TEST(DynamicResolutionLogic, CpuBoundWithoutGpuHeadroomHoldsScale)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+
+	dynamicres::DynamicResolutionControllerOutput out;
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(8.0, true, 0.8, kReprojectionReasonCpu), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_FALSE(out.classification.gpuHasHeadroom);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, CpuBoundReleaseCanBeDisabled)
+{
+	dynamicres::DynamicResolutionController controller;
+	auto settings = FastSettings();
+	settings.releaseOnCpuBound = false;
+
+	dynamicres::DynamicResolutionControllerOutput out;
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(4.0, true, 0.8, kReprojectionReasonCpu), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_TRUE(out.classification.gpuHasHeadroom);
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
@@ -234,6 +285,21 @@ TEST(DynamicResolutionLogic, AmbiguousHighGpuMissesDoNotLower)
 		out = controller.Evaluate(Input(9.5, true, 1.0), settings);
 	}
 
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, MotionSmoothingFlagIsSurfacedWithoutGpuReason)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+
+	dynamicres::DynamicResolutionControllerOutput out;
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(9.5, true, 1.0, kReprojectionMotion), settings);
+	}
+
+	EXPECT_TRUE(out.classification.motionSmoothingActive);
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }

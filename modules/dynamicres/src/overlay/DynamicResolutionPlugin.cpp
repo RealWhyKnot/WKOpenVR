@@ -132,6 +132,7 @@ void DynamicResolutionPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 		lastReason_ = "Waiting for timing";
 		return;
 	}
+	RefreshMotionSmoothingState();
 
 	double liveScale =
 	    profile_.restore.lastWrittenScale > 0.0 ? profile_.restore.lastWrittenScale : profile_.restore.baselineScale;
@@ -365,6 +366,20 @@ bool DynamicResolutionPlugin::CollectTiming(DynamicResolutionTiming& outTiming)
 	return true;
 }
 
+void DynamicResolutionPlugin::RefreshMotionSmoothingState()
+{
+	vr::IVRCompositor* compositor = vr::VRCompositor();
+	if (!compositor) {
+		haveMotionSmoothingState_ = false;
+		motionSmoothingSupported_ = false;
+		motionSmoothingEnabled_ = false;
+		return;
+	}
+	motionSmoothingSupported_ = compositor->IsMotionSmoothingSupported();
+	motionSmoothingEnabled_ = compositor->IsMotionSmoothingEnabled();
+	haveMotionSmoothingState_ = true;
+}
+
 double DynamicResolutionPlugin::ReadFrameBudgetMs()
 {
 	vr::IVRSystem* system = vr::VRSystem();
@@ -443,6 +458,15 @@ void DynamicResolutionPlugin::DrawSettings()
 				    SaveProfile();
 			    }
 		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Release on CPU-bound", [&] {
+			    bool value = profile_.settings.releaseOnCpuBound;
+			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+			            "##dynamicres_release_cpu", &value,
+			            "Raises back toward the original scale when misses are CPU-bound and GPU time is low.")) {
+				    profile_.settings.releaseOnCpuBound = value;
+				    SaveProfile();
+			    }
+		    });
 	    });
 }
 
@@ -480,6 +504,42 @@ void DynamicResolutionPlugin::DrawStatus()
 		    openvr_pair::overlay::ui::SettingRow(table, "Missed frames", [&] {
 			    ImGui::Text("%d of %d samples", lastClassification_.unstableSamples, lastClassification_.sampleCount);
 		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Motion smoothing", [&] {
+			    if (!haveMotionSmoothingState_) {
+				    openvr_pair::overlay::ui::DrawStatusCell("Unknown", StatusTone::Idle, false);
+			    }
+			    else {
+				    openvr_pair::overlay::ui::DrawStatusCell(
+				        motionSmoothingSupported_ ? "Supported" : "Unsupported",
+				        motionSmoothingSupported_ ? StatusTone::Ok : StatusTone::Idle, false);
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Smoothing setting", [&] {
+			    if (!haveMotionSmoothingState_) {
+				    ImGui::TextUnformatted("-");
+			    }
+			    else {
+				    openvr_pair::overlay::ui::DrawStatusCell(
+				        motionSmoothingEnabled_ ? "Enabled" : "Off",
+				        motionSmoothingEnabled_ ? StatusTone::Ok : StatusTone::Idle, false);
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Smoothing active", [&] {
+			    openvr_pair::overlay::ui::DrawStatusCell(
+			        lastClassification_.motionSmoothingActive ? "Active" : "Idle",
+			        lastClassification_.motionSmoothingActive ? StatusTone::Warn : StatusTone::Idle, false);
+		    });
+		    if (lastClassification_.pressure == ResolutionPressure::CpuBound) {
+			    openvr_pair::overlay::ui::SettingRow(table, "CPU-bound", [&] {
+				    if (lastClassification_.gpuHasHeadroom) {
+					    openvr_pair::overlay::ui::DrawTextWrapped(
+					        "GPU has headroom; lowering scale will not help this miss.");
+				    }
+				    else {
+					    openvr_pair::overlay::ui::DrawTextWrapped("Holding scale until GPU pressure is clear.");
+				    }
+			    });
+		    }
 		    openvr_pair::overlay::ui::SettingRow(table, "Restore", [&] {
 			    const bool pending = profile_.restore.restorePending;
 			    if (pending) {

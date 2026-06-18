@@ -34,9 +34,11 @@ struct DynamicResolutionSettings
 	int windowSize = 6;
 	int lowerRequiredTicks = 3;
 	int raiseRequiredTicks = 3;
+	int cpuReleaseTicks = 4;
 	int settleTicks = 0;
 	int noEffectLimit = 3;
 	bool allowRaiseBack = true;
+	bool releaseOnCpuBound = true;
 };
 
 struct DynamicResolutionTiming
@@ -64,6 +66,8 @@ struct DynamicResolutionClassification
 	int cpuReasonSamples = 0;
 	int gpuReasonSamples = 0;
 	bool unstable = false;
+	bool gpuHasHeadroom = false;
+	bool motionSmoothingActive = false;
 };
 
 struct DynamicResolutionControllerInput

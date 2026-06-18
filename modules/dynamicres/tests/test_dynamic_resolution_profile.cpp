@@ -12,6 +12,8 @@ TEST(DynamicResolutionProfile, ParsesSettingsAndRestoreState)
 	std::istringstream in("min_scale_fraction=0.55\n"
 	                      "step_fraction=0.07\n"
 	                      "allow_raise_back=0\n"
+	                      "release_on_cpu_bound=0\n"
+	                      "cpu_release_ticks=9\n"
 	                      "restore_pending=1\n"
 	                      "baseline_scale=1.25\n"
 	                      "baseline_manual_override=1\n"
@@ -23,6 +25,8 @@ TEST(DynamicResolutionProfile, ParsesSettingsAndRestoreState)
 	EXPECT_DOUBLE_EQ(profile.settings.minScaleFraction, 0.55);
 	EXPECT_DOUBLE_EQ(profile.settings.stepFraction, 0.07);
 	EXPECT_FALSE(profile.settings.allowRaiseBack);
+	EXPECT_FALSE(profile.settings.releaseOnCpuBound);
+	EXPECT_EQ(profile.settings.cpuReleaseTicks, 9);
 	EXPECT_TRUE(profile.restore.restorePending);
 	EXPECT_DOUBLE_EQ(profile.restore.baselineScale, 1.25);
 	EXPECT_TRUE(profile.restore.baselineManualOverride);
@@ -34,6 +38,7 @@ TEST(DynamicResolutionProfile, ClampsUnsafeValues)
 {
 	std::istringstream in("min_scale_fraction=9.0\n"
 	                      "step_fraction=0.90\n"
+	                      "cpu_release_ticks=999\n"
 	                      "baseline_scale=-1.0\n"
 	                      "last_written_scale=-2.0\n");
 
@@ -41,6 +46,7 @@ TEST(DynamicResolutionProfile, ClampsUnsafeValues)
 
 	EXPECT_DOUBLE_EQ(profile.settings.minScaleFraction, 1.5);
 	EXPECT_DOUBLE_EQ(profile.settings.stepFraction, 0.25);
+	EXPECT_EQ(profile.settings.cpuReleaseTicks, 60);
 	EXPECT_DOUBLE_EQ(profile.restore.baselineScale, 0.1);
 	EXPECT_DOUBLE_EQ(profile.restore.lastWrittenScale, 0.0);
 }
@@ -51,6 +57,8 @@ TEST(DynamicResolutionProfile, RoundTripsKeyValueState)
 	profile.settings.minScaleFraction = 0.64;
 	profile.settings.stepFraction = 0.04;
 	profile.settings.allowRaiseBack = false;
+	profile.settings.releaseOnCpuBound = false;
+	profile.settings.cpuReleaseTicks = 7;
 	profile.restore.restorePending = true;
 	profile.restore.baselineScale = 1.1;
 	profile.restore.baselineManualOverride = false;
@@ -65,6 +73,8 @@ TEST(DynamicResolutionProfile, RoundTripsKeyValueState)
 	EXPECT_DOUBLE_EQ(parsed.settings.minScaleFraction, profile.settings.minScaleFraction);
 	EXPECT_DOUBLE_EQ(parsed.settings.stepFraction, profile.settings.stepFraction);
 	EXPECT_EQ(parsed.settings.allowRaiseBack, profile.settings.allowRaiseBack);
+	EXPECT_EQ(parsed.settings.releaseOnCpuBound, profile.settings.releaseOnCpuBound);
+	EXPECT_EQ(parsed.settings.cpuReleaseTicks, profile.settings.cpuReleaseTicks);
 	EXPECT_EQ(parsed.restore.restorePending, profile.restore.restorePending);
 	EXPECT_DOUBLE_EQ(parsed.restore.baselineScale, profile.restore.baselineScale);
 	EXPECT_EQ(parsed.restore.baselineManualOverride, profile.restore.baselineManualOverride);

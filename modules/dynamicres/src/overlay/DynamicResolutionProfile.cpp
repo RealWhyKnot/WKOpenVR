@@ -119,6 +119,10 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 			profile.settings.stepFraction = std::clamp(ParseDouble(value, profile.settings.stepFraction), 0.01, 0.25);
 		else if (key == "allow_raise_back")
 			profile.settings.allowRaiseBack = ParseBool(value);
+		else if (key == "release_on_cpu_bound")
+			profile.settings.releaseOnCpuBound = ParseBool(value);
+		else if (key == "cpu_release_ticks")
+			profile.settings.cpuReleaseTicks = std::clamp(ParseInt(value, profile.settings.cpuReleaseTicks), 1, 60);
 		else if (key == "restore_pending")
 			profile.restore.restorePending = ParseBool(value);
 		else if (key == "baseline_scale")
@@ -138,6 +142,8 @@ void WriteDynamicResolutionProfile(const DynamicResolutionProfile& profile, std:
 	WritePair(out, "min_scale_fraction", profile.settings.minScaleFraction);
 	WritePair(out, "step_fraction", profile.settings.stepFraction);
 	WritePair(out, "allow_raise_back", profile.settings.allowRaiseBack);
+	WritePair(out, "release_on_cpu_bound", profile.settings.releaseOnCpuBound);
+	WritePair(out, "cpu_release_ticks", profile.settings.cpuReleaseTicks);
 	WritePair(out, "restore_pending", profile.restore.restorePending);
 	WritePair(out, "baseline_scale", profile.restore.baselineScale);
 	WritePair(out, "baseline_manual_override", profile.restore.baselineManualOverride);

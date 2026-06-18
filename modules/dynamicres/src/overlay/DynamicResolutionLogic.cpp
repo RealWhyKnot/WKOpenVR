@@ -205,6 +205,15 @@ DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const Dy
 		return out;
 	}
 
+	if (settings.releaseOnCpuBound && settings.allowRaiseBack &&
+	    out.classification.pressure == ResolutionPressure::CpuBound && out.classification.gpuHasHeadroom &&
+	    pressureTicks_ >= std::max(1, settings.cpuReleaseTicks) && current < baseline - 0.005) {
+		out.action = ResolutionAction::Raise;
+		out.targetScale = std::min(baseline, current * (1.0 + RaiseStepFor(settings, out.classification)));
+		out.reason = "CPU-bound; GPU headroom";
+		return out;
+	}
+
 	if (settings.allowRaiseBack && out.classification.pressure == ResolutionPressure::Headroom &&
 	    pressureTicks_ >=
 	        (activeDirection_ == ResolutionAction::Raise ? 1 : std::max(1, settings.raiseRequiredTicks)) &&
@@ -259,6 +268,7 @@ DynamicResolutionClassification DynamicResolutionController::Classify(const Dyna
 		if (IsUnstableTiming(sample)) ++out.unstableSamples;
 		if ((sample.reprojectionFlags & kReprojectionReasonCpu) != 0) ++out.cpuReasonSamples;
 		if ((sample.reprojectionFlags & kReprojectionReasonGpu) != 0) ++out.gpuReasonSamples;
+		if ((sample.reprojectionFlags & kReprojectionMotion) != 0) out.motionSmoothingActive = true;
 	}
 
 	out.sampleCount = static_cast<int>(samples_.size());
@@ -273,6 +283,7 @@ DynamicResolutionClassification DynamicResolutionController::Classify(const Dyna
 	const bool lowGpu = out.medianAppGpuMs <= budget * settings.headroomGpuBudgetFraction;
 	const bool explicitGpuReason = out.gpuReasonSamples > 0;
 	const int raiseUnstableTolerance = RaiseUnstableTolerance(settings);
+	out.gpuHasHeadroom = lowGpu;
 
 	if (out.unstableSamples > 0 && explicitGpuReason && highGpu) {
 		out.pressure = ResolutionPressure::GpuBound;

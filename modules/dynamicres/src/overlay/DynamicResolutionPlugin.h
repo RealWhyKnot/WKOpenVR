@@ -44,6 +44,7 @@ private:
 	bool WriteSteamVrScale(double scale);
 	bool WriteSteamVrManualOverride(bool value);
 	bool CollectTiming(DynamicResolutionTiming& outTiming);
+	void RefreshMotionSmoothingState();
 	double ReadFrameBudgetMs();
 	SceneState ReadSceneState() const;
 	void UpdateStatus(const DynamicResolutionControllerOutput& output);
@@ -60,6 +61,9 @@ private:
 	bool externalOverride_ = false;
 	bool disabledForScene_ = false;
 	bool displayFrequencyFallback_ = false;
+	bool haveMotionSmoothingState_ = false;
+	bool motionSmoothingSupported_ = false;
+	bool motionSmoothingEnabled_ = false;
 	double lastLiveScale_ = 1.0;
 	double lastTargetScale_ = 1.0;
 	double lastFrameBudgetMs_ = 1000.0 / 90.0;
