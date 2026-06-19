@@ -33,7 +33,6 @@ add_library(wkopenvr_testharness STATIC
 	MockOpenVR/MockSettings.h
 	Scenario_calibration.cpp
 	Scenario_smoothing.cpp
-	Scenario_dashboardinput.cpp
 	Scenario_inputhealth.cpp
 	Scenario_facetracking.cpp
 	Scenario_oscrouter.cpp

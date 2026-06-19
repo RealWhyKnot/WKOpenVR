@@ -65,7 +65,6 @@ set(OPENVR_PAIR_FEATURE_DEFINES "")
 # with -DWKOPENVR_RELEASE_BUILD=ON, in which case it's skipped silently.
 wkopenvr_add_driver_module(inputhealth)
 wkopenvr_add_driver_module(smoothing)
-wkopenvr_add_driver_module(dashboardinput)
 wkopenvr_add_driver_module(calibration)
 wkopenvr_add_driver_module(facetracking)
 wkopenvr_add_driver_module(oscrouter)

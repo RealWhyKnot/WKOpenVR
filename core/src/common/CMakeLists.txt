@@ -23,7 +23,6 @@ add_library(openvr_pair_common STATIC
 	CaptionsRealtimeFlags.h
 	CaptionsChatboxPacing.h
 	CaptionsSpeechModels.h
-	DashboardInputRuntimeGate.h
 	DebugLogging.cpp
 	DebugLogging.h
 	DiagnosticsLog.cpp

@@ -24,9 +24,6 @@ bool ModuleIdForFeatureMask(uint32_t featureMask, openvr_pair::common::modules::
 		case pairdriver::kFeatureSmoothing:
 			out = ModuleId::Smoothing;
 			return true;
-		case pairdriver::kFeatureDashboardInput:
-			out = ModuleId::DashboardInput;
-			return true;
 		case pairdriver::kFeatureInputHealth:
 			out = ModuleId::InputHealth;
 			return true;

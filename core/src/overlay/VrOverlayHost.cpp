@@ -1,6 +1,5 @@
 #include "VrOverlayHost.h"
 
-#include "DashboardInputSafeOverlayLogic.h"
 #include "DiagnosticsLog.h"
 #include "Win32Paths.h"
 
@@ -27,13 +26,10 @@ namespace {
 // registration point at the same entity.
 constexpr const char* kAppKey = "wk.wkopenvr";
 constexpr const char* kFriendlyName = "WKOpenVR";
-constexpr const char* kSafeOverlayKey = "wk.wkopenvr.dashboardinput.safe";
-constexpr const char* kSafeOverlayName = "WKOpenVR";
 
 // Width of the dashboard panel in metres. SC used 3.0; same value
 // renders comfortably at typical viewing distance.
 constexpr float kOverlayWidthMeters = 3.0f;
-constexpr uint32_t kSafeOverlaySortOrder = 100;
 
 // Retry the VR session probe at most once per second. Matches SC.
 constexpr double kInitRetrySeconds = 1.0;
@@ -84,34 +80,18 @@ double NowSeconds()
 #endif
 }
 
-vr::HmdMatrix34_t SafeOverlayHmdRelativeTransform()
-{
-	vr::HmdMatrix34_t mat{};
-	mat.m[0][0] = 1.0f;
-	mat.m[1][1] = 1.0f;
-	mat.m[2][2] = 1.0f;
-	mat.m[0][3] = 0.0f;
-	mat.m[1][3] = -0.05f;
-	mat.m[2][3] = -1.25f;
-	return mat;
-}
-
 } // namespace
 
 VrOverlayHost::VrOverlayHost() = default;
 
 VrOverlayHost::~VrOverlayHost()
 {
-	openvr_pair::common::DiagnosticLog(
-	    "vr-overlay", "destroy overlay_created=%d safe_created=%d vr_ready=%d main=%llu thumb=%llu safe=%llu",
-	    overlayCreated_ ? 1 : 0, safeOverlayCreated_ ? 1 : 0, vrReady_ ? 1 : 0, (unsigned long long)mainHandle_,
-	    (unsigned long long)thumbHandle_, (unsigned long long)safeHandle_);
+	openvr_pair::common::DiagnosticLog("vr-overlay", "destroy overlay_created=%d vr_ready=%d main=%llu thumb=%llu",
+	                                   overlayCreated_ ? 1 : 0, vrReady_ ? 1 : 0, (unsigned long long)mainHandle_,
+	                                   (unsigned long long)thumbHandle_);
 	if (overlayCreated_ && vr::VROverlay()) {
 		if (mainHandle_) vr::VROverlay()->DestroyOverlay(mainHandle_);
 		if (thumbHandle_) vr::VROverlay()->DestroyOverlay(thumbHandle_);
-	}
-	if (safeOverlayCreated_ && vr::VROverlay() && safeHandle_) {
-		vr::VROverlay()->DestroyOverlay(safeHandle_);
 	}
 	if (vrReady_) {
 		vr::VR_Shutdown();
@@ -124,28 +104,6 @@ std::string VrOverlayHost::ResolveIconPath() const
 	if (p.empty()) return {};
 	p /= "dashboard_icon.png";
 	return p.string();
-}
-
-void VrOverlayHost::SetSafeOverlayEnabled(bool enabled)
-{
-	if (safeOverlayFeatureEnabled_ == enabled) return;
-	safeOverlayFeatureEnabled_ = enabled;
-	if (!enabled) {
-		UpdateSafeOverlayVisibility(false);
-		safeOverlayStatus_ = "disabled";
-		safeOverlayUserRequestedVisible_ = false;
-	}
-	else {
-		safeOverlayStatus_ = safeOverlayCreated_ ? "ready" : "starting";
-	}
-	openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_feature_enabled enabled=%d", enabled ? 1 : 0);
-}
-
-void VrOverlayHost::RequestSafeOverlayToggle()
-{
-	safeOverlayUserRequestedVisible_ = !safeOverlayUserRequestedVisible_;
-	openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_toggle_requested visible=%d",
-	                                   safeOverlayUserRequestedVisible_ ? 1 : 0);
 }
 
 bool VrOverlayHost::TryInitVrStack()
@@ -286,108 +244,10 @@ void VrOverlayHost::TryCreateOverlay()
 	                                   kOverlayWidthMeters);
 }
 
-void VrOverlayHost::TryCreateSafeOverlay(int overlayPixelWidth, int overlayPixelHeight)
-{
-	if (safeOverlayCreated_ || !vr::VROverlay()) return;
-
-	const vr::EVROverlayError err = vr::VROverlay()->CreateOverlay(kSafeOverlayKey, kSafeOverlayName, &safeHandle_);
-	if (err == vr::VROverlayError_KeyInUse) {
-		safeOverlayStatus_ = "overlay key busy";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "create_safe_overlay_key_in_use");
-		return;
-	}
-	if (err != vr::VROverlayError_None) {
-		safeOverlayStatus_ = "overlay create failed";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "create_safe_overlay_failed error=%d name='%s'", (int)err,
-		                                   vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
-		return;
-	}
-
-	// Input comes from the runtime laser mouse: Mouse input method plus
-	// MakeOverlaysInteractiveIfVisible activates the system laser whenever
-	// the overlay is shown, and the events arrive through
-	// PollNextOverlayEvent like the main dashboard overlay. No action
-	// manifest, no action-set priority, no reserved-button bindings.
-	vr::VROverlay()->SetOverlayWidthInMeters(safeHandle_, kOverlayWidthMeters);
-	vr::VROverlay()->SetOverlayInputMethod(safeHandle_, vr::VROverlayInputMethod_Mouse);
-	vr::VROverlay()->SetOverlayFlag(safeHandle_, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, true);
-	vr::VROverlay()->SetOverlayFlag(safeHandle_, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
-	vr::VROverlay()->SetOverlaySortOrder(safeHandle_, kSafeOverlaySortOrder);
-	const vr::HmdMatrix34_t transform = SafeOverlayHmdRelativeTransform();
-	vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(safeHandle_, vr::k_unTrackedDeviceIndex_Hmd, &transform);
-	if (overlayPixelWidth > 0 && overlayPixelHeight > 0) {
-		// Seed the mouse scale at creation so the first events already
-		// arrive in texture-pixel space; SubmitTexture refreshes it.
-		vr::HmdVector2_t mouseScale{};
-		mouseScale.v[0] = static_cast<float>(overlayPixelWidth);
-		mouseScale.v[1] = static_cast<float>(overlayPixelHeight);
-		vr::VROverlay()->SetOverlayMouseScale(safeHandle_, &mouseScale);
-	}
-
-	safeOverlayCreated_ = true;
-	if (safeOverlayFeatureEnabled_) safeOverlayStatus_ = "ready";
-	openvr_pair::common::DiagnosticLog(
-	    "vr-overlay", "safe_overlay_created handle=%llu width_m=%.2f hmd_relative_pos=(%.2f,%.2f,%.2f) sort=%u",
-	    (unsigned long long)safeHandle_, kOverlayWidthMeters, transform.m[0][3], transform.m[1][3], transform.m[2][3],
-	    kSafeOverlaySortOrder);
-}
-
 bool VrOverlayHost::IsActiveDashboardOverlay() const
 {
 	if (!overlayCreated_ || !vr::VROverlay()) return false;
 	return vr::VROverlay()->IsActiveDashboardOverlay(mainHandle_);
-}
-
-void VrOverlayHost::UpdateSafeOverlayVisibility(bool visible)
-{
-	if (!safeOverlayCreated_ || !vr::VROverlay()) {
-		safeOverlayVisible_ = false;
-		if (visible) safeOverlayStatus_ = "overlay unavailable";
-		return;
-	}
-	if (visible == safeOverlayVisible_) return;
-
-	vr::EVROverlayError err = vr::VROverlayError_None;
-	if (visible) {
-		const vr::HmdMatrix34_t transform = SafeOverlayHmdRelativeTransform();
-		err = vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(safeHandle_, vr::k_unTrackedDeviceIndex_Hmd,
-		                                                                &transform);
-		if (err == vr::VROverlayError_None) {
-			err = vr::VROverlay()->ShowOverlay(safeHandle_);
-		}
-	}
-	else {
-		err = vr::VROverlay()->HideOverlay(safeHandle_);
-		if (ImGui::GetCurrentContext()) {
-			// A laser click can be mid-press when the overlay hides;
-			// release so ImGui's button state can't get stuck down.
-			ImGui::GetIO().AddMouseButtonEvent(0, false);
-		}
-	}
-
-	if (err != vr::VROverlayError_None) {
-		safeOverlayStatus_ = visible ? "show failed" : "hide failed";
-		openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_visibility_failed visible=%d error=%d name='%s'",
-		                                   visible ? 1 : 0, (int)err,
-		                                   vr::VROverlay()->GetOverlayErrorNameFromEnum(err));
-		return;
-	}
-
-	safeOverlayVisible_ = visible;
-	safeOverlayStatus_ = visible ? "visible" : (safeOverlayFeatureEnabled_ ? "ready" : "disabled");
-	openvr_pair::common::DiagnosticLog("vr-overlay", "safe_overlay_visible visible=%d", visible ? 1 : 0);
-}
-
-void VrOverlayHost::TickSafeOverlay(int overlayPixelWidth, int overlayPixelHeight)
-{
-	if (!safeOverlayFeatureEnabled_) {
-		UpdateSafeOverlayVisibility(false);
-		return;
-	}
-
-	TryCreateSafeOverlay(overlayPixelWidth, overlayPixelHeight);
-	UpdateSafeOverlayVisibility(DashboardInputSafeOverlayShouldBeVisible(
-	    safeOverlayFeatureEnabled_, safeOverlayUserRequestedVisible_, anyDashboardVisible_));
 }
 
 void VrOverlayHost::RefreshDashboardState()
@@ -417,7 +277,6 @@ void VrOverlayHost::DrainOverlayEvents()
 {
 	if (!vr::VROverlay()) return;
 	if (overlayCreated_) DrainEventsForHandle(mainHandle_);
-	if (safeOverlayCreated_) DrainEventsForHandle(safeHandle_);
 }
 
 void VrOverlayHost::DrainEventsForHandle(vr::VROverlayHandle_t handle)
@@ -453,7 +312,7 @@ void VrOverlayHost::DrainEventsForHandle(vr::VROverlayHandle_t handle)
 	}
 }
 
-bool VrOverlayHost::TickFrame(int overlayPixelWidth, int overlayPixelHeight)
+bool VrOverlayHost::TickFrame(int, int)
 {
 	// Stage 1: bring the VR session up. While SteamVR is down the rest
 	// of this function is a no-op and the umbrella continues to render
@@ -471,11 +330,9 @@ bool VrOverlayHost::TickFrame(int overlayPixelWidth, int overlayPixelHeight)
 	}
 
 	// Stage 2: register the dashboard overlay (one-shot), then refresh
-	// dashboard state BEFORE the safe-overlay policy so the auto-hide
-	// decision sees the current frame's visibility.
+	// dashboard state for the current frame.
 	TryCreateOverlay();
 	RefreshDashboardState();
-	TickSafeOverlay(overlayPixelWidth, overlayPixelHeight);
 
 	// Stage 3: drain OpenVR events into ImGui IO. Virtual-keyboard
 	// support is intentionally deferred -- replacing an active
@@ -504,10 +361,6 @@ void VrOverlayHost::SubmitTexture(unsigned int glTextureId, int width, int heigh
 	if (overlayCreated_ && IsActiveDashboardOverlay()) {
 		vr::VROverlay()->SetOverlayTexture(mainHandle_, &tex);
 		vr::VROverlay()->SetOverlayMouseScale(mainHandle_, &mouseScale);
-	}
-	if (safeOverlayCreated_ && safeOverlayVisible_) {
-		vr::VROverlay()->SetOverlayTexture(safeHandle_, &tex);
-		vr::VROverlay()->SetOverlayMouseScale(safeHandle_, &mouseScale);
 	}
 }
 

@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "FeaturePlugin.h"
-#include "DashboardInputPlugin.h"
 #include "ShellFooter.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
@@ -77,13 +76,6 @@ TEST(FeaturePlugin, ChannelHelpersRouteReleaseAndDevelopmentModules)
 	EXPECT_FALSE(openvr_pair::overlay::ShouldShowInDevModuleList(FeaturePluginChannel::DevTools));
 }
 
-TEST(FeaturePlugin, DashboardInputIsADevelopmentModule)
-{
-	EXPECT_EQ(openvr_pair::overlay::FeaturePluginChannel::Development, DashboardInputPlugin::kPluginChannel);
-	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInModulesTab(DashboardInputPlugin::kPluginChannel));
-	EXPECT_TRUE(openvr_pair::overlay::ShouldShowInDevModuleList(DashboardInputPlugin::kPluginChannel));
-}
-
 TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
 {
 	EXPECT_TRUE(
@@ -98,15 +90,15 @@ TEST(ShellUiLogic, DesktopDefaultOnlySelectsInDesktopMode)
 
 TEST(ShellUiLogic, FeaturePickerSelectionKeepsTopNavStable)
 {
-	const std::vector<std::string_view> installed = {"enable_smoothing.flag", "enable_dashboardinput.flag"};
+	const std::vector<std::string_view> installed = {"enable_smoothing.flag", "enable_inputhealth.flag"};
 
 	auto selection = openvr_pair::overlay::ResolveFeaturePickerSelection(false, "enable_smoothing.flag",
-	                                                                     "enable_dashboardinput.flag", "", installed);
-	EXPECT_EQ("enable_dashboardinput.flag", std::string(selection.flag));
+	                                                                     "enable_inputhealth.flag", "", installed);
+	EXPECT_EQ("enable_inputhealth.flag", std::string(selection.flag));
 	EXPECT_TRUE(selection.applyDesktopDefault);
 
 	selection = openvr_pair::overlay::ResolveFeaturePickerSelection(
-	    false, "enable_smoothing.flag", "enable_dashboardinput.flag", "enable_dashboardinput.flag", installed);
+	    false, "enable_smoothing.flag", "enable_inputhealth.flag", "enable_inputhealth.flag", installed);
 	EXPECT_EQ("enable_smoothing.flag", std::string(selection.flag));
 	EXPECT_FALSE(selection.applyDesktopDefault);
 
@@ -131,12 +123,12 @@ TEST(ShellUiLogic, FeatureContentTabsRequireEffectiveEnabledModule)
 TEST(ShellUiLogic, ModuleTabOrderParsesAndSerializesValidFlags)
 {
 	const std::vector<std::string> parsed = openvr_pair::overlay::ParseModuleTabOrderSetting(
-	    " enable_smoothing.flag ; invalid ; enable_dashboardinput.flag ; enable_smoothing.flag ; ../bad.flag ");
+	    " enable_smoothing.flag ; invalid ; enable_inputhealth.flag ; enable_smoothing.flag ; ../bad.flag ");
 
 	ASSERT_EQ(2u, parsed.size());
 	EXPECT_EQ("enable_smoothing.flag", parsed[0]);
-	EXPECT_EQ("enable_dashboardinput.flag", parsed[1]);
-	EXPECT_EQ("enable_smoothing.flag;enable_dashboardinput.flag",
+	EXPECT_EQ("enable_inputhealth.flag", parsed[1]);
+	EXPECT_EQ("enable_smoothing.flag;enable_inputhealth.flag",
 	          openvr_pair::overlay::SerializeModuleTabOrderSetting(parsed));
 }
 
@@ -144,7 +136,7 @@ TEST(ShellUiLogic, ModuleTabOrderAppliesSavedOrderAndAppendsNewModules)
 {
 	const std::vector<std::string> saved = {"enable_captions.flag", "enable_missing.flag", "enable_smoothing.flag",
 	                                        "enable_smoothing.flag"};
-	const std::vector<std::string_view> available = {"enable_smoothing.flag", "enable_dashboardinput.flag",
+	const std::vector<std::string_view> available = {"enable_smoothing.flag", "enable_inputhealth.flag",
 	                                                 "enable_captions.flag"};
 
 	const std::vector<std::string> resolved = openvr_pair::overlay::ResolveModuleTabOrder(saved, available);
@@ -152,24 +144,24 @@ TEST(ShellUiLogic, ModuleTabOrderAppliesSavedOrderAndAppendsNewModules)
 	ASSERT_EQ(3u, resolved.size());
 	EXPECT_EQ("enable_captions.flag", resolved[0]);
 	EXPECT_EQ("enable_smoothing.flag", resolved[1]);
-	EXPECT_EQ("enable_dashboardinput.flag", resolved[2]);
+	EXPECT_EQ("enable_inputhealth.flag", resolved[2]);
 }
 
 TEST(ShellUiLogic, ModuleTabOrderMovesWithinBounds)
 {
-	std::vector<std::string> order = {"enable_inputhealth.flag", "enable_smoothing.flag", "enable_dashboardinput.flag"};
+	std::vector<std::string> order = {"enable_inputhealth.flag", "enable_smoothing.flag", "enable_captions.flag"};
 
 	EXPECT_TRUE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_smoothing.flag", -1));
 	EXPECT_EQ("enable_smoothing.flag", order[0]);
 	EXPECT_EQ("enable_inputhealth.flag", order[1]);
-	EXPECT_EQ("enable_dashboardinput.flag", order[2]);
+	EXPECT_EQ("enable_captions.flag", order[2]);
 
 	EXPECT_FALSE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_smoothing.flag", -1));
 	EXPECT_FALSE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_missing.flag", 1));
 
 	EXPECT_TRUE(openvr_pair::overlay::MoveModuleTabOrder(order, "enable_inputhealth.flag", 1));
 	EXPECT_EQ("enable_smoothing.flag", order[0]);
-	EXPECT_EQ("enable_dashboardinput.flag", order[1]);
+	EXPECT_EQ("enable_captions.flag", order[1]);
 	EXPECT_EQ("enable_inputhealth.flag", order[2]);
 }
 

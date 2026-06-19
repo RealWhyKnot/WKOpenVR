@@ -97,7 +97,6 @@ Wire format is defined in [core/src/common/Protocol.h](core/src/common/Protocol.
 
 These modules live under `modules/` and build in dev (`./build.ps1` with no `-Release` flag), but are excluded from published release artifacts via `modules/<slug>/disabled-in-release.flag`. They are exercised in the test suite but are not yet stable enough to ship. Removing the flag re-enables the matching release artifact on the next tag.
 
-- **dashboardinput** -- safe dashboard overlay input path used while developing WKOpenVR dashboard input handling. Toggled by `enable_dashboardinput.flag`.
 - **phantom** -- tracker dropout dead-reckoning, IK fallback, and virtual-tracker placeholders for missing hardware, with an out-of-process ML pose-completion sidecar. Toggled by `enable_phantom.flag`.
 
 ## License

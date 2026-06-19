@@ -21,9 +21,6 @@ struct ShellContext
 	uint32_t primaryDashboardDevice = 0xFFFFFFFFu;
 	int primaryDashboardHand = 0;
 	bool dashboardVisible = false;
-	bool dashboardInputSafeOverlayVisible = false;
-	bool dashboardInputSafeOverlayToggleRequested = false;
-	std::string dashboardInputSafeOverlayStatus;
 	std::vector<std::string> moduleTabOrder;
 
 	std::string DesktopDefaultModuleFlagFileName() const;

@@ -85,8 +85,6 @@ const module_safety::ModuleSpec* SafetySpecForFeatureMask(uint32_t featureMask)
 			return module_safety::FindById(module_registry::ModuleId::Calibration);
 		case pairdriver::kFeatureSmoothing:
 			return module_safety::FindById(module_registry::ModuleId::Smoothing);
-		case pairdriver::kFeatureDashboardInput:
-			return module_safety::FindById(module_registry::ModuleId::DashboardInput);
 		case pairdriver::kFeatureInputHealth:
 			return module_safety::FindById(module_registry::ModuleId::InputHealth);
 		case pairdriver::kFeatureFaceTracking:
@@ -109,8 +107,6 @@ uint32_t FeatureMaskForModuleId(module_registry::ModuleId id)
 			return pairdriver::kFeatureCalibration;
 		case module_registry::ModuleId::Smoothing:
 			return pairdriver::kFeatureSmoothing;
-		case module_registry::ModuleId::DashboardInput:
-			return pairdriver::kFeatureDashboardInput;
 		case module_registry::ModuleId::InputHealth:
 			return pairdriver::kFeatureInputHealth;
 		case module_registry::ModuleId::FaceTracking:
@@ -246,7 +242,6 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 	DriverModuleContext moduleContext{this, pDriverContext, featureFlags};
 	const char* calibrationPipe = module_registry::PipeName(module_registry::ModuleId::Calibration);
 	const char* smoothingPipe = module_registry::PipeName(module_registry::ModuleId::Smoothing);
-	const char* dashboardInputPipe = module_registry::PipeName(module_registry::ModuleId::DashboardInput);
 	const char* inputHealthPipe = module_registry::PipeName(module_registry::ModuleId::InputHealth);
 	const char* faceTrackingPipe = module_registry::PipeName(module_registry::ModuleId::FaceTracking);
 	const char* oscRouterPipe = module_registry::PipeName(module_registry::ModuleId::OscRouter);
@@ -325,9 +320,6 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 #if OPENVR_PAIR_HAS_SMOOTHING_DRIVER
 	activateModule(smoothing::CreateDriverModule());
 #endif
-#if OPENVR_PAIR_HAS_DASHBOARDINPUT_DRIVER
-	activateModule(dashboardinput::CreateDriverModule());
-#endif
 #if OPENVR_PAIR_HAS_INPUTHEALTH_DRIVER
 	activateModule(inputhealth::CreateDriverModule());
 #endif
@@ -381,13 +373,6 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 		smoothingServer->Run();
 	}
 
-	if (featureFlags & pairdriver::kFeatureDashboardInput) {
-		dashboardInputServer =
-		    std::make_unique<IPCServer>(this, dashboardInputPipe, pairdriver::kFeatureDashboardInput);
-		LOG("Starting dashboardinput IPC server pipe=%s", dashboardInputPipe);
-		dashboardInputServer->Run();
-	}
-
 	if (featureFlags & pairdriver::kFeatureInputHealth) {
 		inputHealthServer = std::make_unique<IPCServer>(this, inputHealthPipe, pairdriver::kFeatureInputHealth);
 		LOG("Starting inputhealth IPC server pipe=%s", inputHealthPipe);
@@ -430,7 +415,6 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 		// MinHook on the way out.
 		if (calibrationServer) calibrationServer->Stop();
 		if (smoothingServer) smoothingServer->Stop();
-		if (dashboardInputServer) dashboardInputServer->Stop();
 		if (inputHealthServer) inputHealthServer->Stop();
 		if (faceTrackingServer) faceTrackingServer->Stop();
 		if (oscRouterServer) oscRouterServer->Stop();
@@ -713,7 +697,6 @@ void ServerTrackedDeviceProvider::Cleanup()
 	if (oscRouterServer) oscRouterServer->Stop();
 	if (faceTrackingServer) faceTrackingServer->Stop();
 	if (inputHealthServer) inputHealthServer->Stop();
-	if (dashboardInputServer) dashboardInputServer->Stop();
 	if (smoothingServer) smoothingServer->Stop();
 	if (calibrationServer) calibrationServer->Stop();
 	shmem.Close();
@@ -1891,67 +1874,6 @@ protocol::FingerSmoothingConfig ServerTrackedDeviceProvider::GetFingerSmoothingC
 	const uint64_t header = fingerCfgPacked.load(std::memory_order_acquire);
 	const uint64_t low = perFingerSmoothness0to7Packed.load(std::memory_order_acquire);
 	return pairdriver::UnpackFingerSmoothing(header, low);
-}
-
-namespace {
-
-// Asymmetric staleness window: an active state survives a stalled refresh
-// stream for 3s (covers a momentarily wedged overlay loop), while
-// re-activation needs an update fresher than 750ms (three healthy 250ms
-// refresh cycles). A symmetric 1500ms cutoff produced ~1Hz active<->stale
-// flapping whenever refresh pushes ran late.
-constexpr uint64_t kDashboardHandTrackingStaleAfterMs = 3000;
-constexpr uint64_t kDashboardHandTrackingFreshAfterMs = 750;
-
-const char* DashboardHandName(uint8_t hand)
-{
-	switch (hand) {
-		case protocol::DashboardHandTrackingHandLeft:
-			return "left";
-		case protocol::DashboardHandTrackingHandRight:
-			return "right";
-		default:
-			return "unknown";
-	}
-}
-
-} // namespace
-
-void ServerTrackedDeviceProvider::SetDashboardHandTrackingState(const protocol::DashboardHandTrackingState& state)
-{
-	const uint64_t newPacked = pairdriver::PackDashboardHandTrackingState(state);
-	const uint64_t oldPacked = dashboardHandTrackingPacked.exchange(newPacked, std::memory_order_acq_rel);
-	if (oldPacked != newPacked) {
-		const protocol::DashboardHandTrackingState prev = pairdriver::UnpackDashboardHandTrackingState(oldPacked);
-		const protocol::DashboardHandTrackingState next = pairdriver::UnpackDashboardHandTrackingState(newPacked);
-		// update_mono_ms changes on every keepalive push (4 Hz while the
-		// dashboard is visible); only flag/hand changes are worth a line.
-		if (pairdriver::DashboardHandTrackingMeaningfulChange(prev, next)) {
-			LOG("[skeletal] SetDashboardHandTrackingState via IPC: enabled=%u dashboard_visible=%u primary=%s "
-			    "update_ms=%llu (was: enabled=%u dashboard_visible=%u primary=%s update_ms=%llu)",
-			    (unsigned)next.enabled, (unsigned)next.dashboard_visible, DashboardHandName(next.primary_hand),
-			    (unsigned long long)next.update_mono_ms, (unsigned)prev.enabled, (unsigned)prev.dashboard_visible,
-			    DashboardHandName(prev.primary_hand), (unsigned long long)prev.update_mono_ms);
-		}
-	}
-}
-
-pairdriver::DashboardHandTrackingSnapshot ServerTrackedDeviceProvider::GetDashboardHandTrackingSnapshot() const
-{
-	const uint64_t packed = dashboardHandTrackingPacked.load(std::memory_order_acquire);
-	const protocol::DashboardHandTrackingState state = pairdriver::UnpackDashboardHandTrackingState(packed);
-	if (!state.enabled || !state.dashboard_visible) {
-		dashboardHandTrackingWasActive.store(false, std::memory_order_relaxed);
-		return pairdriver::DecodeDashboardHandTrackingState(packed, state.update_mono_ms,
-		                                                    kDashboardHandTrackingStaleAfterMs);
-	}
-	const bool wasActive = dashboardHandTrackingWasActive.load(std::memory_order_relaxed);
-	const pairdriver::DashboardHandTrackingSnapshot snapshot =
-	    pairdriver::DecodeDashboardHandTrackingStateWithHysteresis(packed, ::GetTickCount64(),
-	                                                               kDashboardHandTrackingStaleAfterMs,
-	                                                               kDashboardHandTrackingFreshAfterMs, wasActive);
-	dashboardHandTrackingWasActive.store(snapshot.active, std::memory_order_relaxed);
-	return snapshot;
 }
 
 void ServerTrackedDeviceProvider::SetInputHealthConfig(const protocol::InputHealthConfig& cfg)

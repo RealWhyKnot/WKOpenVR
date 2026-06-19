@@ -1,5 +1,4 @@
 #include "BuildChannel.h"
-#include "DashboardInputRuntimeGate.h"
 #include "DebugLogging.h"
 #include "DiagnosticsLog.h"
 #include "FeaturePlugin.h"
@@ -59,7 +58,6 @@ namespace openvr_pair::overlay {
 
 std::unique_ptr<FeaturePlugin> CreateInputHealthPlugin();
 std::unique_ptr<FeaturePlugin> CreateSmoothingPlugin();
-std::unique_ptr<FeaturePlugin> CreateDashboardInputPlugin();
 std::unique_ptr<FeaturePlugin> CreateSpaceCalibratorPlugin();
 std::unique_ptr<FeaturePlugin> CreateQuestAppPlugin();
 std::unique_ptr<FeaturePlugin> CreateDynamicResolutionPlugin();
@@ -97,9 +95,6 @@ std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>> CreatePlugins(
 #endif
 #if OPENVR_PAIR_HAS_SMOOTHING_OVERLAY
 	plugins.push_back(CreateSmoothingPlugin());
-#endif
-#if OPENVR_PAIR_HAS_DASHBOARDINPUT_OVERLAY
-	plugins.push_back(CreateDashboardInputPlugin());
 #endif
 #if OPENVR_PAIR_HAS_CALIBRATION_OVERLAY
 	plugins.push_back(CreateSpaceCalibratorPlugin());
@@ -213,7 +208,6 @@ struct OverlayFrameTimings
 	bool vrSurfaceVisible = false;
 	bool activeDashboardOverlay = false;
 	bool anyDashboardVisible = false;
-	bool safeOverlayVisible = false;
 	bool vrConnected = false;
 };
 
@@ -258,14 +252,13 @@ public:
 		    "compositor_sample_ms=%.1f plugin_tick_ms=%.1f imgui_build_ms=%.1f render_ms=%.1f "
 		    "swap_ms=%.1f submit_ms=%.1f wait_ms=%.1f render_path='%s' plugin_ticks=%zu "
 		    "slow_plugin='%s' slow_plugin_ms=%.1f vr_visible=%d dashboard_active=%d "
-		    "any_dashboard_visible=%d safe_visible=%d vr_connected=%d suppressed=%u",
+		    "any_dashboard_visible=%d vr_connected=%d suppressed=%u",
 		    timings.frameGapMs, timings.totalMs, timings.slowStage, timings.slowStageMs, timings.perfTickMs,
 		    timings.toggleMs, timings.backendFrameMs, timings.vrTickMs, timings.compositorSampleMs,
 		    timings.pluginTickMs, timings.imguiBuildMs, timings.renderMs, timings.swapMs, timings.submitMs,
 		    timings.waitMs, timings.renderPath, timings.installedPluginTicks, timings.slowPlugin, timings.slowPluginMs,
 		    timings.vrSurfaceVisible ? 1 : 0, timings.activeDashboardOverlay ? 1 : 0,
-		    timings.anyDashboardVisible ? 1 : 0, timings.safeOverlayVisible ? 1 : 0, timings.vrConnected ? 1 : 0,
-		    suppressedSinceLastLog_);
+		    timings.anyDashboardVisible ? 1 : 0, timings.vrConnected ? 1 : 0, suppressedSinceLastLog_);
 
 		suppressedSinceLastLog_ = 0;
 		lastLogSeconds_ = nowSeconds;
@@ -507,8 +500,6 @@ int main(int argc, char** argv)
 	bool prevActiveDashboardOverlay = false;
 	bool prevAnyDashboardVisible = false;
 	bool prevVrConnected = false;
-	bool prevSafeOverlayVisible = false;
-	std::string prevSafeOverlayStatus;
 	int prevPrimaryDashboardHand = 0;
 	CompositorTimingSampler compositorSampler;
 	OverlayFrameHitchLogger frameHitches;
@@ -563,35 +554,21 @@ int main(int argc, char** argv)
 		// queue in order on NewFrame; later events override earlier
 		// ones. When the dashboard is not visible no mouse events
 		// fire and GLFW's position is used unchanged.
-		const bool dashboardInputEnabled = context.IsFlagPresent(
-		    openvr_pair::common::modules::FlagFileName(openvr_pair::common::modules::ModuleId::DashboardInput));
-		const bool dashboardInputRuntimeEnabled = openvr_pair::common::dashboardinput::RuntimeEnabled(
-		    dashboardInputEnabled,
-		    context.IsFlagPresent(openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileName));
-		vrOverlay->SetSafeOverlayEnabled(dashboardInputRuntimeEnabled);
-		if (context.dashboardInputSafeOverlayToggleRequested) {
-			context.dashboardInputSafeOverlayToggleRequested = false;
-			vrOverlay->RequestSafeOverlayToggle();
-		}
 		stageStartSeconds = glfwGetTime();
 		const bool activeDashboardOverlay = vrOverlay->TickFrame(kVrFboWidth, kVrFboHeight);
 		frameTimings.vrTickMs = (glfwGetTime() - stageStartSeconds) * 1000.0;
 		ObserveSlowStage(frameTimings, "vr_tick", frameTimings.vrTickMs);
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
-		const bool safeOverlayVisible = vrOverlay->SafeOverlayVisible();
-		const bool vrSurfaceVisible = activeDashboardOverlay || safeOverlayVisible;
+		const bool vrSurfaceVisible = activeDashboardOverlay;
 		context.vrConnected = vrOverlay->VrConnected();
 		context.activeDashboardOverlay = activeDashboardOverlay;
 		context.anyDashboardVisible = anyDashboardVisible;
 		context.primaryDashboardDevice = vrOverlay->PrimaryDashboardDevice();
 		context.primaryDashboardHand = vrOverlay->PrimaryDashboardHand();
 		context.dashboardVisible = activeDashboardOverlay;
-		context.dashboardInputSafeOverlayVisible = safeOverlayVisible;
-		context.dashboardInputSafeOverlayStatus = vrOverlay->SafeOverlayStatus();
 		frameTimings.vrSurfaceVisible = vrSurfaceVisible;
 		frameTimings.activeDashboardOverlay = activeDashboardOverlay;
 		frameTimings.anyDashboardVisible = anyDashboardVisible;
-		frameTimings.safeOverlayVisible = safeOverlayVisible;
 		frameTimings.vrConnected = context.vrConnected;
 		if (context.vrConnected) {
 			stageStartSeconds = glfwGetTime();
@@ -601,22 +578,17 @@ int main(int argc, char** argv)
 		}
 		if (!haveVrState || activeDashboardOverlay != prevActiveDashboardOverlay ||
 		    anyDashboardVisible != prevAnyDashboardVisible || context.vrConnected != prevVrConnected ||
-		    safeOverlayVisible != prevSafeOverlayVisible ||
-		    context.dashboardInputSafeOverlayStatus != prevSafeOverlayStatus ||
 		    context.primaryDashboardHand != prevPrimaryDashboardHand) {
 			openvr_pair::common::DiagnosticLog(
 			    "overlay",
 			    "vr_state active_dashboard_overlay=%d any_dashboard_visible=%d vr_connected=%d "
-			    "primary_dashboard_device=%u primary_dashboard_hand=%d safe_overlay_visible=%d safe_status='%s'",
+			    "primary_dashboard_device=%u primary_dashboard_hand=%d",
 			    activeDashboardOverlay ? 1 : 0, anyDashboardVisible ? 1 : 0, context.vrConnected ? 1 : 0,
-			    context.primaryDashboardDevice, context.primaryDashboardHand, safeOverlayVisible ? 1 : 0,
-			    context.dashboardInputSafeOverlayStatus.c_str());
+			    context.primaryDashboardDevice, context.primaryDashboardHand);
 			haveVrState = true;
 			prevActiveDashboardOverlay = activeDashboardOverlay;
 			prevAnyDashboardVisible = anyDashboardVisible;
 			prevVrConnected = context.vrConnected;
-			prevSafeOverlayVisible = safeOverlayVisible;
-			prevSafeOverlayStatus = context.dashboardInputSafeOverlayStatus;
 			prevPrimaryDashboardHand = context.primaryDashboardHand;
 		}
 

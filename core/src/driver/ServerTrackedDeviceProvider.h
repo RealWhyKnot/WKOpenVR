@@ -86,8 +86,6 @@ public:
 	// and vice-versa.
 	void SetFingerSmoothingConfig(const protocol::FingerSmoothingConfig& cfg);
 	protocol::FingerSmoothingConfig GetFingerSmoothingConfig() const;
-	void SetDashboardHandTrackingState(const protocol::DashboardHandTrackingState& state);
-	pairdriver::DashboardHandTrackingSnapshot GetDashboardHandTrackingSnapshot() const;
 
 	// Input-health config cache. Written by IPCServer when the WKOpenVR-InputHealth
 	// overlay pushes a new config (rare). Read by the boolean / scalar input
@@ -118,7 +116,6 @@ private:
 	// pose-update path doesn't touch them.
 	std::unique_ptr<IPCServer> calibrationServer;
 	std::unique_ptr<IPCServer> smoothingServer;
-	std::unique_ptr<IPCServer> dashboardInputServer;
 	std::unique_ptr<IPCServer> inputHealthServer;
 	std::unique_ptr<IPCServer> faceTrackingServer;
 	std::unique_ptr<IPCServer> oscRouterServer;
@@ -452,14 +449,6 @@ private:
 	// until the overlay has sent a real config.
 	mutable std::atomic<uint64_t> fingerCfgPacked{0};
 	mutable std::atomic<uint64_t> perFingerSmoothness0to7Packed{0};
-
-	// v32 dashboard hand-tracking state from the Smoothing overlay. Packed into
-	// one atomic so the skeletal hook can cheaply tell whether the SteamVR
-	// dashboard is currently visible and whether that state is still fresh.
-	mutable std::atomic<uint64_t> dashboardHandTrackingPacked{0};
-	// Last decoded active state; feeds the staleness hysteresis so a refresh
-	// stream hovering near the stale boundary settles instead of flapping.
-	mutable std::atomic<bool> dashboardHandTrackingWasActive{false};
 
 	// Input-health config packed into an atomic uint64_t. Same pattern as
 	// fingerCfgPacked: single-writer (IPC thread on user UI input), many-

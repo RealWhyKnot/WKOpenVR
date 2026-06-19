@@ -265,11 +265,9 @@ namespace protocol {
 // sync can target either the most closed eye or the most open eye instead of
 // always averaging both eyelid openness values.
 //
-// v32 (2026-06-09): adds RequestSetDashboardHandTrackingState. The Dashboard Input
-// overlay reports whether the SteamVR dashboard is visible, independent of
-// whether WKOpenVR's own dashboard tab is active, so the skeletal hook can keep
-// dashboard-window live-frame diagnostics and avoid dashboard-specific static
-// hand fallbacks when the source stream is still live.
+// v32 (2026-06-09): reserved request slot. Earlier development builds used it
+// for Dashboard Input hand-tracking diagnostics; keep the ordinal occupied so
+// later request IDs stay stable.
 //
 // v33 (2026-06-09): adds RequestSetFaceShapeTuning. Face Tracking overlay sends
 // one compact per-expression scale at a time, plus a reset sentinel, so avatar-
@@ -408,9 +406,9 @@ enum RequestType
 	// v28 (2026-06-02): body-completion solver settings and
 	// confidence threshold for Phantom virtual roles.
 	RequestSetPhantomSolverConfig,
-	// v32 (2026-06-09): SteamVR dashboard hand-tracking state from the
-	// Dashboard Input overlay. Appended to preserve prior request ordinals.
-	RequestSetDashboardHandTrackingState,
+	// v32 (2026-06-09): reserved retired request slot. Appended to preserve
+	// prior request ordinals.
+	RequestReservedDashboardHandTrackingState,
 	// v33 (2026-06-09): per-expression face tracking output scale. Appended
 	// to preserve prior request ordinals.
 	RequestSetFaceShapeTuning,

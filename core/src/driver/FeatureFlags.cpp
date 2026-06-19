@@ -5,7 +5,6 @@
 
 #include "FeatureFlags.h"
 
-#include "DashboardInputRuntimeGate.h"
 #include "Logging.h"
 #include "ModuleRegistry.h"
 #include "ModuleSafety.h"
@@ -67,8 +66,6 @@ const module_registry::ModuleInfo* ModuleForFeatureMask(uint32_t featureMask)
 			return &module_registry::Get(module_registry::ModuleId::Calibration);
 		case kFeatureSmoothing:
 			return &module_registry::Get(module_registry::ModuleId::Smoothing);
-		case kFeatureDashboardInput:
-			return &module_registry::Get(module_registry::ModuleId::DashboardInput);
 		case kFeatureInputHealth:
 			return &module_registry::Get(module_registry::ModuleId::InputHealth);
 		case kFeatureFaceTracking:
@@ -159,7 +156,6 @@ uint32_t DetectFeatureFlags()
 
 	const module_registry::ModuleInfo& calibration = module_registry::Get(module_registry::ModuleId::Calibration);
 	const module_registry::ModuleInfo& smoothing = module_registry::Get(module_registry::ModuleId::Smoothing);
-	const module_registry::ModuleInfo& dashboardInput = module_registry::Get(module_registry::ModuleId::DashboardInput);
 	const module_registry::ModuleInfo& inputHealth = module_registry::Get(module_registry::ModuleId::InputHealth);
 	const module_registry::ModuleInfo& faceTracking = module_registry::Get(module_registry::ModuleId::FaceTracking);
 	const module_registry::ModuleInfo& oscRouter = module_registry::Get(module_registry::ModuleId::OscRouter);
@@ -168,9 +164,6 @@ uint32_t DetectFeatureFlags()
 
 	const bool calOn = ModuleFlagFileExists(dir, calibration);
 	const bool smoOn = ModuleFlagFileExists(dir, smoothing);
-	const bool dashOn = ModuleFlagFileExists(dir, dashboardInput);
-	const bool dashRuntimeOptIn =
-	    FlagFileExists(dir, openvr_pair::common::dashboardinput::kRuntimeOptInFlagFileNameWide);
 	const bool ihOn = ModuleFlagFileExists(dir, inputHealth);
 	const bool ftOn = ModuleFlagFileExists(dir, faceTracking);
 	const bool orOn = ModuleFlagFileExists(dir, oscRouter);
@@ -183,14 +176,12 @@ uint32_t DetectFeatureFlags()
 
 	bool calSafe = calOn;
 	bool smoSafe = smoOn;
-	bool dashSafe = openvr_pair::common::dashboardinput::RuntimeEnabled(dashOn, dashRuntimeOptIn);
 	bool ihSafe = ihOn;
 	bool ftSafe = ftOn;
 	bool capSafe = capOn;
 	bool phSafe = phOn;
 	SafetyGateResult calGate = ApplySafetyGate(calSafe, calibration);
 	SafetyGateResult smoGate = ApplySafetyGate(smoSafe, smoothing);
-	SafetyGateResult dashGate = ApplySafetyGate(dashSafe, dashboardInput);
 	SafetyGateResult ihGate = ApplySafetyGate(ihSafe, inputHealth);
 	SafetyGateResult ftGate = ApplySafetyGate(ftSafe, faceTracking);
 	SafetyGateResult capGate = ApplySafetyGate(capSafe, captions);
@@ -199,7 +190,7 @@ uint32_t DetectFeatureFlags()
 	bool orSafe = orOn || ftSafe || capSafe;
 	SafetyGateResult orGate = ApplySafetyGate(orSafe, oscRouter);
 	SafetyGateResult gates[] = {
-	    calGate, smoGate, dashGate, ihGate, ftGate, capGate, phGate, orGate,
+	    calGate, smoGate, ihGate, ftGate, capGate, phGate, orGate,
 	};
 	ApplyRepeatedActiveOnlyBackoff(gates, sizeof(gates) / sizeof(gates[0]));
 	if (!orSafe && (ftSafe || capSafe)) {
@@ -207,11 +198,7 @@ uint32_t DetectFeatureFlags()
 		ftSafe = false;
 		capSafe = false;
 	}
-	if (dashOn && !dashRuntimeOptIn) {
-		LOG("DetectFeatureFlags: dashboardinput flag present but runtime opt-in flag is missing");
-	}
-
-	uint32_t flags = ComposeFeatureFlags(calSafe, smoSafe, dashSafe, ihSafe, ftSafe, orSafe, capSafe, phSafe);
+	uint32_t flags = ComposeFeatureFlags(calSafe, smoSafe, ihSafe, ftSafe, orSafe, capSafe, phSafe);
 	const bool orEffective = (flags & kFeatureOscRouter) != 0;
 	if (orEffective && !orOn) {
 		LOG("DetectFeatureFlags: enabling oscrouter because a module requires centralized OSC routing");
@@ -219,13 +206,11 @@ uint32_t DetectFeatureFlags()
 
 	// %ls expects wide string on MSVC's CRT. Cap the printed length so a
 	// pathological install path doesn't blow the log line.
-	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d/%d smoothing=%d/%d dashboardinput=%d/%d "
-	    "dashboardinput_runtime=%d "
+	LOG("DetectFeatureFlags: resources=%.260ls calibration=%d/%d smoothing=%d/%d "
 	    "inputhealth=%d/%d facetracking=%d/%d oscrouter_flag=%d/%d oscrouter_effective=%d captions=%d/%d "
 	    "phantom=%d/%d (mask=0x%x)",
-	    dir.c_str(), (int)calOn, (int)calSafe, (int)smoOn, (int)smoSafe, (int)dashOn, (int)dashSafe,
-	    (int)dashRuntimeOptIn, (int)ihOn, (int)ihSafe, (int)ftOn, (int)ftSafe, (int)orOn, (int)orSafe, (int)orEffective,
-	    (int)capOn, (int)capSafe, (int)phOn, (int)phSafe, (unsigned)flags);
+	    dir.c_str(), (int)calOn, (int)calSafe, (int)smoOn, (int)smoSafe, (int)ihOn, (int)ihSafe, (int)ftOn, (int)ftSafe,
+	    (int)orOn, (int)orSafe, (int)orEffective, (int)capOn, (int)capSafe, (int)phOn, (int)phSafe, (unsigned)flags);
 	return flags;
 }
 

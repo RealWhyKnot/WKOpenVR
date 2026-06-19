@@ -204,25 +204,6 @@ struct SetDevicePrediction
 	uint8_t _reserved[2]; // pad to 8-byte alignment; must be 0
 };
 
-enum DashboardHandTrackingPrimaryHand : uint8_t
-{
-	DashboardHandTrackingHandUnknown = 0,
-	DashboardHandTrackingHandLeft = 1,
-	DashboardHandTrackingHandRight = 2,
-};
-
-// v32: SteamVR dashboard hand-tracking state sent by the Dashboard Input overlay.
-// update_mono_ms uses a monotonic Windows tick count so the driver can reject
-// stale overlay state without trusting wall-clock time.
-struct DashboardHandTrackingState
-{
-	uint8_t enabled;
-	uint8_t dashboard_visible;
-	uint8_t primary_hand;
-	uint8_t _reserved;
-	uint64_t update_mono_ms;
-};
-
 // Per-tracking-system fallback transform. Applied to any device whose tracking
 // system matches `system_name` and that doesn't currently have an active per-ID
 // transform. Lets newly connected trackers inherit the calibrated offset
@@ -759,10 +740,6 @@ struct Request
 		// v12: per-device prediction smoothness from the Smoothing overlay.
 		// Much smaller than SetDeviceTransform so the union does not grow.
 		SetDevicePrediction setDevicePrediction;
-		// v32: dashboard-visible hand-tracking state from the Smoothing overlay.
-		// Fits comfortably under SetDeviceTransform; Version bump handles paired
-		// install semantics.
-		DashboardHandTrackingState setDashboardHandTrackingState;
 		// v15: face-tracking master config + compatibility calibration
 		// command + module selection + shape tuning. All are smaller than
 		// SetDeviceTransform so the union does not grow; the static_asserts
@@ -810,8 +787,6 @@ struct Request
 };
 
 static_assert(sizeof(AlignmentSpeedParams) <= sizeof(SetDeviceTransform), "AlignmentSpeedParams must not grow Request");
-static_assert(sizeof(DashboardHandTrackingState) <= sizeof(SetDeviceTransform),
-              "DashboardHandTrackingState must not grow Request");
 static_assert(sizeof(InputHealthCompensationEntry) <= sizeof(SetDeviceTransform),
               "InputHealthCompensationEntry must not grow Request");
 static_assert(sizeof(FaceTrackingConfig) <= sizeof(SetDeviceTransform), "FaceTrackingConfig must not grow Request");

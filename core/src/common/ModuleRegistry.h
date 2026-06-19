@@ -9,7 +9,6 @@ enum class ModuleId
 {
 	Calibration,
 	Smoothing,
-	DashboardInput,
 	InputHealth,
 	FaceTracking,
 	OscRouter,

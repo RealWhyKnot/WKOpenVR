@@ -15,7 +15,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(ui_core_tests
-	test_dashboard_input_safe_overlay_logic.cpp
 	test_bug_report.cpp
 	test_perf_history.cpp
 	test_ui_core.cpp
@@ -24,7 +23,6 @@ add_executable(ui_core_tests
 target_include_directories(ui_core_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common
 	${CMAKE_SOURCE_DIR}/core/src/overlay
-	${CMAKE_SOURCE_DIR}/modules/dashboardinput/src/overlay
 	${CMAKE_SOURCE_DIR}/lib
 	${CMAKE_SOURCE_DIR}/lib/openvr/headers
 	${CMAKE_SOURCE_DIR}/lib/imgui)

@@ -15,7 +15,6 @@
 //
 // Dev-only modules may also use:
 //
-//   resources/enable_dashboardinput.flag -- WKOpenVR-DashboardInput
 //   resources/enable_phantom.flag        -- WKOpenVR-Phantom
 //
 // Any subset (including the empty subset) may be present. With no flags the
@@ -35,15 +34,13 @@ constexpr uint32_t kFeatureFaceTracking = 1u << 3;
 constexpr uint32_t kFeatureOscRouter = 1u << 4;
 constexpr uint32_t kFeatureCaptions = 1u << 5;
 constexpr uint32_t kFeaturePhantom = 1u << 6;
-constexpr uint32_t kFeatureDashboardInput = 1u << 7;
 
-constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool dashboardInput, bool inputHealth,
-                                       bool faceTracking, bool oscRouter, bool captions, bool phantom)
+constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool inputHealth, bool faceTracking,
+                                       bool oscRouter, bool captions, bool phantom)
 {
 	uint32_t flags = 0;
 	if (calibration) flags |= kFeatureCalibration;
 	if (smoothing) flags |= kFeatureSmoothing;
-	if (dashboardInput) flags |= kFeatureDashboardInput;
 	if (inputHealth) flags |= kFeatureInputHealth;
 	if (faceTracking) flags |= kFeatureFaceTracking;
 	if (oscRouter || faceTracking || captions) flags |= kFeatureOscRouter;

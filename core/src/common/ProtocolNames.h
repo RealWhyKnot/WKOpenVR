@@ -7,7 +7,6 @@
 // request type and rejects out-of-feature requests.
 #define OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-Calibration"
 #define OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-Smoothing"
-#define OPENVR_PAIRDRIVER_DASHBOARDINPUT_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-DashboardInput"
 #define OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-InputHealth"
 #define OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME "\\\\.\\pipe\\WKOpenVR-FaceTracking"
 // v16 (2026-05-13): OSC router module. Driver opens this pipe gated on
