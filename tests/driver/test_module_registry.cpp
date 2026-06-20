@@ -27,6 +27,19 @@ TEST(ModuleRegistry, ContainsAllRegisteredModules)
 	EXPECT_NE(module_registry::FindById(module_registry::ModuleId::DynamicResolution), nullptr);
 }
 
+TEST(ModuleRegistry, ModuleIdsKeepWireValuesStable)
+{
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::Calibration), 0u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::Smoothing), 1u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::InputHealth), 3u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::FaceTracking), 4u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::OscRouter), 5u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::Captions), 6u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::Phantom), 7u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::QuestApp), 8u);
+	EXPECT_EQ(static_cast<uint32_t>(module_registry::ModuleId::DynamicResolution), 9u);
+}
+
 TEST(ModuleRegistry, ExposesStableFaceTrackingMetadata)
 {
 	const auto* module = module_registry::FindById(module_registry::ModuleId::FaceTracking);

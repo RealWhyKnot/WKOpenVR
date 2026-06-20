@@ -1,21 +1,22 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace openvr_pair::common::modules {
 
-enum class ModuleId
+enum class ModuleId : uint32_t
 {
-	Calibration,
-	Smoothing,
-	InputHealth,
-	FaceTracking,
-	OscRouter,
-	Captions,
-	Phantom,
-	QuestApp,
-	DynamicResolution,
+	Calibration = 0,
+	Smoothing = 1,
+	InputHealth = 3,
+	FaceTracking = 4,
+	OscRouter = 5,
+	Captions = 6,
+	Phantom = 7,
+	QuestApp = 8,
+	DynamicResolution = 9,
 };
 
 struct ModuleInfo
