@@ -92,7 +92,7 @@ private:
 	std::atomic<uint64_t> pubPipeQueueDrops_{0};
 	std::atomic<uint64_t> pubPipeReadBreaks_{0};
 
-	std::atomic<bool> stop_{false};
+	std::atomic<bool> stop_{true};
 	std::thread sendWorker_;
 	std::thread pubPipeWorker_;
 

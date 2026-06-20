@@ -24,6 +24,12 @@ namespace {
 
 using RouterClock = std::chrono::steady_clock;
 
+void ClearActiveRouterIfCurrent(OscRouter* router)
+{
+	OscRouter* expected = router;
+	g_activeRouter.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
 struct SendWorkerDiagSample
 {
 	uint64_t sent = 0;
@@ -310,6 +316,7 @@ bool OscRouter::Init(DriverModuleContext& ctx)
 	OR_LOG("OscRouter::Init target=%s:%u enabled=%d", sendHost_.c_str(), (unsigned)sendPort_, enabled_ ? 1 : 0);
 
 	// Create stats shmem.
+	shmemReady_.store(false, std::memory_order_release);
 	if (!statsShmem_.Create(OPENVR_PAIRDRIVER_OSCROUTER_SHMEM_NAME)) {
 		OR_LOG("OscRouter: shmem create failed (GetLastError=%u); stats disabled", (unsigned)GetLastError());
 	}
@@ -335,10 +342,14 @@ bool OscRouter::Init(DriverModuleContext& ctx)
 
 void OscRouter::Shutdown()
 {
-	OR_LOG("OscRouter: shutdown begin", 0);
-	g_activeRouter.store(nullptr, std::memory_order_release);
+	if (stop_.exchange(true, std::memory_order_acq_rel)) {
+		ClearActiveRouterIfCurrent(this);
+		return;
+	}
 
-	stop_.store(true, std::memory_order_release);
+	OR_LOG("OscRouter: shutdown begin", 0);
+	ClearActiveRouterIfCurrent(this);
+
 	queueCv_.notify_all();
 
 	if (sendWorker_.joinable()) {
@@ -352,6 +363,7 @@ void OscRouter::Shutdown()
 
 	sender_.Close();
 	statsShmem_.Close();
+	shmemReady_.store(false, std::memory_order_release);
 	OR_LOG("OscRouter: shutdown complete sent=%llu bytes=%llu queued=%llu dropped=%llu "
 	       "oversize=%llu unmatched=%llu send_fail=%llu pub_frames=%llu pub_bad=%llu",
 	       static_cast<unsigned long long>(packetsSent_.load(std::memory_order_relaxed)),

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <memory>
 #include <thread>
 
 namespace {
@@ -109,4 +110,27 @@ TEST(OscRouterShutdown, ShutdownCancelsIdleConnectedPubPipeRead)
 	shutdownThread.join();
 	const ULONGLONG elapsedMs = GetTickCount64() - started;
 	EXPECT_LT(elapsedMs, 2000ULL);
+}
+
+TEST(OscRouterShutdown, RepeatedShutdownDoesNotClearReplacementActiveRouter)
+{
+	oscrouter::g_activeRouter.store(nullptr, std::memory_order_release);
+
+	DriverModuleContext ctx{};
+	auto first = std::make_unique<oscrouter::OscRouter>();
+	ASSERT_TRUE(first->Init(ctx));
+	ASSERT_EQ(oscrouter::g_activeRouter.load(std::memory_order_acquire), first.get());
+
+	first->Shutdown();
+	ASSERT_EQ(oscrouter::g_activeRouter.load(std::memory_order_acquire), nullptr);
+
+	auto second = std::make_unique<oscrouter::OscRouter>();
+	ASSERT_TRUE(second->Init(ctx));
+	ASSERT_EQ(oscrouter::g_activeRouter.load(std::memory_order_acquire), second.get());
+
+	first->Shutdown();
+	EXPECT_EQ(oscrouter::g_activeRouter.load(std::memory_order_acquire), second.get());
+
+	second->Shutdown();
+	EXPECT_EQ(oscrouter::g_activeRouter.load(std::memory_order_acquire), nullptr);
 }
