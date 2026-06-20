@@ -228,6 +228,25 @@ TEST(FaceSignalProcessor, ShapeTuningHighConfiguredBoundsClampToValidSignalMaxim
 	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 1.0f, 1e-6f);
 }
 
+TEST(FaceSignalProcessor, ClampsAllExpressionOutputsBeforePublish)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+
+	frame.expressions[kOursJawOpen] = 2.5f;
+	frame.expressions[kOursMouthSmileLeft] = -0.5f;
+	frame.upstream_expressions[12] = 2.5f; // Unmapped upstream slot.
+
+	processor.Apply(frame, cfg);
+
+	EXPECT_FLOAT_EQ(frame.expressions[kOursJawOpen], 1.0f);
+	EXPECT_FLOAT_EQ(frame.expressions[kOursMouthSmileLeft], 0.0f);
+	EXPECT_FLOAT_EQ(frame.upstream_expressions[kUpstreamJawOpen], 1.0f);
+	EXPECT_FLOAT_EQ(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.0f);
+	EXPECT_FLOAT_EQ(frame.upstream_expressions[12], 1.0f);
+}
+
 TEST(FaceSignalProcessor, MouthCloseCompensationIsDisabledByDefault)
 {
 	facetracking::FaceSignalProcessor processor;

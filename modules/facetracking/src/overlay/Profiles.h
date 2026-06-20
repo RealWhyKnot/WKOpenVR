@@ -81,8 +81,8 @@ struct FacetrackingProfile
 	// multi-run has a stable priority.
 	std::vector<std::string> enabled_module_uuids;
 
-	// Expression output scales. Values are percentages in [0, 200], with 100
-	// meaning pass-through. Stored sparse in JSON by expression name.
+	// Expression output tuning. Values are percentages in [0, 200], with 100
+	// meaning pass-through. Final published output remains limited to 0..1.
 	FaceShapeScaleArray global_shape_tuning = DefaultFaceShapeScales();
 	std::map<std::string, FaceShapeScaleArray> avatar_shape_tuning;
 	std::map<std::string, AvatarShapeTuningMetadata> avatar_shape_metadata;

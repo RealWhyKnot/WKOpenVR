@@ -27,7 +27,7 @@ inline float ClampUpstreamUnitSignal(float v)
 	return std::clamp(v, 0.0f, 1.0f);
 }
 
-inline constexpr float kExpressionOutputMax = 2.0f;
+inline constexpr float kExpressionOutputMax = 1.0f;
 
 inline float ClampExpressionOutputSignal(float v)
 {

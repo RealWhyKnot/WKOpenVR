@@ -243,6 +243,13 @@ TEST(UpstreamShapeMap, ValuesAreClampedTo01)
 	EXPECT_FLOAT_EQ(dst[11], 0.0f);
 }
 
+TEST(UpstreamShapeMap, ExpressionOutputClampRejectsBoostOverflow)
+{
+	EXPECT_FLOAT_EQ(ClampExpressionOutputSignal(2.5f), 1.0f);
+	EXPECT_FLOAT_EQ(ClampExpressionOutputSignal(1.0f), 1.0f);
+	EXPECT_FLOAT_EQ(ClampExpressionOutputSignal(-0.5f), 0.0f);
+}
+
 TEST(UpstreamShapeMap, MappedCountMatchesExpectation)
 {
 	// Updated total after the v5.1.1.0 vendoring + semantic aliases land.

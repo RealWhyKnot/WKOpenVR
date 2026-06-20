@@ -346,9 +346,10 @@ enum UpstreamShape : uint32_t
 	U_NeckFlexLeft,
 };
 
-static inline float FiniteOrZero(float v)
+static inline float SignedUnitOrZero(float v)
 {
-	return facetracking::IsInvalidUpstreamSignal(v) ? 0.0f : v;
+	if (facetracking::IsInvalidUpstreamSignal(v)) return 0.0f;
+	return std::clamp(v, -1.0f, 1.0f);
 }
 
 static inline float Upstream(const protocol::FaceTrackingFrameBody& frame, uint32_t index)
@@ -368,7 +369,7 @@ static bool PublishFtV2Float(OscCounts& counts, const char* name, float value)
 	char address[96];
 	int written = std::snprintf(address, sizeof(address), "%s%s", kPrefix, name);
 	if (written <= 0 || static_cast<size_t>(written) >= sizeof(address)) return false;
-	OscPublishFloat(counts, address, value);
+	OscPublishFloat(counts, address, SignedUnitOrZero(value));
 	return true;
 }
 
@@ -415,13 +416,16 @@ static float MouthSadLeft(const protocol::FaceTrackingFrameBody& frame)
 static OscCounts PublishEye(const protocol::FaceTrackingFrameBody& frame)
 {
 	OscCounts counts;
-	const float gx_l = FiniteOrZero(frame.eye_gaze_l[0]);
-	const float gy_l = FiniteOrZero(frame.eye_gaze_l[1]);
-	const float gx_r = FiniteOrZero(frame.eye_gaze_r[0]);
-	const float gy_r = FiniteOrZero(frame.eye_gaze_r[1]);
-	const float open_l = FiniteOrZero(frame.eye_openness_l);
-	const float open_r = FiniteOrZero(frame.eye_openness_r);
-	const float pupil = (FiniteOrZero(frame.pupil_dilation_l) + FiniteOrZero(frame.pupil_dilation_r)) * 0.5f;
+	const float gx_l = SignedUnitOrZero(frame.eye_gaze_l[0]);
+	const float gy_l = SignedUnitOrZero(frame.eye_gaze_l[1]);
+	const float gx_r = SignedUnitOrZero(frame.eye_gaze_r[0]);
+	const float gy_r = SignedUnitOrZero(frame.eye_gaze_r[1]);
+	const float open_l = facetracking::ClampExpressionOutputSignal(frame.eye_openness_l);
+	const float open_r = facetracking::ClampExpressionOutputSignal(frame.eye_openness_r);
+	const float pupil =
+	    facetracking::ClampExpressionOutputSignal((facetracking::ClampExpressionOutputSignal(frame.pupil_dilation_l) +
+	                                               facetracking::ClampExpressionOutputSignal(frame.pupil_dilation_r)) *
+	                                              0.5f);
 
 	OscPublishFloat(counts, "/avatar/parameters/LeftEyeX", gx_l);
 	OscPublishFloat(counts, "/avatar/parameters/LeftEyeY", gy_l);
@@ -465,7 +469,7 @@ static OscCounts PublishExpressions(const protocol::FaceTrackingFrameBody& frame
 	};
 
 	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-		const float value = FiniteOrZero(frame.expressions[i]);
+		const float value = facetracking::ClampExpressionOutputSignal(frame.expressions[i]);
 		emitBoth(facetracking::ExpressionName(i), value);
 		// Modern VRCFaceTracking-v5 avatars bind to the renamed parameter
 		// names (MouthClosed, MouthCornerPull*, MouthFrown*) instead of
@@ -487,14 +491,14 @@ static OscCounts PublishCurrentVrcft(const protocol::FaceTrackingFrameBody& fram
 		PublishFtV2Float(counts, kUpstreamExpressionNames[i], Upstream(frame, i));
 	}
 
-	const float gx_l = FiniteOrZero(frame.eye_gaze_l[0]);
-	const float gy_l = FiniteOrZero(frame.eye_gaze_l[1]);
-	const float gx_r = FiniteOrZero(frame.eye_gaze_r[0]);
-	const float gy_r = FiniteOrZero(frame.eye_gaze_r[1]);
-	const float open_l = FiniteOrZero(frame.eye_openness_l);
-	const float open_r = FiniteOrZero(frame.eye_openness_r);
-	const float pupil_l = FiniteOrZero(frame.pupil_dilation_l);
-	const float pupil_r = FiniteOrZero(frame.pupil_dilation_r);
+	const float gx_l = SignedUnitOrZero(frame.eye_gaze_l[0]);
+	const float gy_l = SignedUnitOrZero(frame.eye_gaze_l[1]);
+	const float gx_r = SignedUnitOrZero(frame.eye_gaze_r[0]);
+	const float gy_r = SignedUnitOrZero(frame.eye_gaze_r[1]);
+	const float open_l = facetracking::ClampExpressionOutputSignal(frame.eye_openness_l);
+	const float open_r = facetracking::ClampExpressionOutputSignal(frame.eye_openness_r);
+	const float pupil_l = facetracking::ClampExpressionOutputSignal(frame.pupil_dilation_l);
+	const float pupil_r = facetracking::ClampExpressionOutputSignal(frame.pupil_dilation_r);
 	const float pupil = Avg2(pupil_l, pupil_r);
 
 	PublishFtV2Float(counts, "EyeX", Avg2(gx_l, gx_r));

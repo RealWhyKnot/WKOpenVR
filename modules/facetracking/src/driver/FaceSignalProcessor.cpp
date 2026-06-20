@@ -193,6 +193,16 @@ void CopyMappedInternalShapesToUpstream(protocol::FaceTrackingFrameBody& frame)
 	}
 }
 
+void ClampFrameExpressionOutputs(protocol::FaceTrackingFrameBody& frame)
+{
+	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
+		frame.expressions[i] = ClampExpressionOutputSignal(frame.expressions[i]);
+	}
+	for (uint32_t i = 0; i < protocol::FACETRACKING_UPSTREAM_EXPRESSION_COUNT; ++i) {
+		frame.upstream_expressions[i] = ClampExpressionOutputSignal(frame.upstream_expressions[i]);
+	}
+}
+
 void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const protocol::FaceShapeTuningParams* shape_tuning)
 {
 	if (!shape_tuning) return;
@@ -209,8 +219,7 @@ void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const protocol::Fa
 		const float scale = static_cast<float>(percent) / 100.0f;
 		const float minValue = static_cast<float>(lo) / 100.0f;
 		const float maxValue = static_cast<float>(hi) / 100.0f;
-		const float tuned =
-		    std::clamp(ClampExpressionOutputSignal(frame.expressions[i] * scale), minValue, maxValue);
+		const float tuned = std::clamp(ClampExpressionOutputSignal(frame.expressions[i] * scale), minValue, maxValue);
 		frame.expressions[i] = Clamp01(tuned);
 	}
 }
@@ -345,6 +354,7 @@ void FaceSignalProcessor::Apply(protocol::FaceTrackingFrameBody& frame, const pr
 	}
 
 	CopyMappedInternalShapesToUpstream(frame);
+	ClampFrameExpressionOutputs(frame);
 }
 
 void FaceSignalProcessor::Reset()

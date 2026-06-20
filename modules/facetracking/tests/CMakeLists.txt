@@ -33,6 +33,7 @@ add_executable(facetracking_tests
     ${FT_DRIVER_SRC}/EyelidSync.cpp
     ${FT_DRIVER_SRC}/FaceSignalProcessor.cpp
     ${FT_DRIVER_SRC}/FaceOscAddressFilter.cpp
+    ${FT_DRIVER_SRC}/FaceOscPublisher.cpp
 )
 
 target_include_directories(facetracking_tests
@@ -43,6 +44,7 @@ target_include_directories(facetracking_tests
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/driver
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers
+    PRIVATE ${CMAKE_SOURCE_DIR}/modules/oscrouter/src/driver
 )
 
 target_link_libraries(facetracking_tests PRIVATE

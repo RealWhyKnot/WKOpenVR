@@ -186,25 +186,21 @@ void DrawShapeValueMeter(float preTuning, float postTuning, bool live)
 		return;
 	}
 
-	preTuning = std::isfinite(preTuning) ? std::clamp(preTuning, 0.0f, 2.0f) : 0.0f;
-	postTuning = std::isfinite(postTuning) ? std::clamp(postTuning, 0.0f, 2.0f) : 0.0f;
+	preTuning = std::isfinite(preTuning) ? std::clamp(preTuning, 0.0f, 1.0f) : 0.0f;
+	postTuning = std::isfinite(postTuning) ? std::clamp(postTuning, 0.0f, 1.0f) : 0.0f;
 
 	char overlay[96];
 	std::snprintf(overlay, sizeof(overlay), "%.0f%% -> %.0f%%  avatar %.0f%%", preTuning * 100.0f, postTuning * 100.0f,
 	              std::min(postTuning, 1.0f) * 100.0f);
-	ImGui::ProgressBar(postTuning / 2.0f, ImVec2(-1.0f, height), overlay);
+	ImGui::ProgressBar(postTuning, ImVec2(-1.0f, height), overlay);
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	const ImVec2 min = ImGui::GetItemRectMin();
 	const ImVec2 max = ImGui::GetItemRectMax();
-	const float markerX = min.x + (max.x - min.x) * 0.5f;
-	const ImU32 markerColor = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-	drawList->AddLine(ImVec2(markerX, min.y + 2.0f), ImVec2(markerX, max.y - 2.0f), markerColor, 1.0f);
-
-	const float rawX = min.x + (max.x - min.x) * (preTuning / 2.0f);
+	const float rawX = min.x + (max.x - min.x) * preTuning;
 	const ImU32 rawColor = ImGui::GetColorU32(ImGuiCol_Text);
 	drawList->AddCircleFilled(ImVec2(rawX, (min.y + max.y) * 0.5f), 3.0f, rawColor);
-	TooltipForLastItem("Bar scale is 0..200%. The vertical marker is the usual 100% avatar amplitude limit.");
+	TooltipForLastItem("Bar scale is 0..100%. Output is limited to the avatar parameter range.");
 }
 
 bool DrawPercentSlider(const char* label, int& value, int minValue, int maxValue, const char* tooltip,

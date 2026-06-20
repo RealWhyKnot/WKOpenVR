@@ -24,6 +24,55 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
+
+namespace {
+
+struct PublishedOscFloat
+{
+	std::string address;
+	float value = 0.0f;
+};
+
+std::vector<PublishedOscFloat>& PublishedOscFloats()
+{
+	static std::vector<PublishedOscFloat> values;
+	return values;
+}
+
+void ClearPublishedOscFloats()
+{
+	PublishedOscFloats().clear();
+}
+
+const PublishedOscFloat* FindPublishedOscFloat(const char* address)
+{
+	const auto& values = PublishedOscFloats();
+	for (auto it = values.rbegin(); it != values.rend(); ++it) {
+		if (it->address == address) return &(*it);
+	}
+	return nullptr;
+}
+
+} // namespace
+
+namespace pairdriver::oscrouter {
+
+bool PublishOsc(const char* source_id, const char* address, const char* typetag, const void* args, size_t arg_len)
+{
+	if (!source_id || std::strcmp(source_id, "facetracking") != 0) return false;
+	if (!address || !typetag || std::strcmp(typetag, ",f") != 0 || !args || arg_len != 4) return false;
+
+	const auto* bytes = static_cast<const uint8_t*>(args);
+	const uint32_t bits = (static_cast<uint32_t>(bytes[0]) << 24) | (static_cast<uint32_t>(bytes[1]) << 16) |
+	                      (static_cast<uint32_t>(bytes[2]) << 8) | static_cast<uint32_t>(bytes[3]);
+	float value = 0.0f;
+	std::memcpy(&value, &bits, sizeof(value));
+	PublishedOscFloats().push_back(PublishedOscFloat{address, value});
+	return true;
+}
+
+} // namespace pairdriver::oscrouter
 
 // ---------------------------------------------------------------------------
 // Reference OSC 1.0 float packet builder (mirrors OscSender.BuildOscFloatPacket
@@ -264,6 +313,65 @@ TEST(FaceOscPublishCounts, AddPreservesDiagnosticFields)
 	EXPECT_EQ(total.filtered, 6u);
 	EXPECT_EQ(total.deduped, 4u);
 	EXPECT_EQ(total.remapped, 10u);
+}
+
+TEST(FaceOscPublisher, ClampsLegacyAndCurrentExpressionOutput)
+{
+	ClearPublishedOscFloats();
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x2u;
+	frame.expressions[10] = 2.0f;          // EyeSquintLeft, legacy/internal expression path.
+	frame.upstream_expressions[0] = 2.0f;  // EyeSquintRight, current VRCFT path.
+	frame.upstream_expressions[1] = 2.0f;  // EyeSquintLeft, current VRCFT path.
+	frame.upstream_expressions[23] = 2.0f; // JawRight, signed derived v2/JawX path.
+	frame.upstream_expressions[24] = 0.0f; // JawLeft.
+
+	const facetracking::FaceOscPublishCounts counts = facetracking::PublishFaceFrameOsc(frame);
+
+	EXPECT_GT(counts.sent, 0u);
+	const PublishedOscFloat* legacySquint = FindPublishedOscFloat("/avatar/parameters/EyeSquintLeft");
+	const PublishedOscFloat* v2SquintLeft = FindPublishedOscFloat("/avatar/parameters/v2/EyeSquintLeft");
+	const PublishedOscFloat* v2SquintRight = FindPublishedOscFloat("/avatar/parameters/v2/EyeSquintRight");
+	const PublishedOscFloat* v2JawX = FindPublishedOscFloat("/avatar/parameters/v2/JawX");
+	ASSERT_NE(legacySquint, nullptr);
+	ASSERT_NE(v2SquintLeft, nullptr);
+	ASSERT_NE(v2SquintRight, nullptr);
+	ASSERT_NE(v2JawX, nullptr);
+	EXPECT_FLOAT_EQ(legacySquint->value, 1.0f);
+	EXPECT_FLOAT_EQ(v2SquintLeft->value, 1.0f);
+	EXPECT_FLOAT_EQ(v2SquintRight->value, 1.0f);
+	EXPECT_FLOAT_EQ(v2JawX->value, 1.0f);
+}
+
+TEST(FaceOscPublisher, ClampsEyeOutputHighSide)
+{
+	ClearPublishedOscFloats();
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x1u;
+	frame.eye_gaze_l[0] = 4.0f;
+	frame.eye_gaze_l[1] = -4.0f;
+	frame.eye_gaze_r[0] = 4.0f;
+	frame.eye_gaze_r[1] = -4.0f;
+	frame.eye_openness_l = 3.0f;
+	frame.eye_openness_r = 3.0f;
+	frame.pupil_dilation_l = 3.0f;
+	frame.pupil_dilation_r = 3.0f;
+
+	const facetracking::FaceOscPublishCounts counts = facetracking::PublishFaceFrameOsc(frame);
+
+	EXPECT_GT(counts.sent, 0u);
+	const PublishedOscFloat* leftX = FindPublishedOscFloat("/avatar/parameters/LeftEyeX");
+	const PublishedOscFloat* leftY = FindPublishedOscFloat("/avatar/parameters/LeftEyeY");
+	const PublishedOscFloat* leftLid = FindPublishedOscFloat("/avatar/parameters/LeftEyeLid");
+	const PublishedOscFloat* pupil = FindPublishedOscFloat("/avatar/parameters/v2/PupilDilation");
+	ASSERT_NE(leftX, nullptr);
+	ASSERT_NE(leftY, nullptr);
+	ASSERT_NE(leftLid, nullptr);
+	ASSERT_NE(pupil, nullptr);
+	EXPECT_FLOAT_EQ(leftX->value, 1.0f);
+	EXPECT_FLOAT_EQ(leftY->value, -1.0f);
+	EXPECT_FLOAT_EQ(leftLid->value, 1.0f);
+	EXPECT_FLOAT_EQ(pupil->value, 1.0f);
 }
 
 // ---------------------------------------------------------------------------

@@ -406,8 +406,8 @@ static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT = 200u;
 struct FaceShapeTuningParams
 {
 	uint16_t scale_percent; // 0..200; 100 = pass through
-	uint16_t min_percent;   // 0..200; lower post-scale output limit
-	uint16_t max_percent;   // 0..200; upper post-scale output limit
+	uint16_t min_percent;   // 0..200; requested lower post-scale limit, final output clamps to 0..1
+	uint16_t max_percent;   // 0..200; requested upper post-scale limit, final output clamps to 0..1
 };
 
 // POD payload for RequestSetFaceShapeTuning. index addresses one
