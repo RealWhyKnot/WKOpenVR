@@ -209,8 +209,9 @@ void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const protocol::Fa
 		const float scale = static_cast<float>(percent) / 100.0f;
 		const float minValue = static_cast<float>(lo) / 100.0f;
 		const float maxValue = static_cast<float>(hi) / 100.0f;
-		frame.expressions[i] =
+		const float tuned =
 		    std::clamp(ClampExpressionOutputSignal(frame.expressions[i] * scale), minValue, maxValue);
+		frame.expressions[i] = Clamp01(tuned);
 	}
 }
 

@@ -141,7 +141,7 @@ TEST(FaceSignalProcessor, ShapeTuningUnderextendsInternalAndUpstreamSlots)
 	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.60f, 1e-6f);
 }
 
-TEST(FaceSignalProcessor, ShapeTuningOverextendsInternalAndUpstreamSlots)
+TEST(FaceSignalProcessor, ShapeTuningBoostsInternalAndUpstreamSlotsWithinOutputRange)
 {
 	facetracking::FaceSignalProcessor processor;
 	protocol::FaceTrackingConfig cfg = MakeConfig();
@@ -149,16 +149,16 @@ TEST(FaceSignalProcessor, ShapeTuningOverextendsInternalAndUpstreamSlots)
 	auto tuning = MakeDefaultShapeTuning();
 	tuning[kOursMouthSmileLeft].scale_percent = 150;
 
-	frame.expressions[kOursMouthSmileLeft] = 0.80f;
-	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 0.80f;
+	frame.expressions[kOursMouthSmileLeft] = 0.40f;
+	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 0.40f;
 
 	processor.Apply(frame, cfg, tuning.data());
 
-	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.20f, 1e-6f);
-	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 1.20f, 1e-6f);
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 0.60f, 1e-6f);
+	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.60f, 1e-6f);
 }
 
-TEST(FaceSignalProcessor, ShapeTuningClampsOutputAtProtocolMaximum)
+TEST(FaceSignalProcessor, ShapeTuningClampsOutputAtValidSignalMaximum)
 {
 	facetracking::FaceSignalProcessor processor;
 	protocol::FaceTrackingConfig cfg = MakeConfig();
@@ -170,8 +170,8 @@ TEST(FaceSignalProcessor, ShapeTuningClampsOutputAtProtocolMaximum)
 
 	processor.Apply(frame, cfg, tuning.data());
 
-	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 2.0f, 1e-6f);
-	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 2.0f, 1e-6f);
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.0f, 1e-6f);
+	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 1.0f, 1e-6f);
 }
 
 TEST(FaceSignalProcessor, ShapeTuningCapsOutputAtConfiguredMaximum)
@@ -208,6 +208,24 @@ TEST(FaceSignalProcessor, ShapeTuningRaisesOutputAtConfiguredMinimum)
 
 	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 0.25f, 1e-6f);
 	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 0.25f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningHighConfiguredBoundsClampToValidSignalMaximum)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	auto tuning = MakeDefaultShapeTuning();
+	tuning[kOursMouthSmileLeft].scale_percent = 200;
+	tuning[kOursMouthSmileLeft].min_percent = 200;
+	tuning[kOursMouthSmileLeft].max_percent = 200;
+
+	frame.expressions[kOursMouthSmileLeft] = 0.25f;
+
+	processor.Apply(frame, cfg, tuning.data());
+
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.0f, 1e-6f);
+	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 1.0f, 1e-6f);
 }
 
 TEST(FaceSignalProcessor, MouthCloseCompensationIsDisabledByDefault)
