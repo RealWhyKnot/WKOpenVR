@@ -111,6 +111,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **diagnostics:** Log pollers and reloc_tick on change, not every tick (e917728)
 - tools(calibration): summarize experiment logs (6f82e13)
 - tools(calibration): add live experiment profile helper (6af37a4)
+- **dashboardinput:** Remove module (1b02581)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -232,6 +233,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Align relocalization quarantine timing (e31efd2)
 - **calibration:** Split locked-head smoothing and disable boundary writes (15d6eec)
 - **dynamicres:** Improve adaptive scaling (34333f8)
+- **facetracking:** Clamp face output boundaries (b89290c)
+- **facetracking:** Clamp tuned expression output (4d90553)
 
 ---
 
