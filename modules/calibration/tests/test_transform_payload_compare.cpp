@@ -11,8 +11,11 @@
 #include "TransformPayloadCompare.h"
 
 #include <cmath>
+#include <cstring>
 
 using protocol::SetDeviceTransform;
+using protocol::SetTrackingSystemFallback;
+using spacecal::apply::FallbackPayloadNearEqual;
 using spacecal::apply::kTransformNearEqualMeters;
 using spacecal::apply::kTransformNearEqualRotDotEps;
 using spacecal::apply::TransformPayloadNearEqual;
@@ -30,8 +33,23 @@ SetDeviceTransform MakePayload()
 	return SetDeviceTransform(1u, /*enabled=*/true, t, r, /*scale=*/1.0);
 }
 
-// Set b's rotation to a pure rotation of `deg` degrees about the X axis.
-void SetRotationDegAboutX(SetDeviceTransform& p, double deg)
+SetTrackingSystemFallback MakeFallbackPayload()
+{
+	SetTrackingSystemFallback p{};
+	const char systemName[] = "lighthouse";
+	std::memcpy(p.system_name, systemName, sizeof systemName);
+	p.enabled = true;
+	p.translation.v[0] = 0.10;
+	p.translation.v[1] = 2.00;
+	p.translation.v[2] = 1.50;
+	p.rotation = {1.0, 0.0, 0.0, 0.0};
+	p.scale = 1.0;
+	p.predictionSmoothness = 0;
+	p.recalibrateOnMovement = true;
+	return p;
+}
+
+template <typename Payload> void SetRotationDegAboutX(Payload& p, double deg)
 {
 	const double half = (deg * kPi / 180.0) / 2.0;
 	p.rotation.w = std::cos(half);
@@ -149,6 +167,103 @@ TEST(TransformPayloadNearEqual, BoundedStalenessAgainstFixedAnchor)
 	}
 	EXPECT_GE(sends, 5);
 	EXPECT_LT(sends, ticks); // far fewer than one send per tick
+	const double residual = std::fabs(live.translation.v[0] - anchor.translation.v[0]);
+	EXPECT_LE(residual, kTransformNearEqualMeters);
+}
+
+TEST(FallbackPayloadNearEqual, IdenticalAreEqual)
+{
+	const auto a = MakeFallbackPayload();
+	const auto b = a;
+	EXPECT_TRUE(FallbackPayloadNearEqual(a, b));
+}
+
+TEST(FallbackPayloadNearEqual, SubDeadbandTranslationEqual)
+{
+	const auto a = MakeFallbackPayload();
+	auto b = a;
+	b.translation.v[1] += kTransformNearEqualMeters * 0.5;
+	EXPECT_TRUE(FallbackPayloadNearEqual(a, b));
+}
+
+TEST(FallbackPayloadNearEqual, AboveDeadbandTranslationNotEqual)
+{
+	const auto a = MakeFallbackPayload();
+	auto b = a;
+	b.translation.v[2] += kTransformNearEqualMeters * 2.0;
+	EXPECT_FALSE(FallbackPayloadNearEqual(a, b));
+}
+
+TEST(FallbackPayloadNearEqual, ExactFieldChangesAlwaysSend)
+{
+	const auto base = MakeFallbackPayload();
+
+	auto system = base;
+	std::memset(system.system_name, 0, sizeof system.system_name);
+	const char nextSystem[] = "oculus";
+	std::memcpy(system.system_name, nextSystem, sizeof nextSystem);
+	EXPECT_FALSE(FallbackPayloadNearEqual(base, system));
+
+	auto enabled = base;
+	enabled.enabled = !base.enabled;
+	EXPECT_FALSE(FallbackPayloadNearEqual(base, enabled));
+
+	auto recal = base;
+	recal.recalibrateOnMovement = !base.recalibrateOnMovement;
+	EXPECT_FALSE(FallbackPayloadNearEqual(base, recal));
+
+	auto pred = base;
+	pred.predictionSmoothness = static_cast<decltype(pred.predictionSmoothness)>(base.predictionSmoothness + 1);
+	EXPECT_FALSE(FallbackPayloadNearEqual(base, pred));
+
+	auto scale = base;
+	scale.scale = base.scale + 0.01;
+	EXPECT_FALSE(FallbackPayloadNearEqual(base, scale));
+}
+
+TEST(FallbackPayloadNearEqual, SubDeadbandRotationEqual)
+{
+	const auto a = MakeFallbackPayload();
+	auto b = a;
+	SetRotationDegAboutX(b, 0.01);
+	EXPECT_TRUE(FallbackPayloadNearEqual(a, b));
+}
+
+TEST(FallbackPayloadNearEqual, AboveDeadbandRotationNotEqual)
+{
+	const auto a = MakeFallbackPayload();
+	auto b = a;
+	SetRotationDegAboutX(b, 0.1);
+	EXPECT_FALSE(FallbackPayloadNearEqual(a, b));
+}
+
+TEST(FallbackPayloadNearEqual, NegatedQuaternionSameOrientation)
+{
+	const auto a = MakeFallbackPayload();
+	auto b = a;
+	b.rotation.w = -a.rotation.w;
+	b.rotation.x = -a.rotation.x;
+	b.rotation.y = -a.rotation.y;
+	b.rotation.z = -a.rotation.z;
+	EXPECT_TRUE(FallbackPayloadNearEqual(a, b));
+}
+
+TEST(FallbackPayloadNearEqual, BoundedStalenessAgainstFixedAnchor)
+{
+	auto anchor = MakeFallbackPayload();
+	auto live = anchor;
+	const double step = kTransformNearEqualMeters * 0.3;
+	const int ticks = 30;
+	int sends = 0;
+	for (int i = 0; i < ticks; ++i) {
+		live.translation.v[0] += step;
+		if (!FallbackPayloadNearEqual(anchor, live)) {
+			++sends;
+			anchor = live;
+		}
+	}
+	EXPECT_GE(sends, 5);
+	EXPECT_LT(sends, ticks);
 	const double residual = std::fabs(live.translation.v[0] - anchor.translation.v[0]);
 	EXPECT_LE(residual, kTransformNearEqualMeters);
 }

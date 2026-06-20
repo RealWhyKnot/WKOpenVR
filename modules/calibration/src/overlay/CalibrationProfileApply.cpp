@@ -11,6 +11,7 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -48,19 +49,62 @@ bool g_alignmentSpeedSent = false;
 protocol::SetTrackingSystemFallback g_lastFallback{};
 bool g_lastFallbackSent = false;
 
-bool FallbackPayloadEqual(const protocol::SetTrackingSystemFallback& a, const protocol::SetTrackingSystemFallback& b)
+enum class ProfileApplySendKind
 {
-	if (memcmp(a.system_name, b.system_name, sizeof a.system_name) != 0) return false;
-	if (a.enabled != b.enabled) return false;
-	if (a.predictionSmoothness != b.predictionSmoothness) return false;
-	if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
-	if (a.scale != b.scale) return false;
-	for (int i = 0; i < 3; i++)
-		if (a.translation.v[i] != b.translation.v[i]) return false;
-	if (a.rotation.w != b.rotation.w || a.rotation.x != b.rotation.x || a.rotation.y != b.rotation.y ||
-	    a.rotation.z != b.rotation.z)
-		return false;
-	return true;
+	Control,
+	Device,
+	Fallback
+};
+
+struct ProfileApplyStats
+{
+	double ipcMs = 0.0;
+	int ipcSends = 0;
+	int deviceSends = 0;
+	int fallbackSends = 0;
+};
+
+constexpr double kSlowProfileApplyMs = 20.0;
+
+using ProfileApplyClock = std::chrono::steady_clock;
+
+double MsSince(ProfileApplyClock::time_point start)
+{
+	return std::chrono::duration<double, std::milli>(ProfileApplyClock::now() - start).count();
+}
+
+ProfileApplyStats* g_profileApplyStats = nullptr;
+
+struct ProfileApplyStatsScope
+{
+	explicit ProfileApplyStatsScope(ProfileApplyStats& stats) : previous(g_profileApplyStats)
+	{
+		g_profileApplyStats = &stats;
+	}
+
+	~ProfileApplyStatsScope() { g_profileApplyStats = previous; }
+
+	ProfileApplyStats* previous;
+};
+
+void SendProfileApplyRequest(const protocol::Request& request, ProfileApplySendKind kind)
+{
+	const auto start = ProfileApplyClock::now();
+	Driver.SendBlocking(request);
+	if (!g_profileApplyStats) return;
+
+	g_profileApplyStats->ipcMs += MsSince(start);
+	++g_profileApplyStats->ipcSends;
+	switch (kind) {
+		case ProfileApplySendKind::Device:
+			++g_profileApplyStats->deviceSends;
+			break;
+		case ProfileApplySendKind::Fallback:
+			++g_profileApplyStats->fallbackSends;
+			break;
+		case ProfileApplySendKind::Control:
+			break;
+	}
 }
 
 void SetTargetSystemField(protocol::SetDeviceTransform& payload, const std::string& system)
@@ -82,7 +126,7 @@ bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransfor
 	}
 	protocol::Request req(protocol::RequestSetDeviceTransform);
 	req.setDeviceTransform = payload;
-	Driver.SendBlocking(req);
+	SendProfileApplyRequest(req, ProfileApplySendKind::Device);
 	cache.valid = true;
 	cache.payload = payload;
 	Metrics::LogAnnotationf("profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
@@ -135,13 +179,13 @@ void SendFallbackIfChanged(const std::string& systemName, bool enabled, const Ei
 	payload.recalibrateOnMovement = recalibrateOnMovement;
 
 	auto it = g_lastFallbacksBySystem.find(systemName);
-	if (it != g_lastFallbacksBySystem.end() && FallbackPayloadEqual(it->second, payload)) {
+	if (it != g_lastFallbacksBySystem.end() && spacecal::apply::FallbackPayloadNearEqual(it->second, payload)) {
 		return;
 	}
 
 	protocol::Request req(protocol::RequestSetTrackingSystemFallback);
 	req.setTrackingSystemFallback = payload;
-	Driver.SendBlocking(req);
+	SendProfileApplyRequest(req, ProfileApplySendKind::Fallback);
 	g_lastFallbacksBySystem[systemName] = payload;
 	// Legacy single-slot cache kept for any code that still reads it.
 	g_lastFallback = payload;
@@ -176,6 +220,7 @@ void InvalidateAllTransformCaches()
 	}
 	g_alignmentSpeedSent = false;
 	g_lastFallbackSent = false;
+	g_lastFallbacksBySystem.clear();
 }
 
 void ResetAndDisableOffsets(uint32_t id, const std::string& trackingSystem)
@@ -220,6 +265,10 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		ctx.enabled = ctx.validProfile;
 		return;
 	}
+
+	const auto applyStart = ProfileApplyClock::now();
+	ProfileApplyStats stats;
+	ProfileApplyStatsScope statsScope(stats);
 
 	std::unique_ptr<char[]> buffer_array(new char[vr::k_unMaxPropertyStringSize]);
 	char* buffer = buffer_array.get();
@@ -267,7 +316,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 			disablePayload.scale = 1.0;
 			protocol::Request req(protocol::RequestSetTrackingSystemFallback);
 			req.setTrackingSystemFallback = disablePayload;
-			Driver.SendBlocking(req);
+			SendProfileApplyRequest(req, ProfileApplySendKind::Fallback);
 		}
 
 		InvalidateAllTransformCaches();
@@ -279,7 +328,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 	    memcmp(&g_lastAlignmentSpeed, &ctx.alignmentSpeedParams, sizeof g_lastAlignmentSpeed) != 0) {
 		protocol::Request setParamsReq(protocol::RequestSetAlignmentSpeedParams);
 		setParamsReq.setAlignmentSpeedParams = ctx.alignmentSpeedParams;
-		Driver.SendBlocking(setParamsReq);
+		SendProfileApplyRequest(setParamsReq, ProfileApplySendKind::Control);
 		g_lastAlignmentSpeed = ctx.alignmentSpeedParams;
 		g_alignmentSpeedSent = true;
 	}
@@ -563,5 +612,16 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		snprintf(snapBuf, sizeof snapBuf, "profile_apply_snap_cycle_consumed: reason=%s payloadSent=%d", snapReason,
 		         scanPayloadSent);
 		Metrics::WriteLogAnnotation(snapBuf);
+	}
+
+	const double totalMs = MsSince(applyStart);
+	if (totalMs >= kSlowProfileApplyMs) {
+		const double nonIpcMs = std::max(0.0, totalMs - stats.ipcMs);
+		Metrics::LogAnnotationf("profile_apply_slow: total_ms=%.1f ipc_ms=%.1f non_ipc_ms=%.1f"
+		                        " ipc_sends=%d fallback_sends=%d device_sends=%d targetMatched=%d"
+		                        " payloadSent=%d state=%d enabled=%d validProfile=%d snap=%d",
+		                        totalMs, stats.ipcMs, nonIpcMs, stats.ipcSends, stats.fallbackSends, stats.deviceSends,
+		                        scanTargetMatched, scanPayloadSent, (int)CalCtx.state, (int)ctx.enabled,
+		                        (int)ctx.validProfile, (int)snapThisCycle);
 	}
 }

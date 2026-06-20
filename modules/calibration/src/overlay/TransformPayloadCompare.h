@@ -5,10 +5,10 @@
 #include <cmath>
 #include <cstring>
 
-// Equality test for the per-device transform payload the overlay sends to the
-// driver, with a sub-perceptual deadband on the transform itself. Pure and
-// header-only so it can be unit-tested (tests/test_transform_payload_compare.cpp)
-// without the overlay's OpenVR/IPC dependencies.
+// Equality tests for transform payloads the overlay sends to the driver, with
+// a sub-perceptual deadband on the transform itself. Pure and header-only so
+// it can be unit-tested (tests/test_transform_payload_compare.cpp) without the
+// overlay's OpenVR/IPC dependencies.
 //
 // Why a deadband: continuous calibration updates its offset on every accepted
 // candidate, so the exact byte-compare this replaced differed essentially every
@@ -36,6 +36,20 @@ inline constexpr double kTransformNearEqualMeters = 1e-4;
 // so 2e-8 maps to ~0.02 deg.
 inline constexpr double kTransformNearEqualRotDotEps = 2e-8;
 
+inline bool TranslationNearEqual(const vr::HmdVector3d_t& a, const vr::HmdVector3d_t& b)
+{
+	const double dx = a.v[0] - b.v[0];
+	const double dy = a.v[1] - b.v[1];
+	const double dz = a.v[2] - b.v[2];
+	return (dx * dx + dy * dy + dz * dz) <= (kTransformNearEqualMeters * kTransformNearEqualMeters);
+}
+
+inline bool RotationNearEqual(const vr::HmdQuaternion_t& a, const vr::HmdQuaternion_t& b)
+{
+	const double dot = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
+	return (1.0 - std::fabs(dot)) <= kTransformNearEqualRotDotEps;
+}
+
 inline bool TransformPayloadNearEqual(const protocol::SetDeviceTransform& a, const protocol::SetDeviceTransform& b)
 {
 	// Exact on everything except the transform components.
@@ -53,19 +67,25 @@ inline bool TransformPayloadNearEqual(const protocol::SetDeviceTransform& a, con
 	if (std::memcmp(a.target_system, b.target_system, sizeof a.target_system) != 0) return false;
 
 	// Translation deadband (squared Euclidean distance vs squared tolerance).
-	const double dx = a.translation.v[0] - b.translation.v[0];
-	const double dy = a.translation.v[1] - b.translation.v[1];
-	const double dz = a.translation.v[2] - b.translation.v[2];
-	if ((dx * dx + dy * dy + dz * dz) > (kTransformNearEqualMeters * kTransformNearEqualMeters)) {
-		return false;
-	}
+	if (!TranslationNearEqual(a.translation, b.translation)) return false;
 
 	// Rotation deadband.
-	const double dot = a.rotation.w * b.rotation.w + a.rotation.x * b.rotation.x + a.rotation.y * b.rotation.y +
-	                   a.rotation.z * b.rotation.z;
-	if ((1.0 - std::fabs(dot)) > kTransformNearEqualRotDotEps) {
-		return false;
-	}
+	if (!RotationNearEqual(a.rotation, b.rotation)) return false;
+
+	return true;
+}
+
+inline bool FallbackPayloadNearEqual(const protocol::SetTrackingSystemFallback& a,
+                                     const protocol::SetTrackingSystemFallback& b)
+{
+	// Exact on routing and policy fields; deadband only the transform.
+	if (std::memcmp(a.system_name, b.system_name, sizeof a.system_name) != 0) return false;
+	if (a.enabled != b.enabled) return false;
+	if (a.predictionSmoothness != b.predictionSmoothness) return false;
+	if (a.recalibrateOnMovement != b.recalibrateOnMovement) return false;
+	if (a.scale != b.scale) return false;
+	if (!TranslationNearEqual(a.translation, b.translation)) return false;
+	if (!RotationNearEqual(a.rotation, b.rotation)) return false;
 
 	return true;
 }
