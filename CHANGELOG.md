@@ -112,6 +112,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - tools(calibration): summarize experiment logs (6f82e13)
 - tools(calibration): add live experiment profile helper (6af37a4)
 - **dashboardinput:** Remove module (1b02581)
+- **calibration:** Deadband fallback transform sends (98ed2ce)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -235,6 +236,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dynamicres:** Improve adaptive scaling (34333f8)
 - **facetracking:** Clamp face output boundaries (b89290c)
 - **facetracking:** Clamp tuned expression output (4d90553)
+- **oscrouter:** Make shutdown idempotent (6007cce)
+- **steamvr:** Require safe-mode marker for recovery (1c3400c)
+- **captions:** Stop startup after owner shutdown (2603754)
+- **common:** Preserve module id wire values (f037bde)
 
 ---
 
