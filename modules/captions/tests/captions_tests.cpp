@@ -12,7 +12,9 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -27,6 +29,7 @@
 #include "CaptionsOutputPolicy.h"
 #include "CaptionsRealtimeFlags.h"
 #include "CaptionsSpeechModels.h"
+#include "HostStatus.h"
 #include "Protocol.h"
 
 // Header-only host + overlay logic under test (no ImGui / COM / device access).
@@ -38,6 +41,8 @@
 #include "SileroVadModelContract.h"
 #include "TranscriptText.h"
 #include "WhisperPromptHistory.h"
+
+void CaptionsHostLog(const char*, ...) {}
 
 TEST(ChatboxPacerTest, MinimumGapEnforced)
 {
@@ -1127,6 +1132,45 @@ TEST(AudioInputFileTest, ReadRoundTripFromTempDir)
 
 	DeleteFileW(path.c_str());
 	EXPECT_EQ(captions::ReadCaptionsInputDeviceId(L""), ""); // empty dir is safe
+}
+
+TEST(HostStatusTest, FlushRetriesWhenDestinationIsTemporarilyLocked)
+{
+	wchar_t tmp[MAX_PATH];
+	DWORD n = GetTempPathW(MAX_PATH, tmp);
+	ASSERT_GT(n, 0u);
+	std::wstring dir(tmp, n);
+	if (!dir.empty() && dir.back() == L'\\') dir.pop_back();
+	dir +=
+	    L"\\WKOpenVR_HostStatus_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(GetTickCount64());
+	ASSERT_TRUE(CreateDirectoryW(dir.c_str(), nullptr)) << GetLastError();
+
+	std::wstring path = dir + L"\\host_status.json";
+	HostStatus status(path);
+	status.SetPhase("first");
+	status.Flush();
+
+	HANDLE held = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+	                          FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(held, INVALID_HANDLE_VALUE) << GetLastError();
+
+	std::thread release([held]() {
+		Sleep(30);
+		CloseHandle(held);
+	});
+
+	status.SetPhase("second");
+	status.Flush();
+	release.join();
+
+	std::ifstream in(path.c_str(), std::ios::binary);
+	std::string body(std::istreambuf_iterator<char>(in), {});
+	EXPECT_NE(body.find("\"phase\": \"second\""), std::string::npos) << body;
+	EXPECT_EQ(GetFileAttributesW((path + L".tmp").c_str()), INVALID_FILE_ATTRIBUTES);
+
+	DeleteFileW((path + L".tmp").c_str());
+	DeleteFileW(path.c_str());
+	RemoveDirectoryW(dir.c_str());
 }
 
 // ---------------------------------------------------------------------------

@@ -48,6 +48,11 @@ static std::string EscapeJson(const std::string& s)
 	return out;
 }
 
+static bool IsRetryableReplaceError(DWORD error)
+{
+	return error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION;
+}
+
 HostStatus::HostStatus(const std::wstring& status_path)
 {
 	WritePath(status_path);
@@ -400,8 +405,24 @@ void HostStatus::DoFlush()
 	CloseHandle(h);
 
 	if (written == static_cast<DWORD>(json.size())) {
-		if (!MoveFileExW(tmp.c_str(), status_path_.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-			TH_LOG("[status] MoveFileExW failed err=%lu path=%ls", (unsigned long)GetLastError(), status_path_.c_str());
+		bool replaced = false;
+		DWORD last_error = ERROR_SUCCESS;
+		int attempts = 0;
+		constexpr int kMaxReplaceAttempts = 20;
+		for (int attempt = 1; attempt <= kMaxReplaceAttempts; ++attempt) {
+			attempts = attempt;
+			if (MoveFileExW(tmp.c_str(), status_path_.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+				replaced = true;
+				break;
+			}
+			last_error = GetLastError();
+			if (!IsRetryableReplaceError(last_error) || attempt == kMaxReplaceAttempts) break;
+			Sleep(10);
+		}
+		if (!replaced) {
+			TH_LOG("[status] MoveFileExW failed err=%lu attempts=%d path=%ls", (unsigned long)last_error, attempts,
+			       status_path_.c_str());
+			DeleteFileW(tmp.c_str());
 		}
 	}
 	else {

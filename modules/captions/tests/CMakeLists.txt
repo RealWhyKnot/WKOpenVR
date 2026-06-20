@@ -17,7 +17,8 @@ set(TR_HOST_SRC "${CMAKE_SOURCE_DIR}/modules/captions/src/host")
 add_executable(captions_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/captions_tests.cpp
     # Pull in the ChatboxPacer implementation for the pacer tests.
-    ${TR_HOST_SRC}/ChatboxPacer.cpp)
+    ${TR_HOST_SRC}/ChatboxPacer.cpp
+    ${TR_HOST_SRC}/HostStatus.cpp)
 
 target_include_directories(captions_tests PRIVATE
     ${TR_HOST_SRC}
@@ -26,7 +27,9 @@ target_include_directories(captions_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/lib/openvr/headers)
 
-target_link_libraries(captions_tests PRIVATE GTest::gtest_main)
+target_link_libraries(captions_tests PRIVATE
+    GTest::gtest_main
+    openvr_pair_common)
 
 target_compile_definitions(captions_tests PRIVATE
     NOMINMAX

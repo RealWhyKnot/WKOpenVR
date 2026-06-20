@@ -848,13 +848,26 @@ try {
 	}
 	// Start control pipe thread.
 	std::thread ctrl_thread(ControlPipeThread);
+	bool vr_ok = false;
+	auto exit_during_startup = [&](const char* stage) -> int {
+		TH_LOG("[main] shutdown requested during startup stage=%s", stage ? stage : "unknown");
+		status.SetState(HostStatus::State::Idle);
+		status.SetPhase("shutdown");
+		status.Flush();
+		if (vr_ok) vr::VR_Shutdown();
+		g_shutdown.store(true, std::memory_order_release);
+		WakeControlPipe();
+		if (ctrl_thread.joinable()) ctrl_thread.join();
+		if (owner_thread.joinable()) owner_thread.join();
+		CaptionsHostFlushLog();
+		return 0;
+	};
 
 	// Initialise OpenVR with a short retry loop. The host can launch slightly
 	// ahead of SteamVR's IPC being ready, in which case the very first
 	// VR_Init returns VRInitError_Init_HmdNotFoundPresenceFailed (121) and
 	// PTT was silently unavailable for the rest of the session. Retry every
 	// 2 s for up to 30 s; bail out immediately on shutdown.
-	bool vr_ok = false;
 	{
 		constexpr int kMaxAttempts = 15;
 		constexpr auto kAttemptInterval = std::chrono::seconds(2);
@@ -881,14 +894,16 @@ try {
 			}
 			if (g_shutdown.load(std::memory_order_acquire)) break;
 		}
-		if (!vr_ok) {
+		if (!vr_ok && !g_shutdown.load(std::memory_order_acquire)) {
 			TH_LOG("[main] VR_Init gave up after %d attempts (last err=%d: %s); "
 			       "PTT will be unavailable for this session",
 			       kMaxAttempts, (int)vr_err, vr::VR_GetVRInitErrorAsSymbol(vr_err));
 		}
 	}
+	if (g_shutdown.load(std::memory_order_acquire)) return exit_during_startup("vr-init");
 	status.SetPttStatus(vr_ok, false, "", vr_ok ? "" : "VR_Init failed; push-to-talk unavailable.");
 	if (vr_ok) RegisterCaptionsManifest();
+	if (g_shutdown.load(std::memory_order_acquire)) return exit_during_startup("actions");
 
 	TH_LOG("[startup] phase=initializing-vad");
 	status.SetPhase("initializing-vad");

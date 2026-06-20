@@ -1,4 +1,9 @@
 #define _CRT_SECURE_NO_DEPRECATE
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #include "HostStatusPoller.h"
 
 #include "JsonUtil.h"
@@ -6,8 +11,6 @@
 #include "Win32Text.h"
 
 #include <chrono>
-#include <fstream>
-#include <sstream>
 #include <string>
 
 namespace captions {
@@ -20,6 +23,29 @@ std::wstring ResolveStatusPath()
 {
 	std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"captions", false);
 	return dir.empty() ? std::wstring() : dir + L"\\host_status.json";
+}
+
+std::string ReadStatusFileShared(const std::wstring& path)
+{
+	HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+	                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return {};
+
+	LARGE_INTEGER size{};
+	if (!GetFileSizeEx(h, &size) || size.QuadPart < 0 || size.QuadPart > 1024 * 1024) {
+		CloseHandle(h);
+		return {};
+	}
+
+	std::string body(static_cast<size_t>(size.QuadPart), '\0');
+	DWORD read = 0;
+	if (!body.empty() && !ReadFile(h, body.data(), static_cast<DWORD>(body.size()), &read, nullptr)) {
+		CloseHandle(h);
+		return {};
+	}
+	CloseHandle(h);
+	body.resize(read);
+	return body;
 }
 } // namespace
 
@@ -67,12 +93,8 @@ void HostStatusPoller::Tick()
 
 void HostStatusPoller::ReadFile()
 {
-	std::ifstream is(openvr_pair::common::Utf8ToWide(path_utf8_));
-	if (!is) return;
-
-	std::stringstream ss;
-	ss << is.rdbuf();
-	std::string body = ss.str();
+	std::string body = ReadStatusFileShared(openvr_pair::common::Utf8ToWide(path_utf8_));
+	if (body.empty()) return;
 
 	picojson::value root;
 	if (!openvr_pair::common::json::ParseObject(root, body)) return;

@@ -135,8 +135,25 @@ std::filesystem::path MakeTempDir(const wchar_t* name)
 
 std::string ReadFileUtf8(const std::filesystem::path& path)
 {
-	std::ifstream f(path, std::ios::binary);
-	return std::string(std::istreambuf_iterator<char>(f), {});
+	HANDLE h = CreateFileW(path.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return {};
+
+	LARGE_INTEGER size{};
+	if (!GetFileSizeEx(h, &size) || size.QuadPart < 0 || size.QuadPart > 64ll * 1024 * 1024) {
+		CloseHandle(h);
+		return {};
+	}
+
+	std::string body(static_cast<size_t>(size.QuadPart), '\0');
+	DWORD read = 0;
+	if (!body.empty() && !ReadFile(h, body.data(), static_cast<DWORD>(body.size()), &read, nullptr)) {
+		CloseHandle(h);
+		return {};
+	}
+	CloseHandle(h);
+	body.resize(read);
+	return body;
 }
 
 void WriteFileUtf8(const std::filesystem::path& path, const std::string& content)
@@ -916,8 +933,7 @@ TEST(E2E, CaptionsHostExitsWhenOwnerLeaseDisabled)
 		    lease.Heartbeat();
 		    std::string status = ReadFileUtf8(statusPath);
 		    return status.find("\"phase\": \"singleton-acquired\"") != std::string::npos ||
-		           status.find("\"phase\": \"opening-control-pipe\"") != std::string::npos ||
-		           status.find("\"phase\": \"running\"") != std::string::npos;
+		           status.find("\"phase\": \"opening-control-pipe\"") != std::string::npos;
 	    },
 	    60000ms))
 	    << "captions status: " << ReadFileUtf8(statusPath);
@@ -926,6 +942,9 @@ TEST(E2E, CaptionsHostExitsWhenOwnerLeaseDisabled)
 	ASSERT_TRUE(host.Wait(15000)) << "captions host did not exit after owner lease was disabled; status: "
 	                              << ReadFileUtf8(statusPath);
 	EXPECT_EQ(host.ExitCode(), 0u) << "captions status: " << ReadFileUtf8(statusPath);
+	const std::string finalStatus = ReadFileUtf8(statusPath);
+	EXPECT_NE(finalStatus.find("\"phase\": \"shutdown\""), std::string::npos) << "captions status: " << finalStatus;
+	EXPECT_EQ(finalStatus.find("\"phase\": \"running\""), std::string::npos) << "captions status: " << finalStatus;
 }
 
 TEST(E2E, FaceHostLoadsTestModuleAndPublishesFrames)
