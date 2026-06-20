@@ -46,12 +46,22 @@ TEST(SafeModeParse, ExtractsBlockedDriversFromRealLog)
 
 TEST(SafeModeParse, DeduplicatesRepeatedBlockLines)
 {
-	const std::string log = "Not loading driver 01wkopenvr because it was blocked by a previous safe mode event\n"
+	const std::string log = "Using safe mode\n"
+	                        "Not loading driver 01wkopenvr because it was blocked by a previous safe mode event\n"
 	                        "Not loading driver 01wkopenvr because it was blocked by a previous safe mode event\n";
 	std::vector<std::string> blocked;
 	EXPECT_TRUE(svc::ParseVrServerSafeModeBlock(log, blocked));
 	ASSERT_EQ(blocked.size(), 1u);
 	EXPECT_EQ(blocked[0], "01wkopenvr");
+}
+
+TEST(SafeModeParse, IgnoresBlockedDriverLinesWithoutSafeModeMarker)
+{
+	const std::string log = "Not loading driver 01wkopenvr because it was blocked by a previous safe mode event\n"
+	                        "Driver 01wkopenvr loaded in a later session\n";
+	std::vector<std::string> blocked;
+	EXPECT_FALSE(svc::ParseVrServerSafeModeBlock(log, blocked));
+	EXPECT_TRUE(blocked.empty());
 }
 
 TEST(SafeModeParse, CleanLogReportsNoBlock)

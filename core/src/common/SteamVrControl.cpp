@@ -159,6 +159,9 @@ bool ParseVrServerSafeModeBlock(const std::string& logText, std::vector<std::str
 	blocked.clear();
 	static const std::string kPrefix = "Not loading driver ";
 	static const std::string kSuffix = " because it was blocked by a previous safe mode event";
+	static const std::string kSafeModeMarker = "Using safe mode";
+
+	if (logText.find(kSafeModeMarker) == std::string::npos) return false;
 
 	size_t pos = 0;
 	while (true) {
