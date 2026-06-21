@@ -57,7 +57,7 @@ private:
 	void TryCreateOverlay();
 	void DrainOverlayEvents();
 	void DrainEventsForHandle(vr::VROverlayHandle_t handle);
-	void RefreshDashboardState();
+	void SetDashboardStateFromActiveOverlay(bool activeDashboardOverlay);
 	void CleanupGlobalActionSetPrioritySetting();
 	bool IsActiveDashboardOverlay() const;
 

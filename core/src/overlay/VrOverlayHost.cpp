@@ -250,27 +250,13 @@ bool VrOverlayHost::IsActiveDashboardOverlay() const
 	return vr::VROverlay()->IsActiveDashboardOverlay(mainHandle_);
 }
 
-void VrOverlayHost::RefreshDashboardState()
+void VrOverlayHost::SetDashboardStateFromActiveOverlay(bool activeDashboardOverlay)
 {
-	anyDashboardVisible_ = false;
+	// Keep the legacy context fields conservative; avoid polling global
+	// dashboard ownership while this overlay is in the background.
+	anyDashboardVisible_ = activeDashboardOverlay;
 	primaryDashboardDevice_ = vr::k_unTrackedDeviceIndexInvalid;
 	primaryDashboardHand_ = 0;
-
-	if (!vrReady_ || !vr::VROverlay()) return;
-	anyDashboardVisible_ = vr::VROverlay()->IsDashboardVisible();
-	if (!anyDashboardVisible_) return;
-
-	primaryDashboardDevice_ = vr::VROverlay()->GetPrimaryDashboardDevice();
-	if (primaryDashboardDevice_ == vr::k_unTrackedDeviceIndexInvalid || !vr::VRSystem()) return;
-
-	const vr::ETrackedControllerRole role =
-	    vr::VRSystem()->GetControllerRoleForTrackedDeviceIndex(primaryDashboardDevice_);
-	if (role == vr::TrackedControllerRole_LeftHand) {
-		primaryDashboardHand_ = 1;
-	}
-	else if (role == vr::TrackedControllerRole_RightHand) {
-		primaryDashboardHand_ = 2;
-	}
 }
 
 void VrOverlayHost::DrainOverlayEvents()
@@ -314,6 +300,13 @@ void VrOverlayHost::DrainEventsForHandle(vr::VROverlayHandle_t handle)
 
 bool VrOverlayHost::TickFrame(int, int)
 {
+	auto logSlowStage = [](const char* stage, double stageStartSeconds) {
+		const double ms = (NowSeconds() - stageStartSeconds) * 1000.0;
+		if (ms >= 50.0) {
+			openvr_pair::common::DiagnosticLog("vr-overlay", "vr_tick_stage stage='%s' ms=%.1f", stage, ms);
+		}
+	};
+
 	// Stage 1: bring the VR session up. While SteamVR is down the rest
 	// of this function is a no-op and the umbrella continues to render
 	// to its desktop window only.
@@ -324,24 +317,31 @@ bool VrOverlayHost::TickFrame(int, int)
 			TryInitVrStack();
 		}
 		if (!vrReady_) {
-			RefreshDashboardState();
+			SetDashboardStateFromActiveOverlay(false);
 			return false;
 		}
 	}
 
-	// Stage 2: register the dashboard overlay (one-shot), then refresh
-	// dashboard state for the current frame.
+	// Stage 2: register the dashboard overlay (one-shot), then check only this
+	// overlay's visibility. Global dashboard-owner polling is not needed here.
+	double stageStartSeconds = NowSeconds();
 	TryCreateOverlay();
-	RefreshDashboardState();
+	logSlowStage("try_create_overlay", stageStartSeconds);
 
-	// Stage 3: drain OpenVR events into ImGui IO. Virtual-keyboard
-	// support is intentionally deferred -- replacing an active
-	// ImGui InputText buffer needs imgui_internal API that varies
-	// across the pin range and is best landed after the dashboard
-	// render path is verified end-to-end.
-	DrainOverlayEvents();
+	stageStartSeconds = NowSeconds();
+	const bool activeDashboardOverlay = IsActiveDashboardOverlay();
+	logSlowStage("is_active_dashboard_overlay", stageStartSeconds);
+	SetDashboardStateFromActiveOverlay(activeDashboardOverlay);
 
-	return IsActiveDashboardOverlay();
+	// Stage 3: drain OpenVR events into ImGui IO only while our dashboard tab
+	// is active. Background overlay event polling is not useful to the shell.
+	if (activeDashboardOverlay) {
+		stageStartSeconds = NowSeconds();
+		DrainOverlayEvents();
+		logSlowStage("drain_overlay_events", stageStartSeconds);
+	}
+
+	return activeDashboardOverlay;
 }
 
 void VrOverlayHost::SubmitTexture(unsigned int glTextureId, int width, int height)
