@@ -240,6 +240,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **steamvr:** Require safe-mode marker for recovery (1c3400c)
 - **captions:** Stop startup after owner shutdown (2603754)
 - **common:** Preserve module id wire values (f037bde)
+- **overlay:** Avoid background dashboard polling (b55b604)
 
 ---
 
