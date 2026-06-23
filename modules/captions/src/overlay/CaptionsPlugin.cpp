@@ -4,6 +4,7 @@
 #include "CaptionsIpcClient.h"
 #include "CaptionsTab.h"
 #include "UiHelpers.h"
+#include "Win32CommandLine.h"
 #include "Win32Paths.h"
 
 #include <imgui/imgui.h>
@@ -28,36 +29,6 @@ namespace {
 std::wstring WidenAscii(const std::string& value)
 {
 	return std::wstring(value.begin(), value.end());
-}
-
-std::wstring QuoteArg(const std::wstring& value)
-{
-	std::wstring out;
-	out.reserve(value.size() + 2);
-	out.push_back(L'"');
-	unsigned backslashes = 0;
-	for (wchar_t ch : value) {
-		if (ch == L'\\') {
-			++backslashes;
-			continue;
-		}
-		if (ch == L'"') {
-			out.append(backslashes * 2 + 1, L'\\');
-			out.push_back(ch);
-			backslashes = 0;
-			continue;
-		}
-		if (backslashes) {
-			out.append(backslashes, L'\\');
-			backslashes = 0;
-		}
-		out.push_back(ch);
-	}
-	if (backslashes) {
-		out.append(backslashes * 2, L'\\');
-	}
-	out.push_back(L'"');
-	return out;
 }
 
 bool FileExists(const std::wstring& path)
@@ -376,11 +347,11 @@ void CaptionsPlugin::StartPackAction(const std::string& pack_id, bool uninstall)
 	}
 
 	std::wstring command = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File ";
-	command += QuoteArg(pack_script_path_);
+	command += openvr_pair::common::QuoteCommandLineArg(pack_script_path_);
 	command += L" -PackId ";
-	command += QuoteArg(WidenAscii(pack_id));
+	command += openvr_pair::common::QuoteCommandLineArg(WidenAscii(pack_id));
 	command += L" -Manifest ";
-	command += QuoteArg(pack_manifest_path_);
+	command += openvr_pair::common::QuoteCommandLineArg(pack_manifest_path_);
 	if (uninstall) command += L" -Uninstall";
 
 	STARTUPINFOW si{};

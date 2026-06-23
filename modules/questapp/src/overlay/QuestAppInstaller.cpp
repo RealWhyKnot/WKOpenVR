@@ -3,6 +3,7 @@
 #include "AdbSetupWizard.h"
 #include "QuestCompanionProtocol.h"
 #include "QuestAppCatalog.h"
+#include "Win32CommandLine.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -27,19 +28,6 @@ std::string Narrow(const std::wstring& value)
 	return openvr_pair::common::WideToUtf8(value);
 }
 
-std::wstring QuoteForCommandLine(const std::wstring& value)
-{
-	std::wstring out = L"\"";
-	for (wchar_t ch : value) {
-		if (ch == L'"')
-			out += L"\\\"";
-		else
-			out += ch;
-	}
-	out += L"\"";
-	return out;
-}
-
 OperationResult RunPowerShellScript(const std::wstring& scriptPath, const std::vector<std::wstring>& args,
                                     DWORD timeoutMs)
 {
@@ -50,10 +38,10 @@ OperationResult RunPowerShellScript(const std::wstring& scriptPath, const std::v
 	}
 
 	std::wstring command = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File ";
-	command += QuoteForCommandLine(scriptPath);
+	command += openvr_pair::common::QuoteCommandLineArg(scriptPath);
 	for (const auto& arg : args) {
 		command += L" ";
-		command += QuoteForCommandLine(arg);
+		command += openvr_pair::common::QuoteCommandLineArg(arg);
 	}
 
 	STARTUPINFOW si{};

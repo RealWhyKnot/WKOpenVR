@@ -3,6 +3,7 @@
 #include "DebugLogging.h"
 #include "LogPaths.h"
 #include "Logging.h"
+#include "Win32CommandLine.h"
 #include "Win32Paths.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -21,26 +22,13 @@
 namespace facetracking {
 namespace {
 
-std::wstring QuoteArg(const std::wstring& value)
-{
-	std::wstring out = L"\"";
-	for (wchar_t ch : value) {
-		if (ch == L'"')
-			out += L"\\\"";
-		else
-			out.push_back(ch);
-	}
-	out += L"\"";
-	return out;
-}
-
 void AppendPathArg(std::wstring& commandLine, const wchar_t* name, const std::wstring& value)
 {
 	if (value.empty()) return;
 	commandLine += L" ";
 	commandLine += name;
 	commandLine += L" ";
-	commandLine += QuoteArg(value);
+	commandLine += openvr_pair::common::QuoteCommandLineArg(value);
 }
 
 // Minimal CBOR encoder for the control-pipe wire. The host's

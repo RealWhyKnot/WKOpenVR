@@ -3,6 +3,7 @@
 
 #include "DiagnosticsLog.h"
 #include "ModulePerf.h"
+#include "Win32CommandLine.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -55,19 +56,6 @@ std::wstring WidenUtf8(const std::string& value)
 	if (needed <= 0) return {};
 	std::wstring out(static_cast<size_t>(needed), L'\0');
 	MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), out.data(), needed);
-	return out;
-}
-
-std::wstring QuoteArg(const std::wstring& value)
-{
-	std::wstring out = L"\"";
-	for (wchar_t ch : value) {
-		if (ch == L'"')
-			out += L"\\\"";
-		else
-			out.push_back(ch);
-	}
-	out += L"\"";
 	return out;
 }
 
@@ -269,7 +257,7 @@ void HostSupervisorBase::AppendOwnerLivenessArgs(std::wstring& commandLine) cons
 	std::swprintf(nonce, sizeof(nonce) / sizeof(nonce[0]), L"%016llX",
 	              static_cast<unsigned long long>(owner_lease_->Nonce()));
 	commandLine += L" --owner-liveness ";
-	commandLine += QuoteArg(WidenUtf8(owner_lease_->Name()));
+	commandLine += QuoteCommandLineArg(WidenUtf8(owner_lease_->Name()));
 	commandLine += L" --owner-liveness-nonce ";
 	commandLine += nonce;
 }
