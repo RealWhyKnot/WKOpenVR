@@ -3,6 +3,7 @@
 #include "DiagnosticsLog.h"
 #include "ModuleRegistry.h"
 #include "ModuleSafety.h"
+#include "PowerShellCommand.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
 #include "Win32Paths.h"
@@ -13,7 +14,6 @@
 #include <shellapi.h>
 
 #include <cctype>
-#include <cstdint>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -166,59 +166,6 @@ std::wstring DiscoverSteamVRRoot()
 	std::wstring steamPath = FindSteamInstallPath();
 	std::wstring root = FindSteamVRRootFromVDF(steamPath);
 	return root; // may be empty
-}
-
-std::wstring QuotePowerShellString(const std::wstring& value)
-{
-	std::wstring out = L"'";
-	for (wchar_t ch : value) {
-		if (ch == L'\'')
-			out += L"''";
-		else
-			out += ch;
-	}
-	out += L"'";
-	return out;
-}
-
-// Encode a PowerShell script body as the value of powershell.exe's
-// -EncodedCommand argument: base64 of UTF-16 LE bytes. Sidesteps every quoting
-// pitfall in ShellExecuteEx + runas re-parsing, which previously caused
-// elevated PowerShell to drop to an interactive prompt with no -Command
-// because UAC's launcher chewed off the single-quoted command body.
-std::wstring EncodePowerShellCommand(const std::wstring& script)
-{
-	// Build UTF-16 LE bytes. On Windows wchar_t is 16-bit and the host is
-	// little-endian, so the bytes are already in the right order.
-	std::vector<unsigned char> bytes;
-	bytes.reserve(script.size() * 2);
-	for (wchar_t ch : script) {
-		bytes.push_back(static_cast<unsigned char>(ch & 0xFF));
-		bytes.push_back(static_cast<unsigned char>((ch >> 8) & 0xFF));
-	}
-
-	static const char* kBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	std::wstring out;
-	out.reserve(((bytes.size() + 2) / 3) * 4);
-	size_t i = 0;
-	while (i + 3 <= bytes.size()) {
-		uint32_t v = (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i + 1]) << 8) | uint32_t(bytes[i + 2]);
-		out += (wchar_t)kBase64[(v >> 18) & 0x3F];
-		out += (wchar_t)kBase64[(v >> 12) & 0x3F];
-		out += (wchar_t)kBase64[(v >> 6) & 0x3F];
-		out += (wchar_t)kBase64[v & 0x3F];
-		i += 3;
-	}
-	if (i < bytes.size()) {
-		uint32_t v = uint32_t(bytes[i]) << 16;
-		size_t rem = bytes.size() - i;
-		if (rem == 2) v |= uint32_t(bytes[i + 1]) << 8;
-		out += (wchar_t)kBase64[(v >> 18) & 0x3F];
-		out += (wchar_t)kBase64[(v >> 12) & 0x3F];
-		out += (wchar_t)(rem == 2 ? kBase64[(v >> 6) & 0x3F] : L'=');
-		out += L'=';
-	}
-	return out;
 }
 
 std::string TrimAscii(std::string value)
@@ -450,8 +397,8 @@ bool ShellContext::SetFlagPresent(const char* flagFileName, bool present)
 		// resources paths never contain wildcards. Set-Content does accept
 		// -LiteralPath; we keep that to defeat any accidental wildcard parse on
 		// the destination filename.
-		command = L"New-Item -ItemType Directory -Force -Path " + QuotePowerShellString(parent) +
-		          L" | Out-Null; Set-Content -LiteralPath " + QuotePowerShellString(path) +
+		command = L"New-Item -ItemType Directory -Force -Path " + common::QuotePowerShellLiteral(parent) +
+		          L" | Out-Null; Set-Content -LiteralPath " + common::QuotePowerShellLiteral(path) +
 		          L" -Value enabled -NoNewline";
 		if (label) {
 			// COM-creating a shortcut from PowerShell is the simplest way to
@@ -460,24 +407,24 @@ bool ShellContext::SetFlagPresent(const char* flagFileName, bool present)
 			// the ShellContext install dir captured at process start), uses
 			// the same exe for its icon, and tags a description so search
 			// previews read "<Feature> in WKOpenVR".
-			command += L"; $smDir = Join-Path $env:ProgramData " + QuotePowerShellString(smRelative);
+			command += L"; $smDir = Join-Path $env:ProgramData " + common::QuotePowerShellLiteral(smRelative);
 			command += L"; New-Item -ItemType Directory -Force -Path $smDir | Out-Null";
-			command += L"; $scPath = Join-Path $smDir " + QuotePowerShellString(scFileName);
+			command += L"; $scPath = Join-Path $smDir " + common::QuotePowerShellLiteral(scFileName);
 			command += L"; $wsh = New-Object -ComObject WScript.Shell";
 			command += L"; $sc = $wsh.CreateShortcut($scPath)";
-			command += L"; $sc.TargetPath = " + QuotePowerShellString(exePath);
-			command += L"; $sc.Arguments = " + QuotePowerShellString(scArg);
-			command += L"; $sc.IconLocation = " + QuotePowerShellString(exePath + L",0");
-			command += L"; $sc.Description = " + QuotePowerShellString(desc);
+			command += L"; $sc.TargetPath = " + common::QuotePowerShellLiteral(exePath);
+			command += L"; $sc.Arguments = " + common::QuotePowerShellLiteral(scArg);
+			command += L"; $sc.IconLocation = " + common::QuotePowerShellLiteral(exePath + L",0");
+			command += L"; $sc.Description = " + common::QuotePowerShellLiteral(desc);
 			command += L"; $sc.Save()";
 		}
 	}
 	else {
-		command = L"if (Test-Path -LiteralPath " + QuotePowerShellString(path) + L") { Remove-Item -LiteralPath " +
-		          QuotePowerShellString(path) + L" -Force }";
+		command = L"if (Test-Path -LiteralPath " + common::QuotePowerShellLiteral(path) +
+		          L") { Remove-Item -LiteralPath " + common::QuotePowerShellLiteral(path) + L" -Force }";
 		if (label) {
-			command += L"; $smDir = Join-Path $env:ProgramData " + QuotePowerShellString(smRelative);
-			command += L"; $scPath = Join-Path $smDir " + QuotePowerShellString(scFileName);
+			command += L"; $smDir = Join-Path $env:ProgramData " + common::QuotePowerShellLiteral(smRelative);
+			command += L"; $scPath = Join-Path $smDir " + common::QuotePowerShellLiteral(scFileName);
 			command += L"; if (Test-Path -LiteralPath $scPath) { Remove-Item -LiteralPath $scPath -Force }";
 		}
 	}
@@ -490,7 +437,8 @@ bool ShellContext::SetFlagPresent(const char* flagFileName, bool present)
 	// hang indefinitely while the Modules tab showed "Enabling..." forever.
 	// EncodedCommand has no special characters in the cmd line so re-parsing
 	// is a no-op.
-	std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -EncodedCommand " + EncodePowerShellCommand(command);
+	std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -EncodedCommand " +
+	                    common::EncodePowerShellCommand(command);
 
 	SHELLEXECUTEINFOW sei{};
 	sei.cbSize = sizeof(sei);

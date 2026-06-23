@@ -3,13 +3,13 @@
 
 #include "JsonUtil.h"
 #include "Logging.h"
+#include "PowerShellCommand.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <bcrypt.h>
-#include <wincrypt.h>
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -528,25 +528,6 @@ std::optional<SyncResult> ModuleSyncRunner::Poll()
 	return result;
 }
 
-// Encode a UTF-8 string as the base64 UTF-16 LE payload for
-// powershell.exe -EncodedCommand.
-static std::string EncodeForPowerShell(const std::wstring& cmd)
-{
-	// Base64-encode the UTF-16 LE byte sequence.
-	const BYTE* bytes = reinterpret_cast<const BYTE*>(cmd.data());
-	DWORD blen = static_cast<DWORD>(cmd.size() * sizeof(wchar_t));
-	DWORD outlen = 0;
-	CryptBinaryToStringA(bytes, blen, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &outlen);
-	std::string out(outlen, '\0');
-	CryptBinaryToStringA(bytes, blen, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, out.data(), &outlen);
-	// outlen includes null terminator if any; trim trailing null.
-	while (!out.empty() && out.back() == '\0')
-		out.pop_back();
-	return out;
-}
-
-#pragma comment(lib, "crypt32.lib")
-
 void ModuleSyncRunner::LaunchNext()
 {
 	if (queue_.empty()) return;
@@ -574,21 +555,8 @@ void ModuleSyncRunner::LaunchNext()
 	// "curated" -- the word after the broken-out parenthesis in a label --
 	// and the script never ran, so the result file stayed empty and picojson
 	// reported "Result JSON parse error").
-	auto psSingleQuoteWide = [](const std::wstring& wide) -> std::wstring {
-		std::wstring r;
-		r.reserve(wide.size() + 2);
-		r += L'\'';
-		for (wchar_t c : wide) {
-			if (c == L'\'')
-				r += L"''";
-			else
-				r += c;
-		}
-		r += L'\'';
-		return r;
-	};
 	auto psSingleQuote = [&](const std::string& utf8) -> std::wstring {
-		return psSingleQuoteWide(openvr_pair::common::Utf8ToWide(utf8));
+		return openvr_pair::common::QuotePowerShellLiteral(openvr_pair::common::Utf8ToWide(utf8));
 	};
 
 	// Build the PS command as a wstring, then base64 encode it.
@@ -597,9 +565,9 @@ void ModuleSyncRunner::LaunchNext()
 	if (!op.kind.empty()) psCmd += L" -Kind " + psSingleQuote(op.kind);
 	if (!op.source_data.empty()) psCmd += L" -SourceData " + psSingleQuote(op.source_data);
 	if (!op.source_id.empty()) psCmd += L" -SourceId " + psSingleQuote(op.source_id);
-	psCmd += L" -ResultPath " + psSingleQuoteWide(result_path_);
+	psCmd += L" -ResultPath " + openvr_pair::common::QuotePowerShellLiteral(result_path_);
 
-	std::string encoded = EncodeForPowerShell(psCmd);
+	std::string encoded = openvr_pair::common::EncodePowerShellCommandUtf8(psCmd);
 
 	std::wstring cmdLine = L"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ";
 	cmdLine += openvr_pair::common::Utf8ToWide(encoded);

@@ -2,6 +2,7 @@
 
 #include "DiagnosticsLog.h"
 #include "JsonUtil.h"
+#include "PowerShellCommand.h"
 #include "UpdateNoticeLogic.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
@@ -127,52 +128,6 @@ bool IsLocalDevBuild()
 {
 	const std::string s = OPENVR_PAIR_VERSION_STRING;
 	return s.find('-') != std::string::npos;
-}
-
-std::wstring QuotePowerShellString(const std::wstring& value)
-{
-	std::wstring out = L"'";
-	for (wchar_t ch : value) {
-		if (ch == L'\'')
-			out += L"''";
-		else
-			out += ch;
-	}
-	out += L"'";
-	return out;
-}
-
-std::wstring EncodePowerShellCommand(const std::wstring& script)
-{
-	std::vector<unsigned char> bytes;
-	bytes.reserve(script.size() * 2);
-	for (wchar_t ch : script) {
-		bytes.push_back(static_cast<unsigned char>(ch & 0xFF));
-		bytes.push_back(static_cast<unsigned char>((ch >> 8) & 0xFF));
-	}
-
-	static const char* kBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	std::wstring out;
-	out.reserve(((bytes.size() + 2) / 3) * 4);
-	size_t i = 0;
-	while (i + 3 <= bytes.size()) {
-		uint32_t v = (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i + 1]) << 8) | uint32_t(bytes[i + 2]);
-		out += (wchar_t)kBase64[(v >> 18) & 0x3F];
-		out += (wchar_t)kBase64[(v >> 12) & 0x3F];
-		out += (wchar_t)kBase64[(v >> 6) & 0x3F];
-		out += (wchar_t)kBase64[v & 0x3F];
-		i += 3;
-	}
-	if (i < bytes.size()) {
-		uint32_t v = uint32_t(bytes[i]) << 16;
-		size_t rem = bytes.size() - i;
-		if (rem == 2) v |= uint32_t(bytes[i + 1]) << 8;
-		out += (wchar_t)kBase64[(v >> 18) & 0x3F];
-		out += (wchar_t)kBase64[(v >> 12) & 0x3F];
-		out += (wchar_t)(rem == 2 ? kBase64[(v >> 6) & 0x3F] : L'=');
-		out += L'=';
-	}
-	return out;
 }
 
 bool FileExists(const std::wstring& path)
@@ -1058,8 +1013,8 @@ bool LaunchQueuedUpdateAfterProcessExit(uint32_t currentProcessId, std::string* 
 	const std::wstring pendingPath = PendingPath();
 	std::wstring script;
 	script += L"$ErrorActionPreference = 'Stop';\r\n";
-	script += L"$installer = " + QuotePowerShellString(installerPath) + L";\r\n";
-	script += L"$pending = " + QuotePowerShellString(pendingPath) + L";\r\n";
+	script += L"$installer = " + common::QuotePowerShellLiteral(installerPath) + L";\r\n";
+	script += L"$pending = " + common::QuotePowerShellLiteral(pendingPath) + L";\r\n";
 	script += L"$pidToWait = " + std::to_wstring(currentProcessId) + L";\r\n";
 	script += L"try { $p = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue; ";
 	script += L"if ($p) { [void]$p.WaitForExit(90000) } } catch {}\r\n";
@@ -1072,7 +1027,8 @@ bool LaunchQueuedUpdateAfterProcessExit(uint32_t currentProcessId, std::string* 
 	script += L"if ($proc.ExitCode -eq 0 -and (Test-Path -LiteralPath $pending)) { ";
 	script += L"Remove-Item -LiteralPath $pending -Force }\r\n";
 
-	const std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -EncodedCommand " + EncodePowerShellCommand(script);
+	const std::wstring args =
+	    L"-NoProfile -ExecutionPolicy Bypass -EncodedCommand " + common::EncodePowerShellCommand(script);
 
 	SHELLEXECUTEINFOW sei{};
 	sei.cbSize = sizeof(sei);
