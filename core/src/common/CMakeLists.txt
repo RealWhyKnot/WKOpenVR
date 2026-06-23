@@ -43,6 +43,8 @@ add_library(openvr_pair_common STATIC
 	ModuleSafety.h
 	ModulePerf.cpp
 	ModulePerf.h
+	PowerShellCommand.cpp
+	PowerShellCommand.h
 	RuntimeHealthSummary.cpp
 	RuntimeHealthSummary.h
 	SidecarOwnerLease.cpp

@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.14)
 # Per-module test subdirs are gated through cmake/WKOpenVRModules.cmake so that
 # a release build with disabled-in-release modules doesn't try to link tests
 # against feature libs that were skipped.
+add_subdirectory(common)
 add_subdirectory(driver)
 add_subdirectory(ui)
 wkopenvr_add_module_tests(calibration)
