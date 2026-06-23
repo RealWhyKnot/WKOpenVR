@@ -15,7 +15,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(common_helpers_tests
-	test_powershell_command.cpp)
+	test_powershell_command.cpp
+	test_win32_command_line.cpp)
 
 target_include_directories(common_helpers_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common

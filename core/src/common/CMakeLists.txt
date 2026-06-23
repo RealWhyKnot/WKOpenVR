@@ -51,6 +51,8 @@ add_library(openvr_pair_common STATIC
 	SidecarOwnerLease.h
 	SteamVrControl.cpp
 	SteamVrControl.h
+	Win32CommandLine.cpp
+	Win32CommandLine.h
 	Win32Errors.cpp
 	Win32Errors.h
 	Win32Paths.cpp
