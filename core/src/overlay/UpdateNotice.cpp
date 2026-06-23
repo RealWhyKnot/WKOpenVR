@@ -21,8 +21,6 @@
 #pragma comment(lib, "winhttp.lib")
 
 #include <atomic>
-#include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -85,50 +83,6 @@ struct PendingFile
 	std::string path;
 	std::string sha256;
 };
-
-bool ParseStamp(const std::string& raw, int (&out)[4])
-{
-	std::string s = raw;
-	if (!s.empty() && s[0] == 'v') s.erase(0, 1);
-	const auto dash = s.find('-');
-	if (dash != std::string::npos) s.resize(dash);
-
-	int parsed[4] = {0, 0, 0, 0};
-	int idx = 0;
-	const char* p = s.c_str();
-	while (idx < 4 && *p) {
-		char* end = nullptr;
-		const long v = std::strtol(p, &end, 10);
-		if (end == p) return false;
-		parsed[idx++] = static_cast<int>(v);
-		p = end;
-		if (*p == '.')
-			++p;
-		else if (*p != '\0')
-			return false;
-	}
-	if (idx != 4) return false;
-	for (int i = 0; i < 4; ++i)
-		out[i] = parsed[i];
-	return true;
-}
-
-bool IsRemoteNewer(const std::string& remote, const std::string& local)
-{
-	int r[4] = {0}, l[4] = {0};
-	if (!ParseStamp(remote, r) || !ParseStamp(local, l)) return false;
-	for (int i = 0; i < 4; ++i) {
-		if (r[i] > l[i]) return true;
-		if (r[i] < l[i]) return false;
-	}
-	return false;
-}
-
-bool IsLocalDevBuild()
-{
-	const std::string s = OPENVR_PAIR_VERSION_STRING;
-	return s.find('-') != std::string::npos;
-}
 
 bool FileExists(const std::wstring& path)
 {
@@ -724,7 +678,8 @@ void ClearStalePendingIfCurrent(const std::string& latestTag, UpdateInstallState
 {
 	if (!install.queuedForSteamVrExit || install.targetTag.empty()) return;
 	if (install.targetTag == latestTag) return;
-	if (IsRemoteNewer(latestTag, install.targetTag) || !IsRemoteNewer(install.targetTag, OPENVR_PAIR_VERSION_STRING)) {
+	if (IsRemoteVersionNewer(latestTag, install.targetTag) ||
+	    !IsRemoteVersionNewer(install.targetTag, OPENVR_PAIR_VERSION_STRING)) {
 		DeletePending();
 		install = {};
 	}
@@ -742,7 +697,7 @@ void RunCheck()
 	UpdateNoticeState next;
 	next.install = installSnapshot;
 
-	if (IsLocalDevBuild()) {
+	if (IsDevVersionStamp(OPENVR_PAIR_VERSION_STRING)) {
 		next.checkComplete = true;
 		{
 			std::lock_guard<std::mutex> lock(inst.mu);
@@ -786,7 +741,7 @@ void RunCheck()
 	else {
 		next.latestVersion = next.latestTag;
 		if (!next.latestVersion.empty() && next.latestVersion.front() == 'v') next.latestVersion.erase(0, 1);
-		next.available = IsRemoteNewer(next.latestTag, OPENVR_PAIR_VERSION_STRING);
+		next.available = IsRemoteVersionNewer(next.latestTag, OPENVR_PAIR_VERSION_STRING);
 		ClearStalePendingIfCurrent(next.latestTag, next.install);
 		if (next.available && next.install.phase == UpdateInstallPhase::Idle) {
 			next.install.canQueue = true;

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -64,6 +66,49 @@ inline std::string ExpectedInstallerAssetName(std::string_view featureName, std:
 	out.append(version);
 	out.append("-Setup.exe");
 	return out;
+}
+
+inline bool ParseVersionStamp(std::string_view raw, std::array<int, 4>& out)
+{
+	std::string s(raw);
+	if (!s.empty() && s[0] == 'v') s.erase(0, 1);
+	const auto dash = s.find('-');
+	if (dash != std::string::npos) s.resize(dash);
+
+	std::array<int, 4> parsed = {0, 0, 0, 0};
+	int idx = 0;
+	const char* p = s.c_str();
+	while (idx < 4 && *p) {
+		char* end = nullptr;
+		const long v = std::strtol(p, &end, 10);
+		if (end == p) return false;
+		parsed[static_cast<size_t>(idx++)] = static_cast<int>(v);
+		p = end;
+		if (*p == '.')
+			++p;
+		else if (*p != '\0')
+			return false;
+	}
+	if (idx != 4) return false;
+	out = parsed;
+	return true;
+}
+
+inline bool IsRemoteVersionNewer(std::string_view remote, std::string_view local)
+{
+	std::array<int, 4> r = {0, 0, 0, 0};
+	std::array<int, 4> l = {0, 0, 0, 0};
+	if (!ParseVersionStamp(remote, r) || !ParseVersionStamp(local, l)) return false;
+	for (size_t i = 0; i < r.size(); ++i) {
+		if (r[i] > l[i]) return true;
+		if (r[i] < l[i]) return false;
+	}
+	return false;
+}
+
+inline bool IsDevVersionStamp(std::string_view stamp)
+{
+	return stamp.find('-') != std::string_view::npos;
 }
 
 inline bool IsTrustedGitHubReleaseAssetUrl(std::string_view url, std::string_view repoName, std::string_view tagName,

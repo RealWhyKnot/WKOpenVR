@@ -10,6 +10,7 @@
 
 #include <imgui.h>
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -398,4 +399,31 @@ TEST(UpdateNoticeLogic, ReleaseAssetUrlMustMatchExpectedRepoTagAndAsset)
 	EXPECT_FALSE(openvr_pair::overlay::IsTrustedGitHubReleaseAssetUrl(
 	    "https://github.com/RealWhyKnot/WKOpenVR-Captions/releases/download/v2026.6.9.0/" + asset, "WKOpenVR-Smoothing",
 	    "v2026.6.9.0", asset));
+}
+
+TEST(UpdateNoticeLogic, ParsesVersionStamps)
+{
+	std::array<int, 4> parts = {};
+	ASSERT_TRUE(openvr_pair::overlay::ParseVersionStamp("v2026.6.21.0-beta", parts));
+	EXPECT_EQ((std::array<int, 4>{2026, 6, 21, 0}), parts);
+
+	EXPECT_TRUE(openvr_pair::overlay::ParseVersionStamp("2026.6.21.12", parts));
+	EXPECT_FALSE(openvr_pair::overlay::ParseVersionStamp("2026.6.21", parts));
+	EXPECT_FALSE(openvr_pair::overlay::ParseVersionStamp("2026.6.21.x", parts));
+}
+
+TEST(UpdateNoticeLogic, ComparesRemoteVersions)
+{
+	EXPECT_TRUE(openvr_pair::overlay::IsRemoteVersionNewer("v2026.6.21.1", "2026.6.21.0"));
+	EXPECT_TRUE(openvr_pair::overlay::IsRemoteVersionNewer("2026.7.0.0", "2026.6.99.99"));
+	EXPECT_FALSE(openvr_pair::overlay::IsRemoteVersionNewer("2026.6.21.0", "2026.6.21.0"));
+	EXPECT_FALSE(openvr_pair::overlay::IsRemoteVersionNewer("2026.6.20.99", "2026.6.21.0"));
+	EXPECT_FALSE(openvr_pair::overlay::IsRemoteVersionNewer("not-a-version", "2026.6.21.0"));
+}
+
+TEST(UpdateNoticeLogic, DetectsDevVersionStamps)
+{
+	EXPECT_TRUE(openvr_pair::overlay::IsDevVersionStamp("2026.6.21.0-beta"));
+	EXPECT_TRUE(openvr_pair::overlay::IsDevVersionStamp("2026.6.21.0-DEV"));
+	EXPECT_FALSE(openvr_pair::overlay::IsDevVersionStamp("2026.6.21.0"));
 }
