@@ -2,6 +2,7 @@
 #include "DebugLogging.h"
 #include "DiagnosticsLog.h"
 #include "FeaturePlugin.h"
+#include "FrameHitchLogic.h"
 #include "ManifestRegistration.h"
 #include "Migration.h"
 #include "ModuleRegistry.h"
@@ -225,25 +226,15 @@ public:
 	double BeginFrame(OverlayFrameTimings& timings)
 	{
 		const double nowSeconds = glfwGetTime();
-		if (lastFrameStartSeconds_ > 0.0 && nowSeconds >= lastFrameStartSeconds_) {
-			timings.frameGapMs = (nowSeconds - lastFrameStartSeconds_) * 1000.0;
-		}
-		lastFrameStartSeconds_ = nowSeconds;
+		timings.frameGapMs = gate_.BeginFrame(nowSeconds);
 		return nowSeconds;
 	}
 
 	void MaybeLog(const OverlayFrameTimings& timings)
 	{
-		const bool shouldLog = timings.frameGapMs >= kFrameGapWarnMs || timings.totalMs >= kFrameWorkWarnMs ||
-		                       timings.slowStageMs >= kStageWarnMs;
-		if (!shouldLog) return;
-
-		const double nowSeconds = glfwGetTime();
-		if (lastLogSeconds_ > 0.0 && nowSeconds >= lastLogSeconds_ &&
-		    nowSeconds - lastLogSeconds_ < kLogThrottleSeconds) {
-			++suppressedSinceLastLog_;
-			return;
-		}
+		const openvr_pair::overlay::FrameHitchDecision decision =
+		    gate_.Evaluate(glfwGetTime(), {timings.frameGapMs, timings.totalMs, timings.slowStageMs});
+		if (!decision.shouldLog) return;
 
 		openvr_pair::common::DiagnosticLog(
 		    "overlay",
@@ -258,21 +249,11 @@ public:
 		    timings.pluginTickMs, timings.imguiBuildMs, timings.renderMs, timings.swapMs, timings.submitMs,
 		    timings.waitMs, timings.renderPath, timings.installedPluginTicks, timings.slowPlugin, timings.slowPluginMs,
 		    timings.vrSurfaceVisible ? 1 : 0, timings.activeDashboardOverlay ? 1 : 0,
-		    timings.anyDashboardVisible ? 1 : 0, timings.vrConnected ? 1 : 0, suppressedSinceLastLog_);
-
-		suppressedSinceLastLog_ = 0;
-		lastLogSeconds_ = nowSeconds;
+		    timings.anyDashboardVisible ? 1 : 0, timings.vrConnected ? 1 : 0, decision.suppressedSinceLastLog);
 	}
 
 private:
-	static constexpr double kFrameGapWarnMs = 250.0;
-	static constexpr double kFrameWorkWarnMs = 250.0;
-	static constexpr double kStageWarnMs = 75.0;
-	static constexpr double kLogThrottleSeconds = 1.0;
-
-	double lastFrameStartSeconds_ = 0.0;
-	double lastLogSeconds_ = 0.0;
-	uint32_t suppressedSinceLastLog_ = 0;
+	openvr_pair::overlay::FrameHitchGate gate_;
 };
 
 } // namespace

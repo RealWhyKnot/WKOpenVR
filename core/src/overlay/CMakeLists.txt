@@ -93,6 +93,7 @@ add_executable(OpenVRPairOverlay WIN32
 	DeviceFilters.h
 	FeaturePlugin.cpp
 	FeaturePlugin.h
+	FrameHitchLogic.h
 	IpcClientBase.cpp
 	IpcClientBase.h
 	ManifestRegistration.cpp
