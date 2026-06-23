@@ -437,8 +437,8 @@ bool ShellContext::SetFlagPresent(const char* flagFileName, bool present)
 	// hang indefinitely while the Modules tab showed "Enabling..." forever.
 	// EncodedCommand has no special characters in the cmd line so re-parsing
 	// is a no-op.
-	std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -EncodedCommand " +
-	                    common::EncodePowerShellCommand(command);
+	std::wstring args =
+	    L"-NoProfile -ExecutionPolicy Bypass -EncodedCommand " + common::EncodePowerShellCommand(command);
 
 	SHELLEXECUTEINFOW sei{};
 	sei.cbSize = sizeof(sei);

@@ -34,8 +34,7 @@ std::wstring EncodePowerShellCommand(const std::wstring& script)
 	out.reserve(((bytes.size() + 2) / 3) * 4);
 	size_t i = 0;
 	while (i + 3 <= bytes.size()) {
-		const uint32_t v =
-		    (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i + 1]) << 8) | uint32_t(bytes[i + 2]);
+		const uint32_t v = (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i + 1]) << 8) | uint32_t(bytes[i + 2]);
 		out += static_cast<wchar_t>(kBase64[(v >> 18) & 0x3F]);
 		out += static_cast<wchar_t>(kBase64[(v >> 12) & 0x3F]);
 		out += static_cast<wchar_t>(kBase64[(v >> 6) & 0x3F]);
