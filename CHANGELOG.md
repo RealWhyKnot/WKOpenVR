@@ -113,6 +113,13 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - tools(calibration): add live experiment profile helper (6af37a4)
 - **dashboardinput:** Remove module (1b02581)
 - **calibration:** Deadband fallback transform sends (98ed2ce)
+- style: apply clang-format to refactor pass (5265c6b)
+- **overlay:** Extract frame hitch gate (f3e927a)
+- **overlay:** Test update version logic (67b8cb4)
+- **common:** Reuse Win32 command-line quoting (40133bf)
+- **common:** Split Win32 command-line quoting (c264a6c)
+- **overlay:** Reuse PowerShell encoding helpers (f2b324d)
+- **common:** Add reusable PowerShell command helpers (800787c)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
