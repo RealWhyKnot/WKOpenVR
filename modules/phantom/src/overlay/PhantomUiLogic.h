@@ -26,6 +26,27 @@ inline uint32_t DriverConnectRetryDelayMs(uint32_t consecutiveFailures)
 	return 8000;
 }
 
+// User-facing message for a snap-calibrate outcome. status mirrors the driver's
+// SnapStatus codes (0 Ok, 1 HeadTilted, 2 NoTrackers, 3 HmdNotReady, 4 LowConfidence);
+// kept as a numeric code so this header stays free of driver-module includes.
+inline const char* SnapResultMessage(uint8_t status, uint8_t assigned_count)
+{
+	switch (status) {
+		case 0:
+			return assigned_count == 1 ? "Mapped 1 tracker." : "Mapped trackers.";
+		case 1:
+			return "Look forward and stand level, then snap again.";
+		case 2:
+			return "No trackers detected to map.";
+		case 3:
+			return "Headset height looks off; stand up and snap again.";
+		case 4:
+			return "Couldn't place trackers confidently; spread out and retry.";
+		default:
+			return "Snap failed.";
+	}
+}
+
 // Display tone for diagnostics cells. Kept ImGui-free (no StatusTone / Theme
 // dependency) so this header stays usable from the unit-test target, which puts
 // modules/phantom/src/overlay on the include path but not core/src/overlay. The

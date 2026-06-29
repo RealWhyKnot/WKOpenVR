@@ -20,7 +20,9 @@
 #include "PhantomReplayRecorder.h"
 #include "PassiveRoleInference.h"
 #include "PoseHistory.h"
+#include "RoleArbiter.h"
 #include "RoleCatalog.h"
+#include "SnapCalibrate.h"
 #include "VirtualTrackerManager.h"
 
 #include <openvr_driver.h>
@@ -192,6 +194,28 @@ bool HmdHorizontalAxes(const vr::HmdQuaternion_t& q, double right_xz[2], double 
 	return true;
 }
 
+// The real-world extra-tracker roles passive inference and snap arbitrate over.
+const std::vector<BodyRole>& InferenceCandidateRoles()
+{
+	static const std::vector<BodyRole> kRoles = {BodyRole::Waist,     BodyRole::Chest,     BodyRole::LeftFoot,
+	                                             BodyRole::RightFoot, BodyRole::LeftKnee,  BodyRole::RightKnee,
+	                                             BodyRole::LeftElbow, BodyRole::RightElbow};
+	return kRoles;
+}
+
+// Current QPC tick. Used by the IPC-thread snap handler, which has no pose
+// timestamp of its own.
+int64_t NowQpc()
+{
+	LARGE_INTEGER c{};
+	QueryPerformanceCounter(&c);
+	return c.QuadPart;
+}
+
+// Planar HMD speed (m/s) below which the auto-snap considers the user "standing
+// still" enough to take a clean static read.
+constexpr double kAutoSnapStillSpeed = 0.10;
+
 struct CompletionDiagSummary
 {
 	uint32_t valid_roles = 0;
@@ -263,6 +287,10 @@ struct DeviceSlot
 	BodyRole inferred_role = BodyRole::None;
 	float inferred_confidence = 0.0f;
 	bool inferred_applied = false;
+
+	// QPC tick of the last role change on this slot; the arbiter's hold timer
+	// reads it to debounce reassignment. 0 = never changed.
+	int64_t role_change_qpc = 0;
 };
 
 class PhantomModule final : public DriverModule
@@ -299,6 +327,8 @@ private:
 	void RefreshVirtualRoleBlocksLocked();
 	void AccumulateInferenceSample(DeviceSlot& s);
 	void MaybeRunInference(int64_t now_qpc);
+	SnapResult RunSnapLocked(int64_t now_qpc);
+	void MaybeAutoSnap(int64_t now_qpc);
 	void PublishStateSnapshot();
 
 	LadderTimings timings_ = LadderTimings::Defaults();
@@ -327,6 +357,16 @@ private:
 	InferenceParams infer_params_{};
 	int64_t last_inference_qpc_ = 0;
 	float infer_apply_threshold_ = 0.60f;
+	RoleArbiterParams arbiter_params_{};
+
+	// One-shot snap: assigns every tracker's role from a single static read.
+	// Auto-snap fires it hands-free once the user stands still with at least one
+	// still-unassigned tracker. Sticky (snapped) roles are written into
+	// role_by_serial_hash_ so the arbiter never second-guesses them.
+	std::atomic<bool> auto_snap_enabled_{true};
+	int64_t still_since_qpc_ = 0;    // when the user last became still (0 = moving)
+	int64_t last_auto_snap_qpc_ = 0; // throttle hands-free snaps
+	int64_t last_pose_qpc_ = 0;      // freshest hot-path tick, used as "now" for liveness
 
 	IkFallback ik_fallback_;
 	BodyPriorEstimator body_prior_estimator_;
@@ -422,20 +462,23 @@ DeviceSlot& PhantomModule::slot(uint32_t openVRID)
 
 void PhantomModule::RefreshVirtualRoleBlocksLocked()
 {
+	// A role is "covered by a real tracker" only while that tracker is still
+	// live: its pose is fresh, or it is inside the dropout-bridging window where
+	// the real device still publishes synthesised poses. Once a tracker has been
+	// gone longer than lost-hold (removed / unplugged), its role unblocks so the
+	// virtual tracker for that role can fill in. This is keyed off liveness, not
+	// the sticky role map, so a removed snapped/manual tracker still hands its
+	// role to the virtual and reclaims it when it returns.
+	const int64_t lost_hold_qpc = qpc_freq_ > 0 ? static_cast<int64_t>(timings_.lost_hold_ms) * qpc_freq_ / 1000 : 0;
+	const int64_t now = last_pose_qpc_;
+
 	std::array<bool, kBodyRoleCount> blocked{};
-	for (const auto& kv : role_by_serial_hash_) {
-		const auto role = kv.second;
-		const auto idx = static_cast<size_t>(role);
-		if (idx < blocked.size() && BodyRoleToControllerType(role) != nullptr) {
-			blocked[idx] = true;
-		}
-	}
 	for (const auto& s : slots_) {
-		const auto role = s.role;
-		const auto idx = static_cast<size_t>(role);
-		if (idx < blocked.size() && BodyRoleToControllerType(role) != nullptr) {
-			blocked[idx] = true;
-		}
+		const auto idx = static_cast<size_t>(s.role);
+		if (idx >= blocked.size() || BodyRoleToControllerType(s.role) == nullptr) continue;
+		const bool live =
+		    s.last_observed_qpc != 0 && (lost_hold_qpc == 0 || (now - s.last_observed_qpc) <= lost_hold_qpc);
+		if (live) blocked[idx] = true;
 	}
 	for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
 		virtual_trackers_.SetRoleBlocked(static_cast<BodyRole>(i), blocked[i]);
@@ -666,7 +709,10 @@ void PhantomModule::AccumulateInferenceSample(DeviceSlot& s)
 	                           last_hmd_pose_.vecPosition[2]};
 	const double trk_pos[3] = {s.last_observed.vecPosition[0], s.last_observed.vecPosition[1],
 	                           s.last_observed.vecPosition[2]};
-	s.infer_accum.AddSample(hmd_pos, right, fwd, trk_pos);
+	// Normalize heights against the learned floor so the priors hold regardless
+	// of the runtime's standing-zero.
+	const double floor_y = last_body_prior_estimate_.priors.floor_y_m;
+	s.infer_accum.AddSample(hmd_pos, right, fwd, trk_pos, floor_y);
 }
 
 void PhantomModule::MaybeRunInference(int64_t now_qpc)
@@ -676,7 +722,10 @@ void PhantomModule::MaybeRunInference(int64_t now_qpc)
 	if (last_inference_qpc_ != 0 && (now_qpc - last_inference_qpc_) < qpc_freq_) return;
 	last_inference_qpc_ = now_qpc;
 
-	constexpr uint32_t kMinInferSamples = 180; // ~2 s at tracker rate before a guess
+	// A clean static layout clears the apply bar at min_static_samples (a
+	// fraction of a second); motion past that only sharpens confidence.
+	const uint32_t min_samples = infer_params_.min_static_samples == 0 ? 1u : infer_params_.min_static_samples;
+	const int64_t lost_hold_qpc = static_cast<int64_t>(timings_.lost_hold_ms) * qpc_freq_ / 1000;
 
 	std::vector<TrackerMotionFeatures> feats;
 	std::vector<uint32_t> slot_index;
@@ -686,53 +735,204 @@ void PhantomModule::MaybeRunInference(int64_t now_qpc)
 		auto& s = slots_[i];
 		if (s.device_class != vr::TrackedDeviceClass_GenericTracker) continue;
 		if (s.serial.empty()) continue;
+		// Skip a tracker that has fully gone away: its stale accumulator must not
+		// keep claiming a role (or steal one from a live replacement tracker).
+		if (s.last_observed_qpc == 0 || (now_qpc - s.last_observed_qpc) > lost_hold_qpc) continue;
 		const auto f = s.infer_accum.Compute();
-		if (!f.has_data || f.sample_count < kMinInferSamples) continue;
+		if (!f.has_data || f.sample_count < min_samples) continue;
 		feats.push_back(f);
 		slot_index.push_back(i);
 	}
 
-	if (feats.empty()) return;
-
-	// Candidate set is every real-world extra-tracker role; the assignment keeps
-	// it one-to-one and leaves any unmatched tracker as None.
-	static const std::vector<BodyRole> kCandidates = {BodyRole::Waist,     BodyRole::Chest,     BodyRole::LeftFoot,
-	                                                  BodyRole::RightFoot, BodyRole::LeftKnee,  BodyRole::RightKnee,
-	                                                  BodyRole::LeftElbow, BodyRole::RightElbow};
-
-	const auto result = InferRoles(feats, kCandidates, infer_params_);
+	const auto& candidates = InferenceCandidateRoles();
+	std::vector<RoleAssignment> result;
+	if (!feats.empty()) {
+		result = InferRoles(feats, candidates, infer_params_);
+	}
 
 	std::lock_guard<std::mutex> lk(state_mutex_);
 	bool applied_any = false;
+
 	for (size_t k = 0; k < result.size(); ++k) {
 		auto& s = slots_[slot_index[k]];
 		s.inferred_role = result[k].role;
 		s.inferred_confidence = result[k].confidence;
+		// Fade old samples so the features keep following the user's setup.
+		s.infer_accum.Decay(0.8);
 
-		// Auto-adopt only for a device the user never tagged and that has no
-		// live role yet, and only above the (stricter) apply threshold.
+		// Snapped / manually-assigned roles are sticky; the arbiter never
+		// second-guesses them. Only unassigned or auto-adopted slots are managed.
 		const bool user_tagged = role_by_serial_hash_.count(s.serial_hash) != 0;
-		if (!user_tagged && s.role == BodyRole::None && result[k].role != BodyRole::None &&
-		    result[k].confidence >= infer_apply_threshold_) {
+		if (user_tagged) continue;
+		if (s.role != BodyRole::None && !s.inferred_applied) continue;
+
+		const float current_fit =
+		    s.role == BodyRole::None ? 0.0f : RoleFitConfidence(feats[k], s.role, candidates, infer_params_);
+		const uint32_t ms_since_change = s.role_change_qpc == 0
+		                                     ? UINT32_MAX
+		                                     : static_cast<uint32_t>((now_qpc - s.role_change_qpc) * 1000 / qpc_freq_);
+		const RoleAction action = DecideRole(s.role, /*userTagged=*/false, result[k].role, result[k].confidence,
+		                                     current_fit, ms_since_change, arbiter_params_);
+
+		if (action == RoleAction::Adopt || action == RoleAction::Reassign) {
+			const BodyRole prev = s.role;
 			s.role = result[k].role;
 			s.inferred_applied = true;
+			s.role_change_qpc = now_qpc;
 			if (opt_in_by_serial_hash_.count(s.serial_hash) == 0) {
 				opt_in_by_serial_hash_[s.serial_hash] = true;
 				s.opted_in = true;
 			}
 			s.ladder.SetIkAvailable(true);
 			applied_any = true;
-			LOG("[phantom][infer] auto-adopted role=%s serial_hash=0x%016llx conf=%.2f samples=%u",
-			    BodyRoleToKey(result[k].role), static_cast<unsigned long long>(s.serial_hash), result[k].confidence,
-			    feats[k].sample_count);
+			LOG("[phantom][infer] %s role=%s (was %s) serial_hash=0x%016llx conf=%.2f samples=%u",
+			    action == RoleAction::Adopt ? "auto-adopted" : "reassigned", BodyRoleToKey(s.role), BodyRoleToKey(prev),
+			    static_cast<unsigned long long>(s.serial_hash), result[k].confidence, feats[k].sample_count);
 		}
+		else if (action == RoleAction::Drop) {
+			LOG("[phantom][infer] dropped role=%s serial_hash=0x%016llx (no longer fits)", BodyRoleToKey(s.role),
+			    static_cast<unsigned long long>(s.serial_hash));
+			s.role = BodyRole::None;
+			s.inferred_applied = false;
+			s.role_change_qpc = now_qpc;
+			s.ladder.SetIkAvailable(false);
+			applied_any = true;
+		}
+	}
 
-		// Fade old samples so the features keep following the user's setup.
-		s.infer_accum.Decay(0.8);
+	// Removed-device cleanup: an auto-adopted tracker that has fully gone away
+	// (no fresh pose past lost-hold) frees its role. Liveness-aware role blocking
+	// (below) then lets a virtual tracker for that role fill in. Sticky
+	// (snapped/manual) roles are left mapped so a returning device reclaims them.
+	for (auto& s : slots_) {
+		if (!s.inferred_applied || s.role == BodyRole::None) continue;
+		if (role_by_serial_hash_.count(s.serial_hash) != 0) continue;
+		if (s.last_observed_qpc != 0 && (now_qpc - s.last_observed_qpc) > lost_hold_qpc) {
+			LOG("[phantom][infer] freed role=%s serial_hash=0x%016llx (tracker removed)", BodyRoleToKey(s.role),
+			    static_cast<unsigned long long>(s.serial_hash));
+			s.role = BodyRole::None;
+			s.inferred_applied = false;
+			s.role_change_qpc = now_qpc;
+			s.ladder.SetIkAvailable(false);
+			applied_any = true;
+		}
 	}
-	if (applied_any) {
-		RefreshVirtualRoleBlocksLocked();
+
+	// Refresh liveness-based virtual blocks every cycle so a tracker going stale
+	// (or returning) hands its role to/from the virtual without needing a role
+	// change to trigger it.
+	RefreshVirtualRoleBlocksLocked();
+	(void)applied_any;
+}
+
+// One-shot snap: assign every live generic tracker's role from a single static
+// read of where it sits relative to the head, write the result into the sticky
+// role map, and seed the body priors. Caller must hold state_mutex_.
+SnapResult PhantomModule::RunSnapLocked(int64_t now_qpc)
+{
+	std::vector<SnapTrackerInput> trackers;
+	trackers.reserve(8);
+	for (uint32_t i = 0; i < slots_.size(); ++i) {
+		const auto& s = slots_[i];
+		if (s.device_class != vr::TrackedDeviceClass_GenericTracker) continue;
+		if (s.serial.empty() || !s.last_observed_valid) continue;
+		SnapTrackerInput t;
+		t.id = i;
+		t.pos[0] = s.last_observed.vecPosition[0];
+		t.pos[1] = s.last_observed.vecPosition[1];
+		t.pos[2] = s.last_observed.vecPosition[2];
+		trackers.push_back(t);
 	}
+
+	double right[2];
+	double fwd[2];
+	const bool axes_valid = last_hmd_valid_ && HmdHorizontalAxes(last_hmd_pose_.qRotation, right, fwd);
+	const double hmd_pos[3] = {last_hmd_pose_.vecPosition[0], last_hmd_pose_.vecPosition[1],
+	                           last_hmd_pose_.vecPosition[2]};
+	const double floor_y = last_body_prior_estimate_.priors.floor_y_m;
+
+	const SnapResult r = SnapCalibrate(hmd_pos, axes_valid, right, fwd, floor_y, trackers, infer_params_);
+	if (!r.ok) {
+		LOG("[phantom][snap] no assignment (status=%d trackers=%zu)", static_cast<int>(r.status), trackers.size());
+		return r;
+	}
+
+	for (const auto& a : r.assignments) {
+		if (a.role == BodyRole::None || a.id >= slots_.size()) continue;
+		auto& s = slots_[a.id];
+		role_by_serial_hash_[s.serial_hash] = a.role; // sticky: arbiter leaves it alone
+		s.role = a.role;
+		s.inferred_role = a.role; // surfaces in the badge + drives overlay auto-persist
+		s.inferred_confidence = a.confidence;
+		s.inferred_applied = true;
+		s.role_change_qpc = now_qpc;
+		opt_in_by_serial_hash_[s.serial_hash] = true;
+		s.opted_in = true;
+		s.ladder.SetIkAvailable(true);
+		LOG("[phantom][snap] mapped role=%s serial_hash=0x%016llx conf=%.2f", BodyRoleToKey(a.role),
+		    static_cast<unsigned long long>(s.serial_hash), a.confidence);
+	}
+
+	// Seed the body priors so estimated trackers start near-correct immediately
+	// instead of waiting out stand-still sampling.
+	if (r.measured_height_m >= 1.0 && r.measured_height_m <= 2.4) {
+		body_prior_estimator_.Seed(r.measured_height_m, r.floor_y_m);
+		last_body_prior_estimate_ = body_prior_estimator_.Estimate(body_priors_.virtual_min_confidence);
+	}
+
+	RefreshVirtualRoleBlocksLocked();
+	return r;
+}
+
+// Hands-free snap: once the user is standing still with at least one
+// still-unassigned tracker, take a snap automatically. Runs on the HMD cadence.
+void PhantomModule::MaybeAutoSnap(int64_t now_qpc)
+{
+	if (qpc_freq_ <= 0 || !auto_snap_enabled_.load(std::memory_order_acquire) || !last_hmd_valid_) {
+		still_since_qpc_ = 0;
+		return;
+	}
+
+	double right[2];
+	double fwd[2];
+	if (!HmdHorizontalAxes(last_hmd_pose_.qRotation, right, fwd)) {
+		still_since_qpc_ = 0;
+		return;
+	}
+	const double planar = std::sqrt((last_hmd_pose_.vecVelocity[0] * last_hmd_pose_.vecVelocity[0]) +
+	                                (last_hmd_pose_.vecVelocity[2] * last_hmd_pose_.vecVelocity[2]));
+	if (planar > kAutoSnapStillSpeed) {
+		still_since_qpc_ = 0;
+		return;
+	}
+
+	if (still_since_qpc_ == 0) {
+		still_since_qpc_ = now_qpc;
+		return;
+	}
+	if ((now_qpc - still_since_qpc_) < (qpc_freq_ / 2)) return; // ~0.5 s of stillness
+	if (last_auto_snap_qpc_ != 0 && (now_qpc - last_auto_snap_qpc_) < (qpc_freq_ * 3)) return;
+
+	std::lock_guard<std::mutex> lk(state_mutex_);
+	bool has_unassigned = false;
+	for (const auto& s : slots_) {
+		if (s.device_class != vr::TrackedDeviceClass_GenericTracker) continue;
+		if (s.serial.empty() || !s.last_observed_valid) continue;
+		if (role_by_serial_hash_.count(s.serial_hash) != 0) continue; // user/snap-tagged: leave it
+		if (s.role == BodyRole::None) {
+			has_unassigned = true;
+			break;
+		}
+	}
+	if (!has_unassigned) {
+		still_since_qpc_ = 0;
+		return;
+	}
+
+	const SnapResult r = RunSnapLocked(now_qpc);
+	last_auto_snap_qpc_ = now_qpc;
+	still_since_qpc_ = 0;
+	LOG("[phantom][snap] auto-snap status=%d assigned=%u", static_cast<int>(r.status), r.assigned_count);
 }
 
 bool PhantomModule::Init(DriverModuleContext& context)
@@ -781,6 +981,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 			};
 			const bool master_enabled = c.master_enabled != 0;
 			master_enabled_.store(master_enabled, std::memory_order_release);
+			auto_snap_enabled_.store(c.auto_snap != 0, std::memory_order_release);
 			// Apply new timings to every active slot. Cheap: just a copy.
 			std::lock_guard<std::mutex> lk(state_mutex_);
 			for (auto& s : slots_)
@@ -868,6 +1069,19 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 			    virtual_trackers_.EnabledCount(), virtual_trackers_.ActiveCount());
 			return true;
 		}
+		case protocol::RequestSnapCalibrate: {
+			SnapResult r;
+			{
+				std::lock_guard<std::mutex> lk(state_mutex_);
+				r = RunSnapLocked(NowQpc());
+			}
+			response.type = protocol::ResponsePhantomSnap;
+			response.phantomSnap.status = static_cast<uint8_t>(r.status);
+			response.phantomSnap.assigned_count =
+			    static_cast<uint8_t>(r.assigned_count > 255u ? 255u : r.assigned_count);
+			LOG("[phantom][snap] manual snap status=%d assigned=%u", static_cast<int>(r.status), r.assigned_count);
+			return true;
+		}
 		default:
 			return false;
 	}
@@ -876,6 +1090,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose)
 {
 	if (openVRID >= slots_.size()) return;
+	last_pose_qpc_ = qpc_ns; // freshest hot-path tick; "now" for liveness checks
 	DeviceSlot& s = slots_[openVRID];
 	ResolveSerialIfMissing(openVRID, s);
 	const bool tracked_ok = PoseIsTrackedOk(pose);
@@ -905,6 +1120,8 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 		// Passive role inference runs on the HMD cadence (throttled to ~1 Hz
 		// internally) so it always has the freshest head pose to reason against.
 		MaybeRunInference(qpc_ns);
+		// Hands-free snap: assign roles outright once the user stands still.
+		MaybeAutoSnap(qpc_ns);
 		// Drive virtual trackers off the HMD pose cadence. Each HMD update
 		// produces one completion frame; the manager only publishes roles
 		// whose confidence passes the policy threshold. Dropout bridging has

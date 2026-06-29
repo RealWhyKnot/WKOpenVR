@@ -13,13 +13,17 @@
 #include <windows.h>
 
 #include "PhantomInferenceShmem.h"
+#include "PhantomReplayPlayer.h"
 #include "Protocol.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -46,10 +50,50 @@ int main(int argc, char* argv[])
 	SetConsoleCtrlHandler(CtrlHandler, TRUE);
 
 	bool self_test = false;
+	const char* score_replay_path = nullptr;
 	for (int i = 1; i < argc; ++i) {
 		if (std::strcmp(argv[i], "--self-test") == 0 || std::strcmp(argv[i], "--healthcheck") == 0) {
 			self_test = true;
 		}
+		else if (std::strcmp(argv[i], "--score-replay") == 0 && i + 1 < argc) {
+			score_replay_path = argv[++i];
+		}
+	}
+
+	// Offline scoring of a phantom_replay_v1 capture: replay the recorded poses
+	// through the same role inference + snap the driver runs and report how well
+	// it recovers the ground-truth roles. The tuning loop for thresholds/priors.
+	if (score_replay_path) {
+		std::ifstream f(score_replay_path);
+		if (!f) {
+			std::fprintf(stderr, "[phantom-sidecar] score-replay: cannot open %s\n", score_replay_path);
+			return 20;
+		}
+		std::vector<std::string> lines;
+		std::string line;
+		while (std::getline(f, line))
+			lines.push_back(line);
+		const phantom::ParsedReplay parsed = phantom::ParseReplay(lines);
+		if (!parsed.ok) {
+			std::fprintf(stderr, "[phantom-sidecar] score-replay: %s\n", parsed.error.c_str());
+			return 21;
+		}
+		const phantom::ReplayScore score = phantom::ScoreReplay(parsed.samples);
+		std::fprintf(stderr, "[phantom-sidecar] score-replay %s: %zu samples over %.0f ms\n", score_replay_path,
+		             parsed.samples.size(), score.duration_ms);
+		for (const auto& t : score.trackers) {
+			char detect[32];
+			if (t.passive_detect_ms < 0.0)
+				std::snprintf(detect, sizeof(detect), "never");
+			else
+				std::snprintf(detect, sizeof(detect), "%.0fms", t.passive_detect_ms);
+			std::fprintf(stderr, "  %-24s truth=%-11s passive=%-11s (%.2f, %s)  snap=%-11s (%.2f)\n", t.serial.c_str(),
+			             phantom::BodyRoleToKey(t.ground_truth), phantom::BodyRoleToKey(t.passive_predicted),
+			             t.passive_confidence, detect, phantom::BodyRoleToKey(t.snap_predicted), t.snap_confidence);
+		}
+		std::fprintf(stderr, "[phantom-sidecar] passive=%u/%u snap=%u/%u (snap_status=%d)\n", score.passive_correct,
+		             score.total, score.snap_correct, score.total, static_cast<int>(score.snap_status));
+		return (score.total > 0 && score.snap_correct == score.total) ? 0 : 1;
 	}
 
 	if (self_test) {

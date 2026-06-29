@@ -33,8 +33,12 @@ add_executable(WKOpenVRPhantomSidecar
 
 target_include_directories(WKOpenVRPhantomSidecar PRIVATE
     ${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/common
+    ${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/driver
+    ${PHANTOM_PAIRDRIVER_ROOT}/modules/phantom/src/analysis
     ${PHANTOM_PAIRDRIVER_ROOT}/core/src/common
     ${PHANTOM_PAIRDRIVER_ROOT}/lib/openvr/headers)
+
+target_compile_features(WKOpenVRPhantomSidecar PRIVATE cxx_std_20)
 
 set_target_properties(WKOpenVRPhantomSidecar PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/artifacts)

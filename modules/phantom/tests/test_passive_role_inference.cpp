@@ -223,3 +223,47 @@ TEST(PassiveRoleInference, MidlineFeetDoNotBecomeHighConfidenceWrongSide)
 		EXPECT_LT(assignment.confidence, 0.60f) << "tracker " << i;
 	}
 }
+
+// A clean static read clears the apply bar at min_static_samples (a fraction of
+// a second) instead of waiting out the full motion ramp -- this is what lets a
+// standing user be detected quickly. Below that floor it is still low.
+TEST(PassiveRoleInference, StaticFirstGuessClearsApplyBarQuickly)
+{
+	InferenceParams params; // min_static_samples = 24, full = 600
+	std::vector<BodyRole> roles = {BodyRole::Waist, BodyRole::Chest};
+
+	std::vector<TrackerMotionFeatures> atFloor = {Feat(0.53, 0.0, 0.10, params.min_static_samples)};
+	std::vector<TrackerMotionFeatures> belowFloor = {Feat(0.53, 0.0, 0.10, 5)};
+
+	const float floorConf = AssignmentFor(InferRoles(atFloor, roles, params), 0).confidence;
+	const float lowConf = AssignmentFor(InferRoles(belowFloor, roles, params), 0).confidence;
+
+	EXPECT_GE(floorConf, 0.60f); // clears the driver auto-adopt bar
+	EXPECT_LT(lowConf, floorConf);
+}
+
+// height_ratio is floor-relative: the same geometry shifted up by a 1 m floor
+// produces identical normalized features.
+TEST(PassiveRoleInference, FloorRelativeAddSampleIsInvariant)
+{
+	const double right[2] = {1.0, 0.0};
+	const double fwd[2] = {0.0, -1.0};
+
+	RoleInferenceAccumulator a; // floor at 0
+	const double hmdA[3] = {0.0, 1.70, 0.0};
+	const double trkA[3] = {0.17, 0.901, 0.0}; // waist-height, 0.10 to the right
+	for (int i = 0; i < 50; ++i)
+		a.AddSample(hmdA, right, fwd, trkA, 0.0);
+
+	RoleInferenceAccumulator b; // floor at +1.0, same heights above floor
+	const double hmdB[3] = {0.0, 2.70, 0.0};
+	const double trkB[3] = {0.17, 1.901, 0.0};
+	for (int i = 0; i < 50; ++i)
+		b.AddSample(hmdB, right, fwd, trkB, 1.0);
+
+	const auto fa = a.Compute();
+	const auto fb = b.Compute();
+	EXPECT_NEAR(fa.height_ratio, fb.height_ratio, 1e-9);
+	EXPECT_NEAR(fa.lateral_norm, fb.lateral_norm, 1e-9);
+	EXPECT_NEAR(fa.height_ratio, 0.901 / 1.70, 1e-9);
+}

@@ -288,7 +288,12 @@ namespace protocol {
 // (0..100, 0 = off) separately from lockedHeadsetSmoothing. Consumes the final
 // existing _pad byte so the payload size does not change, but still requires a
 // paired overlay+driver install.
-const uint32_t Version = 36;
+//
+// v37 (2026-06-29): Phantom snap-calibrate. RequestSnapCalibrate triggers a
+// one-shot, motion-free body-role assignment from the current static pose (no
+// payload inputs; the driver reads the live HMD + tracker poses). The driver
+// replies ResponsePhantomSnap with the snap status + assigned tracker count.
+const uint32_t Version = 37;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -412,6 +417,10 @@ enum RequestType
 	// v33 (2026-06-09): per-expression face tracking output scale. Appended
 	// to preserve prior request ordinals.
 	RequestSetFaceShapeTuning,
+	// v37 (2026-06-29): phantom one-shot snap-calibrate. Driver routes on
+	// \\.\pipe\WKOpenVR-Phantom; assigns body roles from the current static
+	// pose and replies ResponsePhantomSnap. Appended to preserve ordinals.
+	RequestSnapCalibrate,
 };
 
 enum ResponseType
@@ -423,6 +432,8 @@ enum ResponseType
 	ResponseOscRouterStats,
 	// Captions: sent in reply to RequestCaptionsGetSupervisorStatus.
 	ResponseCaptionsSupervisorStatus,
+	// v37: sent in reply to RequestSnapCalibrate. Payload is PhantomSnapResult.
+	ResponsePhantomSnap,
 };
 
 struct Protocol

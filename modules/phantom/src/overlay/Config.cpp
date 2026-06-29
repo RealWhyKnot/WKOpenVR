@@ -58,6 +58,9 @@ PhantomConfig LoadPhantomConfig()
 		else if (std::strcmp(key, "auto_accept_roles") == 0) {
 			cfg.auto_accept_roles = (std::atoi(val) != 0);
 		}
+		else if (std::strcmp(key, "auto_snap") == 0) {
+			cfg.auto_snap = (std::atoi(val) != 0);
+		}
 		else if (std::strcmp(key, "solver.virtual_min_confidence") == 0) {
 			cfg.solver.virtual_min_confidence = std::strtod(val, nullptr);
 		}
@@ -117,6 +120,7 @@ void SavePhantomConfig(const PhantomConfig& cfg)
 	if (!f) return;
 	std::fprintf(f, "master_enabled=%d\n", cfg.master_enabled ? 1 : 0);
 	std::fprintf(f, "auto_accept_roles=%d\n", cfg.auto_accept_roles ? 1 : 0);
+	std::fprintf(f, "auto_snap=%d\n", cfg.auto_snap ? 1 : 0);
 	std::fprintf(f, "blend_out_ms=%u\n", (unsigned)cfg.blend_out_ms);
 	std::fprintf(f, "blend_in_ms=%u\n", (unsigned)cfg.blend_in_ms);
 	std::fprintf(f, "reckon_hold_ms=%u\n", (unsigned)cfg.reckon_hold_ms);

@@ -104,6 +104,22 @@ public:
 		++yaw_sample_count_;
 	}
 
+	// Seed the learned height + floor from a one-shot snap so estimated trackers
+	// start near-correct immediately instead of waiting out stand-still sampling.
+	// Marks enough stable samples that Estimate() reports the seeded priors right
+	// away; yaw is left to settle on its own from live motion (not faked).
+	void Seed(double height_m, double floor_y_m)
+	{
+		floor_y_m_ = ClampBodyPriorValue(floor_y_m, -2.0, 2.0);
+		floor_initialized_ = true;
+		floor_from_tracker_ = false;
+		height_m_ = ClampBodyPriorValue(height_m, 1.0, 2.4);
+		height_initialized_ = true;
+		if (stable_sample_count_ < 30) {
+			stable_sample_count_ = 30;
+		}
+	}
+
 	BodyPriorEstimate Estimate(double virtual_min_confidence) const
 	{
 		BodyPriorEstimate estimate;

@@ -54,5 +54,9 @@ private:
 	void SendDeviceOptIn(const std::string& serial, bool enabled);
 	void SendDeviceRole(const std::string& serial, phantom::BodyRole role);
 	void SendVirtualEnabled(phantom::BodyRole role, bool enabled);
+	void SendSnapCalibrate();
 	void ReplayDriverState();
+
+	// Last manual-snap outcome, shown inline under the Snap button.
+	std::string snapMessage_;
 };

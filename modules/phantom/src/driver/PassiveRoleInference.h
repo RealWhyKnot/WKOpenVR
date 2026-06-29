@@ -46,12 +46,20 @@ public:
 	// hmd_pos / tracker_pos are world positions {x,y,z}; hmd_right / hmd_fwd are
 	// the HMD's horizontal right and forward unit vectors {x,z} so the caller
 	// owns the (sign-sensitive) heading math once. Only valid, tracked samples
-	// should be passed in.
+	// should be passed in. The floor_y overload normalizes heights against the
+	// floor the body-prior estimator has learned (floor at y=0 is the default),
+	// so the priors hold regardless of the runtime's standing-zero.
 	void AddSample(const double hmd_pos[3], const double hmd_right[2], const double hmd_fwd[2],
 	               const double tracker_pos[3])
 	{
-		const double head_y = hmd_pos[1];
-		if (head_y < kMinHeadHeight) {
+		AddSample(hmd_pos, hmd_right, hmd_fwd, tracker_pos, 0.0);
+	}
+
+	void AddSample(const double hmd_pos[3], const double hmd_right[2], const double hmd_fwd[2],
+	               const double tracker_pos[3], double floor_y)
+	{
+		const double head_h = hmd_pos[1] - floor_y;
+		if (head_h < kMinHeadHeight) {
 			return; // implausible head height (uninitialised / seated-on-floor); skip.
 		}
 
@@ -59,14 +67,14 @@ public:
 		const double dz = tracker_pos[2] - hmd_pos[2];
 		const double lateral = (dx * hmd_right[0]) + (dz * hmd_right[1]);
 		const double forward = (dx * hmd_fwd[0]) + (dz * hmd_fwd[1]);
-		const double tracker_y = tracker_pos[1];
+		const double tracker_h = tracker_pos[1] - floor_y;
 
-		sum_height_ratio_ += tracker_y / head_y;
+		sum_height_ratio_ += tracker_h / head_h;
 		sum_lateral_ += lateral;
 		sum_forward_ += forward;
-		sum_head_y_ += head_y;
-		sum_tracker_y_ += tracker_y;
-		sum_tracker_y_sq_ += tracker_y * tracker_y;
+		sum_head_h_ += head_h;
+		sum_tracker_h_ += tracker_h;
+		sum_tracker_h_sq_ += tracker_h * tracker_h;
 		++count_;
 	}
 
@@ -85,9 +93,9 @@ public:
 		sum_height_ratio_ *= factor;
 		sum_lateral_ *= factor;
 		sum_forward_ *= factor;
-		sum_head_y_ *= factor;
-		sum_tracker_y_ *= factor;
-		sum_tracker_y_sq_ *= factor;
+		sum_head_h_ *= factor;
+		sum_tracker_h_ *= factor;
+		sum_tracker_h_sq_ *= factor;
 		count_ = static_cast<uint32_t>(std::llround(count_ * factor));
 	}
 
@@ -101,10 +109,10 @@ public:
 		}
 
 		const double n = static_cast<double>(count_);
-		const double head_y = sum_head_y_ / n;
-		const double inv_head = head_y > kMinHeadHeight ? 1.0 / head_y : 0.0;
-		const double mean_tracker_y = sum_tracker_y_ / n;
-		const double var_y = std::max(0.0, (sum_tracker_y_sq_ / n) - (mean_tracker_y * mean_tracker_y));
+		const double head_h = sum_head_h_ / n;
+		const double inv_head = head_h > kMinHeadHeight ? 1.0 / head_h : 0.0;
+		const double mean_tracker_h = sum_tracker_h_ / n;
+		const double var_y = std::max(0.0, (sum_tracker_h_sq_ / n) - (mean_tracker_h * mean_tracker_h));
 
 		f.height_ratio = sum_height_ratio_ / n;
 		f.lateral_norm = (sum_lateral_ / n) * inv_head;
@@ -121,9 +129,9 @@ private:
 	double sum_height_ratio_ = 0.0;
 	double sum_lateral_ = 0.0;
 	double sum_forward_ = 0.0;
-	double sum_head_y_ = 0.0;
-	double sum_tracker_y_ = 0.0;
-	double sum_tracker_y_sq_ = 0.0;
+	double sum_head_h_ = 0.0;
+	double sum_tracker_h_ = 0.0;
+	double sum_tracker_h_sq_ = 0.0;
 	uint32_t count_ = 0;
 };
 
@@ -169,6 +177,14 @@ struct InferenceParams
 	// Samples needed before an assignment can reach full confidence.
 	uint32_t full_confidence_samples = 600; // ~ a few seconds at tracker rate
 
+	// Samples after which a static (no-motion) first guess is already trusted:
+	// at this count the sample term reaches static_sample_floor so a clean
+	// standing layout clears the apply bar in a fraction of a second instead of
+	// waiting out the full motion ramp. A one-shot snap forces sample_count to
+	// full_confidence_samples so it lands at 1.0 immediately.
+	uint32_t min_static_samples = 24; // ~0.25 s at tracker rate
+	double static_sample_floor = 0.85;
+
 	// Minimum confidence below which an assignment is reported as None.
 	float min_confidence = 0.35f;
 };
@@ -198,10 +214,25 @@ inline float AssignmentConfidence(double best_cost, double second_cost, uint32_t
 	const double cost_factor = std::exp(-best_cost / std::max(1e-6, params.cost_scale));
 	const double margin = std::max(0.0, second_cost - best_cost);
 	const double margin_factor = 1.0 - std::exp(-margin / std::max(1e-6, params.margin_scale));
-	const double sample_factor =
-	    params.full_confidence_samples == 0
-	        ? 1.0
-	        : std::min(1.0, static_cast<double>(sample_count) / static_cast<double>(params.full_confidence_samples));
+
+	// Sample term: ramp 0 -> static_sample_floor over the first min_static_samples
+	// (so a clean static read is trusted quickly), then floor -> 1.0 over the rest
+	// of the way to full_confidence_samples as sustained motion corroborates.
+	double sample_factor;
+	if (params.full_confidence_samples == 0) {
+		sample_factor = 1.0;
+	}
+	else {
+		const double n = static_cast<double>(sample_count);
+		const double full = static_cast<double>(params.full_confidence_samples);
+		const double min_static = static_cast<double>(params.min_static_samples == 0 ? 1u : params.min_static_samples);
+		const double floor = std::clamp(params.static_sample_floor, 0.0, 1.0);
+		const double base = std::min(1.0, n / min_static) * floor;
+		const double extra = (n > min_static && full > min_static)
+		                         ? (1.0 - floor) * std::min(1.0, (n - min_static) / (full - min_static))
+		                         : 0.0;
+		sample_factor = base + extra;
+	}
 	const double conf = cost_factor * margin_factor * sample_factor;
 	return static_cast<float>(std::clamp(conf, 0.0, 1.0));
 }
@@ -293,6 +324,49 @@ inline std::vector<RoleAssignment> InferRoles(const std::vector<TrackerMotionFea
 	}
 
 	return result;
+}
+
+// Confidence that one tracker's features belong to a specific role, scored the
+// same way InferRoles scores its picks (cost of the queried role vs the best
+// alternative in the candidate set). Lets a caller ask "does the role this
+// tracker currently holds still fit?" without re-running the full assignment.
+inline float RoleFitConfidence(const TrackerMotionFeatures& f, BodyRole role,
+                               const std::vector<BodyRole>& candidate_roles, const InferenceParams& params = {})
+{
+	if (!f.has_data || role == BodyRole::None) {
+		return 0.0f;
+	}
+	const auto& priors = DefaultRolePriors();
+	double role_cost = std::numeric_limits<double>::infinity();
+	double second = std::numeric_limits<double>::infinity();
+	bool found = false;
+	for (BodyRole c : candidate_roles) {
+		const RolePrior* p = nullptr;
+		for (const RolePrior& pr : priors) {
+			if (pr.role == c) {
+				p = &pr;
+				break;
+			}
+		}
+		if (!p) {
+			continue;
+		}
+		const double cost = RoleCost(f, *p, params);
+		if (c == role) {
+			role_cost = cost;
+			found = true;
+		}
+		else {
+			second = std::min(second, cost);
+		}
+	}
+	if (!found) {
+		return 0.0f;
+	}
+	if (!std::isfinite(second)) {
+		second = role_cost + params.margin_scale * 3.0;
+	}
+	return AssignmentConfidence(role_cost, second, f.sample_count, params);
 }
 
 } // namespace phantom

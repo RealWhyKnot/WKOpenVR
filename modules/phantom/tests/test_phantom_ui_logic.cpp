@@ -169,3 +169,12 @@ TEST(PhantomUiLogic, AutoSaveDetectedRoleGatesOnConfidenceAndState)
 	EXPECT_FALSE(phantom::ui::ShouldAutoSaveDetectedRole(true, true, BodyRole::LeftFoot, BodyRole::RightFoot, kManual,
 	                                                     0.99f, kThreshold));
 }
+
+TEST(PhantomUiLogic, SnapResultMessageMapsStatusCodes)
+{
+	EXPECT_STREQ(phantom::ui::SnapResultMessage(0, 1), "Mapped 1 tracker.");
+	EXPECT_STREQ(phantom::ui::SnapResultMessage(0, 3), "Mapped trackers.");
+	EXPECT_STRNE(phantom::ui::SnapResultMessage(1, 0), phantom::ui::SnapResultMessage(0, 0)); // tilted != ok
+	EXPECT_STREQ(phantom::ui::SnapResultMessage(2, 0), "No trackers detected to map.");
+	EXPECT_STREQ(phantom::ui::SnapResultMessage(99, 0), "Snap failed.");
+}

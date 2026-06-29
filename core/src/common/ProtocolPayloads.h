@@ -594,7 +594,9 @@ struct PhantomConfig
 	// history available, but no synthesis is applied and no virtual
 	// devices are added).
 	uint8_t master_enabled;
-	uint8_t _pad0[3];
+	// v37: 1 = auto snap-calibrate body roles when the user stands still.
+	uint8_t auto_snap;
+	uint8_t _pad0[2];
 
 	// Timeout ladder values, all in milliseconds. Defaults track the
 	// constants in modules/phantom/src/common/BlendCurves.h:
@@ -678,6 +680,23 @@ struct PhantomSolverConfig
 	double upper_leg_m;
 	double lower_leg_m;
 	double virtual_min_confidence;
+};
+
+// POD payload for RequestSnapCalibrate (v37). The driver reads the live HMD +
+// tracker poses, so there are no inputs today; reserved bytes leave room for a
+// future role mask without a version bump.
+struct PhantomSnapCalibrate
+{
+	uint8_t _reserved[8];
+};
+
+// POD payload for ResponsePhantomSnap (v37). status is the SnapStatus enum,
+// assigned_count is how many trackers got a role from the snap.
+struct PhantomSnapResult
+{
+	uint8_t status;
+	uint8_t assigned_count;
+	uint8_t _reserved[6];
 };
 
 // POD payload for RequestSetHeadMountConfig (v25/v26/v29/v30/v36). The overlay resolves
@@ -770,6 +789,8 @@ struct Request
 		PhantomVirtualEnabled setPhantomVirtualEnabled;
 		// v28: phantom in-process body completion settings.
 		PhantomSolverConfig setPhantomSolverConfig;
+		// v37: snap-calibrate trigger. Tiny; static_assert pins the size.
+		PhantomSnapCalibrate snapCalibrate;
 		// v22: OSC router live send-port edit. Tiny (8 bytes); does not
 		// grow the union.
 		OscRouterConfig setOscRouterConfig;
@@ -805,6 +826,7 @@ static_assert(sizeof(PhantomTrackerOffset) <= sizeof(SetDeviceTransform), "Phant
 static_assert(sizeof(PhantomVirtualEnabled) <= sizeof(SetDeviceTransform),
               "PhantomVirtualEnabled must not grow Request");
 static_assert(sizeof(PhantomSolverConfig) <= sizeof(SetDeviceTransform), "PhantomSolverConfig must not grow Request");
+static_assert(sizeof(PhantomSnapCalibrate) <= sizeof(SetDeviceTransform), "PhantomSnapCalibrate must not grow Request");
 
 struct Response
 {
@@ -815,6 +837,7 @@ struct Response
 		Protocol protocol;
 		OscRouterStats oscRouterStats;                     // v16: ResponseOscRouterStats
 		CaptionsSupervisorStatus captionsSupervisorStatus; // Captions: supervisor state
+		PhantomSnapResult phantomSnap;                     // v37: ResponsePhantomSnap
 	};
 
 	Response() : type(ResponseInvalid), protocol({}) {}

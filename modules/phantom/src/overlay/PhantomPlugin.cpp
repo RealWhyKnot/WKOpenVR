@@ -127,7 +127,8 @@ void PhantomPlugin::SendConfig()
 	protocol::Request req(protocol::RequestSetPhantomConfig);
 	auto& c = req.setPhantomConfig;
 	c.master_enabled = cfg_.master_enabled ? 1u : 0u;
-	c._pad0[0] = c._pad0[1] = c._pad0[2] = 0;
+	c.auto_snap = cfg_.auto_snap ? 1u : 0u;
+	c._pad0[0] = c._pad0[1] = 0;
 	c.blend_out_ms = cfg_.blend_out_ms;
 	c.blend_in_ms = cfg_.blend_in_ms;
 	c.reckon_hold_ms = cfg_.reckon_hold_ms;
@@ -586,6 +587,31 @@ void PhantomPlugin::SendVirtualEnabled(phantom::BodyRole role, bool enabled)
 	}
 }
 
+void PhantomPlugin::SendSnapCalibrate()
+{
+	if (!ipc_.IsConnected()) {
+		snapMessage_ = "Driver not connected.";
+		return;
+	}
+	protocol::Request req(protocol::RequestSnapCalibrate);
+	std::memset(&req.snapCalibrate, 0, sizeof(req.snapCalibrate));
+	try {
+		const protocol::Response resp = ipc_.SendBlocking(req);
+		if (resp.type == protocol::ResponsePhantomSnap) {
+			snapMessage_ = phantom::ui::SnapResultMessage(resp.phantomSnap.status, resp.phantomSnap.assigned_count);
+		}
+		else {
+			snapMessage_ = "Snap failed.";
+		}
+	}
+	catch (const std::exception& e) {
+		connectError_ = e.what();
+		snapMessage_ = "Snap failed.";
+	}
+	// Snapped roles publish to the driver state shmem as confident detections,
+	// so the existing auto-save path persists them when auto-save is on.
+}
+
 void PhantomPlugin::ReplayDriverState()
 {
 	if (!ipc_.IsConnected()) return;
@@ -605,19 +631,37 @@ void PhantomPlugin::ReplayDriverState()
 void PhantomPlugin::DrawAutoDetectPanel()
 {
 	ui::DrawPanel("Automatic role detection", [&] {
-		ui::DrawTextWrapped("Move around normally for a few seconds. The driver watches each tracker's "
-		                    "height and motion relative to your headset and works out which body point "
-		                    "it sits on. Confident detections are applied live; with auto-save on they "
-		                    "also persist so the mapping is remembered next session. The Assigned column "
-		                    "badges whether a saved role was detected (Auto) or hand-picked below (Manual); "
-		                    "Clear removes a saved role and Manual roles are never overwritten by detection.");
+		ui::DrawTextWrapped("Stand naturally and look forward, then Snap to map every tracker at once. The "
+		                    "driver reads each tracker's height and side relative to your headset and works "
+		                    "out which body point it sits on. With auto-snap on it does this hands-free as "
+		                    "soon as you stand still. Passive detection keeps refining in the background and "
+		                    "self-corrects a wrong guess as you move. The Assigned column badges whether a "
+		                    "saved role was detected (Auto) or hand-picked (Manual); Manual and snapped roles "
+		                    "are never overwritten by passive detection.");
 		ImGui::Spacing();
+
+		if (ImGui::Button("Snap calibrate")) {
+			SendSnapCalibrate();
+		}
+		ui::TooltipForLastItem("Map every tracker now from your current pose. Stand naturally and look "
+		                       "forward first.");
+		if (!snapMessage_.empty()) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", snapMessage_.c_str());
+		}
+		ImGui::Spacing();
+
+		if (ImGui::Checkbox("Auto-snap when standing still", &cfg_.auto_snap)) {
+			SendConfig();
+			SavePhantomConfig(cfg_);
+		}
+		ui::TooltipForLastItem("Automatically snap-calibrate once you stand still with an unmapped tracker.");
 
 		if (ImGui::Checkbox("Save confident detections automatically", &cfg_.auto_accept_roles)) {
 			SavePhantomConfig(cfg_);
 		}
-		ui::TooltipForLastItem("When on, a detection above ~70% confidence is written to the saved "
-		                       "tracker mapping without pressing Accept.");
+		ui::TooltipForLastItem("When on, a detection above ~70% confidence (including snaps) is written to the "
+		                       "saved tracker mapping so it is remembered next session.");
 		ImGui::Spacing();
 
 		if (!stateShmemReady_ || !stateShmem_.layout()) {

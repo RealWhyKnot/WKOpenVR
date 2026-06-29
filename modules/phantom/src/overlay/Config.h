@@ -57,6 +57,11 @@ struct PhantomConfig
 	// applies confident detections live; this only controls persistence.
 	bool auto_accept_roles = true;
 
+	// When true, the driver snap-calibrates body roles automatically once the
+	// user stands still with at least one unassigned tracker (zero-touch). A
+	// manual Snap button is always available regardless.
+	bool auto_snap = true;
+
 	// Per-body-role absent-mode toggle. When true (and the role
 	// has a solver pose above the configured confidence threshold), the
 	// driver publishes a virtual GenericTracker for the role with the
