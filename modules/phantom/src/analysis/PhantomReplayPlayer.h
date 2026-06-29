@@ -240,7 +240,10 @@ inline ReplayScore ScoreReplay(const std::vector<ReplaySample>& samples, double 
 		if (s.device_class != "tracker") continue;
 
 		const size_t i = slot_for(s);
-		if (truth[i] == BodyRole::None) truth[i] = s.ground_truth_role;
+		// Ground truth = the most recent non-None role the capture labelled this
+		// tracker with (the user's final assignment), not the empty early frames
+		// before roles were assigned.
+		if (s.ground_truth_role != BodyRole::None) truth[i] = s.ground_truth_role;
 		last_pos_x[i] = s.pos[0];
 		last_pos_y[i] = s.pos[1];
 		last_pos_z[i] = s.pos[2];
