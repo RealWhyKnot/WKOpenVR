@@ -5,7 +5,6 @@
 #include "CalibrationMetrics.h"
 #include "ControllerInput.h"
 #include "HeadMountPoseSampling.h"
-#include "RelocGuard.h" // spacecal::reloc_guard -- post-relocalization sample quarantine.
 #include "RuntimeHealthSummary.h"
 #include "TargetStabilityGate.h" // spacecal::target_stability -- continuous-solve back-off.
 #include "RotationMatrix3.h"
@@ -244,17 +243,6 @@ void RecordRejectedReplaySampleDiagnostics(const vr::DriverPose_t& reference, co
 	diag.refZeroPose = PoseLooksZero(reference);
 	diag.targetZeroPose = PoseLooksZero(target);
 	Metrics::SetTickReplaySampleDiagnostics(diag);
-}
-
-bool CandidateRelPoseMadMm(const CalibrationContext& ctx, const Eigen::AffineCompact3d& rel, double& outMadMm)
-{
-	std::deque<Eigen::AffineCompact3d> window = ctx.autoLockHistory;
-	window.push_back(rel);
-	while (window.size() > spacecal::autolock::kHistoryMax)
-		window.pop_front();
-	if (window.size() < spacecal::autolock::kSamplesNeeded) return false;
-	outMadMm = spacecal::autolock::RobustTranslDeviation(window) * 1000.0;
-	return true;
 }
 
 PoseHealthProbe ProbePoseHealth(int deviceId, const Pose& pose, const LARGE_INTEGER& sampleTime,
@@ -667,33 +655,6 @@ bool CollectSample(const CalibrationContext& ctx)
 	Eigen::AffineCompact3d tgtWorld = Eigen::AffineCompact3d::Identity();
 	tgtWorld.linear() = tgtPose.rot;
 	tgtWorld.translation() = tgtPose.trans;
-	const Eigen::AffineCompact3d candidateRel = refWorld.inverse() * tgtWorld;
-
-	// Post-relocalization sample quarantine (experimental, default off). After a
-	// detected HMD relocalization the inside-out world frame has shifted; drop
-	// samples for a short settle window so the shifted pose pairs never enter the
-	// solve OR the AUTO-lock MAD window. The early-release path tests this
-	// candidate against the existing relative-pose window, so a non-poisoned row
-	// can resume immediately while a shifted row falls back to the time window.
-	bool quarantineActive = false;
-	if (ctx.experimentalRelocQuarantineEnabled) {
-		double candidateMadMm = 0.0;
-		const bool haveCandidateMad = CandidateRelPoseMadMm(ctx, candidateRel, candidateMadMm);
-		quarantineActive = spacecal::reloc_guard::QuarantineActive(
-		    glfwGetTime(), ctx.lastRelocDetectedTime, ctx.experimentalRelocQuarantineSec,
-		    haveCandidateMad ? candidateMadMm : 0.0, haveCandidateMad ? ctx.autoLockMadFloor * 1000.0 : 0.0,
-		    spacecal::reloc_guard::kDefaultClearMult);
-	}
-	if (quarantineActive) {
-		RecordReplaySampleDiagnostics(collectedSample, false);
-		static double s_lastQuarantineLog = -1e9;
-		const double nowLog = glfwGetTime();
-		if (nowLog - s_lastQuarantineLog >= 1.0) {
-			s_lastQuarantineLog = nowLog;
-			Metrics::WriteLogAnnotation("reloc_quarantine_sample_dropped");
-		}
-		return true;
-	}
 	RecordReplaySampleDiagnostics(collectedSample, true);
 	calibration.PushSample(collectedSample);
 	openvr_pair::common::RuntimePoseHealthSample runtimeHealth{};

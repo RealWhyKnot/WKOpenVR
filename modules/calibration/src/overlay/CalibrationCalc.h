@@ -205,18 +205,6 @@ public:
 	bool enableStaticRecalibration;
 	bool lockRelativePosition = false;
 
-	// Robust/bounded-solve guards (experimental). Set per-tick from CalCtx at the
-	// ComputeIncremental call site, mirroring lockRelativePosition. All default
-	// off, so ComputeIncremental behaves exactly as before unless the user opts
-	// in. See BoundedSolve.h for the math.
-	bool boundedSolveEnabled = false;
-	bool boundedSolvePrior = false;
-	double boundedSolvePriorLambda = 0.2;
-	bool boundedSolveSlew = false;
-	double boundedSolveMaxStepM = 0.05;
-	double boundedSolveMaxStepRad = 0.0349; // ~2 deg
-	bool boundedSolveCommonMode = false;
-
 	const Eigen::AffineCompact3d Transformation() const { return m_estimatedTransformation; }
 
 	const Eigen::Vector3d EulerRotation() const
