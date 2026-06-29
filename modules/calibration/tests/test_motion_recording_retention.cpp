@@ -87,41 +87,6 @@ double EnvDouble(const char* name, double fallback)
 	}
 }
 
-// Parse a tracking-style env override. Accepts the numeric enum value (0-3) or a
-// case-insensitive name ("manual", "continuous", "locked"/"lockedwithrecovery",
-// "hard"/"hardtrackerlock"). Anything else returns the fallback.
-TrackingStyle EnvTrackingStyle(const char* name, TrackingStyle fallback)
-{
-	const char* raw = std::getenv(name);
-	if (!raw) return fallback;
-	std::string value = TrimAscii(raw);
-	for (char& c : value) {
-		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-	}
-	if (value == "0" || value == "manual") return TrackingStyle::Manual;
-	if (value == "1" || value == "continuous") return TrackingStyle::Continuous;
-	if (value == "2" || value == "locked" || value == "lockedwithrecovery" || value == "locked_with_recovery")
-		return TrackingStyle::LockedWithRecovery;
-	if (value == "3" || value == "hard" || value == "hardtrackerlock" || value == "hard_tracker_lock")
-		return TrackingStyle::HardTrackerLock;
-	return fallback;
-}
-
-replay::ReplayRelocSource EnvRelocSource(const char* name, replay::ReplayRelocSource fallback)
-{
-	const char* raw = std::getenv(name);
-	if (!raw) return fallback;
-	std::string value = TrimAscii(raw);
-	for (char& c : value) {
-		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-	}
-	if (value == "auto") return replay::ReplayRelocSource::Auto;
-	if (value == "annotation" || value == "annotations") return replay::ReplayRelocSource::Annotation;
-	if (value == "column" || value == "reloc_detected") return replay::ReplayRelocSource::Column;
-	if (value == "proxy" || value == "relative" || value == "relpose") return replay::ReplayRelocSource::Proxy;
-	return fallback;
-}
-
 std::size_t EnvSize(const char* name, std::size_t fallback)
 {
 	const char* raw = std::getenv(name);
@@ -349,23 +314,6 @@ void WriteLockedSnapV4Recording(const std::filesystem::path& path, int rowCount,
 	}
 }
 
-// Write a minimal v3 recording (raw poses + tick_phase, no v4 locked-snap
-// columns) so the locked-snap path reports the requires_v4 skip.
-void WriteMinimalV3Recording(const std::filesystem::path& path, int rowCount)
-{
-	std::ofstream out(path);
-	ASSERT_TRUE(out) << path.string();
-	out << "# spacecal_log_v3\n";
-	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
-	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase\n";
-	out.precision(17);
-	for (int i = 0; i < rowCount; ++i) {
-		const double t = static_cast<double>(i) / 60.0;
-		const double refX = 0.01 * (i % 5);
-		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15) << ",1.60,0.0,1,0,0,0,Continuous\n";
-	}
-}
-
 void WriteExperimentalFlagsV5Recording(const std::filesystem::path& path)
 {
 	std::ofstream out(path);
@@ -377,9 +325,7 @@ void WriteExperimentalFlagsV5Recording(const std::filesystem::path& path)
 	       "head_tracker_valid,head_tracker_tx,head_tracker_ty,head_tracker_tz,"
 	       "head_tracker_qw,head_tracker_qx,head_tracker_qy,head_tracker_qz,reloc_detected,"
 	       "experimental_flags\n";
-	const uint32_t flags =
-	    spacecal::calibration_experiments::RelocQuarantine | spacecal::calibration_experiments::BoundedSolve |
-	    spacecal::calibration_experiments::BoundedSolveSlew | spacecal::calibration_experiments::BoundedSolveCommonMode;
+	const uint32_t flags = spacecal::calibration_experiments::HeadsetOffsetAutoCorrect;
 	out.precision(17);
 	for (int i = 0; i < 8; ++i) {
 		const double t = static_cast<double>(i) / 60.0;
@@ -387,49 +333,6 @@ void WriteExperimentalFlagsV5Recording(const std::filesystem::path& path)
 		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15)
 		    << ",1.60,0.0,1,0,0,0,Continuous,0,1.60,0.0,1,0,0,0,0,0,0,0,1,0,0,0,0," << flags << "\n";
 	}
-}
-
-void WriteRelocSourceV4Recording(const std::filesystem::path& path, bool includeAnnotation, bool includeColumnEvent,
-                                 bool includeProxyJump)
-{
-	std::ofstream out(path);
-	ASSERT_TRUE(out) << path.string();
-	out << "# spacecal_log_v4\n";
-	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
-	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase,reloc_detected\n";
-	out.precision(17);
-	for (int i = 0; i < 5; ++i) {
-		const double t = static_cast<double>(i) * 0.5;
-		if (includeAnnotation && i == 2) {
-			out << "# [0.75] hmd_relocalization_detected: dx=0.051 dy=0.000 dz=0.000 dt=0.050\n";
-		}
-		const double refX = 0.01 * static_cast<double>(i);
-		const double targetJump = includeProxyJump && i >= 2 ? 1.0 : 0.0;
-		const int reloc = includeColumnEvent && i == 2 ? 1 : 0;
-		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15 + targetJump) << ",1.60,0.0,1,0,0,0,Continuous,"
-		    << reloc << "\n";
-	}
-}
-
-replay::LoadedRecording MakeStableRelativePoseRecording(int rowCount, double annotationTime)
-{
-	replay::LoadedRecording recording;
-	recording.formatVersion = 5;
-	if (annotationTime >= 0.0) {
-		recording.relocalizationAnnotationTimes.push_back(annotationTime);
-	}
-	recording.rows.reserve(static_cast<std::size_t>(rowCount));
-	for (int i = 0; i < rowCount; ++i) {
-		replay::ReplayRow row;
-		row.timestamp = static_cast<double>(i) / 30.0;
-		row.ref.rot.setIdentity();
-		row.target.rot.setIdentity();
-		row.ref.trans = Eigen::Vector3d(0.002 * static_cast<double>(i % 7), 1.60, 0.001 * static_cast<double>(i % 5));
-		const double relNoise = 0.001 * std::sin(static_cast<double>(i) * 0.35);
-		row.target.trans = row.ref.trans + Eigen::Vector3d(0.15 + relNoise, 0.0, -0.05);
-		recording.rows.push_back(std::move(row));
-	}
-	return recording;
 }
 
 } // namespace
@@ -523,9 +426,7 @@ TEST(MotionRecordingReplayTest, LoadsV5ExperimentalFlagsAndKeepsV4Compatible)
 	ASSERT_TRUE(v5.hasExperimentalFlagsColumn);
 	ASSERT_FALSE(v5.rows.empty());
 	EXPECT_TRUE(v5.rows.front().hasExperimentalFlags);
-	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::RelocQuarantine);
-	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::BoundedSolveSlew);
-	EXPECT_EQ(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::DriftBreaker);
+	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::HeadsetOffsetAutoCorrect);
 
 	const std::filesystem::path v4Path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_flags_compat.csv";
 	std::filesystem::remove(v4Path);
@@ -545,13 +446,6 @@ TEST(MotionRecordingReplayTest, FormatsExperimentalToggleAnnotations)
 {
 	const char* optionNames[] = {
 	    "headset_offset_auto_correct",
-	    "reloc_quarantine",
-	    "drift_breaker",
-	    "bounded_solve",
-	    "bounded_solve_prior",
-	    "bounded_solve_slew",
-	    "bounded_solve_common_mode",
-	    "locked_snap_recovery",
 	};
 	for (const char* optionName : optionNames) {
 		EXPECT_EQ(std::string(optionName) + "_toggled: source=ui enabled=1",
@@ -559,55 +453,6 @@ TEST(MotionRecordingReplayTest, FormatsExperimentalToggleAnnotations)
 		EXPECT_EQ(std::string(optionName) + "_toggled: source=ui enabled=0",
 		          spacecal::calibration_experiments::ToggleAnnotation(optionName, false));
 	}
-}
-
-TEST(MotionRecordingReplayTest, RelPoseMadIsInvariantForNonSampleSelectionGuards)
-{
-	const auto recording = MakeStableRelativePoseRecording(/*rowCount=*/90, /*annotationTime=*/-1.0);
-
-	replay::ReplayOptions base;
-	base.continuous = true;
-	base.maxContinuousSamples = 30;
-	base.qualityReportInterval = 0;
-
-	const auto baseline = replay::RunReplay(recording, base);
-	ASSERT_TRUE(baseline.succeeded) << baseline.error;
-
-	replay::ReplayOptions bounded = base;
-	bounded.applyBoundedSolve = true;
-	bounded.bsSlew = true;
-	bounded.bsCommonMode = true;
-	const auto boundedResult = replay::RunReplay(recording, bounded);
-	ASSERT_TRUE(boundedResult.succeeded) << boundedResult.error;
-
-	replay::ReplayOptions drift = base;
-	drift.applyDriftBreaker = true;
-	const auto driftResult = replay::RunReplay(recording, drift);
-	ASSERT_TRUE(driftResult.succeeded) << driftResult.error;
-
-	EXPECT_DOUBLE_EQ(baseline.medianRelPoseMadMm, boundedResult.medianRelPoseMadMm);
-	EXPECT_DOUBLE_EQ(baseline.finalRelPoseMadMm, boundedResult.finalRelPoseMadMm);
-	EXPECT_DOUBLE_EQ(baseline.medianRelPoseMadMm, driftResult.medianRelPoseMadMm);
-	EXPECT_DOUBLE_EQ(baseline.finalRelPoseMadMm, driftResult.finalRelPoseMadMm);
-}
-
-TEST(MotionRecordingReplayTest, QuarantineReleasesEarlyWhenCandidateMadIsSettled)
-{
-	const auto recording = MakeStableRelativePoseRecording(/*rowCount=*/90, /*annotationTime=*/1.0);
-
-	replay::ReplayOptions options;
-	options.applyRelocQuarantine = true;
-	options.relocSource = replay::ReplayRelocSource::Annotation;
-	options.quarantineSec = 1.0;
-	options.qualityReportInterval = 0;
-
-	const auto result = replay::RunReplay(recording, options);
-
-	EXPECT_TRUE(result.succeeded) << result.error;
-	EXPECT_EQ("annotation", result.relocSource);
-	EXPECT_EQ(1, result.relocEvents);
-	EXPECT_EQ(0, result.samplesQuarantined);
-	EXPECT_FALSE(result.sampleStarved);
 }
 
 TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
@@ -695,174 +540,6 @@ TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
 	EXPECT_GE(result.finalQuality.holdoutP95Mm, 0.0);
 }
 
-TEST(MotionRecordingReplayTest, LockedSnapReanchorsOnV4UniverseFlip)
-{
-	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_locked_snap.csv";
-	std::filesystem::remove(path);
-	WriteLockedSnapV4Recording(path, /*rowCount=*/40, /*flipRow=*/20, /*flipDistanceM=*/0.5);
-
-	const auto recording = replay::LoadRecording(path.string());
-	std::filesystem::remove(path);
-	ASSERT_TRUE(recording.error.empty()) << recording.error;
-	ASSERT_EQ(4, recording.formatVersion);
-	ASSERT_TRUE(recording.hasLockedSnapColumns);
-	ASSERT_EQ(40u, recording.rows.size());
-	// The flip row carries the raw HMD teleport + the (unmoved) head tracker.
-	EXPECT_TRUE(recording.rows[20].hasHmdPose);
-	EXPECT_TRUE(recording.rows[20].headTrackerValid);
-	EXPECT_TRUE(recording.rows[20].relocDetected);
-	EXPECT_NEAR(0.5, recording.rows[20].hmd.trans.x(), 1e-9);
-	EXPECT_NEAR(0.0, recording.rows[19].hmd.trans.x(), 1e-9);
-
-	replay::ReplayOptions base;
-	base.continuous = false;
-	base.qualityReportInterval = 0;
-
-	// Toggle ON in a locked style: the corroborated universe flip opens exactly
-	// one gentle re-anchor.
-	{
-		replay::ReplayOptions options = base;
-		options.applyLockedSnap = true;
-		options.trackingStyle = TrackingStyle::LockedWithRecovery;
-		const auto result = replay::RunReplay(recording, options);
-		EXPECT_TRUE(result.succeeded) << result.error;
-		EXPECT_EQ("applied", result.lockedSnapStatus);
-		EXPECT_EQ(1, result.snapReanchors);
-	}
-
-	// Toggle OFF: byte-identical legacy replay, no re-anchors counted.
-	{
-		replay::ReplayOptions options = base;
-		options.applyLockedSnap = false;
-		const auto result = replay::RunReplay(recording, options);
-		EXPECT_TRUE(result.succeeded) << result.error;
-		EXPECT_EQ("off", result.lockedSnapStatus);
-		EXPECT_EQ(0, result.snapReanchors);
-	}
-
-	// Toggle ON but a non-locked style: the gentle path is locked-only, so the
-	// snap is classified (v4 columns present -> "applied") yet never re-anchors.
-	{
-		replay::ReplayOptions options = base;
-		options.applyLockedSnap = true;
-		options.trackingStyle = TrackingStyle::Continuous;
-		const auto result = replay::RunReplay(recording, options);
-		EXPECT_TRUE(result.succeeded) << result.error;
-		EXPECT_EQ("applied", result.lockedSnapStatus);
-		EXPECT_EQ(0, result.snapReanchors);
-	}
-}
-
-TEST(MotionRecordingReplayTest, LockedSnapNoReanchorWithoutFlip)
-{
-	const std::filesystem::path path =
-	    std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_locked_snap_clean.csv";
-	std::filesystem::remove(path);
-	WriteLockedSnapV4Recording(path, /*rowCount=*/40, /*flipRow=*/-1, /*flipDistanceM=*/0.0);
-
-	const auto recording = replay::LoadRecording(path.string());
-	std::filesystem::remove(path);
-	ASSERT_TRUE(recording.error.empty()) << recording.error;
-	ASSERT_TRUE(recording.hasLockedSnapColumns);
-
-	replay::ReplayOptions options;
-	options.continuous = false;
-	options.qualityReportInterval = 0;
-	options.applyLockedSnap = true;
-	options.trackingStyle = TrackingStyle::LockedWithRecovery;
-	const auto result = replay::RunReplay(recording, options);
-	EXPECT_TRUE(result.succeeded) << result.error;
-	EXPECT_EQ("applied", result.lockedSnapStatus);
-	EXPECT_EQ(0, result.snapReanchors);
-}
-
-TEST(MotionRecordingReplayTest, LockedSnapRequiresV4OnV3Recording)
-{
-	const std::filesystem::path path =
-	    std::filesystem::temp_directory_path() / "wkopenvr_replay_v3_locked_snap_skip.csv";
-	std::filesystem::remove(path);
-	WriteMinimalV3Recording(path, /*rowCount=*/40);
-
-	const auto recording = replay::LoadRecording(path.string());
-	std::filesystem::remove(path);
-	ASSERT_TRUE(recording.error.empty()) << recording.error;
-	ASSERT_EQ(3, recording.formatVersion);
-	ASSERT_FALSE(recording.hasLockedSnapColumns);
-
-	replay::ReplayOptions options;
-	options.continuous = false;
-	options.qualityReportInterval = 0;
-	options.applyLockedSnap = true;
-	options.trackingStyle = TrackingStyle::LockedWithRecovery;
-	const auto result = replay::RunReplay(recording, options);
-	EXPECT_TRUE(result.succeeded) << result.error;
-	EXPECT_EQ("locked_snap_replay_requires_v4", result.lockedSnapStatus);
-	EXPECT_EQ(0, result.snapReanchors);
-}
-
-TEST(MotionRecordingReplayTest, AnnotationRelocSourceDrivesQuarantineWithoutProxy)
-{
-	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_reloc_annotation.csv";
-	WriteRelocSourceV4Recording(path, /*includeAnnotation=*/true, /*includeColumnEvent=*/false,
-	                            /*includeProxyJump=*/false);
-
-	const auto recording = replay::LoadRecording(path.string());
-	ASSERT_TRUE(recording.error.empty()) << recording.error;
-	ASSERT_EQ(1u, recording.relocalizationAnnotationTimes.size());
-	EXPECT_TRUE(recording.hasRelocDetectedColumn);
-	EXPECT_EQ(0, recording.relocDetectedRowCount);
-
-	replay::ReplayOptions options;
-	options.applyRelocQuarantine = true;
-	options.relocSource = replay::ReplayRelocSource::Annotation;
-	const auto result = replay::RunReplay(recording, options);
-
-	EXPECT_TRUE(result.succeeded) << result.error;
-	EXPECT_EQ("annotation", result.relocSource);
-	EXPECT_EQ(1, result.relocEvents);
-	EXPECT_EQ(2, result.samplesQuarantined);
-}
-
-TEST(MotionRecordingReplayTest, AutoRelocSourcePrefersAnnotationOverProxy)
-{
-	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_reloc_auto.csv";
-	WriteRelocSourceV4Recording(path, /*includeAnnotation=*/true, /*includeColumnEvent=*/false,
-	                            /*includeProxyJump=*/true);
-
-	const auto recording = replay::LoadRecording(path.string());
-	ASSERT_TRUE(recording.error.empty()) << recording.error;
-
-	replay::ReplayOptions options;
-	options.applyRelocQuarantine = true;
-	options.relocSource = replay::ReplayRelocSource::Auto;
-	const auto result = replay::RunReplay(recording, options);
-
-	EXPECT_TRUE(result.succeeded) << result.error;
-	EXPECT_EQ("annotation", result.relocSource);
-	EXPECT_EQ(1, result.relocEvents);
-	EXPECT_EQ(2, result.samplesQuarantined);
-}
-
-TEST(MotionRecordingReplayTest, ColumnRelocSourceUsedWhenAnnotationsAbsent)
-{
-	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_reloc_column.csv";
-	WriteRelocSourceV4Recording(path, /*includeAnnotation=*/false, /*includeColumnEvent=*/true,
-	                            /*includeProxyJump=*/false);
-
-	const auto recording = replay::LoadRecording(path.string());
-	ASSERT_TRUE(recording.error.empty()) << recording.error;
-
-	replay::ReplayOptions options;
-	options.applyRelocQuarantine = true;
-	options.relocSource = replay::ReplayRelocSource::Auto;
-	const auto result = replay::RunReplay(recording, options);
-
-	EXPECT_TRUE(result.succeeded) << result.error;
-	EXPECT_EQ("column", result.relocSource);
-	EXPECT_EQ(1, result.relocEvents);
-	EXPECT_EQ(2, result.samplesQuarantined);
-}
-
 TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 {
 	const char* enabled = std::getenv("WKOPENVR_REPLAY_RECORDINGS");
@@ -879,25 +556,6 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.continuous = true;
 	baseOptions.qualityReportInterval = EnvSize("WKOPENVR_REPLAY_QUALITY_INTERVAL", baseOptions.qualityReportInterval);
 	baseOptions.includeHoldoutQuality = EnvFlag("WKOPENVR_REPLAY_HOLDOUT", baseOptions.includeHoldoutQuality);
-	// Experimental drift-fighting guards (all default off -> legacy replay).
-	baseOptions.applyRelocQuarantine = EnvFlag("WKOPENVR_REPLAY_QUARANTINE", baseOptions.applyRelocQuarantine);
-	baseOptions.quarantineSec = EnvDouble("WKOPENVR_REPLAY_QUARANTINE_SEC", baseOptions.quarantineSec);
-	baseOptions.applyDriftBreaker = EnvFlag("WKOPENVR_REPLAY_DRIFT_BREAKER", baseOptions.applyDriftBreaker);
-	baseOptions.driftBreakerMadMult = EnvDouble("WKOPENVR_REPLAY_DRIFT_BREAKER_MULT", baseOptions.driftBreakerMadMult);
-	baseOptions.driftBreakerAbsCapMm =
-	    EnvDouble("WKOPENVR_REPLAY_DRIFT_BREAKER_CAP_MM", baseOptions.driftBreakerAbsCapMm);
-	baseOptions.applyBoundedSolve = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE", baseOptions.applyBoundedSolve);
-	baseOptions.bsPrior = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR", baseOptions.bsPrior);
-	baseOptions.bsPriorLambda = EnvDouble("WKOPENVR_REPLAY_BOUNDED_SOLVE_LAMBDA", baseOptions.bsPriorLambda);
-	baseOptions.bsSlew = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW", baseOptions.bsSlew);
-	baseOptions.bsMaxStepMm = EnvDouble("WKOPENVR_REPLAY_BOUNDED_SOLVE_STEP_MM", baseOptions.bsMaxStepMm);
-	baseOptions.bsCommonMode = EnvFlag("WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE", baseOptions.bsCommonMode);
-	baseOptions.relocProxyJumpM = EnvDouble("WKOPENVR_REPLAY_RELOC_PROXY_M", baseOptions.relocProxyJumpM);
-	baseOptions.relocSource = EnvRelocSource("WKOPENVR_REPLAY_RELOC_SOURCE", baseOptions.relocSource);
-	// Toggle 4 (locked-style snap recovery). Needs a v4 recording; on v3 input the
-	// replay reports locked_snap=locked_snap_replay_requires_v4 and counts zero.
-	baseOptions.applyLockedSnap = EnvFlag("WKOPENVR_REPLAY_LOCKED_SNAP", baseOptions.applyLockedSnap);
-	baseOptions.trackingStyle = EnvTrackingStyle("WKOPENVR_REPLAY_TRACKING_STYLE", baseOptions.trackingStyle);
 	const auto sampleWindows = ReplaySampleWindows();
 
 	std::size_t replayed = 0;
@@ -938,18 +596,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " peak_relpose_mad_mm=" << result.peakRelPoseMadMm
 			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
-			          << " samples_quarantined=" << result.samplesQuarantined
 			          << " solver_sample_rows=" << result.solverSamplesPushed
 			          << " solver_sample_ratio=" << result.solverSampleRatio
-			          << " sample_starved=" << (result.sampleStarved ? 1 : 0)
-			          << " freeze_engagements=" << result.freezeEngagements
-			          << " snap_reanchors=" << result.snapReanchors
-			          << " locked_snap_hmd_jumps=" << result.lockedSnapHmdJumps
-			          << " locked_snap_tracker_invalid=" << result.lockedSnapTrackerInvalid
-			          << " locked_snap_corroborated=" << result.lockedSnapCorroborated
-			          << " reloc_events=" << result.relocEvents << " reloc_source=" << result.relocSource
-			          << " locked_snap=" << result.lockedSnapStatus
-			          << " tracking_style=" << static_cast<int>(options.trackingStyle)
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
 			PrintQualitySummary(input.name, sampleWindow, result);
 			++replayed;

@@ -62,13 +62,6 @@ static void LogExperimentToggle(const char* optionName, bool enabled)
 	Metrics::WriteLogAnnotation(annotation.c_str());
 }
 
-static void AssignExperimentToggle(const char* optionName, bool& target, bool value)
-{
-	if (target == value) return;
-	target = value;
-	LogExperimentToggle(optionName, value);
-}
-
 static bool ExperimentCheckbox(const char* optionName, const char* id, bool* value, const char* tooltip)
 {
 	if (!openvr_pair::overlay::ui::CheckboxWithTooltip(id, value, tooltip)) return false;
@@ -458,7 +451,6 @@ void CCal_DrawSettings()
 
 		{
 			ImGui::BeginGroupPanel("Experimental", panel_size);
-			const bool showDiagnostics = spacecal::calibration_experiments::HiddenExperimentsEnabled();
 			openvr_pair::overlay::ui::DrawSettingTable(
 			    "##advanced_experimental_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
 				    openvr_pair::overlay::ui::SettingRow(table, "Headset offset auto-correct", [&] {
@@ -469,92 +461,6 @@ void CCal_DrawSettings()
 					            "tracker when continuous calibration sees the same stable correction across multiple "
 					            "windows.\n\n"
 					            "Experimental. Leave off unless you are testing head-mounted tracker offset drift.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    openvr_pair::overlay::ui::SettingRow(table, "Relocalization sample guard", [&] {
-					    if (ExperimentCheckbox(
-					            "reloc_quarantine", "##experimental_reloc_quarantine",
-					            &CalCtx.experimentalRelocQuarantineEnabled,
-					            "After the headset's inside-out tracking relocalizes (a sudden world-frame jump), "
-					            "briefly pause feeding samples to continuous calibration so the shifted poses don't "
-					            "drag the calibration off.\n\nExperimental. Helps on setups that relocalize often.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    if (showDiagnostics) {
-					    openvr_pair::overlay::ui::SettingRow(table, "Auto-freeze on drift", [&] {
-						    if (ExperimentCheckbox(
-						            "drift_breaker", "##experimental_drift_breaker",
-						            &CalCtx.experimentalDriftBreakerEnabled,
-						            "If the relative pose between your devices starts varying wildly (the calibration "
-						            "is "
-						            "running away), automatically freeze it -- the same thing turning on headset lock "
-						            "does, "
-						            "but without you having to notice first.\n\nDiagnostic.")) {
-							    if (!CalCtx.experimentalDriftBreakerEnabled && CalCtx.driftBreakerFrozen) {
-								    CalCtx.driftBreakerFrozen = false;
-								    CalCtx.ResolveLockMode();
-								    Metrics::WriteLogAnnotation("drift_breaker_disabled_released: source=ui");
-							    }
-							    SaveProfile(CalCtx);
-						    }
-					    });
-				    }
-				    openvr_pair::overlay::ui::SettingRow(table, "Bounded solve", [&] {
-					    if (ExperimentCheckbox(
-					            "bounded_solve", "##experimental_bounded_solve",
-					            &CalCtx.experimentalBoundedSolveEnabled,
-					            "Limit one calibration update to a bounded step and reject whole-world jumps, so a "
-					            "burst of bad samples can't yank it.\n\nExperimental.")) {
-						    if (!showDiagnostics) {
-							    AssignExperimentToggle("bounded_solve_prior", CalCtx.experimentalBoundedSolvePrior,
-							                           false);
-							    AssignExperimentToggle("bounded_solve_slew", CalCtx.experimentalBoundedSolveSlew,
-							                           CalCtx.experimentalBoundedSolveEnabled);
-							    AssignExperimentToggle("bounded_solve_common_mode",
-							                           CalCtx.experimentalBoundedSolveCommonMode,
-							                           CalCtx.experimentalBoundedSolveEnabled);
-						    }
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    if (showDiagnostics) {
-					    openvr_pair::overlay::ui::SettingRow(table, "  Anchor to last solve", [&] {
-						    if (ExperimentCheckbox(
-						            "bounded_solve_prior", "##experimental_bounded_solve_prior",
-						            &CalCtx.experimentalBoundedSolvePrior,
-						            "Pull each continuous-cal update gently toward the last settled result. Requires "
-						            "Bounded solve.\n\nDiagnostic.")) {
-							    SaveProfile(CalCtx);
-						    }
-					    });
-					    openvr_pair::overlay::ui::SettingRow(table, "  Limit step size", [&] {
-						    if (ExperimentCheckbox("bounded_solve_slew", "##experimental_bounded_solve_slew",
-						                           &CalCtx.experimentalBoundedSolveSlew,
-						                           "Cap how far one calibration update can jump. Requires Bounded "
-						                           "solve.\n\nDiagnostic.")) {
-							    SaveProfile(CalCtx);
-						    }
-					    });
-					    openvr_pair::overlay::ui::SettingRow(table, "  Reject universe jumps", [&] {
-						    if (ExperimentCheckbox(
-						            "bounded_solve_common_mode", "##experimental_bounded_solve_common_mode",
-						            &CalCtx.experimentalBoundedSolveCommonMode,
-						            "Discard samples where both devices jump together the same way -- a whole-world "
-						            "relocalization carries no calibration information. Requires Bounded solve.\n\n"
-						            "Diagnostic.")) {
-							    SaveProfile(CalCtx);
-						    }
-					    });
-				    }
-				    openvr_pair::overlay::ui::SettingRow(table, "Recover snaps when locked", [&] {
-					    if (ExperimentCheckbox(
-					            "locked_snap_recovery", "##experimental_locked_snap_recovery",
-					            &CalCtx.experimentalLockedSnapRecoveryEnabled,
-					            "In the locked headset styles, allow the gentle snap re-anchor to run when the head "
-					            "tracker confirms your head didn't actually move (a headset universe flip). Off keeps "
-					            "locked styles from auto-reanchoring.\n\nExperimental.")) {
 						    SaveProfile(CalCtx);
 					    }
 				    });

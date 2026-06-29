@@ -93,9 +93,9 @@ inline bool LockRelativeModeEnabled(CalibrationContext::LockMode mode)
 	return mode == CalibrationContext::LockMode::ON;
 }
 
-inline bool ResolveLockRelativePositionValue(CalibrationContext::LockMode mode, bool driftBreakerFrozen)
+inline bool ResolveLockRelativePositionValue(CalibrationContext::LockMode mode)
 {
-	return LockRelativeModeEnabled(mode) || driftBreakerFrozen;
+	return LockRelativeModeEnabled(mode);
 }
 
 inline TrackingStyle InferTrackingStyleFromConfig(const CalibrationContext& ctx)

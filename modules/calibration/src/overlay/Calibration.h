@@ -316,47 +316,11 @@ struct CalibrationContext
 	// updates each tick and would converge through the shift anyway.
 	bool baseStationDriftCorrectionEnabled = true;
 
-	// --- Experimental drift-fighting toggles (all default OFF, opt-in via the
-	// calibration Advanced tab). Each gates an independent guard against the
-	// continuous-cal calibration drifting off when Quest inside-out tracking
-	// relocalizes. See RelocGuard.h / DriftBreaker.h / BoundedSolve.h /
-	// LockedSnapRecovery.h for the per-guard rationale. Persisted; runaway-state
-	// runtime fields below them are reset in Clear() and not persisted.
-
-	// Toggle 1 -- post-relocalization sample quarantine: drop continuous-cal
-	// samples for a settle window after a detected HMD relocalization so the
-	// post-snap shifted pose pairs do not enter the solve.
-	bool experimentalRelocQuarantineEnabled = false;
-	double experimentalRelocQuarantineSec = 1.0;
-	// Runtime: glfwGetTime() of the most recent relocalization detection, armed
-	// by the reloc detector. -1e9 = none seen yet. Not persisted.
+	// Relocalization-detector runtime state. Armed by the HMD reloc detector;
+	// relocDetectedThisTick is recorded per tick (spacecal_log reloc_detected
+	// column). Not persisted; reset in Clear().
 	double lastRelocDetectedTime = -1e9;
 	bool relocDetectedThisTick = false;
-
-	// Toggle 2 -- drift circuit-breaker: auto-freeze the relative pose when its
-	// MAD runs away past K*floor or an absolute cap (automating the manual
-	// headset-lock the user would otherwise reach for).
-	bool experimentalDriftBreakerEnabled = false;
-	double experimentalDriftBreakerMadMult = 8.0;
-	double experimentalDriftBreakerAbsCapMm = 60.0;
-	// Runtime: breaker currently holding the relative pose frozen. Not persisted.
-	bool driftBreakerFrozen = false;
-
-	// Toggle 3 -- robust/bounded continuous solve: bound how far one solve tick
-	// can move the applied calibration (prior pull + slew clamp) and reject
-	// whole-universe (common-mode) jumps. The parent gates the three sub-guards.
-	bool experimentalBoundedSolveEnabled = false;
-	bool experimentalBoundedSolvePrior = false;
-	double experimentalBoundedSolvePriorLambda = 0.2;
-	bool experimentalBoundedSolveSlew = false;
-	double experimentalBoundedSolveMaxStepMm = 50.0;
-	double experimentalBoundedSolveMaxStepDeg = 2.0;
-	bool experimentalBoundedSolveCommonMode = false;
-
-	// Toggle 4 -- locked-style snap recovery: allow the gentle corroborated snap
-	// re-anchor to run in the locked tracking styles (it is otherwise
-	// Continuous-only, so corroborated Quest universe flips are skipped today).
-	bool experimentalLockedSnapRecoveryEnabled = false;
 
 	// Target-stability back-off (always on, conservative). Rolling EWMA of the
 	// fraction of recent continuous-cal ticks whose target tracker was not
@@ -774,7 +738,6 @@ struct CalibrationContext
 		lockRelativePosition = false;
 		// Experimental drift-guard runtime state (the toggles themselves are
 		// settings and intentionally NOT reset here -- only the runaway state).
-		driftBreakerFrozen = false;
 		lastRelocDetectedTime = -1e9;
 		relocDetectedThisTick = false;
 		targetInvalidEwma = 0.0;

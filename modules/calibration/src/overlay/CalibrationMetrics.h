@@ -235,13 +235,11 @@ struct ReplaySampleDiagnostics
 };
 
 // v4 wire-format addition: raw HMD pose, head-mount tracker pose (+ a valid flag),
-// and a per-row relocalization-detected flag. These let the offline replay harness
-// reconstruct the head-tracker corroboration the locked-style snap recovery depends
-// on (spacecal::snap_suppression::IsJumpClassifiedAsSnap needs the head-tracker
-// displacement, which v3 didn't record), so experimentalLockedSnapRecoveryEnabled
-// can be A/B-confirmed on a recorded session rather than only live. Poses are in
-// world space (worldFromDriver applied), matching the ref/target columns. Filled by
-// SetTickLockedSnapInputs() each tick alongside SetTickRawPoses().
+// and a per-row relocalization-detected flag. These record the head-tracker
+// corroboration inputs (head-mount displacement vs HMD jump) so offline replay can
+// analyse relocalization/snap events on a recorded session rather than only live.
+// Poses are in world space (worldFromDriver applied), matching the ref/target
+// columns. Filled by SetTickLockedSnapInputs() each tick alongside SetTickRawPoses().
 struct ReplayLockedSnapInputs
 {
 	Eigen::Vector3d hmdTrans = Eigen::Vector3d::Zero();

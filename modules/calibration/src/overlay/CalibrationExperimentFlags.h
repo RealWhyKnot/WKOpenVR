@@ -9,13 +9,6 @@ namespace spacecal::calibration_experiments {
 enum ExperimentFlag : uint32_t
 {
 	HeadsetOffsetAutoCorrect = 1u << 0,
-	RelocQuarantine = 1u << 1,
-	DriftBreaker = 1u << 2,
-	BoundedSolve = 1u << 3,
-	BoundedSolvePrior = 1u << 4,
-	BoundedSolveSlew = 1u << 5,
-	BoundedSolveCommonMode = 1u << 6,
-	LockedSnapRecovery = 1u << 7,
 };
 
 inline bool EnvFlagEnabled(const char* value)

@@ -45,10 +45,6 @@ void CCal_TickBoundaryCapture();
                                  // hysteresis + stationary-gate constants and pure helpers.
 #include "WarmRestart.h"         // spacecal::warm_restart::ShouldEngage -- proximity-edge
                                  // decision for the saved-profile snap path.
-#include "DriftBreaker.h"        // spacecal::drift_breaker -- experimental auto-freeze on
-                                 // relative-pose MAD runaway.
-#include "RelocGuard.h"          // spacecal::reloc_guard -- experimental post-relocalization
-                                 // sample quarantine window helper.
 #include "TargetStabilityGate.h" // spacecal::target_stability -- defer the continuous solve
                                  // while the target tracking link is flapping.
 
@@ -938,47 +934,6 @@ void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& re
 		autoLockMadFloorTs = floorEntry.first;
 	}
 
-	// Drift circuit-breaker (experimental, default off). When the relative-pose
-	// MAD runs away past K*floor or an absolute cap, force the relative-pose lock
-	// on -- the same effect as the user manually enabling headset lock -- and
-	// release it with hysteresis once the MAD restabilizes. driftBreakerFrozen is
-	// a one-way override read by ResolveLockMode; it never touches the AUTO
-	// pending-flip queue, so it composes with the detector rather than fighting
-	// it. Reuses translStdDev / autoLockMadFloor just computed above.
-	const bool driftBreakerEffective =
-	    experimentalDriftBreakerEnabled && spacecal::calibration_experiments::HiddenExperimentsEnabled();
-	if (!driftBreakerEffective) {
-		if (driftBreakerFrozen) {
-			driftBreakerFrozen = false;
-			ResolveLockMode();
-			Metrics::WriteLogAnnotation("drift_breaker_disabled_released");
-		}
-	}
-	else {
-		const double madMm = translStdDev * 1000.0;
-		const double floorMm = autoLockMadFloor * 1000.0;
-		if (!driftBreakerFrozen &&
-		    spacecal::drift_breaker::ShouldFreeze(madMm, floorMm, experimentalDriftBreakerMadMult,
-		                                          experimentalDriftBreakerAbsCapMm)) {
-			driftBreakerFrozen = true;
-			ResolveLockMode();
-			char buf[200];
-			snprintf(buf, sizeof buf, "drift_breaker_freeze_engaged: translMad_mm=%.1f mad_floor_mm=%.1f", madMm,
-			         floorMm);
-			Metrics::WriteLogAnnotation(buf);
-		}
-		else if (driftBreakerFrozen &&
-		         spacecal::drift_breaker::ShouldRelease(madMm, floorMm, experimentalDriftBreakerMadMult,
-		                                                experimentalDriftBreakerAbsCapMm)) {
-			driftBreakerFrozen = false;
-			ResolveLockMode();
-			char buf[200];
-			snprintf(buf, sizeof buf, "drift_breaker_freeze_released: translMad_mm=%.1f mad_floor_mm=%.1f", madMm,
-			         floorMm);
-			Metrics::WriteLogAnnotation(buf);
-		}
-	}
-
 	// Panic-unlock: at clearly-broken deviation, skip the pending-flip queue
 	// and drop the effective lock immediately so downstream cal output stops
 	// using the stale rigid attachment. ResolveLockMode runs inline because
@@ -1133,7 +1088,7 @@ bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSp
 void CalibrationContext::ResolveLockMode()
 {
 	const bool prev = lockRelativePosition;
-	lockRelativePosition = ResolveLockRelativePositionValue(lockRelativePositionMode, driftBreakerFrozen);
+	lockRelativePosition = ResolveLockRelativePositionValue(lockRelativePositionMode);
 	// Diagnostic: annotate every resolved-value change. The UI-side toggle of
 	// "Lock relative position" is invisible in post-session logs unless we
 	// trace the resolve step; without this a user-reported "I toggled Lock
@@ -1737,8 +1692,7 @@ void CalibrationTick(double time)
 			         " relPosCal=%d hmdStalls=%d"
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
-			         " mad_floor_source=%s wr_validation=%s"
-			         " drift_breaker_frozen=%d",
+			         " mad_floor_source=%s wr_validation=%s",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
 			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
@@ -1747,7 +1701,7 @@ void CalibrationTick(double time)
 			         ctx.geometryShiftGraceUntil, g_cusumState.S, g_cusumState.sustainedAboveThreshold,
 			         spacecal::geometry_shift::kMinSustainedSpikes, cooldownRemaining, (int)ctx.relativePosCalibrated,
 			         ctx.consecutiveHmdStalls, (int)warmRestartActive, ctx.warmRestartGraceSamples, postSnapBiasMm,
-			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb, (int)ctx.driftBreakerFrozen);
+			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
@@ -1770,18 +1724,6 @@ void CalibrationTick(double time)
 			         (double)ctx.oneShotCalibrationSpeed, (double)ctx.continuousCalibrationSpeed,
 			         (double)ctx.ActiveCalibrationSpeed(), (double)ctx.jitterThreshold);
 			Metrics::WriteLogAnnotation(dumpBuf);
-			char expBuf[512];
-			snprintf(expBuf, sizeof expBuf,
-			         "session_experimental_dump: reloc_quarantine=%d quarantine_sec=%.2f drift_breaker=%d"
-			         " breaker_mad_mult=%.1f breaker_abs_cap_mm=%.1f bounded_solve=%d bs_prior=%d bs_lambda=%.2f"
-			         " bs_slew=%d bs_max_step_mm=%.1f bs_common_mode=%d locked_snap_recovery=%d",
-			         (int)ctx.experimentalRelocQuarantineEnabled, ctx.experimentalRelocQuarantineSec,
-			         (int)ctx.experimentalDriftBreakerEnabled, ctx.experimentalDriftBreakerMadMult,
-			         ctx.experimentalDriftBreakerAbsCapMm, (int)ctx.experimentalBoundedSolveEnabled,
-			         (int)ctx.experimentalBoundedSolvePrior, ctx.experimentalBoundedSolvePriorLambda,
-			         (int)ctx.experimentalBoundedSolveSlew, ctx.experimentalBoundedSolveMaxStepMm,
-			         (int)ctx.experimentalBoundedSolveCommonMode, (int)ctx.experimentalLockedSnapRecoveryEnabled);
-			Metrics::WriteLogAnnotation(expBuf);
 		}
 	}
 
@@ -2733,20 +2675,6 @@ void CalibrationTick(double time)
 	if (CalCtx.state == CalibrationState::Continuous) {
 		CalCtx.messages.clear();
 		calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
-		// Experimental robust/bounded-solve guards, plumbed per-tick (mirrors the
-		// lockRelativePosition wiring below). Defaults keep these off -> no change.
-		const bool hiddenExperimentDiagnostics = spacecal::calibration_experiments::HiddenExperimentsEnabled();
-		calibration.boundedSolveEnabled = CalCtx.experimentalBoundedSolveEnabled;
-		calibration.boundedSolvePrior = CalCtx.experimentalBoundedSolveEnabled && hiddenExperimentDiagnostics &&
-		                                CalCtx.experimentalBoundedSolvePrior;
-		calibration.boundedSolvePriorLambda = CalCtx.experimentalBoundedSolvePriorLambda;
-		calibration.boundedSolveSlew = CalCtx.experimentalBoundedSolveEnabled &&
-		                               (CalCtx.experimentalBoundedSolveSlew || !hiddenExperimentDiagnostics);
-		calibration.boundedSolveMaxStepM = CalCtx.experimentalBoundedSolveMaxStepMm / 1000.0;
-		calibration.boundedSolveMaxStepRad = CalCtx.experimentalBoundedSolveMaxStepDeg * 0.017453292519943295;
-		calibration.boundedSolveCommonMode =
-		    CalCtx.experimentalBoundedSolveEnabled &&
-		    (CalCtx.experimentalBoundedSolveCommonMode || !hiddenExperimentDiagnostics);
 		const bool blockStaleRelPose =
 		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
@@ -3319,26 +3247,11 @@ void CalibrationTick(double time)
 		Metrics::SetTickLockedSnapInputs(lockedSnap);
 
 		uint32_t experimentalFlags = 0;
-		const bool hiddenExperimentDiagnostics = spacecal::calibration_experiments::HiddenExperimentsEnabled();
 		auto setExperimentFlag = [&](spacecal::calibration_experiments::ExperimentFlag flag, bool enabled) {
 			if (enabled) experimentalFlags |= static_cast<uint32_t>(flag);
 		};
 		setExperimentFlag(spacecal::calibration_experiments::HeadsetOffsetAutoCorrect,
 		                  ctx.headMount.experimentalAutoCorrectOffset);
-		setExperimentFlag(spacecal::calibration_experiments::RelocQuarantine, ctx.experimentalRelocQuarantineEnabled);
-		setExperimentFlag(spacecal::calibration_experiments::DriftBreaker,
-		                  ctx.experimentalDriftBreakerEnabled && hiddenExperimentDiagnostics);
-		if (ctx.experimentalBoundedSolveEnabled) {
-			setExperimentFlag(spacecal::calibration_experiments::BoundedSolve, true);
-			setExperimentFlag(spacecal::calibration_experiments::BoundedSolvePrior,
-			                  hiddenExperimentDiagnostics && ctx.experimentalBoundedSolvePrior);
-			setExperimentFlag(spacecal::calibration_experiments::BoundedSolveSlew,
-			                  ctx.experimentalBoundedSolveSlew || !hiddenExperimentDiagnostics);
-			setExperimentFlag(spacecal::calibration_experiments::BoundedSolveCommonMode,
-			                  ctx.experimentalBoundedSolveCommonMode || !hiddenExperimentDiagnostics);
-		}
-		setExperimentFlag(spacecal::calibration_experiments::LockedSnapRecovery,
-		                  ctx.experimentalLockedSnapRecoveryEnabled);
 		Metrics::SetTickExperimentalFlags(experimentalFlags);
 	}
 

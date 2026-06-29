@@ -1,11 +1,6 @@
 #include "MotionRecording.h"
 
 #include "AutoLockHysteresis.h" // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
-#include "BoundedSolve.h"
-#include "DriftBreaker.h"
-#include "LockedSnapRecovery.h" // spacecal::locked_snap::GentleSnapAllowedInLockedStyle (toggle 4).
-#include "RelocGuard.h"
-#include "SnapSuppression.h" // spacecal::snap_suppression::IsJumpClassifiedAsSnap (toggle 4).
 
 #include <windows.h>
 #include <shlobj_core.h>
@@ -198,29 +193,6 @@ void AddReasonCount(std::vector<ReplayReasonCount>& counts, const std::string& r
 	counts.push_back(std::move(entry));
 }
 
-bool CandidateRelPoseMadMm(const std::deque<Eigen::AffineCompact3d>& currentWindow,
-                           const Eigen::AffineCompact3d& candidate, double& outMadMm)
-{
-	std::deque<Eigen::AffineCompact3d> window = currentWindow;
-	window.push_back(candidate);
-	while (window.size() > spacecal::autolock::kHistoryMax)
-		window.pop_front();
-	if (window.size() < spacecal::autolock::kSamplesNeeded) return false;
-	outMadMm = spacecal::autolock::RobustTranslDeviation(window) * 1000.0;
-	return true;
-}
-
-// Map a recorded tick_phase string to the CalibrationState the locked-snap gate
-// consults. Only Continuous / ContinuousStandby make the gentle re-anchor
-// eligible; every other phase maps to None (ineligible), matching the live
-// GentleSnapAllowedInLockedStyle state check.
-CalibrationState ReplayRowStateFromPhase(const std::string& phase)
-{
-	if (phase == "ContinuousStandby") return CalibrationState::ContinuousStandby;
-	if (phase == "Continuous") return CalibrationState::Continuous;
-	return CalibrationState::None;
-}
-
 // Read a 7-tuple of doubles (tx,ty,tz,qw,qx,qy,qz) from `fields` at the given
 // column indexes into `pose` (world space). Returns false if any column is
 // missing or unparseable, leaving `pose` untouched. A zero-norm quaternion
@@ -262,29 +234,6 @@ bool ParseAnnotationTimestamp(const std::string& line, const char* marker, doubl
 	if (end == std::string::npos || end <= start) return false;
 	const std::string ts = line.substr(start, end - start);
 	return ReadDouble(ts, out);
-}
-
-ReplayRelocSource ResolveRelocSource(const LoadedRecording& rec, ReplayRelocSource requested)
-{
-	if (requested != ReplayRelocSource::Auto) return requested;
-	if (!rec.relocalizationAnnotationTimes.empty()) return ReplayRelocSource::Annotation;
-	if (rec.hasRelocDetectedColumn) return ReplayRelocSource::Column;
-	return ReplayRelocSource::Proxy;
-}
-
-const char* ReplayRelocSourceName(ReplayRelocSource source)
-{
-	switch (source) {
-		case ReplayRelocSource::Auto:
-			return "auto";
-		case ReplayRelocSource::Annotation:
-			return "annotation";
-		case ReplayRelocSource::Column:
-			return "column";
-		case ReplayRelocSource::Proxy:
-			return "proxy";
-	}
-	return "unknown";
 }
 
 } // namespace
@@ -582,42 +531,10 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	CalibrationCalc calc;
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = false;
-	// Toggle 3 (robust/bounded solve) plumbs straight into ComputeIncremental.
-	calc.boundedSolveEnabled = opts.applyBoundedSolve;
-	calc.boundedSolvePrior = opts.bsPrior;
-	calc.boundedSolvePriorLambda = opts.bsPriorLambda;
-	calc.boundedSolveSlew = opts.bsSlew;
-	calc.boundedSolveMaxStepM = opts.bsMaxStepMm / 1000.0;
-	calc.boundedSolveMaxStepRad = opts.bsMaxStepDeg * 0.017453292519943295;
-	calc.boundedSolveCommonMode = opts.bsCommonMode;
-
-	// Experimental-guard replay state. prevRel/lastRelocTime drive the
-	// relocalization proxy + quarantine (toggles 1); relWindow/madFloorWindow
-	// drive the relative-pose MAD + drift breaker (toggle 2).
-	Eigen::AffineCompact3d prevRel = Eigen::AffineCompact3d::Identity();
-	bool havePrevRel = false;
-	double lastRelocTime = -1e9;
+	// Relative-pose MAD tracking (the AUTO-lock translMad analog) -- the headline
+	// drift signal summarised as peak/median/final.
 	std::deque<Eigen::AffineCompact3d> relWindow;
-	std::deque<double> madFloorWindow;
 	std::vector<double> allMad;
-	bool driftFrozen = false;
-	const ReplayRelocSource relocSource = ResolveRelocSource(rec, opts.relocSource);
-	res.relocSource = ReplayRelocSourceName(relocSource);
-	std::size_t nextAnnotationIndex = 0;
-
-	// Toggle 4 (locked-style snap recovery) replay state. We track the previous
-	// row's HMD and head-tracker world translations so each row's HMD jump and
-	// head-tracker displacement can be compared, exactly as the live
-	// TickHmdRelocalizationDetector does tick-to-tick. The locked-snap A/B needs
-	// the v4 columns; on v2/v3 input we report the skip and leave snapReanchors=0.
-	const bool runLockedSnap = opts.applyLockedSnap && rec.hasLockedSnapColumns;
-	if (opts.applyLockedSnap) {
-		res.lockedSnapStatus = rec.hasLockedSnapColumns ? "applied" : "locked_snap_replay_requires_v4";
-	}
-	Eigen::Vector3d prevHmdTrans = Eigen::Vector3d::Zero();
-	Eigen::Vector3d prevHeadTrackerTrans = Eigen::Vector3d::Zero();
-	bool haveLockedPrevHmd = false;
-	bool haveLockedPrevHeadTracker = false;
 
 	const bool boundedContinuous = opts.continuous && opts.maxContinuousSamples > 0;
 	const std::size_t continuousWindow = boundedContinuous ? opts.maxContinuousSamples : 0;
@@ -657,53 +574,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	for (std::size_t rowIndex = 0; rowIndex < rec.rows.size(); ++rowIndex) {
 		const auto& row = rec.rows[rowIndex];
 
-		// Toggle 4: locked-style snap recovery. Run before sample intake so it sees
-		// every row (the live detector runs ahead of CollectSample and fires
-		// regardless of whether the sample is accepted). A >=30 cm HMD jump
-		// corroborated by a <2 cm head-tracker displacement is a Quest universe
-		// flip; in a locked tracking style the live styleOK gate (Continuous-only)
-		// skips recovery, so the experimental toggle opens the gentle re-anchor that
-		// GentleSnapAllowedInLockedStyle authorises. Mode is DriverSynth -- the mode
-		// the locked styles configure (>= Corroborate, which IsJumpClassifiedAsSnap
-		// requires); the per-row head-tracker validity still gates corroboration.
-		if (runLockedSnap) {
-			if (row.hasHmdPose) {
-				if (haveLockedPrevHmd) {
-					const double hmdDeltaM = (row.hmd.trans - prevHmdTrans).norm();
-					const double headTrackerDeltaM = (row.headTrackerValid && haveLockedPrevHeadTracker)
-					                                     ? (row.headTracker.trans - prevHeadTrackerTrans).norm()
-					                                     : -1.0; // negative = no valid head-tracker reading
-					if (hmdDeltaM >= spacecal::snap_suppression::kSnapHmdJumpM) {
-						++res.lockedSnapHmdJumps;
-						if (headTrackerDeltaM < 0.0) ++res.lockedSnapTrackerInvalid;
-					}
-					const bool snapCorroborated = spacecal::snap_suppression::IsJumpClassifiedAsSnap(
-					    HeadMountMode::DriverSynth, hmdDeltaM, headTrackerDeltaM);
-					if (snapCorroborated) ++res.lockedSnapCorroborated;
-					if (spacecal::locked_snap::GentleSnapAllowedInLockedStyle(opts.trackingStyle, /*toggleOn=*/true,
-					                                                          snapCorroborated,
-					                                                          ReplayRowStateFromPhase(row.tickPhase))) {
-						++res.snapReanchors;
-					}
-				}
-				prevHmdTrans = row.hmd.trans;
-				haveLockedPrevHmd = true;
-				if (row.headTrackerValid) {
-					prevHeadTrackerTrans = row.headTracker.trans;
-					haveLockedPrevHeadTracker = true;
-				}
-				else {
-					haveLockedPrevHeadTracker = false;
-				}
-			}
-			else {
-				// No HMD pose this row -> drop the window so the next delta isn't
-				// measured across a gap (mirrors the live havePrevHmd reset).
-				haveLockedPrevHmd = false;
-				haveLockedPrevHeadTracker = false;
-			}
-		}
-
 		Sample s = row.hasSampleDiagnostics ? row.sample : Sample(row.ref, row.target, row.timestamp);
 		if (row.sampleObserved) ++res.sampleRowsObserved;
 		if (row.hasSampleDiagnostics) {
@@ -739,11 +609,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			continue;
 		}
 
-		// Relative-pose-jump proxy for relocalization (toggle 1/2 driver). A
-		// sudden change in ref^-1*target between consecutive observed rows marks a
-		// frame shift, derived purely from the recorded poses so v3 recordings
-		// work. prevRel advances every observed row (even quarantined ones) so the
-		// jump is measured tick-to-tick and doesn't re-trigger after it settles.
+		// Relative pose ref^-1*target -> the AUTO-lock translMad analog below.
 		Eigen::AffineCompact3d refW;
 		refW.linear() = s.ref.rot;
 		refW.translation() = s.ref.trans;
@@ -751,47 +617,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		tgtW.linear() = s.target.rot;
 		tgtW.translation() = s.target.trans;
 		const Eigen::AffineCompact3d rel = refW.inverse() * tgtW;
-		if (relocSource == ReplayRelocSource::Annotation) {
-			while (nextAnnotationIndex < rec.relocalizationAnnotationTimes.size() &&
-			       rec.relocalizationAnnotationTimes[nextAnnotationIndex] <= row.timestamp) {
-				lastRelocTime = rec.relocalizationAnnotationTimes[nextAnnotationIndex];
-				++nextAnnotationIndex;
-				++res.relocEvents;
-			}
-		}
-		else if (relocSource == ReplayRelocSource::Column) {
-			if (row.relocDetected) {
-				lastRelocTime = row.timestamp;
-				++res.relocEvents;
-			}
-		}
-		else if (havePrevRel && (rel.translation() - prevRel.translation()).norm() > opts.relocProxyJumpM) {
-			lastRelocTime = row.timestamp;
-			++res.relocEvents;
-		}
-		prevRel = rel;
-		havePrevRel = true;
-
-		// Toggle 1: drop this sample for the settle window after a relocalization.
-		// If the candidate relative-pose window has already returned to the settled
-		// floor, release early; otherwise the dropped sample never enters the solver
-		// or the MAD window below.
-		bool quarantineActive = false;
-		if (opts.applyRelocQuarantine) {
-			double candidateMadMm = 0.0;
-			const bool haveCandidateMad = CandidateRelPoseMadMm(relWindow, rel, candidateMadMm);
-			const double floorMm =
-			    !madFloorWindow.empty() ? *std::min_element(madFloorWindow.begin(), madFloorWindow.end()) : 0.0;
-			quarantineActive = spacecal::reloc_guard::QuarantineActive(
-			    row.timestamp, lastRelocTime, opts.quarantineSec, haveCandidateMad ? candidateMadMm : 0.0,
-			    haveCandidateMad ? floorMm : 0.0, spacecal::reloc_guard::kDefaultClearMult);
-		}
-		if (quarantineActive) {
-			++res.samplesQuarantined;
-			tick.rejectReason = "quarantined";
-			res.trace.push_back(std::move(tick));
-			continue;
-		}
 
 		calc.PushSample(s);
 		++res.solverSamplesPushed;
@@ -802,36 +627,16 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		}
 		res.maxSamplesInWindow = std::max(res.maxSamplesInWindow, static_cast<int>(calc.SampleCount()));
 
-		// Relative-pose MAD (the AUTO-lock translMad analog) over a bounded
-		// window, plus the drift breaker (toggle 2). Mirrors the live
-		// UpdateAutoLock + ResolveLockMode path: the breaker forces
-		// calc.lockRelativePosition on for this and subsequent ticks when the MAD
-		// runs away, releasing with hysteresis.
+		// Relative-pose MAD (the AUTO-lock translMad analog) over a bounded window
+		// -- the headline drift signal, summarised as peak/median/final.
 		relWindow.push_back(rel);
 		while (relWindow.size() > spacecal::autolock::kHistoryMax)
 			relWindow.pop_front();
 		if (relWindow.size() >= spacecal::autolock::kSamplesNeeded) {
 			const double madMm = spacecal::autolock::RobustTranslDeviation(relWindow) * 1000.0;
-			madFloorWindow.push_back(madMm);
-			while (madFloorWindow.size() > 200)
-				madFloorWindow.pop_front();
-			const double floorMm = *std::min_element(madFloorWindow.begin(), madFloorWindow.end());
 			allMad.push_back(madMm);
 			res.peakRelPoseMadMm = std::max(res.peakRelPoseMadMm, madMm);
 			res.finalRelPoseMadMm = madMm;
-			if (opts.applyDriftBreaker) {
-				if (!driftFrozen && spacecal::drift_breaker::ShouldFreeze(madMm, floorMm, opts.driftBreakerMadMult,
-				                                                          opts.driftBreakerAbsCapMm)) {
-					driftFrozen = true;
-					calc.lockRelativePosition = true;
-					++res.freezeEngagements;
-				}
-				else if (driftFrozen && spacecal::drift_breaker::ShouldRelease(madMm, floorMm, opts.driftBreakerMadMult,
-				                                                               opts.driftBreakerAbsCapMm)) {
-					driftFrozen = false;
-					calc.lockRelativePosition = false;
-				}
-			}
 		}
 
 		if (opts.continuous) {
@@ -905,7 +710,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	if (observedRows > 0) {
 		res.solverSampleRatio = static_cast<double>(res.solverSamplesPushed) / static_cast<double>(observedRows);
 	}
-	res.sampleStarved = opts.applyRelocQuarantine && observedRows > 0 && res.solverSampleRatio < 0.50;
 	res.finalTransformValid = calc.isValid();
 	if (calc.isValid()) {
 		res.finalTransform = calc.Transformation();

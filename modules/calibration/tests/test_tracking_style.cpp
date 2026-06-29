@@ -56,10 +56,9 @@ TEST(TrackingStyleTest, LockRelativeModeHelpersUseExplicitOnOffOnly)
 	EXPECT_TRUE(LockRelativeModeEnabled(CalibrationContext::LockMode::ON));
 	EXPECT_FALSE(LockRelativeModeEnabled(CalibrationContext::LockMode::AUTO));
 
-	EXPECT_FALSE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::OFF, false));
-	EXPECT_TRUE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::ON, false));
-	EXPECT_FALSE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::AUTO, false));
-	EXPECT_TRUE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::OFF, true));
+	EXPECT_FALSE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::OFF));
+	EXPECT_TRUE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::ON));
+	EXPECT_FALSE(ResolveLockRelativePositionValue(CalibrationContext::LockMode::AUTO));
 }
 
 TEST(TrackingStyleTest, PreservingPresetKeepsManualLockRelativeOverride)

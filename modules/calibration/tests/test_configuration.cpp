@@ -101,20 +101,6 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	ApplyTrackingStylePreset(src, TrackingStyle::LockedWithRecovery);
 	src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
 	src.floorOffsetMetersY = -0.4375; // boundary/floor persistence is disabled
-	// Experimental drift-fighting toggles (non-default; must round-trip).
-	src.experimentalRelocQuarantineEnabled = true;
-	src.experimentalRelocQuarantineSec = 2.0;
-	src.experimentalDriftBreakerEnabled = true;
-	src.experimentalDriftBreakerMadMult = 6.0;
-	src.experimentalDriftBreakerAbsCapMm = 80.0;
-	src.experimentalBoundedSolveEnabled = true;
-	src.experimentalBoundedSolvePrior = true;
-	src.experimentalBoundedSolvePriorLambda = 0.3;
-	src.experimentalBoundedSolveSlew = true;
-	src.experimentalBoundedSolveMaxStepMm = 40.0;
-	src.experimentalBoundedSolveMaxStepDeg = 3.0;
-	src.experimentalBoundedSolveCommonMode = true;
-	src.experimentalLockedSnapRecoveryEnabled = true;
 	src.validProfile = true;
 
 	std::stringstream io;
@@ -139,56 +125,6 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
 	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, 0.0);
 	EXPECT_FALSE(dst.floorEnabled);
-	EXPECT_TRUE(dst.experimentalRelocQuarantineEnabled);
-	EXPECT_DOUBLE_EQ(dst.experimentalRelocQuarantineSec, 2.0);
-	EXPECT_FALSE(dst.experimentalDriftBreakerEnabled);
-	EXPECT_DOUBLE_EQ(dst.experimentalDriftBreakerMadMult, 6.0);
-	EXPECT_DOUBLE_EQ(dst.experimentalDriftBreakerAbsCapMm, 80.0);
-	EXPECT_TRUE(dst.experimentalBoundedSolveEnabled);
-	EXPECT_FALSE(dst.experimentalBoundedSolvePrior);
-	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolvePriorLambda, 0.3);
-	EXPECT_TRUE(dst.experimentalBoundedSolveSlew);
-	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolveMaxStepMm, 40.0);
-	EXPECT_DOUBLE_EQ(dst.experimentalBoundedSolveMaxStepDeg, 3.0);
-	EXPECT_TRUE(dst.experimentalBoundedSolveCommonMode);
-	EXPECT_TRUE(dst.experimentalLockedSnapRecoveryEnabled);
-}
-
-TEST(ConfigurationTest, HiddenExperimentalFieldsLoadOnlyWithDiagnosticOverride)
-{
-	const std::string extra = "\"experimental_drift_breaker\":true,"
-	                          "\"experimental_bounded_solve\":true,"
-	                          "\"experimental_bounded_solve_prior\":true,"
-	                          "\"experimental_bounded_solve_slew\":false,"
-	                          "\"experimental_bounded_solve_common_mode\":false";
-
-	{
-		ScopedEnvVar hiddenExperiments("WKOPENVR_CALIBRATION_EXPERIMENT_DIAGNOSTICS", "0");
-		CalibrationContext ctx;
-		std::stringstream io(MakeMinimalProfile(/*schemaVersion=*/7, extra));
-		ParseProfile(ctx, io);
-
-		EXPECT_TRUE(ctx.validProfile);
-		EXPECT_FALSE(ctx.experimentalDriftBreakerEnabled);
-		EXPECT_TRUE(ctx.experimentalBoundedSolveEnabled);
-		EXPECT_FALSE(ctx.experimentalBoundedSolvePrior);
-		EXPECT_TRUE(ctx.experimentalBoundedSolveSlew);
-		EXPECT_TRUE(ctx.experimentalBoundedSolveCommonMode);
-	}
-
-	{
-		ScopedEnvVar hiddenExperiments("WKOPENVR_CALIBRATION_EXPERIMENT_DIAGNOSTICS", "1");
-		CalibrationContext ctx;
-		std::stringstream io(MakeMinimalProfile(/*schemaVersion=*/7, extra));
-		ParseProfile(ctx, io);
-
-		EXPECT_TRUE(ctx.validProfile);
-		EXPECT_TRUE(ctx.experimentalDriftBreakerEnabled);
-		EXPECT_TRUE(ctx.experimentalBoundedSolveEnabled);
-		EXPECT_TRUE(ctx.experimentalBoundedSolvePrior);
-		EXPECT_FALSE(ctx.experimentalBoundedSolveSlew);
-		EXPECT_FALSE(ctx.experimentalBoundedSolveCommonMode);
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -237,15 +173,6 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
 	EXPECT_EQ(dst.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(dst.headMount.allowRawHmdFallback);
-	// Experimental drift-fighting toggles default OFF.
-	EXPECT_FALSE(dst.experimentalRelocQuarantineEnabled);
-	EXPECT_FALSE(dst.experimentalDriftBreakerEnabled);
-	EXPECT_FALSE(dst.experimentalBoundedSolveEnabled);
-	EXPECT_FALSE(dst.experimentalBoundedSolvePrior);
-	EXPECT_FALSE(dst.experimentalBoundedSolveSlew);
-	EXPECT_FALSE(dst.experimentalBoundedSolveCommonMode);
-	EXPECT_FALSE(dst.experimentalLockedSnapRecoveryEnabled);
-	EXPECT_DOUBLE_EQ(dst.experimentalRelocQuarantineSec, 1.0);
 }
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,6 @@
 // per-row experimental_flags bitmask.
 
 #include "CalibrationCalc.h"
-#include "TrackingStyle.h" // TrackingStyle enum for the locked-snap replay option
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -30,14 +29,6 @@
 #include <vector>
 
 namespace spacecal::replay {
-
-enum class ReplayRelocSource
-{
-	Auto,
-	Annotation,
-	Column,
-	Proxy,
-};
 
 // One replayable tick. Produced by parsing a v2 log row.
 struct ReplayRow
@@ -91,9 +82,9 @@ struct LoadedRecording
 	std::vector<double> relocalizationAnnotationTimes;
 	bool hasRelocDetectedColumn = false;
 	int relocDetectedRowCount = 0;
-	// True when the v4 raw-HMD + head-tracker columns are present, so the
-	// locked-snap A/B path can run. v2/v3 recordings leave this false and the
-	// replay reports "locked_snap_replay_requires_v4" instead of counting snaps.
+	// True when the v4 raw-HMD + head-tracker columns are present, so offline
+	// analysis of relocalization/snap events has the witness data. v2/v3
+	// recordings leave this false.
 	bool hasLockedSnapColumns = false;
 	bool hasExperimentalFlagsColumn = false;
 };
@@ -173,39 +164,6 @@ struct ReplayOptions
 	std::size_t maxContinuousSamples = 200; // 0 keeps every sample; live continuous mode uses a bounded window.
 	std::size_t qualityReportInterval = 50; // 0 disables periodic shadow-quality snapshots.
 	bool includeHoldoutQuality = false;
-
-	// --- Experimental drift-fighting guards, applied during replay so a recorded
-	// session can be A/B compared with each guard on vs off. All default off ->
-	// byte-identical to the legacy replay. See RelocGuard.h / DriftBreaker.h /
-	// BoundedSolve.h.
-	bool applyRelocQuarantine = false; // toggle 1
-	double quarantineSec = 1.0;
-	bool applyDriftBreaker = false; // toggle 2
-	double driftBreakerMadMult = 8.0;
-	double driftBreakerAbsCapMm = 60.0;
-	bool applyBoundedSolve = false; // toggle 3 parent
-	bool bsPrior = false;
-	double bsPriorLambda = 0.2;
-	bool bsSlew = false;
-	double bsMaxStepMm = 50.0;
-	double bsMaxStepDeg = 2.0;
-	bool bsCommonMode = false;
-	// Relative-pose-jump proxy threshold (m): a jump in ref^-1*target larger than
-	// this marks a relocalization for the quarantine/breaker, derived purely from
-	// the recorded ref/target poses, so v3 recordings (no raw HMD pose) work too.
-	double relocProxyJumpM = 0.05;
-	ReplayRelocSource relocSource = ReplayRelocSource::Auto;
-
-	// Toggle 4 (locked-style snap recovery). When on AND the recording is v4 (raw
-	// HMD + head-tracker columns present), the replay reproduces the live snap
-	// corroboration: a >=30 cm HMD jump confirmed by a <2 cm head-tracker
-	// displacement is a Quest universe flip, and in a locked tracking style the
-	// experimental toggle opens the gentle re-anchor that the live styleOK gate
-	// otherwise skips. Each such row increments ReplayResult::snapReanchors.
-	// trackingStyle is the style the A/B assumes; the gentle path only opens for
-	// LockedWithRecovery / HardTrackerLock (GentleSnapAllowedInLockedStyle).
-	bool applyLockedSnap = false;
-	TrackingStyle trackingStyle = TrackingStyle::LockedWithRecovery;
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
@@ -233,27 +191,13 @@ struct ReplayResult
 	int shadowWouldReject = 0;
 	double finalErrorMm = 0.0; // NaN if calc never produced a valid result
 	// Relative-pose dispersion across the replay (the AUTO-lock translMad analog),
-	// in mm -- the headline drift signal for A/B-ing the experimental guards --
-	// plus how often each guard engaged. peak/median/final summarise the
-	// per-row MAD trajectory over the bounded relative-pose window.
+	// in mm -- the headline drift signal. peak/median/final summarise the per-row
+	// MAD trajectory over the bounded relative-pose window.
 	double peakRelPoseMadMm = 0.0;
 	double medianRelPoseMadMm = 0.0;
 	double finalRelPoseMadMm = 0.0;
-	int samplesQuarantined = 0;
-	int freezeEngagements = 0;
-	int snapReanchors = 0;
-	int lockedSnapHmdJumps = 0;
-	int lockedSnapTrackerInvalid = 0;
-	int lockedSnapCorroborated = 0;
-	int relocEvents = 0;
 	int solverSamplesPushed = 0;
 	double solverSampleRatio = 1.0;
-	bool sampleStarved = false;
-	std::string relocSource = "off";
-	// Locked-snap A/B status: "off" (toggle not requested), "applied" (ran on a v4
-	// recording), or "locked_snap_replay_requires_v4" (requested but the recording
-	// lacks the raw HMD + head-tracker columns, so snapReanchors stays 0).
-	std::string lockedSnapStatus = "off";
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();
 	bool finalTransformValid = false;
 	ReplayQualitySnapshot finalQuality;
