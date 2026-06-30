@@ -75,6 +75,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dynamicres:** Release scale on cpu-bound headroom (fbe05c2)
 - **phantom:** Clean runtime enable/disable of virtual trackers (no floating) (815d018)
 - **phantom:** Snap role-detection + self-healing tracker fill-in (94a3fa1)
+- **calibration:** Surface recovery-layer state in the heartbeat (8a69cf4)
+- **calibration:** Two-stream tau estimator for time-sync (a0b5344)
+- **calibration:** Continuous sub-30cm witness-correction signal (f96edc4)
+- **calibration:** Constant-velocity re-anchor ramp (protocol v38) (a3651b8)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -252,6 +256,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **common:** Preserve module id wire values (f037bde)
 - **overlay:** Avoid background dashboard polling (b55b604)
 - **phantom:** Stop virtual-tracker pose deadlock; flag uncalibrated trackers (30add3e)
+- **calibration:** Prefer re-anchor over destructive clear in recovery (3ca8ff9)
+- **calibration:** Use head-mount witness for recovery in all tracking styles (12ed38a)
+- **release:** Use central date for release automation (1b13080)
 
 ---
 
