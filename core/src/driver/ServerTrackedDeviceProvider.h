@@ -239,6 +239,15 @@ private:
 		// system fallback rather than an overlay-supplied per-ID value. Used to
 		// snap on the first activation of fallback.
 		bool fallbackActive = false;
+
+		// v38 re-anchor ramp latch. Set when a SetDeviceTransform arrives with
+		// reanchor=true; while set, BlendTransform moves transform toward
+		// targetTransform at a constant velocity (ReanchorRamp.h caps) instead of
+		// the proportional lerp, so a large re-anchor settles imperceptibly. The
+		// latch self-clears when the target is reached and is cleared by a snap
+		// (lerp=false). Normal lerp=true updates keep it latched, so the ramp
+		// survives the per-tick profile re-sends during a re-anchor.
+		bool reanchorRamp = false;
 		// Prediction-suppression strength on a 0..100 scale. The pose's velocity
 		// / acceleration / poseTimeOffset fields and position filter are tuned
 		// from this value. 0 = pose untouched; 100 = strongest smoothing with

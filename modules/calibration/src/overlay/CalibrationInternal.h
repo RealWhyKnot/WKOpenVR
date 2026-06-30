@@ -11,3 +11,4 @@ extern SCIPCClient Driver;
 extern protocol::DriverPoseShmem shmem;
 
 extern bool g_snapNextProfileApply;
+extern bool g_reanchorNextProfileApply;

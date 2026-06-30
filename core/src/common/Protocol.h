@@ -293,7 +293,12 @@ namespace protocol {
 // one-shot, motion-free body-role assignment from the current static pose (no
 // payload inputs; the driver reads the live HMD + tracker poses). The driver
 // replies ResponsePhantomSnap with the snap status + assigned tracker count.
-const uint32_t Version = 37;
+//
+// v38 (2026-06-30): re-anchor ramp. SetDeviceTransform grows a `reanchor` bool.
+// When set (with lerp=true), the driver moves the device transform toward its
+// target at a constant velocity (fixed mm/frame, deg/frame cap) instead of
+// snapping or proportionally blending, so large re-anchors settle imperceptibly.
+const uint32_t Version = 38;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

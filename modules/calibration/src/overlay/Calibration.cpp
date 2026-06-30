@@ -239,6 +239,13 @@ static void TickCpuPressureMonitor(double computationTimeMs, double now_s)
 // Cleared by ScanAndApplyProfile after consuming. One-shot.
 bool g_snapNextProfileApply = false;
 
+// One-shot re-anchor request: the next profile-apply cycle sends per-ID payloads
+// with reanchor=true (and lerp=true), so the driver ramps to the saved profile
+// at a constant velocity instead of snapping. Set by ArmReanchorToProfile (snap
+// corroboration, relocalization re-anchor, warm-restart witness veto, and
+// warm-restart engage); cleared by ScanAndApplyProfile after consuming.
+bool g_reanchorNextProfileApply = false;
+
 // AdditionalCalibration's special members live inline in the header now --
 // CalibrationCalc is complete at the include point, so the implicitly-defined
 // destructor handles the unique_ptr just fine.
@@ -1486,20 +1493,13 @@ void CalibrationTick(double time)
 				}
 
 				if (engaged) {
-					ctx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
-					ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
-					ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
+					// Put-headset-back-on re-anchor: arm grace and ramp to the
+					// saved profile at constant velocity (ArmReanchorToProfile)
+					// rather than snapping. Resets the post-snap bias accumulator
+					// and pins the last-consumed err timestamp so pre-snap
+					// retargeting errors don't feed the post-snap mean.
 					ctx.warmRestartReanchorCount = 0; // fresh warm-restart episode
-					// Reset the post-snap bias accumulator and pin the
-					// last-consumed err timestamp to the latest pre-snap
-					// sample, so pre-snap retargeting errors do not feed
-					// into the post-snap mean. warmRestartSnapTime is
-					// surfaced in the heartbeat to label mad_floor_source.
-					ctx.postSnapErrorSumMm = 0.0;
-					ctx.postSnapErrorSampleCount = 0;
-					ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
-					ctx.warmRestartSnapTime = Metrics::CurrentTime;
-					g_snapNextProfileApply = true;
+					ArmReanchorToProfile(ctx);
 					const double mag = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
 					                             ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
 					                             ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());

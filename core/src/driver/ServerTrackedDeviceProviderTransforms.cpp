@@ -1,6 +1,7 @@
 #include "ServerTrackedDeviceProvider.h"
 #include "IsometryTransform.h"
 #include "Logging.h"
+#include "ReanchorRamp.h"
 
 #include <algorithm>
 #include <cmath>
@@ -105,6 +106,25 @@ void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const 
 	// seconds since the prior call.
 	const double dt = (timestamp.QuadPart - device.lastPoll.QuadPart) / (double)qpcFreq.QuadPart;
 	device.lastPoll = timestamp;
+
+	if (device.reanchorRamp) {
+		// Constant-velocity re-anchor: move toward the target at a fixed
+		// mm/frame and deg/frame cap so a large offset settles imperceptibly
+		// rather than snapping or proportionally blending (which front-loads the
+		// motion). The world-space remaining distance is measured centred on the
+		// live device pose, matching GetTransformDeltaSize.
+		const auto cur_pose = device.transform * deviceWorldPose;
+		const auto tgt_pose = device.targetTransform * deviceWorldPose;
+		const double transFull = (cur_pose.translation - tgt_pose.translation).norm();
+		const double rotFull = cur_pose.rotation.angularDistance(tgt_pose.rotation);
+		const double frac = spacecal::reanchor::ComputeReanchorFraction(transFull, rotFull,
+		                                                                spacecal::reanchor::kReanchorSlewTransMps * dt,
+		                                                                spacecal::reanchor::kReanchorSlewRotRadps * dt);
+		device.transform =
+		    device.transform.interpolateAround(frac, device.targetTransform, deviceWorldPose.translation);
+		if (frac >= 1.0) device.reanchorRamp = false; // reached target; resume normal blend
+		return;
+	}
 
 	double lerp = dt * GetTransformRate(device.currentRate);
 

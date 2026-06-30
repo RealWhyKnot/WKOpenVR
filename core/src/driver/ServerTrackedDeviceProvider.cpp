@@ -924,6 +924,19 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 
 	if (newTransform.updateScale) tf.scale = newTransform.scale;
 
+	// v38 re-anchor ramp latch. A snap (lerp=false) lands instantly and clears
+	// any pending ramp; a reanchor request (lerp=true, reanchor=true) starts a
+	// constant-velocity ramp; a normal lerp=true update leaves an in-progress
+	// ramp latched so the overlay's per-tick profile re-sends during a re-anchor
+	// don't abort it (BlendTransform self-clears the latch when the target is
+	// reached).
+	if (!newTransform.lerp) {
+		tf.reanchorRamp = false;
+	}
+	else if (newTransform.reanchor) {
+		tf.reanchorRamp = true;
+	}
+
 	// v23 (2026-05-19): only mutate stored hide when the caller explicitly
 	// signals intent. Prior unconditional assignment let any partial-init
 	// payload (e.g. ResetAndDisableOffsets) silently wipe a user-marked
@@ -934,6 +947,7 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 	// or never initialized. Snap to the target so we don't ramp in from a junk state.
 	if (!wasEnabled && tf.enabled) {
 		tf.transform = tf.targetTransform;
+		tf.reanchorRamp = false; // enable snap supersedes any pending ramp
 		// Forensic diagnostic for audit row #8 (project_upstream_regression_audit_2026-05-04).
 		// If a sleeper bug ever puts a stale fallback transform into
 		// `tf.transform` before this snap, the snap would lock-in the
@@ -950,6 +964,7 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 	// doesn't pick up where the last one left off.
 	if (wasEnabled && !tf.enabled) {
 		tf.targetTransform = tf.transform;
+		tf.reanchorRamp = false; // no pending ramp across a disable
 	}
 
 	// Always reset the lerp clock and rate. If the device went offline for a long time,

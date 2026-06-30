@@ -20,8 +20,9 @@
 // reaches the driver within a deadband of the live value.
 //
 // Every non-transform field is compared EXACTLY -- enable, the update bits, the
-// motion-gate `lerp` flag, the head-mount `quash`/`updateQuash` flags,
-// prediction, recalibrateOnMovement, scale and the target system string -- so any
+// motion-gate `lerp` flag, the `reanchor` ramp flag, the head-mount
+// `quash`/`updateQuash` flags, prediction, recalibrateOnMovement, scale and the
+// target system string -- so any
 // meaningful state change propagates immediately; only the translation/rotation
 // numbers have a tolerance.
 
@@ -59,6 +60,7 @@ inline bool TransformPayloadNearEqual(const protocol::SetDeviceTransform& a, con
 	if (a.updateRotation != b.updateRotation) return false;
 	if (a.updateScale != b.updateScale) return false;
 	if (a.lerp != b.lerp) return false;
+	if (a.reanchor != b.reanchor) return false;
 	if (a.quash != b.quash) return false;
 	if (a.updateQuash != b.updateQuash) return false;
 	if (a.predictionSmoothness != b.predictionSmoothness) return false;

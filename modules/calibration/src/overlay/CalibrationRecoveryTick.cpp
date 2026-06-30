@@ -1192,7 +1192,9 @@ void ArmReanchorToProfile(CalibrationContext& ctx)
 	ctx.postSnapErrorSampleCount = 0;
 	ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
 	ctx.warmRestartSnapTime = Metrics::CurrentTime;
-	g_snapNextProfileApply = true;
+	// Ramp to the profile at constant velocity (imperceptible) instead of
+	// snapping; the driver latches the ramp until the target is reached.
+	g_reanchorNextProfileApply = true;
 }
 
 void RecoverFromWedgedCalibration(const char* userFacingMessage, const char* recoverReason)
