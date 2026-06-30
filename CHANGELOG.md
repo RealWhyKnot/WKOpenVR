@@ -81,6 +81,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Constant-velocity re-anchor ramp (protocol v38) (a3651b8)
 - **phantom:** Selectable virtual tracker render model, default Vive Tracker 3.0 (95ee154)
 - **dynamicres:** Drive FPS toward native refresh with measured bottleneck detection (76c9650)
+- **calibration:** Surface witness-puck health and felt-jump rate in diagnostics (fcedd6a)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
