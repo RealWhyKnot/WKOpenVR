@@ -30,6 +30,7 @@
 #include "HeadMountShadowOffset.h"
 #include "HeadMountSourceGuard.h"
 #include "HeadMountTargetBinding.h"
+#include "RecoveryPolicy.h"
 #include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
 
@@ -1488,6 +1489,7 @@ void CalibrationTick(double time)
 					ctx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
 					ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
 					ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
+					ctx.warmRestartReanchorCount = 0; // fresh warm-restart episode
 					// Reset the post-snap bias accumulator and pin the
 					// last-consumed err timestamp to the latest pre-snap
 					// sample, so pre-snap retargeting errors do not feed
@@ -2810,7 +2812,8 @@ void CalibrationTick(double time)
 				if (outcome == spacecal::warm_restart::ValidationOutcome::Settled &&
 				    CalCtx.warmRestartValidationState != spacecal::warm_restart::ValidationOutcome::Settled) {
 					CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Settled;
-					CalCtx.warmRestartGraceSamples = 0; // end grace early
+					CalCtx.warmRestartGraceSamples = 0;  // end grace early
+					CalCtx.warmRestartReanchorCount = 0; // episode resolved
 					char vbuf[320];
 					snprintf(vbuf, sizeof vbuf,
 					         "[warm-restart][validated] mad_mm=%.3f samples_since_snap=%d"
@@ -2841,8 +2844,40 @@ void CalibrationTick(double time)
 					         meanBiasTransM * 1000.0, CalCtx.postSnapErrorSampleCount, madFloorSource, failReason);
 					Metrics::WriteLogAnnotation(fbuf);
 					Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=validation_failed");
-					RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
-					                             "warm_restart_validation_failed");
+
+					// Witness veto: a present witness puck independently confirms
+					// the saved profile, so re-anchor and re-arm grace (bounded
+					// retries) instead of destroying the user's calibration. The
+					// destructive clear is a true last resort -- only when no
+					// saved profile exists to fall back to (RecoveryPolicy.h).
+					// This is the path the take-off/put-back-on field sessions
+					// hit; the old code cleared unconditionally here.
+					const bool witnessPresent = wkopenvr::headmount::WitnessPresent(CalCtx);
+					const auto wrAction = spacecal::recovery::ChooseWarmRestartFailureAction(
+					    witnessPresent, CalCtx.validProfile, CalCtx.warmRestartReanchorCount,
+					    spacecal::recovery::kWarmRestartMaxReanchors);
+					if (wrAction == spacecal::recovery::RecoveryAction::ReanchorToProfile) {
+						CalCtx.warmRestartReanchorCount += 1;
+						char vbuf[256];
+						snprintf(vbuf, sizeof vbuf,
+						         "[warm-restart][witness-veto] reanchor=%d/%d -> profile re-applied,"
+						         " grace re-armed (no destructive clear)",
+						         CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors);
+						Metrics::WriteLogAnnotation(vbuf);
+						ArmReanchorToProfile(CalCtx);
+					}
+					else if (wrAction == spacecal::recovery::RecoveryAction::DestructiveClear) {
+						RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
+						                             "warm_restart_validation_failed");
+					}
+					else { // Hold -- preserve the profile rather than clear it
+						char hbuf[256];
+						snprintf(hbuf, sizeof hbuf,
+						         "[warm-restart][held] witnessPresent=%d reanchors=%d validProfile=%d"
+						         " -> profile preserved, no destructive clear",
+						         (int)witnessPresent, CalCtx.warmRestartReanchorCount, (int)CalCtx.validProfile);
+						Metrics::WriteLogAnnotation(hbuf);
+					}
 				}
 				else if (graceEndedThisTick) {
 					// Inconclusive at grace end: MAD between thresholds and

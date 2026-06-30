@@ -537,6 +537,13 @@ struct CalibrationContext
 	int postSnapErrorSampleCount = 0;
 	double warmRestartLastConsumedErrTs = 0.0;
 
+	// Bounded re-anchor retries within one warm-restart episode. When a
+	// witness puck is present, a failed validation re-anchors to the saved
+	// profile and re-arms the grace window rather than destructively clearing;
+	// this counter caps those retries (see RecoveryPolicy.h). Reset to 0 at a
+	// fresh warm-restart engage/snap, on Settled, and on Clear().
+	int warmRestartReanchorCount = 0;
+
 	// Snap wall-time and source-of-floor tracking. `warmRestartSnapTime`
 	// is `Metrics::CurrentTime` at snap fire; `autoLockMadFloorTs` is the
 	// timestamp of the sample that produced the current floor value.
@@ -770,6 +777,7 @@ struct CalibrationContext
 		postSnapErrorSumMm = 0.0;
 		postSnapErrorSampleCount = 0;
 		warmRestartLastConsumedErrTs = 0.0;
+		warmRestartReanchorCount = 0;
 		warmRestartSnapTime = 0.0;
 		autoLockMadFloorTs = 0.0;
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a

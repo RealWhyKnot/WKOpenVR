@@ -51,6 +51,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_pose_sampling.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_progress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_snap_suppression.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_recovery_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_driver_synth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_head_from_tracker_solve.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_head_mount_shadow_offset.cpp

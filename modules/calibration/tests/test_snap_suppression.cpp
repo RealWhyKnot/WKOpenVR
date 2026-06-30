@@ -217,7 +217,7 @@ TEST(SnapSuppression, EffectiveMode_enables_snap_classification_in_continuous)
 	// The core fix: in Continuous (config mode Off) with a witness puck bound,
 	// a corroborated universe flip now classifies as a snap instead of taking
 	// the destructive path. Without promotion this returned false.
-	const HeadMountMode configOff = HeadMountMode::Off; // Continuous preset
+	const HeadMountMode configOff = HeadMountMode::Off;               // Continuous preset
 	EXPECT_FALSE(ss::IsJumpClassifiedAsSnap(configOff, 0.85, 0.005)); // old behavior: never corroborates
 
 	const HeadMountMode eff = ss::EffectiveHeadMountMode(configOff, /*witnessPresent=*/true);
