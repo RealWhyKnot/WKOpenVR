@@ -14,11 +14,11 @@
 
     1. Every .ps1 under .github/scripts/ is parsed via
        [System.Management.Automation.Language.Parser]::ParseFile.
-    2. Every workflow .yml under .github/workflows/ is scanned for
-       `run: |` blocks running under `shell: pwsh`. Each block is
-       extracted, ${{ ... }} expressions are stubbed with a literal
-       sentinel (so the parser sees valid PowerShell), and the result
-       is parsed via ParseInput.
+    2. Every workflow .yml under .github/workflows/ and every composite
+       action.yml under .github/actions/ is scanned for `run: |` blocks
+       running under `shell: pwsh`. Each block is extracted, ${{ ... }}
+       expressions are stubbed with a literal sentinel (so the parser
+       sees valid PowerShell), and the result is parsed via ParseInput.
 
   Either pass reports the file, the step name, the offending line, and
   the parser's own diagnostic. Exit 1 on any error.
@@ -82,17 +82,31 @@ if (Test-Path -LiteralPath $workflowDir) {
     $retiredReleaseSecret = 'MODULE_RELEASE_TOKEN'
     $nightlyBetaWorkflow = Join-Path $workflowDir 'nightly-beta.yml'
 
-    Get-ChildItem -LiteralPath $workflowDir -Filter '*.yml' | ForEach-Object {
-        $wfPath  = $_.FullName
-        $retiredSecretMatches = Select-String -LiteralPath $wfPath -SimpleMatch $retiredReleaseSecret
-        foreach ($match in $retiredSecretMatches) {
-            $errors.Add("$wfPath (line $($match.LineNumber)): $retiredReleaseSecret is not a configured repository secret; use MIRROR_RELEASE_TOKEN.") | Out-Null
-        }
+    # Also scan composite actions (.github/actions/**/action.yml): they embed
+    # `shell: pwsh` `run: |` blocks too and CI invokes them, so the same parser
+    # gate must cover them or a syntax bug there surfaces only at runtime.
+    $yamlFiles = @(Get-ChildItem -LiteralPath $workflowDir -Filter '*.yml')
+    $actionsDir = Join-Path $Root '.github/actions'
+    if (Test-Path -LiteralPath $actionsDir) {
+        $yamlFiles += @(Get-ChildItem -LiteralPath $actionsDir -Filter 'action.yml' -Recurse)
+    }
 
-        if ([string]::Equals($wfPath, $nightlyBetaWorkflow, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $workflowText = Get-Content -LiteralPath $wfPath -Raw
-            if ($workflowText -match 'git push \$remote' -and $workflowText -notmatch 'persist-credentials:\s*false') {
-                $errors.Add("${wfPath}: checkout must set persist-credentials: false before pushing the beta tag with MIRROR_RELEASE_TOKEN.") | Out-Null
+    $yamlFiles | ForEach-Object {
+        $wfPath  = $_.FullName
+
+        # The retired-secret and beta-tag credential checks are workflow policy;
+        # they do not apply to composite actions.
+        if ($wfPath.StartsWith($workflowDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $retiredSecretMatches = Select-String -LiteralPath $wfPath -SimpleMatch $retiredReleaseSecret
+            foreach ($match in $retiredSecretMatches) {
+                $errors.Add("$wfPath (line $($match.LineNumber)): $retiredReleaseSecret is not a configured repository secret; use MIRROR_RELEASE_TOKEN.") | Out-Null
+            }
+
+            if ([string]::Equals($wfPath, $nightlyBetaWorkflow, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $workflowText = Get-Content -LiteralPath $wfPath -Raw
+                if ($workflowText -match 'git push \$remote' -and $workflowText -notmatch 'persist-credentials:\s*false') {
+                    $errors.Add("${wfPath}: checkout must set persist-credentials: false before pushing the beta tag with MIRROR_RELEASE_TOKEN.") | Out-Null
+                }
             }
         }
 

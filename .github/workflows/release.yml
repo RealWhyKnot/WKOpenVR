@@ -43,8 +43,11 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          submodules: recursive
+          submodules: false
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout submodules (with retry)
+        uses: ./.github/actions/checkout-submodules
 
       - name: Detect beta tag
         id: beta

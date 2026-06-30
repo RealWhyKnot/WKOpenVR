@@ -26,7 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Checkout submodules (with retry)
+        uses: ./.github/actions/checkout-submodules
 
       - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@v5

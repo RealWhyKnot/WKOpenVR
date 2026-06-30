@@ -1,0 +1,39 @@
+name: Checkout submodules with retry
+description: >
+  Fetch git submodules with retry and exponential backoff. actions/checkout
+  performs the submodule fetch in a single pass with no retry, so a transient
+  load error from a submodule host (notably lib/Eigen on gitlab.com, which
+  returns 503 "unable to handle this request due to load" under spikes) fails
+  the whole run even when the code is fine. Run this right after actions/checkout
+  with `submodules: false`.
+
+inputs:
+  attempts:
+    description: Maximum number of attempts before failing.
+    required: false
+    default: '4'
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch submodules (with retry)
+      shell: pwsh
+      run: |
+        # Native non-zero exits must not throw here, or the first failed attempt
+        # would abort the loop before the retry. We check $LASTEXITCODE ourselves.
+        $PSNativeCommandUseErrorActionPreference = $false
+        $max = [int]'${{ inputs.attempts }}'
+        $ok = $false
+        for ($i = 1; $i -le $max; $i++) {
+          Write-Host "Submodule update attempt $i of $max"
+          git submodule sync --recursive
+          git -c protocol.version=2 submodule update --init --recursive --force
+          if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+          Write-Warning "Submodule fetch failed (exit $LASTEXITCODE)."
+          if ($i -lt $max) {
+            $delay = [math]::Min(60, [int][math]::Pow(2, $i) * 5)
+            Write-Host "Retrying in $delay seconds..."
+            Start-Sleep -Seconds $delay
+          }
+        }
+        if (-not $ok) { throw "Submodule checkout failed after $max attempts." }
