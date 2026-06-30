@@ -58,7 +58,7 @@ jobs:
           python-version: '3.x'
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-lint-${{ runner.os }}-${{ hashFiles('modules/facetracking/src/host/**/*.csproj', 'tests/e2e/facetracking_test_module/**/*.csproj', 'modules/facetracking/src/host/**/packages.lock.json') }}
@@ -66,7 +66,7 @@ jobs:
             nuget-lint-${{ runner.os }}-
 
       - name: Cache LLVM
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: 'C:\Program Files\LLVM'
           key: llvm-${{ runner.os }}-22.1.0-v2
@@ -152,7 +152,7 @@ jobs:
         # cold MSVC pass when a change touches only a few files. Keep save as a
         # separate best-effort step so cache archive failures cannot fail CI
         # after build/tests already passed.
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: build
           key: build-vs2026-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', 'core/src/**/*.cpp', 'core/src/**/*.h', 'modules/**/*.cpp', 'modules/**/*.h', 'modules/**/*.cs', '.gitmodules', 'version.txt') }}
@@ -160,7 +160,7 @@ jobs:
             build-vs2026-${{ runner.os }}-
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('modules/facetracking/src/host/**/*.csproj', 'modules/facetracking/src/host/**/packages.lock.json') }}
@@ -229,7 +229,7 @@ jobs:
       - name: Save build directory cache
         if: success() && steps.build-cache.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: build
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
