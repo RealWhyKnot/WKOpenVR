@@ -79,6 +79,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Two-stream tau estimator for time-sync (a0b5344)
 - **calibration:** Continuous sub-30cm witness-correction signal (f96edc4)
 - **calibration:** Constant-velocity re-anchor ramp (protocol v38) (a3651b8)
+- **phantom:** Selectable virtual tracker render model, default Vive Tracker 3.0 (95ee154)
+- **dynamicres:** Drive FPS toward native refresh with measured bottleneck detection (76c9650)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
