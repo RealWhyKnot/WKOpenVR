@@ -50,6 +50,7 @@ private:
 	void UpdateStatus(const DynamicResolutionControllerOutput& output);
 	void SaveProfile();
 	void DrawSettings();
+	void DrawAdvanced();
 	void DrawStatus();
 
 	DynamicResolutionProfile profile_;
@@ -68,6 +69,7 @@ private:
 	double lastTargetScale_ = 1.0;
 	double lastFrameBudgetMs_ = 1000.0 / 90.0;
 	ResolutionAction lastActionCode_ = ResolutionAction::None;
+	ResolutionPressure lastLoggedPressure_ = ResolutionPressure::Waiting;
 	std::string lastAction_ = "None";
 	std::string lastReason_ = "Waiting";
 	std::string lastError_;

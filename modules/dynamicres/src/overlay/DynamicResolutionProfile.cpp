@@ -117,6 +117,40 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 			    ClampScaleFraction(ParseDouble(value, profile.settings.minScaleFraction));
 		else if (key == "step_fraction")
 			profile.settings.stepFraction = std::clamp(ParseDouble(value, profile.settings.stepFraction), 0.01, 0.25);
+		else if (key == "max_scale_fraction")
+			profile.settings.maxScaleFraction =
+			    std::clamp(ParseDouble(value, profile.settings.maxScaleFraction), 1.0, 2.0);
+		else if (key == "lower_gpu_budget_fraction")
+			profile.settings.lowerGpuBudgetFraction =
+			    std::clamp(ParseDouble(value, profile.settings.lowerGpuBudgetFraction), 0.50, 1.00);
+		else if (key == "gpu_safety_margin_fraction")
+			profile.settings.gpuSafetyMarginFraction =
+			    std::clamp(ParseDouble(value, profile.settings.gpuSafetyMarginFraction), 0.50, 1.00);
+		else if (key == "over_budget_fraction")
+			profile.settings.overBudgetFraction =
+			    std::clamp(ParseDouble(value, profile.settings.overBudgetFraction), 0.0, 1.0);
+		else if (key == "headroom_gpu_budget_fraction")
+			profile.settings.headroomGpuBudgetFraction =
+			    std::clamp(ParseDouble(value, profile.settings.headroomGpuBudgetFraction), 0.30, 0.95);
+		else if (key == "raise_above_baseline_fraction")
+			profile.settings.raiseAboveBaselineFraction =
+			    std::clamp(ParseDouble(value, profile.settings.raiseAboveBaselineFraction), 0.30, 0.95);
+		else if (key == "cpu_stall_fraction")
+			profile.settings.cpuStallFraction =
+			    std::clamp(ParseDouble(value, profile.settings.cpuStallFraction), 1.0, 2.0);
+		else if (key == "lower_required_ticks")
+			profile.settings.lowerRequiredTicks =
+			    std::clamp(ParseInt(value, profile.settings.lowerRequiredTicks), 1, 30);
+		else if (key == "raise_required_ticks")
+			profile.settings.raiseRequiredTicks =
+			    std::clamp(ParseInt(value, profile.settings.raiseRequiredTicks), 1, 30);
+		else if (key == "raise_above_baseline_ticks")
+			profile.settings.raiseAboveBaselineTicks =
+			    std::clamp(ParseInt(value, profile.settings.raiseAboveBaselineTicks), 1, 60);
+		else if (key == "quality_preset")
+			profile.settings.qualityPreset =
+			    static_cast<QualityPreset>(std::clamp(ParseInt(value, static_cast<int>(profile.settings.qualityPreset)),
+			                                          0, static_cast<int>(QualityPreset::Custom)));
 		else if (key == "allow_raise_back")
 			profile.settings.allowRaiseBack = ParseBool(value);
 		else if (key == "release_on_cpu_bound")
@@ -139,8 +173,19 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 
 void WriteDynamicResolutionProfile(const DynamicResolutionProfile& profile, std::ostream& out)
 {
+	WritePair(out, "quality_preset", static_cast<int>(profile.settings.qualityPreset));
 	WritePair(out, "min_scale_fraction", profile.settings.minScaleFraction);
+	WritePair(out, "max_scale_fraction", profile.settings.maxScaleFraction);
 	WritePair(out, "step_fraction", profile.settings.stepFraction);
+	WritePair(out, "lower_gpu_budget_fraction", profile.settings.lowerGpuBudgetFraction);
+	WritePair(out, "gpu_safety_margin_fraction", profile.settings.gpuSafetyMarginFraction);
+	WritePair(out, "over_budget_fraction", profile.settings.overBudgetFraction);
+	WritePair(out, "headroom_gpu_budget_fraction", profile.settings.headroomGpuBudgetFraction);
+	WritePair(out, "raise_above_baseline_fraction", profile.settings.raiseAboveBaselineFraction);
+	WritePair(out, "cpu_stall_fraction", profile.settings.cpuStallFraction);
+	WritePair(out, "lower_required_ticks", profile.settings.lowerRequiredTicks);
+	WritePair(out, "raise_required_ticks", profile.settings.raiseRequiredTicks);
+	WritePair(out, "raise_above_baseline_ticks", profile.settings.raiseAboveBaselineTicks);
 	WritePair(out, "allow_raise_back", profile.settings.allowRaiseBack);
 	WritePair(out, "release_on_cpu_bound", profile.settings.releaseOnCpuBound);
 	WritePair(out, "cpu_release_ticks", profile.settings.cpuReleaseTicks);
