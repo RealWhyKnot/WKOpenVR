@@ -11,6 +11,7 @@
 #include "PhantomUiLogic.h"
 #include "Protocol.h"
 #include "ShellContext.h"
+#include "TrackerModelCatalog.h"
 #include "UiHelpers.h"
 
 #include <imgui.h>
@@ -128,7 +129,8 @@ void PhantomPlugin::SendConfig()
 	auto& c = req.setPhantomConfig;
 	c.master_enabled = cfg_.master_enabled ? 1u : 0u;
 	c.auto_snap = cfg_.auto_snap ? 1u : 0u;
-	c._pad0[0] = c._pad0[1] = 0;
+	c.render_model = static_cast<uint8_t>(cfg_.tracker_model);
+	c._pad0[0] = 0;
 	c.blend_out_ms = cfg_.blend_out_ms;
 	c.blend_in_ms = cfg_.blend_in_ms;
 	c.reckon_hold_ms = cfg_.reckon_hold_ms;
@@ -915,6 +917,25 @@ void PhantomPlugin::DrawAbsentTab()
 	ui::DrawInfoBanner(
 	    "Estimated trackers",
 	    "Enable only the roles you need. When confidence is low, Phantom stops publishing instead of guessing.");
+	ImGui::Spacing();
+
+	const phantom::TrackerModel model = cfg_.tracker_model;
+	if (ImGui::BeginCombo("Tracker model", phantom::TrackerModelLabel(model))) {
+		for (uint8_t i = 0; i < phantom::kTrackerModelCount; ++i) {
+			const auto candidate = static_cast<phantom::TrackerModel>(i);
+			const bool selected = (candidate == model);
+			if (ImGui::Selectable(phantom::TrackerModelLabel(candidate), selected)) {
+				cfg_.tracker_model = candidate;
+				SendConfig();
+				SavePhantomConfig(cfg_);
+			}
+			if (selected) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	ui::TooltipForLastItem("Visual model the estimated (virtual) trackers show in SteamVR. Cosmetic only - the "
+	                       "tracker role is unaffected. Newly enabled roles update immediately; restart SteamVR to "
+	                       "change trackers that are already showing.");
 	ImGui::Spacing();
 
 	const phantom::BodyRole roles[] = {

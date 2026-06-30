@@ -51,6 +51,10 @@ public:
 	void SetMasterEnabled(bool enabled);
 	bool MasterEnabled() const;
 
+	// Set the render model for all virtual trackers (current + future). Driven by
+	// the overlay's tracker-model dropdown via RequestSetPhantomConfig.
+	void SetModel(TrackerModel model);
+
 	// Called every tick by PhantomModule (specifically when the HMD pose
 	// updates). Lazily activates pending virtual devices and pushes
 	// solver-derived poses on every already-activated device.
@@ -90,6 +94,12 @@ private:
 	std::array<std::unique_ptr<VirtualTrackerDevice>, kBodyRoleCount> devices_{};
 	std::array<bool, kBodyRoleCount> enabled_{};
 	std::array<bool, kBodyRoleCount> blocked_{};
+
+	// Render model presented by every virtual tracker. Defaults to Vive Tracker 3.0;
+	// the overlay overrides it via SetModel. Read on the pose-hook thread in
+	// MaybeActivate, written on the IPC thread in SetModel (benign race, matching the
+	// existing devices_/enabled_ access pattern across those threads).
+	TrackerModel model_{TrackerModel::ViveTracker3};
 
 	std::atomic<bool> master_enabled_{false};
 	std::atomic<bool> hmd_pose_seen_{false};

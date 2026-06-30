@@ -33,7 +33,7 @@ vr::DriverPose_t MakeDisconnectedVirtualPose()
 	return p;
 }
 
-VirtualTrackerDevice::VirtualTrackerDevice(BodyRole role) : role_(role)
+VirtualTrackerDevice::VirtualTrackerDevice(BodyRole role, TrackerModel model) : role_(role), model_(model)
 {
 	char buf[96];
 	const char* roleKey = BodyRoleToKey(role);
@@ -63,7 +63,7 @@ vr::EVRInitError VirtualTrackerDevice::Activate(vr::TrackedDeviceIndex_t unObjec
 	props->SetStringProperty(prop_container_, vr::Prop_TrackingSystemName_String, "wkopenvr");
 	props->SetStringProperty(prop_container_, vr::Prop_ModelNumber_String, "WKOpenVR Virtual Tracker");
 	props->SetStringProperty(prop_container_, vr::Prop_SerialNumber_String, serial_.c_str());
-	props->SetStringProperty(prop_container_, vr::Prop_RenderModelName_String, "{htc}vr_tracker_vive_1_0");
+	props->SetStringProperty(prop_container_, vr::Prop_RenderModelName_String, TrackerModelRenderName(model_));
 	if (controllerType) {
 		props->SetStringProperty(prop_container_, vr::Prop_ControllerType_String, controllerType);
 	}
@@ -90,6 +90,18 @@ void VirtualTrackerDevice::Deactivate()
 {
 	object_id_ = vr::k_unTrackedDeviceIndexInvalid;
 	prop_container_ = vr::k_ulInvalidPropertyContainer;
+}
+
+void VirtualTrackerDevice::SetModel(TrackerModel model)
+{
+	model_ = model;
+	// Best-effort live update: SteamVR re-reads the render model on a property
+	// change. If the device is not yet activated, Activate will apply model_.
+	if (prop_container_ != vr::k_ulInvalidPropertyContainer) {
+		vr::VRProperties()->SetStringProperty(prop_container_, vr::Prop_RenderModelName_String,
+		                                      TrackerModelRenderName(model_));
+		LOG("[phantom] VirtualTrackerDevice(%s) render model -> %s", serial_.c_str(), TrackerModelRenderName(model_));
+	}
 }
 
 void VirtualTrackerDevice::EnterStandby()

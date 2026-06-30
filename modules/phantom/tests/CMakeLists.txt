@@ -28,6 +28,7 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_frozen_tracker_invariant.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_ik_fallback.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_role_catalog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_tracker_model_catalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_inference_shmem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_passive_role_inference.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_snap_calibrate.cpp

@@ -997,6 +997,8 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 			const bool master_enabled = c.master_enabled != 0;
 			master_enabled_.store(master_enabled, std::memory_order_release);
 			auto_snap_enabled_.store(c.auto_snap != 0, std::memory_order_release);
+			virtual_trackers_.SetModel(c.render_model < kTrackerModelCount ? static_cast<TrackerModel>(c.render_model)
+			                                                               : TrackerModel::ViveTracker3);
 			// Apply new timings to every active slot. Cheap: just a copy.
 			std::lock_guard<std::mutex> lk(state_mutex_);
 			for (auto& s : slots_)
