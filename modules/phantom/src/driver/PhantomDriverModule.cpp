@@ -1202,6 +1202,14 @@ void PhantomModule::CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_
                                              std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
 {
 	if (qpc_freq <= 0) return;
+
+	// Absent-mode virtual trackers publish through this out-of-lock channel too:
+	// publishing inline from VirtualTrackerManager::Tick re-enters the umbrella's
+	// pose hook (holding its state mutex) and self-deadlocks. Virtual trackers are
+	// gated by their own per-role enables, independent of the dropout master, so
+	// drain them before the master-switch early-out below.
+	virtual_trackers_.CollectPoseUpdates(out);
+
 	if (!master_enabled_.load(std::memory_order_acquire)) return;
 
 	const int64_t min_publish_delta = std::max<int64_t>(1, qpc_freq / 90);

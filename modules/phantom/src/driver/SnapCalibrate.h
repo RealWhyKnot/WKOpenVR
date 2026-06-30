@@ -20,11 +20,12 @@ namespace phantom {
 
 enum class SnapStatus : uint8_t
 {
-	Ok = 0,           // at least one tracker assigned a role
-	HeadTilted = 1,   // horizontal head axis unusable (look forward and retry)
-	NoTrackers = 2,   // no trackers present to assign
-	HmdNotReady = 3,  // implausible head height above floor
-	LowConfidence = 4 // trackers present but none crossed the confidence bar
+	Ok = 0,            // at least one tracker assigned a role
+	HeadTilted = 1,    // horizontal head axis unusable (look forward and retry)
+	NoTrackers = 2,    // no trackers present to assign
+	HmdNotReady = 3,   // implausible head height above floor
+	LowConfidence = 4, // trackers present but none crossed the confidence bar
+	NotCalibrated = 5  // trackers sit nowhere near the body (not in the HMD's space)
 };
 
 struct SnapTrackerInput
@@ -98,6 +99,28 @@ inline SnapResult SnapCalibrate(const double hmd_pos[3], bool axes_valid, const 
 		feats.push_back(f);
 	}
 
+	// Sanity gate: a worn body tracker sits within roughly arm's reach of the
+	// head, between the floor and just above it. If every tracker is far off
+	// (deep negative height or metres away horizontally) the devices are not in
+	// the headset's tracking space -- almost always an un-run Space Calibrator on
+	// a mixed setup (e.g. Quest HMD + lighthouse trackers). Say so instead of
+	// silently failing to assign.
+	// A worn tracker sits within ~0.6 head-heights of the head horizontally
+	// (waist/chest directly below, feet/knees just ahead, elbows out a little) and
+	// between the floor and head height. Cross-space devices land metres away
+	// (hdist ~0.85+) and/or well below the floor.
+	int plausible = 0;
+	for (const auto& f : feats) {
+		const double hdist = std::sqrt((f.lateral_norm * f.lateral_norm) + (f.forward_norm * f.forward_norm));
+		if (f.height_ratio >= -0.15 && f.height_ratio <= 1.3 && hdist <= 0.6) {
+			++plausible;
+		}
+	}
+	if (plausible == 0) {
+		out.status = SnapStatus::NotCalibrated;
+		return out;
+	}
+
 	static const std::vector<BodyRole> kCandidates = {BodyRole::Waist,     BodyRole::Chest,     BodyRole::LeftFoot,
 	                                                  BodyRole::RightFoot, BodyRole::LeftKnee,  BodyRole::RightKnee,
 	                                                  BodyRole::LeftElbow, BodyRole::RightElbow};
@@ -130,6 +153,8 @@ inline const char* SnapStatusMessage(SnapStatus s)
 			return "Headset height looks off; stand up and snap again.";
 		case SnapStatus::LowConfidence:
 			return "Couldn't place trackers confidently; spread out and retry.";
+		case SnapStatus::NotCalibrated:
+			return "Trackers aren't aligned to your headset; run Space Calibrator first.";
 	}
 	return "";
 }

@@ -27,8 +27,8 @@ inline uint32_t DriverConnectRetryDelayMs(uint32_t consecutiveFailures)
 }
 
 // User-facing message for a snap-calibrate outcome. status mirrors the driver's
-// SnapStatus codes (0 Ok, 1 HeadTilted, 2 NoTrackers, 3 HmdNotReady, 4 LowConfidence);
-// kept as a numeric code so this header stays free of driver-module includes.
+// SnapStatus codes (0 Ok, 1 HeadTilted, 2 NoTrackers, 3 HmdNotReady, 4 LowConfidence,
+// 5 NotCalibrated); kept as a numeric code so this header stays free of driver includes.
 inline const char* SnapResultMessage(uint8_t status, uint8_t assigned_count)
 {
 	switch (status) {
@@ -42,6 +42,8 @@ inline const char* SnapResultMessage(uint8_t status, uint8_t assigned_count)
 			return "Headset height looks off; stand up and snap again.";
 		case 4:
 			return "Couldn't place trackers confidently; spread out and retry.";
+		case 5:
+			return "Trackers aren't aligned to your headset; run Space Calibrator first.";
 		default:
 			return "Snap failed.";
 	}

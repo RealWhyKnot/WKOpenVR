@@ -106,6 +106,21 @@ TEST(SnapCalibrate, HeadTiltedRefuses)
 	EXPECT_EQ(r.status, SnapStatus::HeadTilted);
 }
 
+// Trackers in a different tracking space than the HMD (metres away, below the
+// floor) -- the classic un-run Space Calibrator on a mixed setup -- report
+// NotCalibrated rather than silently failing to assign.
+TEST(SnapCalibrate, UncalibratedTrackersReportNotCalibrated)
+{
+	std::vector<SnapTrackerInput> trackers = {
+	    {0, {1.0, -0.80, -2.60}},
+	    {1, {0.3, -0.60, -2.40}},
+	    {2, {0.6, -0.30, -2.35}},
+	};
+	const SnapResult r = SnapCalibrate(kHmd, /*axes_valid=*/true, kRight, kFwd, /*floor_y=*/0.0, trackers);
+	EXPECT_FALSE(r.ok);
+	EXPECT_EQ(r.status, SnapStatus::NotCalibrated);
+}
+
 // No trackers -> nothing to assign.
 TEST(SnapCalibrate, NoTrackers)
 {

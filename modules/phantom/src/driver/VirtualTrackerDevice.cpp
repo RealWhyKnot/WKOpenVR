@@ -102,10 +102,20 @@ void VirtualTrackerDevice::Publish(const vr::DriverPose_t& pose)
 {
 	last_pose_ = pose;
 	pose_epoch_.fetch_add(1, std::memory_order_release);
+	// Do NOT call TrackedDevicePoseUpdated here: this runs inside the umbrella's
+	// pose hook (holding its state mutex), and TrackedDevicePoseUpdated re-enters
+	// that hook on the same thread -> "resource deadlock would occur". Mark the
+	// pose pending; the manager drains it through CollectSilentPoseUpdates, which
+	// the umbrella forwards after releasing the lock.
+	pending_ = true;
+}
 
-	if (object_id_ != vr::k_unTrackedDeviceIndexInvalid && vr::VRServerDriverHost()) {
-		vr::VRServerDriverHost()->TrackedDevicePoseUpdated(object_id_, last_pose_, sizeof(last_pose_));
-	}
+bool VirtualTrackerDevice::TakePendingPose(vr::DriverPose_t& out)
+{
+	if (!pending_) return false;
+	pending_ = false;
+	out = last_pose_;
+	return true;
 }
 
 } // namespace phantom

@@ -212,6 +212,18 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose, const BodyCom
 	}
 }
 
+void VirtualTrackerManager::CollectPoseUpdates(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
+{
+	for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+		auto& dev = devices_[i];
+		if (!dev || !dev->Activated()) continue;
+		vr::DriverPose_t pose{};
+		if (dev->TakePendingPose(pose)) {
+			out.emplace_back(static_cast<uint32_t>(dev->ObjectId()), pose);
+		}
+	}
+}
+
 int VirtualTrackerManager::ActiveCount() const
 {
 	int n = 0;

@@ -36,9 +36,17 @@ public:
 
 	BodyRole Role() const { return role_; }
 
-	// Push a new pose for this device. Cached for any GetPose poll and
-	// forwarded directly via TrackedDevicePoseUpdated for the live channel.
+	// Push a new pose for this device. Cached for any GetPose poll and marked
+	// pending. The pose is NOT forwarded here: publishing TrackedDevicePoseUpdated
+	// inline would re-enter the umbrella's pose hook (which holds its state mutex)
+	// and self-deadlock. VirtualTrackerManager::CollectPoseUpdates drains the
+	// pending pose so the umbrella forwards it outside the hook lock.
 	void Publish(const vr::DriverPose_t& pose);
+
+	// If a pose has been published since the last drain, copy it out and clear
+	// the pending flag. Returns false when nothing new is pending. Same-thread
+	// as Publish (the pose-hook thread); no locking needed.
+	bool TakePendingPose(vr::DriverPose_t& out);
 
 	bool Activated() const { return object_id_ != vr::k_unTrackedDeviceIndexInvalid; }
 	vr::TrackedDeviceIndex_t ObjectId() const { return object_id_; }
@@ -56,6 +64,10 @@ private:
 	// pattern with a guard byte is enough.
 	vr::DriverPose_t last_pose_{};
 	std::atomic<uint32_t> pose_epoch_{0};
+
+	// Set by Publish, cleared by TakePendingPose. Both run on the pose-hook
+	// thread, so a plain bool is sufficient.
+	bool pending_ = false;
 };
 
 } // namespace phantom

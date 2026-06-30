@@ -11,6 +11,8 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace phantom {
 
@@ -53,6 +55,13 @@ public:
 	// updates). Lazily activates pending virtual devices and pushes
 	// solver-derived poses on every already-activated device.
 	void Tick(const vr::DriverPose_t& hmd_pose, const BodyCompletionResult& body, double min_confidence);
+
+	// Drain the latest pose for each active virtual device into `out` as
+	// (objectId, pose) pairs, so the umbrella can forward them via the original
+	// TrackedDevicePoseUpdated outside the pose-hook lock. Publishing inline from
+	// Tick re-enters the hook and self-deadlocks; this is the safe channel that
+	// dropout bridging already uses. Call on the pose-hook thread after Tick.
+	void CollectPoseUpdates(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
 
 	// Diagnostic: how many virtual devices are currently activated.
 	int ActiveCount() const;
