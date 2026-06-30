@@ -25,6 +25,7 @@
 #include "BoundaryRePush.h"        // TickBoundaryRePush -- safety boundary chaperone re-push.
 #include "ControllerInput.h"
 #include "HeadFromTrackerSolve.h"
+#include "ContinuousCorrection.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
 #include "HeadMountPoseSampling.h"
 #include "HeadMountShadowOffset.h"
@@ -432,6 +433,25 @@ static void TickHeadMountInvariantShadow(const CalibrationContext& ctx, double t
 		         localJumpDeg, hmdDeltaM * 100.0, trackerDeltaM * 100.0, mismatchM * 100.0, (int)softSnap,
 		         (int)hardSnap, hmdAgeMs, trackerAgeMs, (unsigned)ctx.headMountOffsetVersion);
 		Metrics::WriteLogAnnotation(buf);
+
+		// Continuous sub-30 cm witness correction (Stage 1, item 4). savedDeltaM
+		// is the live witness-vs-calibration drift; surface the slew-limited,
+		// dead-banded corrective step this loop would apply. Diagnostic only --
+		// applying it to the live transform is gated on a hardware pass that
+		// validates the magnitude/cadence against real drift before enabling, so
+		// the working continuous-cal solver is never fought blind. Only meaningful
+		// once the rigid head-from-tracker offset is calibrated.
+		if (ctx.headMount.offsetCalibrated &&
+		    (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby)) {
+			constexpr double kNominalTickDt = 1.0 / 3.5; // continuous-cal cadence
+			const double stepM =
+			    spacecal::cont_correction::CorrectionStepM(savedDeltaM, ctx.autoLockMadFloor, kNominalTickDt);
+			char ccbuf[256];
+			snprintf(ccbuf, sizeof ccbuf,
+			         "[cont-correction] drift_mm=%.2f mad_floor_mm=%.2f step_mm=%.3f would_apply=%d (diagnostic)",
+			         savedDeltaM * 1000.0, ctx.autoLockMadFloor * 1000.0, stepM * 1000.0, (int)(stepM > 0.0));
+			Metrics::WriteLogAnnotation(ccbuf);
+		}
 	}
 
 	g_headMountShadowOffset.previousInvariantHmd = hmdReference;
