@@ -1,8 +1,30 @@
 #pragma once
 
 #include "Calibration.h"
+#include "SnapSuppression.h" // EffectiveHeadMountMode
 
 namespace wkopenvr::headmount {
+
+// A witness puck is "present" when the head-mount tracker is bound to a
+// resolved OpenVR device. Per-tick pose validity is checked separately at each
+// corroboration read site; presence alone is enough to enable the passive
+// Corroborate role (an invalid pose this tick yields headTrackerDelta < 0,
+// which the downstream classifiers treat as "no corroboration", never as a
+// destructive trigger).
+inline bool WitnessPresent(const CalibrationContext& ctx)
+{
+	return ctx.headMount.deviceID >= 0 && (uint32_t)ctx.headMount.deviceID < vr::k_unMaxTrackedDeviceCount;
+}
+
+// Effective head-mount mode for corroboration/recovery decisions: promotes to
+// at least Corroborate when a witness puck is present, without mutating the
+// persisted (style-derived) config mode. Use this -- not ctx.headMount.mode --
+// anywhere corroboration, the AUTO Lock witness gate, or snap classification is
+// decided, so the witness works in Continuous/Manual styles too.
+inline HeadMountMode EffectiveHeadMountMode(const CalibrationContext& ctx)
+{
+	return spacecal::snap_suppression::EffectiveHeadMountMode(ctx.headMount.mode, WitnessPresent(ctx));
+}
 
 inline bool IsContinuousHeadMountBindingState(CalibrationState state)
 {

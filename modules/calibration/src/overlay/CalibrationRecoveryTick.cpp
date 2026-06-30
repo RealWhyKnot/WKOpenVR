@@ -8,6 +8,7 @@
 #include "CalibrationProfileApply.h"
 #include "CommonModeCoherence.h"
 #include "HeadMountPoseSampling.h"
+#include "HeadMountTargetBinding.h"
 #include "SnapSuppression.h"
 #include "TrackingStyle.h"
 
@@ -641,10 +642,15 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// Only computed when mode >= Corroborate and the tracker is valid and
 	// fresh. On validity loss the cache is cleared so the next valid tick
 	// starts a fresh window.
+	// Effective mode promotes Off -> Corroborate whenever a witness puck is
+	// bound, so corroboration works in Continuous/Manual styles (which set the
+	// config mode to Off). Computed once; used by every corroboration gate in
+	// this function (delta capture, who-moved, snap classification).
+	const HeadMountMode effHeadMountMode = wkopenvr::headmount::EffectiveHeadMountMode(CalCtx);
 	double headTrackerDelta = -1.0; // negative = no valid reading this tick
 	{
 		const auto& hm = CalCtx.headMount;
-		const bool corroborateActive = hm.mode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
+		const bool corroborateActive = effHeadMountMode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
 		                               (uint32_t)hm.deviceID < vr::k_unMaxTrackedDeviceCount;
 		if (corroborateActive) {
 			const auto& tp = CalCtx.devicePoses[hm.deviceID];
@@ -741,8 +747,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 				// Choose displacement estimate. Prefer the head-mount tracker
 				// actual displacement (kHeadMountCorroboration) when valid,
 				// fall back to velocity-integrated HMD estimate otherwise.
-				const bool useHeadMount =
-				    headTrackerDelta >= 0.0 && CalCtx.headMount.mode >= HeadMountMode::Corroborate;
+				const bool useHeadMount = headTrackerDelta >= 0.0 && effHeadMountMode >= HeadMountMode::Corroborate;
 				const auto& hmdRawNow = CalCtx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
 				const double hmdSpeed = vmagFinite(hmdRawNow.vecVelocity);
 				const double hmdImuDisp = hmdSpeed * dt;
@@ -861,7 +866,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// during the HMD jump -- a universe flip, not real motion). Computed above the
 	// gate because the corroborated fast-reanchor branch below reuses it.
 	const bool snapCorroborated =
-	    spacecal::snap_suppression::IsJumpClassifiedAsSnap(CalCtx.headMount.mode, currentHmdDelta, headTrackerDelta);
+	    spacecal::snap_suppression::IsJumpClassifiedAsSnap(effHeadMountMode, currentHmdDelta, headTrackerDelta);
 
 	// If `fired` is true (a relocalization log line was emitted) but a
 	// gate blocked the recovery, log WHY -- gives us debug evidence for

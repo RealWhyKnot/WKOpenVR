@@ -181,6 +181,50 @@ TEST(SnapSuppression, Off_mode_unchanged_recovery)
 }
 
 // ---------------------------------------------------------------------------
+// EffectiveHeadMountMode: witness presence promotes Off -> Corroborate so the
+// witness works in Continuous/Manual styles (which set config mode = Off).
+// ---------------------------------------------------------------------------
+
+TEST(SnapSuppression, EffectiveMode_promotes_off_when_witness_present)
+{
+	// Continuous/Manual set config mode Off; a bound witness promotes to Corroborate.
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::Off, /*witnessPresent=*/true), HeadMountMode::Corroborate);
+}
+
+TEST(SnapSuppression, EffectiveMode_promotes_autopaired_when_witness_present)
+{
+	// AutoPaired (1) is below Corroborate (2): promoted when a witness is present.
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::AutoPaired, true), HeadMountMode::Corroborate);
+}
+
+TEST(SnapSuppression, EffectiveMode_preserves_higher_mode)
+{
+	// DriverSynth already implies Corroborate: never downgraded.
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::DriverSynth, true), HeadMountMode::DriverSynth);
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::Corroborate, true), HeadMountMode::Corroborate);
+}
+
+TEST(SnapSuppression, EffectiveMode_unchanged_when_no_witness)
+{
+	// No witness puck: nothing changes, so non-witness setups behave as before.
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::Off, /*witnessPresent=*/false), HeadMountMode::Off);
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::AutoPaired, false), HeadMountMode::AutoPaired);
+	EXPECT_EQ(ss::EffectiveHeadMountMode(HeadMountMode::DriverSynth, false), HeadMountMode::DriverSynth);
+}
+
+TEST(SnapSuppression, EffectiveMode_enables_snap_classification_in_continuous)
+{
+	// The core fix: in Continuous (config mode Off) with a witness puck bound,
+	// a corroborated universe flip now classifies as a snap instead of taking
+	// the destructive path. Without promotion this returned false.
+	const HeadMountMode configOff = HeadMountMode::Off; // Continuous preset
+	EXPECT_FALSE(ss::IsJumpClassifiedAsSnap(configOff, 0.85, 0.005)); // old behavior: never corroborates
+
+	const HeadMountMode eff = ss::EffectiveHeadMountMode(configOff, /*witnessPresent=*/true);
+	EXPECT_TRUE(ss::IsJumpClassifiedAsSnap(eff, 0.85, 0.005)); // 85 cm HMD flip, 5 mm puck move -> snap
+}
+
+// ---------------------------------------------------------------------------
 // Pinned threshold constants (per plan spec -- must not drift without review)
 // ---------------------------------------------------------------------------
 

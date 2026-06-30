@@ -21,6 +21,27 @@
 
 namespace spacecal::snap_suppression {
 
+// Promotes the head-mount mode to at least Corroborate whenever a witness puck
+// is present (bound to a resolved device).
+//
+// The user-selected tracking style sets configMode = Off for Continuous and
+// Manual (ApplyTrackingStylePreset), which disabled the entire corroboration
+// subsystem even when a Lighthouse witness puck was bound and feeding pose
+// pairs. Corroborate is a passive role -- it only reads the witness to classify
+// who-moved and to suppress destructive snaps; it never synthesizes output
+// (that is DriverSynth, which stays the user's explicit choice). So whenever a
+// witness is present, the effective mode is at least Corroborate regardless of
+// style. A higher configMode (DriverSynth) is preserved. When no witness is
+// present nothing changes, so non-witness setups behave exactly as before.
+//
+// Pure: callers pass witnessPresent (device resolved) and never mutate the
+// persisted config mode.
+inline HeadMountMode EffectiveHeadMountMode(HeadMountMode configMode, bool witnessPresent)
+{
+	if (witnessPresent && configMode < HeadMountMode::Corroborate) return HeadMountMode::Corroborate;
+	return configMode;
+}
+
 // Returns the effective speed in m/s for the AUTO Lock stationary gate.
 //
 // When mode >= Corroborate and trackerSpeedMps is non-negative (meaning the

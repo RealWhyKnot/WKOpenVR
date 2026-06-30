@@ -1017,8 +1017,11 @@ static double ComputeEffectiveSpeedMps(const CalibrationContext& ctx)
 	const double hmdSpeed = ComputeHmdSpeedMps(ctx);
 
 	const auto& hm = ctx.headMount;
+	// Promote Off -> Corroborate when a witness puck is bound so the AUTO Lock
+	// stationary gate also consults the witness in Continuous/Manual styles.
+	const HeadMountMode effMode = wkopenvr::headmount::EffectiveHeadMountMode(ctx);
 	double trackerSpeedMps = -1.0; // sentinel: tracker invalid / unavailable
-	if (hm.mode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
+	if (effMode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
 	    (uint32_t)hm.deviceID < vr::k_unMaxTrackedDeviceCount) {
 		const auto& tp = ctx.devicePoses[hm.deviceID];
 		if (tp.poseIsValid && tp.result == vr::ETrackingResult::TrackingResult_Running_OK) {
@@ -1026,7 +1029,7 @@ static double ComputeEffectiveSpeedMps(const CalibrationContext& ctx)
 			                            tp.vecVelocity[2] * tp.vecVelocity[2]);
 		}
 	}
-	return spacecal::snap_suppression::EffectiveSpeedMps(hm.mode, hmdSpeed, trackerSpeedMps);
+	return spacecal::snap_suppression::EffectiveSpeedMps(effMode, hmdSpeed, trackerSpeedMps);
 }
 
 // Commit a queued AUTO Lock flip when the user is still enough that the
