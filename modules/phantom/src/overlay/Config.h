@@ -2,6 +2,7 @@
 
 #include "BlendCurves.h"
 #include "RoleCatalog.h"
+#include "TrackerModelCatalog.h"
 
 #include <cstdint>
 #include <string>
@@ -68,6 +69,11 @@ struct PhantomConfig
 	// vive_tracker_<role> controller type so supported apps pick it up
 	// automatically as a body-bound tracker.
 	std::unordered_map<phantom::BodyRole, bool> virtual_enabled;
+
+	// SteamVR render model for the absent-mode virtual trackers. Cosmetic only;
+	// the controller type still drives app role binding. Defaults to Vive Tracker
+	// 3.0. Sent to the driver in PhantomConfig.render_model.
+	phantom::TrackerModel tracker_model = phantom::TrackerModel::ViveTracker3;
 
 	PhantomSolverSettings solver;
 };

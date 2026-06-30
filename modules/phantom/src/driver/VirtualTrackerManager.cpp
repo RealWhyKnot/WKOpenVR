@@ -96,6 +96,18 @@ bool VirtualTrackerManager::MasterEnabled() const
 	return master_enabled_.load(std::memory_order_acquire);
 }
 
+void VirtualTrackerManager::SetModel(TrackerModel model)
+{
+	if (model_ == model) return;
+	model_ = model;
+	LOG("[phantom] virtual tracker render model -> %s", TrackerModelRenderName(model));
+	// Re-apply to any already-activated devices. New activations read model_ in
+	// MaybeActivate, so they pick it up automatically.
+	for (auto& dev : devices_) {
+		if (dev) dev->SetModel(model);
+	}
+}
+
 namespace {
 
 vr::DriverPose_t PoseFromCompletion(const vr::DriverPose_t& hmd_pose, const BodyCompletionRoleOutput& role)
@@ -154,7 +166,7 @@ void VirtualTrackerManager::MaybeActivate(BodyRole role)
 
 	const bool reactivating = static_cast<bool>(devices_[idx]);
 	if (!devices_[idx]) {
-		devices_[idx] = std::make_unique<VirtualTrackerDevice>(role);
+		devices_[idx] = std::make_unique<VirtualTrackerDevice>(role, model_);
 	}
 	const std::string serial = devices_[idx]->Serial();
 	if (!vr::VRServerDriverHost()) {

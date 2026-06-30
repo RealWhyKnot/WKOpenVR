@@ -298,7 +298,10 @@ namespace protocol {
 // When set (with lerp=true), the driver moves the device transform toward its
 // target at a constant velocity (fixed mm/frame, deg/frame cap) instead of
 // snapping or proportionally blending, so large re-anchors settle imperceptibly.
-const uint32_t Version = 38;
+//
+// v39 (2026-06-30): phantom virtual tracker render-model selection. PhantomConfig
+// repurposes a pad byte as `render_model` (TrackerModel enum; 0 = Vive Tracker 3.0).
+const uint32_t Version = 39;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

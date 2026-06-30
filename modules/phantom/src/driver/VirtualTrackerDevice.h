@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RoleCatalog.h"
+#include "TrackerModelCatalog.h"
 
 #include <openvr_driver.h>
 
@@ -26,7 +27,7 @@ vr::DriverPose_t MakeDisconnectedVirtualPose();
 class VirtualTrackerDevice final : public vr::ITrackedDeviceServerDriver
 {
 public:
-	explicit VirtualTrackerDevice(BodyRole role);
+	VirtualTrackerDevice(BodyRole role, TrackerModel model);
 
 	// ITrackedDeviceServerDriver
 	vr::EVRInitError Activate(vr::TrackedDeviceIndex_t unObjectId) override;
@@ -43,6 +44,12 @@ public:
 	const std::string& Serial() const { return serial_; }
 
 	BodyRole Role() const { return role_; }
+
+	// Change the SteamVR render model. Re-applies Prop_RenderModelName_String if the
+	// device is already activated (best-effort live update); the change is guaranteed
+	// on the next vrserver restart. Called from the IPC thread when the user picks a
+	// different model in the overlay.
+	void SetModel(TrackerModel model);
 
 	// Push a new pose for this device. Cached for any GetPose poll and marked
 	// pending. The pose is NOT forwarded here: publishing TrackedDevicePoseUpdated
@@ -76,6 +83,9 @@ public:
 
 private:
 	BodyRole role_;
+	// Render model presented to SteamVR. Set at construction, read in Activate, and
+	// updated live by SetModel. Cosmetic only (controller type drives role binding).
+	TrackerModel model_;
 	std::string serial_;
 	vr::TrackedDeviceIndex_t object_id_ = vr::k_unTrackedDeviceIndexInvalid;
 	vr::PropertyContainerHandle_t prop_container_ = vr::k_ulInvalidPropertyContainer;

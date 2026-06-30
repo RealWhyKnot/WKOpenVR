@@ -606,7 +606,12 @@ struct PhantomConfig
 	uint8_t master_enabled;
 	// v37: 1 = auto snap-calibrate body roles when the user stands still.
 	uint8_t auto_snap;
-	uint8_t _pad0[2];
+	// v39: render model for absent-mode virtual trackers (TrackerModel enum;
+	// see modules/phantom/src/common/TrackerModelCatalog.h). 0 = Vive Tracker
+	// 3.0, the default, so a zero-filled byte from an older overlay decodes to
+	// the default rather than to a stale model.
+	uint8_t render_model;
+	uint8_t _pad0[1];
 
 	// Timeout ladder values, all in milliseconds. Defaults track the
 	// constants in modules/phantom/src/common/BlendCurves.h:
