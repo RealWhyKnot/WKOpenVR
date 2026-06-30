@@ -73,6 +73,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Add global expression tuning (4fc17d7)
 - **calibration:** Add experiment replay diagnostics (3c0b1b2)
 - **dynamicres:** Release scale on cpu-bound headroom (fbe05c2)
+- **phantom:** Clean runtime enable/disable of virtual trackers (no floating) (815d018)
+- **phantom:** Snap role-detection + self-healing tracker fill-in (94a3fa1)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -120,6 +122,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **common:** Split Win32 command-line quoting (c264a6c)
 - **overlay:** Reuse PowerShell encoding helpers (f2b324d)
 - **common:** Add reusable PowerShell command helpers (800787c)
+- **calibration:** Remove experimental drift-fighting toggles (0ba4d64)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -248,6 +251,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **captions:** Stop startup after owner shutdown (2603754)
 - **common:** Preserve module id wire values (f037bde)
 - **overlay:** Avoid background dashboard polling (b55b604)
+- **phantom:** Stop virtual-tracker pose deadlock; flag uncalibrated trackers (30add3e)
 
 ---
 
