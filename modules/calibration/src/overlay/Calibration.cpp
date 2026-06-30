@@ -1717,7 +1717,8 @@ void CalibrationTick(double time)
 			         " relPosCal=%d hmdStalls=%d"
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
-			         " mad_floor_source=%s wr_validation=%s",
+			         " mad_floor_source=%s wr_validation=%s"
+			         " witness_eff_mode=%d reanchor_pending=%d wr_reanchors=%d synth_fallbacks=%llu",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
 			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
@@ -1726,7 +1727,9 @@ void CalibrationTick(double time)
 			         ctx.geometryShiftGraceUntil, g_cusumState.S, g_cusumState.sustainedAboveThreshold,
 			         spacecal::geometry_shift::kMinSustainedSpikes, cooldownRemaining, (int)ctx.relativePosCalibrated,
 			         ctx.consecutiveHmdStalls, (int)warmRestartActive, ctx.warmRestartGraceSamples, postSnapBiasMm,
-			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb);
+			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb,
+			         (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx), (int)g_reanchorNextProfileApply,
+			         ctx.warmRestartReanchorCount, (unsigned long long)ctx.driverSynthFallbackTotal);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
