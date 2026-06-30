@@ -39,7 +39,7 @@ jobs:
           python-version: '3.x'
 
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-lint-${{ runner.os }}-${{ hashFiles('modules/facetracking/src/host/**/*.csproj', 'tests/e2e/facetracking_test_module/**/*.csproj', 'modules/facetracking/src/host/**/packages.lock.json') }}
@@ -47,7 +47,7 @@ jobs:
             nuget-lint-${{ runner.os }}-
 
       - name: Cache LLVM
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: 'C:\Program Files\LLVM'
           key: llvm-${{ runner.os }}-22.1.0-v2
@@ -55,7 +55,7 @@ jobs:
       - name: Cache clang-tidy build
         # lint.ps1 configures a Ninja compile database under build/lint-tidy.
         # Caching it keeps the configure + analysis incremental across nights.
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: build/lint-tidy
           key: tidy-build-vs2026-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
