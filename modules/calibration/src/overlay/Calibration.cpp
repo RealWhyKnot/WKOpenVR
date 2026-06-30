@@ -1703,7 +1703,8 @@ void CalibrationTick(double time)
 					validationStateHb = "inconclusive";
 					break;
 			}
-			char hbBuf[1024];
+			const auto& wh = LastWitnessHealth();
+			char hbBuf[1152];
 			snprintf(hbBuf, sizeof hbBuf,
 			         "[cal-heartbeat] state=%d trackingStyle=%d headMountMode=%d lockMode=%d lockRel=%d autoLockEff=%d"
 			         " autoLockPending=%d autoLockPendingTo=%d autoLockHeldSec=%.2f"
@@ -1718,7 +1719,8 @@ void CalibrationTick(double time)
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
 			         " mad_floor_source=%s wr_validation=%s"
-			         " witness_eff_mode=%d reanchor_pending=%d wr_reanchors=%d synth_fallbacks=%llu",
+			         " witness_eff_mode=%d reanchor_pending=%d wr_reanchors=%d synth_fallbacks=%llu"
+			         " witness_valid_pct=%.1f witness_last_valid_sec=%.1f subthreshold_relocs=%llu",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
 			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
@@ -1729,7 +1731,9 @@ void CalibrationTick(double time)
 			         ctx.consecutiveHmdStalls, (int)warmRestartActive, ctx.warmRestartGraceSamples, postSnapBiasMm,
 			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb,
 			         (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx), (int)g_reanchorNextProfileApply,
-			         ctx.warmRestartReanchorCount, (unsigned long long)ctx.driverSynthFallbackTotal);
+			         ctx.warmRestartReanchorCount, (unsigned long long)ctx.driverSynthFallbackTotal,
+			         spacecal::witness_health::ValidPct(wh), spacecal::witness_health::LastValidSec(wh, time),
+			         (unsigned long long)wh.subthresholdRelocs);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}

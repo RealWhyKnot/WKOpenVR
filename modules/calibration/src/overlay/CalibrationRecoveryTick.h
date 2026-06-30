@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TrackerLiveness.h"
+#include "WitnessHealth.h"
 
 #include <string>
 
@@ -18,6 +19,10 @@ struct CalibrationContext;
 // constant-velocity ramp in one place when that lands). Does NOT touch
 // warmRestartReanchorCount -- callers manage retry accounting.
 void ArmReanchorToProfile(CalibrationContext& ctx);
+
+// Witness-puck health rollup from the last relocalization-detector tick.
+// Read by the [cal-heartbeat] emitter; updated inside TickHmdRelocalizationDetector.
+const spacecal::witness_health::WitnessHealth& LastWitnessHealth();
 
 extern spacecal::liveness::TrackerLivenessState g_refLiveness;
 extern spacecal::liveness::TrackerLivenessState g_tgtLiveness;

@@ -431,6 +431,9 @@ struct RelocalizationDetectorState
 	// inside the !hmdValid branch. Same 1 Hz cap so a long stall produces
 	// 1 line per second instead of 60+.
 	double lastInvalidLogTime = -1e9;
+
+	// Witness (head-mount tracker) health rollup, surfaced in the heartbeat.
+	spacecal::witness_health::WitnessHealth witnessHealth;
 };
 RelocalizationDetectorState g_relocDetector;
 
@@ -674,6 +677,22 @@ void TickHmdRelocalizationDetectorImpl(double now)
 		}
 	}
 
+	// Witness health rollup (diagnostic; surfaced in the heartbeat). Tracked
+	// every tick a witness puck is bound -- independent of corroboration mode --
+	// so the heartbeat shows the puck dropping out even in Continuous style
+	// (config mode Off; only the effective mode promotes to Corroborate).
+	{
+		const auto& hmHealth = CalCtx.headMount;
+		const bool witnessBound = hmHealth.deviceID >= 0 && (uint32_t)hmHealth.deviceID < vr::k_unMaxTrackedDeviceCount;
+		bool witnessValidNow = false;
+		if (witnessBound) {
+			const auto& tp = CalCtx.devicePoses[hmHealth.deviceID];
+			witnessValidNow =
+			    tp.poseIsValid && tp.deviceIsConnected && tp.result == vr::ETrackingResult::TrackingResult_Running_OK;
+		}
+		spacecal::witness_health::TickWitness(s.witnessHealth, witnessBound, witnessValidNow, now);
+	}
+
 	// Trigger evaluation. Need a previous HMD pose and >=2 base stations
 	// (so condition 2 isn't trivially passing). Note we still update the
 	// cache even when no trigger fires -- always tracking the latest
@@ -869,6 +888,13 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	const bool snapCorroborated =
 	    spacecal::snap_suppression::IsJumpClassifiedAsSnap(effHeadMountMode, currentHmdDelta, headTrackerDelta);
 
+	// Felt-jump accounting (diagnostic). A fired relocalization that passed every
+	// recovery gate except magnitude is a 5-30 cm SLAM jump that translated the
+	// headset uncorrected; count it so the heartbeat surfaces the rate.
+	if (fired && !magnitudeOK && recoveryEligible && startupOK && throttleOK && !postStallGrace) {
+		spacecal::witness_health::NoteSubthresholdReloc(s.witnessHealth);
+	}
+
 	// If `fired` is true (a relocalization log line was emitted) but a
 	// gate blocked the recovery, log WHY -- gives us debug evidence for
 	// every borderline event so we can tune thresholds against real data
@@ -887,11 +913,12 @@ void TickHmdRelocalizationDetectorImpl(double now)
 		snprintf(skipbuf, sizeof skipbuf,
 		         "auto_recover_skipped: hmdDelta=%.3f magnitudeOK=%d stateOK=%d styleOK=%d startupOK=%d "
 		         "throttleOK=%d postStallGrace=%d (secSinceStall=%.2f) state=%d style=%d"
-		         " hmMode=%d deviceID=%d poseIsValid=%d connected=%d result=%d"
+		         " hmMode=%d effMode=%d deviceID=%d poseIsValid=%d connected=%d result=%d"
 		         " havePrevTracker=%d headTrackerDelta=%.4f",
 		         currentHmdDelta, (int)magnitudeOK, (int)stateOK, (int)styleOK, (int)startupOK, (int)throttleOK,
 		         (int)postStallGrace, secSinceStall, (int)CalCtx.state, (int)CalCtx.trackingStyle, (int)hmDbg.mode,
-		         hmDbg.deviceID, poseValid, connected, result, (int)s.havePrevHeadTracker, headTrackerDelta);
+		         (int)effHeadMountMode, hmDbg.deviceID, poseValid, connected, result, (int)s.havePrevHeadTracker,
+		         headTrackerDelta);
 		Metrics::WriteLogAnnotation(skipbuf);
 	}
 
@@ -1066,6 +1093,13 @@ void TickBaseStationDrift(double now)
 void TickHmdRelocalizationDetector(double now)
 {
 	TickHmdRelocalizationDetectorImpl(now);
+}
+
+// Defined outside the anonymous namespace above so it has external linkage and
+// the heartbeat emitter (Calibration.cpp, a separate TU) can read the rollup.
+const spacecal::witness_health::WitnessHealth& LastWitnessHealth()
+{
+	return g_relocDetector.witnessHealth;
 }
 
 void DumpDriftSubsystemState()
