@@ -287,6 +287,11 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 	const char* snapReason =
 	    recoverySnapThisCycle ? "recovery" : ((forceSnapReason && forceSnapReason[0]) ? forceSnapReason : "forced");
 
+	// One-shot re-anchor: send reanchor=true (with lerp=true) so the driver ramps
+	// to the profile at constant velocity. A snap this cycle takes precedence
+	// (the driver clears the ramp on lerp=false), so they never conflict.
+	const bool reanchorThisCycle = g_reanchorNextProfileApply && !snapThisCycle;
+
 	// Snapshot of which IDs got adopted this scan and what serial/model they had.
 	// Compared against g_lastAdoptedTrackers below to log new-adoption / disconnect events.
 	std::map<uint32_t, AdoptedTracker> currentAdopted;
@@ -511,6 +516,9 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		    /*inContinuousState=*/CalCtx.state == CalibrationState::Continuous,
 		    /*isFreshlyAdopted=*/isFreshlyAdopted,
 		    /*snapThisCycle=*/snapThisCycle);
+		// Re-anchor ramp request rides alongside lerp=true; the driver moves to
+		// the target at a constant velocity instead of the proportional blend.
+		payload.reanchor = reanchorThisCycle;
 		// Hide intent: the continuous-target toggle hides the active target
 		// during continuous calibration. The head-mounted tracker toggle is
 		// serial-based so the same physical tracker remains hidden through
@@ -612,6 +620,15 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		snprintf(snapBuf, sizeof snapBuf, "profile_apply_snap_cycle_consumed: reason=%s payloadSent=%d", snapReason,
 		         scanPayloadSent);
 		Metrics::WriteLogAnnotation(snapBuf);
+	}
+
+	// Consume the one-shot re-anchor flag after all per-ID payloads are sent, so
+	// every calibrated device starts its ramp on the same cycle.
+	if (reanchorThisCycle) {
+		g_reanchorNextProfileApply = false;
+		char rbuf[160];
+		snprintf(rbuf, sizeof rbuf, "profile_apply_reanchor_cycle_consumed: payloadSent=%d", scanPayloadSent);
+		Metrics::WriteLogAnnotation(rbuf);
 	}
 
 	const double totalMs = MsSince(applyStart);

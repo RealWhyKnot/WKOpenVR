@@ -74,38 +74,48 @@ struct SetDeviceTransform
 	// recalibrateOnMovement profile setting is enabled.
 	bool recalibrateOnMovement;
 
+	// v38 (2026-06-30): re-anchor ramp. When true, the driver moves
+	// tf.transform toward tf.targetTransform at a constant velocity (a fixed
+	// mm/frame and deg/frame cap) instead of snapping (lerp=false) or
+	// proportionally blending (lerp=true). This makes a large re-anchor (e.g. a
+	// corroborated universe flip or a put-headset-back-on warm restart) settle
+	// imperceptibly rather than teleporting. Distinct from lerp: a re-anchor is
+	// sent with lerp=true AND reanchor=true. The driver latches the ramp until
+	// the target is reached; a later lerp=false snap clears it.
+	bool reanchor;
+
 	SetDeviceTransform(uint32_t id, bool enabled)
 	    : openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(false),
 	      translation({}), rotation({1, 0, 0, 0}), scale(1), lerp(false), quash(false), updateQuash(false),
-	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false)
+	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false), reanchor(false)
 	{
 	}
 
 	SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation)
 	    : openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(false), updateScale(false),
 	      translation(translation), rotation({1, 0, 0, 0}), scale(1), lerp(false), quash(false), updateQuash(false),
-	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false)
+	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false), reanchor(false)
 	{
 	}
 
 	SetDeviceTransform(uint32_t id, bool enabled, vr::HmdQuaternion_t rotation)
 	    : openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(true), updateScale(false),
 	      translation({}), rotation(rotation), scale(1), lerp(false), quash(false), updateQuash(false), target_system{},
-	      predictionSmoothness(0), recalibrateOnMovement(false)
+	      predictionSmoothness(0), recalibrateOnMovement(false), reanchor(false)
 	{
 	}
 
 	SetDeviceTransform(uint32_t id, bool enabled, double scale)
 	    : openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(true),
 	      translation({}), rotation({1, 0, 0, 0}), scale(scale), lerp(false), quash(false), updateQuash(false),
-	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false)
+	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false), reanchor(false)
 	{
 	}
 
 	SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation, vr::HmdQuaternion_t rotation)
 	    : openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(false),
 	      translation(translation), rotation(rotation), scale(1), lerp(false), quash(false), updateQuash(false),
-	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false)
+	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false), reanchor(false)
 	{
 	}
 
@@ -113,7 +123,7 @@ struct SetDeviceTransform
 	                   double scale)
 	    : openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(true),
 	      translation(translation), rotation(rotation), scale(scale), lerp(false), quash(false), updateQuash(false),
-	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false)
+	      target_system{}, predictionSmoothness(0), recalibrateOnMovement(false), reanchor(false)
 	{
 	}
 };

@@ -25,11 +25,13 @@
 #include "BoundaryRePush.h"        // TickBoundaryRePush -- safety boundary chaperone re-push.
 #include "ControllerInput.h"
 #include "HeadFromTrackerSolve.h"
+#include "ContinuousCorrection.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
 #include "HeadMountPoseSampling.h"
 #include "HeadMountShadowOffset.h"
 #include "HeadMountSourceGuard.h"
 #include "HeadMountTargetBinding.h"
+#include "RecoveryPolicy.h"
 #include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
 
@@ -238,6 +240,13 @@ static void TickCpuPressureMonitor(double computationTimeMs, double now_s)
 // Cleared by ScanAndApplyProfile after consuming. One-shot.
 bool g_snapNextProfileApply = false;
 
+// One-shot re-anchor request: the next profile-apply cycle sends per-ID payloads
+// with reanchor=true (and lerp=true), so the driver ramps to the saved profile
+// at a constant velocity instead of snapping. Set by ArmReanchorToProfile (snap
+// corroboration, relocalization re-anchor, warm-restart witness veto, and
+// warm-restart engage); cleared by ScanAndApplyProfile after consuming.
+bool g_reanchorNextProfileApply = false;
+
 // AdditionalCalibration's special members live inline in the header now --
 // CalibrationCalc is complete at the include point, so the implicitly-defined
 // destructor handles the unique_ptr just fine.
@@ -424,6 +433,25 @@ static void TickHeadMountInvariantShadow(const CalibrationContext& ctx, double t
 		         localJumpDeg, hmdDeltaM * 100.0, trackerDeltaM * 100.0, mismatchM * 100.0, (int)softSnap,
 		         (int)hardSnap, hmdAgeMs, trackerAgeMs, (unsigned)ctx.headMountOffsetVersion);
 		Metrics::WriteLogAnnotation(buf);
+
+		// Continuous sub-30 cm witness correction (Stage 1, item 4). savedDeltaM
+		// is the live witness-vs-calibration drift; surface the slew-limited,
+		// dead-banded corrective step this loop would apply. Diagnostic only --
+		// applying it to the live transform is gated on a hardware pass that
+		// validates the magnitude/cadence against real drift before enabling, so
+		// the working continuous-cal solver is never fought blind. Only meaningful
+		// once the rigid head-from-tracker offset is calibrated.
+		if (ctx.headMount.offsetCalibrated &&
+		    (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby)) {
+			constexpr double kNominalTickDt = 1.0 / 3.5; // continuous-cal cadence
+			const double stepM =
+			    spacecal::cont_correction::CorrectionStepM(savedDeltaM, ctx.autoLockMadFloor, kNominalTickDt);
+			char ccbuf[256];
+			snprintf(ccbuf, sizeof ccbuf,
+			         "[cont-correction] drift_mm=%.2f mad_floor_mm=%.2f step_mm=%.3f would_apply=%d (diagnostic)",
+			         savedDeltaM * 1000.0, ctx.autoLockMadFloor * 1000.0, stepM * 1000.0, (int)(stepM > 0.0));
+			Metrics::WriteLogAnnotation(ccbuf);
+		}
 	}
 
 	g_headMountShadowOffset.previousInvariantHmd = hmdReference;
@@ -1017,8 +1045,11 @@ static double ComputeEffectiveSpeedMps(const CalibrationContext& ctx)
 	const double hmdSpeed = ComputeHmdSpeedMps(ctx);
 
 	const auto& hm = ctx.headMount;
+	// Promote Off -> Corroborate when a witness puck is bound so the AUTO Lock
+	// stationary gate also consults the witness in Continuous/Manual styles.
+	const HeadMountMode effMode = wkopenvr::headmount::EffectiveHeadMountMode(ctx);
 	double trackerSpeedMps = -1.0; // sentinel: tracker invalid / unavailable
-	if (hm.mode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
+	if (effMode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
 	    (uint32_t)hm.deviceID < vr::k_unMaxTrackedDeviceCount) {
 		const auto& tp = ctx.devicePoses[hm.deviceID];
 		if (tp.poseIsValid && tp.result == vr::ETrackingResult::TrackingResult_Running_OK) {
@@ -1026,7 +1057,7 @@ static double ComputeEffectiveSpeedMps(const CalibrationContext& ctx)
 			                            tp.vecVelocity[2] * tp.vecVelocity[2]);
 		}
 	}
-	return spacecal::snap_suppression::EffectiveSpeedMps(hm.mode, hmdSpeed, trackerSpeedMps);
+	return spacecal::snap_suppression::EffectiveSpeedMps(effMode, hmdSpeed, trackerSpeedMps);
 }
 
 // Commit a queued AUTO Lock flip when the user is still enough that the
@@ -1482,19 +1513,13 @@ void CalibrationTick(double time)
 				}
 
 				if (engaged) {
-					ctx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
-					ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
-					ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
-					// Reset the post-snap bias accumulator and pin the
-					// last-consumed err timestamp to the latest pre-snap
-					// sample, so pre-snap retargeting errors do not feed
-					// into the post-snap mean. warmRestartSnapTime is
-					// surfaced in the heartbeat to label mad_floor_source.
-					ctx.postSnapErrorSumMm = 0.0;
-					ctx.postSnapErrorSampleCount = 0;
-					ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
-					ctx.warmRestartSnapTime = Metrics::CurrentTime;
-					g_snapNextProfileApply = true;
+					// Put-headset-back-on re-anchor: arm grace and ramp to the
+					// saved profile at constant velocity (ArmReanchorToProfile)
+					// rather than snapping. Resets the post-snap bias accumulator
+					// and pins the last-consumed err timestamp so pre-snap
+					// retargeting errors don't feed the post-snap mean.
+					ctx.warmRestartReanchorCount = 0; // fresh warm-restart episode
+					ArmReanchorToProfile(ctx);
 					const double mag = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
 					                             ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
 					                             ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
@@ -1692,7 +1717,8 @@ void CalibrationTick(double time)
 			         " relPosCal=%d hmdStalls=%d"
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
-			         " mad_floor_source=%s wr_validation=%s",
+			         " mad_floor_source=%s wr_validation=%s"
+			         " witness_eff_mode=%d reanchor_pending=%d wr_reanchors=%d synth_fallbacks=%llu",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
 			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
@@ -1701,7 +1727,9 @@ void CalibrationTick(double time)
 			         ctx.geometryShiftGraceUntil, g_cusumState.S, g_cusumState.sustainedAboveThreshold,
 			         spacecal::geometry_shift::kMinSustainedSpikes, cooldownRemaining, (int)ctx.relativePosCalibrated,
 			         ctx.consecutiveHmdStalls, (int)warmRestartActive, ctx.warmRestartGraceSamples, postSnapBiasMm,
-			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb);
+			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb,
+			         (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx), (int)g_reanchorNextProfileApply,
+			         ctx.warmRestartReanchorCount, (unsigned long long)ctx.driverSynthFallbackTotal);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
@@ -2807,7 +2835,8 @@ void CalibrationTick(double time)
 				if (outcome == spacecal::warm_restart::ValidationOutcome::Settled &&
 				    CalCtx.warmRestartValidationState != spacecal::warm_restart::ValidationOutcome::Settled) {
 					CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Settled;
-					CalCtx.warmRestartGraceSamples = 0; // end grace early
+					CalCtx.warmRestartGraceSamples = 0;  // end grace early
+					CalCtx.warmRestartReanchorCount = 0; // episode resolved
 					char vbuf[320];
 					snprintf(vbuf, sizeof vbuf,
 					         "[warm-restart][validated] mad_mm=%.3f samples_since_snap=%d"
@@ -2838,8 +2867,40 @@ void CalibrationTick(double time)
 					         meanBiasTransM * 1000.0, CalCtx.postSnapErrorSampleCount, madFloorSource, failReason);
 					Metrics::WriteLogAnnotation(fbuf);
 					Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=validation_failed");
-					RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
-					                             "warm_restart_validation_failed");
+
+					// Witness veto: a present witness puck independently confirms
+					// the saved profile, so re-anchor and re-arm grace (bounded
+					// retries) instead of destroying the user's calibration. The
+					// destructive clear is a true last resort -- only when no
+					// saved profile exists to fall back to (RecoveryPolicy.h).
+					// This is the path the take-off/put-back-on field sessions
+					// hit; the old code cleared unconditionally here.
+					const bool witnessPresent = wkopenvr::headmount::WitnessPresent(CalCtx);
+					const auto wrAction = spacecal::recovery::ChooseWarmRestartFailureAction(
+					    witnessPresent, CalCtx.validProfile, CalCtx.warmRestartReanchorCount,
+					    spacecal::recovery::kWarmRestartMaxReanchors);
+					if (wrAction == spacecal::recovery::RecoveryAction::ReanchorToProfile) {
+						CalCtx.warmRestartReanchorCount += 1;
+						char vbuf[256];
+						snprintf(vbuf, sizeof vbuf,
+						         "[warm-restart][witness-veto] reanchor=%d/%d -> profile re-applied,"
+						         " grace re-armed (no destructive clear)",
+						         CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors);
+						Metrics::WriteLogAnnotation(vbuf);
+						ArmReanchorToProfile(CalCtx);
+					}
+					else if (wrAction == spacecal::recovery::RecoveryAction::DestructiveClear) {
+						RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
+						                             "warm_restart_validation_failed");
+					}
+					else { // Hold -- preserve the profile rather than clear it
+						char hbuf[256];
+						snprintf(hbuf, sizeof hbuf,
+						         "[warm-restart][held] witnessPresent=%d reanchors=%d validProfile=%d"
+						         " -> profile preserved, no destructive clear",
+						         (int)witnessPresent, CalCtx.warmRestartReanchorCount, (int)CalCtx.validProfile);
+						Metrics::WriteLogAnnotation(hbuf);
+					}
 				}
 				else if (graceEndedThisTick) {
 					// Inconclusive at grace end: MAD between thresholds and

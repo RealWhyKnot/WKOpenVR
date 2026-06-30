@@ -8,6 +8,8 @@
 #include "CalibrationProfileApply.h"
 #include "CommonModeCoherence.h"
 #include "HeadMountPoseSampling.h"
+#include "HeadMountTargetBinding.h"
+#include "RecoveryPolicy.h"
 #include "SnapSuppression.h"
 #include "TrackingStyle.h"
 
@@ -641,10 +643,15 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// Only computed when mode >= Corroborate and the tracker is valid and
 	// fresh. On validity loss the cache is cleared so the next valid tick
 	// starts a fresh window.
+	// Effective mode promotes Off -> Corroborate whenever a witness puck is
+	// bound, so corroboration works in Continuous/Manual styles (which set the
+	// config mode to Off). Computed once; used by every corroboration gate in
+	// this function (delta capture, who-moved, snap classification).
+	const HeadMountMode effHeadMountMode = wkopenvr::headmount::EffectiveHeadMountMode(CalCtx);
 	double headTrackerDelta = -1.0; // negative = no valid reading this tick
 	{
 		const auto& hm = CalCtx.headMount;
-		const bool corroborateActive = hm.mode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
+		const bool corroborateActive = effHeadMountMode >= HeadMountMode::Corroborate && hm.deviceID >= 0 &&
 		                               (uint32_t)hm.deviceID < vr::k_unMaxTrackedDeviceCount;
 		if (corroborateActive) {
 			const auto& tp = CalCtx.devicePoses[hm.deviceID];
@@ -741,8 +748,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 				// Choose displacement estimate. Prefer the head-mount tracker
 				// actual displacement (kHeadMountCorroboration) when valid,
 				// fall back to velocity-integrated HMD estimate otherwise.
-				const bool useHeadMount =
-				    headTrackerDelta >= 0.0 && CalCtx.headMount.mode >= HeadMountMode::Corroborate;
+				const bool useHeadMount = headTrackerDelta >= 0.0 && effHeadMountMode >= HeadMountMode::Corroborate;
 				const auto& hmdRawNow = CalCtx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
 				const double hmdSpeed = vmagFinite(hmdRawNow.vecVelocity);
 				const double hmdImuDisp = hmdSpeed * dt;
@@ -861,7 +867,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// during the HMD jump -- a universe flip, not real motion). Computed above the
 	// gate because the corroborated fast-reanchor branch below reuses it.
 	const bool snapCorroborated =
-	    spacecal::snap_suppression::IsJumpClassifiedAsSnap(CalCtx.headMount.mode, currentHmdDelta, headTrackerDelta);
+	    spacecal::snap_suppression::IsJumpClassifiedAsSnap(effHeadMountMode, currentHmdDelta, headTrackerDelta);
 
 	// If `fired` is true (a relocalization log line was emitted) but a
 	// gate blocked the recovery, log WHY -- gives us debug evidence for
@@ -946,76 +952,97 @@ void TickHmdRelocalizationDetectorImpl(double now)
 			         hmdDelta * 1000.0, headTrackerDelta * 1000.0);
 			Metrics::WriteLogAnnotation(snapbuf);
 
-			// Fast re-anchor: snap to the saved profile and arm the
-			// warm-restart validation grace window. The saved profile was
-			// correct before the Quest SLAM snap; re-applying it without
-			// clearing the solver lets the continuous-cal loop converge
-			// back to the pre-snap state rather than starting from zero.
-			// This is the same path as the warm-restart engage (see
-			// Calibration.cpp::ShouldEngage) but fired from the snap
-			// classification rather than the proximity sensor.
-			CalCtx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
-			CalCtx.warmRestartMadAtSnap = CalCtx.autoLockMadFloor;
-			CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
-			CalCtx.postSnapErrorSumMm = 0.0;
-			CalCtx.postSnapErrorSampleCount = 0;
-			CalCtx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
-			CalCtx.warmRestartSnapTime = Metrics::CurrentTime;
-			g_snapNextProfileApply = true;
+			// Fast re-anchor: re-apply the saved profile and arm the
+			// warm-restart validation grace window. This is the same path as
+			// the warm-restart engage (see Calibration.cpp::ShouldEngage) but
+			// fired from the snap classification rather than the proximity
+			// sensor. Fresh snap episode -> reset the bounded-retry counter.
+			CalCtx.warmRestartReanchorCount = 0;
+			ArmReanchorToProfile(CalCtx);
 		}
-		// Destructive full recovery (calibration Clear + cold restart) stays
-		// Continuous-only. In a locked style the gate only opens for a
-		// corroborated snap (handled above), so this branch is unreachable there;
-		// the guard makes that explicit and future-proof.
+		// Not a corroborated snap. Choose hold / gentle re-anchor / (last
+		// resort) destructive clear instead of unconditionally clearing -- the
+		// old code clobbered valid calibrations whenever the witness was off,
+		// the dominant false positive in field logs. Continuous-only; in a
+		// locked style the gate only opens for a corroborated snap (above).
 		else if (recoveryEligible) {
-			char logbuf[384];
-			snprintf(logbuf, sizeof logbuf,
-			         "auto_recover_from_relocalization: hmdDelta=%.3f dpos=(%.3f,%.3f,%.3f) rotRad=%.3f"
-			         " priorState=%s priorValid=%d secSinceStall=%.2f trackerDelta=%.4f"
-			         " -> calibration cleared, continuous-cal restarting",
-			         hmdDelta, dpos.x(), dpos.y(), dpos.z(), s.lastFireRotRad,
-			         (CalCtx.state == CalibrationState::Continuous) ? "Continuous" : "ContinuousStandby",
-			         (int)calibration.isValid(), secSinceStall, headTrackerDelta);
-			Metrics::WriteLogAnnotation(logbuf);
+			const bool witnessValid = headTrackerDelta >= 0.0;
+			const bool witnessSaysHeadMoved = headTrackerDelta >= spacecal::snap_suppression::kSnapTrackerMaxDispM;
+			const bool warmRestartFailed =
+			    CalCtx.warmRestartValidationState == spacecal::warm_restart::ValidationOutcome::Failed;
+			const auto recoveryAction = spacecal::recovery::ChooseRelocRecoveryAction(
+			    witnessValid, witnessSaysHeadMoved, CalCtx.validProfile, warmRestartFailed);
 
-			// Step 0 (audit UX #3): snapshot the pre-recovery calibration
-			// state so the UI's "Undo" button can restore it. Snapshot the
-			// CalCtx fields the recovery is about to clear -- restoring
-			// these is sufficient to put the user back in the wedged
-			// calibration (which is, after all, what they were running
-			// happily in until the false-positive auto-recovery clobbered
-			// it). Reset the dismissed flag so this new event gets a
-			// fresh banner even if a previous one was dismissed.
-			s.lastAutoRecoverSnapshot.valid = true;
-			s.lastAutoRecoverSnapshot.refToTargetPose = CalCtx.refToTargetPose;
-			s.lastAutoRecoverSnapshot.relativePosCalibrated = CalCtx.relativePosCalibrated;
-			s.lastAutoRecoverSnapshot.hasAppliedCalibrationResult = CalCtx.hasAppliedCalibrationResult;
-			s.autoRecoverBannerDismissed = false;
+			if (recoveryAction == spacecal::recovery::RecoveryAction::Hold) {
+				char hbuf[320];
+				snprintf(hbuf, sizeof hbuf,
+				         "auto_recover_held: hmdDelta=%.3f trackerDelta=%.4f witnessValid=%d witnessMoved=%d"
+				         " validProfile=%d -> calibration preserved (no destructive clear)",
+				         hmdDelta, headTrackerDelta, (int)witnessValid, (int)witnessSaysHeadMoved,
+				         (int)CalCtx.validProfile);
+				Metrics::WriteLogAnnotation(hbuf);
+			}
+			else if (recoveryAction == spacecal::recovery::RecoveryAction::ReanchorToProfile) {
+				char rbuf[320];
+				snprintf(rbuf, sizeof rbuf,
+				         "[reanchor] reloc -> saved profile: hmdDelta=%.3f trackerDelta=%.4f witnessValid=%d"
+				         " -> profile re-applied, validation grace armed (no destructive clear)",
+				         hmdDelta, headTrackerDelta, (int)witnessValid);
+				Metrics::WriteLogAnnotation(rbuf);
+				CalCtx.warmRestartReanchorCount = 0; // fresh reloc episode
+				ArmReanchorToProfile(CalCtx);
+			}
+			else { // DestructiveClear -- last resort: no saved profile to fall back to
+				char logbuf[384];
+				snprintf(logbuf, sizeof logbuf,
+				         "auto_recover_from_relocalization: hmdDelta=%.3f dpos=(%.3f,%.3f,%.3f) rotRad=%.3f"
+				         " priorState=%s priorValid=%d secSinceStall=%.2f trackerDelta=%.4f"
+				         " -> calibration cleared, continuous-cal restarting",
+				         hmdDelta, dpos.x(), dpos.y(), dpos.z(), s.lastFireRotRad,
+				         (CalCtx.state == CalibrationState::Continuous) ? "Continuous" : "ContinuousStandby",
+				         (int)calibration.isValid(), secSinceStall, headTrackerDelta);
+				Metrics::WriteLogAnnotation(logbuf);
 
-			// Steps 1-4: wipe + restart cold. The helper does
-			// calibration.Clear() + zero CalCtx fields (incl. calibratedTranslation
-			// / calibratedRotation, which Clear() doesn't touch -- this was the
-			// 2026-05-03 SaveProfile-persisted-wedge bug; see the helper's
-			// comment) + StartContinuousCalibration() + posts the user-facing
-			// message AFTER the restart (StartContinuousCalibration clears
-			// CalCtx.messages internally). Step 5 (the user banner) is folded
-			// in via the helper's userFacingMessage argument.
-			//
-			// SaveProfile is intentionally NOT called here. The next valid
-			// ComputeIncremental will write the post-recovery values via the
-			// existing path at the end of CalibrationTick, which is exactly
-			// what we want.
+				// Step 0 (audit UX #3): snapshot the pre-recovery calibration
+				// state so the UI's "Undo" button can restore it. Snapshot the
+				// CalCtx fields the recovery is about to clear -- restoring
+				// these is sufficient to put the user back in the wedged
+				// calibration (which is, after all, what they were running
+				// happily in until the false-positive auto-recovery clobbered
+				// it). Reset the dismissed flag so this new event gets a
+				// fresh banner even if a previous one was dismissed.
+				s.lastAutoRecoverSnapshot.valid = true;
+				s.lastAutoRecoverSnapshot.refToTargetPose = CalCtx.refToTargetPose;
+				s.lastAutoRecoverSnapshot.relativePosCalibrated = CalCtx.relativePosCalibrated;
+				s.lastAutoRecoverSnapshot.hasAppliedCalibrationResult = CalCtx.hasAppliedCalibrationResult;
+				s.autoRecoverBannerDismissed = false;
 
-			char uimsg[128];
-			snprintf(uimsg, sizeof uimsg, "Quest re-localized (%.0f cm jump). Recalibrating...\n", hmdDelta * 100.0);
-			// Arm the recovery-convergence watch so the next post-recovery
-			// usingRelPose_fired event can emit a `[recovery][converged]`
-			// line tying physical jump severity to convergence time. Uses
-			// Metrics::CurrentTime so the CalibrationCalc reader sees the
-			// same clock epoch (it doesn't include GLFW).
-			CalCtx.recoveryWaitingSince = Metrics::CurrentTime;
-			CalCtx.recoveryHmdDeltaAtStart = hmdDelta;
-			RecoverFromWedgedCalibration(uimsg, "quest_relocalization_recovery");
+				// Steps 1-4: wipe + restart cold. The helper does
+				// calibration.Clear() + zero CalCtx fields (incl. calibratedTranslation
+				// / calibratedRotation, which Clear() doesn't touch -- this was the
+				// 2026-05-03 SaveProfile-persisted-wedge bug; see the helper's
+				// comment) + StartContinuousCalibration() + posts the user-facing
+				// message AFTER the restart (StartContinuousCalibration clears
+				// CalCtx.messages internally). Step 5 (the user banner) is folded
+				// in via the helper's userFacingMessage argument.
+				//
+				// SaveProfile is intentionally NOT called here. The next valid
+				// ComputeIncremental will write the post-recovery values via the
+				// existing path at the end of CalibrationTick, which is exactly
+				// what we want.
+
+				char uimsg[128];
+				snprintf(uimsg, sizeof uimsg, "Quest re-localized (%.0f cm jump). Recalibrating...\n",
+				         hmdDelta * 100.0);
+				// Arm the recovery-convergence watch so the next post-recovery
+				// usingRelPose_fired event can emit a `[recovery][converged]`
+				// line tying physical jump severity to convergence time. Uses
+				// Metrics::CurrentTime so the CalibrationCalc reader sees the
+				// same clock epoch (it doesn't include GLFW).
+				CalCtx.recoveryWaitingSince = Metrics::CurrentTime;
+				CalCtx.recoveryHmdDeltaAtStart = hmdDelta;
+				RecoverFromWedgedCalibration(uimsg, "quest_relocalization_recovery");
+			}
 		}
 
 		s.lastAutoRecoverTime = now;
@@ -1152,6 +1179,24 @@ void DismissAutoRecoveryBanner()
 // per the 2026-05-04 "user notices nothing" directive). The metrics
 // annotation is the caller's responsibility -- this helper deliberately
 // doesn't write one so each caller's grep key can differ.
+void ArmReanchorToProfile(CalibrationContext& ctx)
+{
+	// Re-apply the saved profile on the next ScanAndApplyProfile cycle and open
+	// the warm-restart validation grace window. The saved profile was correct
+	// before the disturbance, so re-applying it without clearing the solver lets
+	// the continuous-cal loop converge back rather than starting from zero.
+	ctx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
+	ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
+	ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
+	ctx.postSnapErrorSumMm = 0.0;
+	ctx.postSnapErrorSampleCount = 0;
+	ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
+	ctx.warmRestartSnapTime = Metrics::CurrentTime;
+	// Ramp to the profile at constant velocity (imperceptible) instead of
+	// snapping; the driver latches the ramp until the target is reached.
+	g_reanchorNextProfileApply = true;
+}
+
 void RecoverFromWedgedCalibration(const char* userFacingMessage, const char* recoverReason)
 {
 	// Capture the prior cal state BEFORE we discard it, so the log line
