@@ -61,6 +61,16 @@ void LogDynamicRes(const char* fmt, ...)
 	va_end(args);
 }
 
+// Per-frame app GPU ms for a single compositor timing. Mirrors ComputeAppGpuMs so the
+// aggregate and the tail/peak use the same definition of app-side render work.
+double PerFrameAppGpuMs(const vr::Compositor_FrameTiming& timing)
+{
+	const double pre = std::max(0.0f, timing.m_flPreSubmitGpuMs);
+	const double post = std::max(0.0f, timing.m_flPostSubmitGpuMs);
+	if (pre > 0.0 || post > 0.0) return pre + post;
+	return std::max(0.0, static_cast<double>(timing.m_flTotalRenderGpuMs) - timing.m_flCompositorRenderGpuMs);
+}
+
 } // namespace
 
 bool DynamicResolutionPlugin::IsInstalled(openvr_pair::overlay::ShellContext& context) const
@@ -153,6 +163,15 @@ void DynamicResolutionPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 	lastClassification_ = output.classification;
 	UpdateStatus(output);
 
+	if (output.classification.pressure != lastLoggedPressure_) {
+		lastLoggedPressure_ = output.classification.pressure;
+		const DynamicResolutionClassification& c = output.classification;
+		LogDynamicRes("classify pressure=%s median_gpu_ms=%.3f peak_gpu_ms=%.3f budget_ms=%.3f over_budget=%d/%d "
+		              "interval_ms=%.3f scale=%.3f",
+		              ResolutionPressureLabel(c.pressure), c.medianAppGpuMs, c.peakAppGpuMs, c.frameBudgetMs,
+		              c.framesOverBudgetTotal, c.framesConsideredTotal, c.clientFrameIntervalMs, lastLiveScale_);
+	}
+
 	switch (output.action) {
 		case ResolutionAction::Lower:
 		case ResolutionAction::Raise:
@@ -164,9 +183,12 @@ void DynamicResolutionPlugin::Tick(openvr_pair::overlay::ShellContext& context)
 				profile_.restore.lastWrittenScale = writtenScale;
 				SaveProfile();
 				controller_.NoteWrite(output.action, writtenScale, output.classification, profile_.settings);
-				LogDynamicRes("scale_change action=%s from=%.3f to=%.3f reason='%s' app_gpu_ms=%.3f budget_ms=%.3f",
+				const DynamicResolutionClassification& c = output.classification;
+				LogDynamicRes("scale_change action=%s from=%.3f to=%.3f reason='%s' median_gpu_ms=%.3f "
+				              "peak_gpu_ms=%.3f budget_ms=%.3f over_budget=%d/%d interval_ms=%.3f",
 				              ResolutionActionLabel(output.action), liveScale, writtenScale, output.reason.c_str(),
-				              output.classification.medianAppGpuMs, output.classification.frameBudgetMs);
+				              c.medianAppGpuMs, c.peakAppGpuMs, c.frameBudgetMs, c.framesOverBudgetTotal,
+				              c.framesConsideredTotal, c.clientFrameIntervalMs);
 			}
 			break;
 		case ResolutionAction::NoEffect:
@@ -193,6 +215,7 @@ void DynamicResolutionPlugin::DrawTab(openvr_pair::overlay::ShellContext&)
 	if (tabs) {
 		openvr_pair::overlay::ui::DrawTabItem("Status", [&] { DrawStatus(); });
 		openvr_pair::overlay::ui::DrawTabItem("Settings", [&] { DrawSettings(); });
+		openvr_pair::overlay::ui::DrawTabItem("Advanced", [&] { DrawAdvanced(); });
 	}
 }
 
@@ -335,6 +358,7 @@ bool DynamicResolutionPlugin::CollectTiming(DynamicResolutionTiming& outTiming)
 
 	uint32_t used = 0;
 	uint32_t maxFrameIndex = lastFrameIndex_;
+	double clientIntervalSum = 0.0;
 	DynamicResolutionTiming aggregate;
 	aggregate.frameBudgetMs = ReadFrameBudgetMs();
 	aggregate.valid = true;
@@ -350,6 +374,10 @@ bool DynamicResolutionPlugin::CollectTiming(DynamicResolutionTiming& outTiming)
 		aggregate.mispresentedFrames += timing.m_nNumMisPresented;
 		aggregate.reprojectionFlags |= timing.m_nReprojectionFlags;
 		aggregate.framePresents = std::max(aggregate.framePresents, timing.m_nNumFramePresents);
+		const double perFrame = PerFrameAppGpuMs(timing);
+		aggregate.peakAppGpuMs = std::max(aggregate.peakAppGpuMs, perFrame);
+		if (perFrame >= aggregate.frameBudgetMs) ++aggregate.framesOverBudget;
+		clientIntervalSum += std::max(0.0f, timing.m_flClientFrameIntervalMs);
 		maxFrameIndex = std::max(maxFrameIndex, timing.m_nFrameIndex);
 		++used;
 	}
@@ -359,6 +387,8 @@ bool DynamicResolutionPlugin::CollectTiming(DynamicResolutionTiming& outTiming)
 	aggregate.postSubmitGpuMs /= used;
 	aggregate.totalRenderGpuMs /= used;
 	aggregate.compositorRenderGpuMs /= used;
+	aggregate.clientFrameIntervalMs = clientIntervalSum / used;
+	aggregate.framesConsidered = static_cast<int>(used);
 	lastFrameIndex_ = maxFrameIndex;
 	haveLastFrameIndex_ = true;
 	lastFrameBudgetMs_ = aggregate.frameBudgetMs;
@@ -431,21 +461,13 @@ void DynamicResolutionPlugin::DrawSettings()
 {
 	openvr_pair::overlay::ui::DrawSettingTable(
 	    "dynamicres_settings", 190.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
-		    openvr_pair::overlay::ui::SettingRow(table, "Minimum scale", [&] {
-			    float value = static_cast<float>(profile_.settings.minScaleFraction * 100.0);
-			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
-			            "##dynamicres_min_scale", &value, 40.0f, 100.0f, "%.0f%%",
-			            "Lowest SteamVR supersample scale this module may write.")) {
-				    profile_.settings.minScaleFraction = ClampScaleFraction(value / 100.0);
-				    SaveProfile();
-			    }
-		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Step size", [&] {
-			    float value = static_cast<float>(profile_.settings.stepFraction * 100.0);
-			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
-			            "##dynamicres_step", &value, 1.0f, 25.0f, "%.0f%%",
-			            "Maximum adaptive scale change per controller step.")) {
-				    profile_.settings.stepFraction = std::clamp(value / 100.0, 0.01, 0.25);
+		    openvr_pair::overlay::ui::SettingRow(table, "Quality preset", [&] {
+			    static const char* kPresetItems[] = {"Max FPS", "FPS-first", "Balanced", "Quality", "Custom"};
+			    int current = std::clamp(static_cast<int>(profile_.settings.qualityPreset), 0,
+			                             static_cast<int>(QualityPreset::Custom));
+			    ImGui::SetNextItemWidth(-1.0f);
+			    if (ImGui::Combo("##dynamicres_preset", &current, kPresetItems, IM_ARRAYSIZE(kPresetItems))) {
+				    ApplyQualityPreset(static_cast<QualityPreset>(current), profile_.settings);
 				    SaveProfile();
 			    }
 		    });
@@ -453,7 +475,7 @@ void DynamicResolutionPlugin::DrawSettings()
 			    bool value = profile_.settings.allowRaiseBack;
 			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
 			            "##dynamicres_raise_back", &value,
-			            "Allows return toward the original SteamVR scale after GPU headroom.")) {
+			            "Allows recovering quality (including above your scale) once GPU headroom is solid.")) {
 				    profile_.settings.allowRaiseBack = value;
 				    SaveProfile();
 			    }
@@ -465,6 +487,114 @@ void DynamicResolutionPlugin::DrawSettings()
 			            "Raises back toward the original scale when misses are CPU-bound and GPU time is low.")) {
 				    profile_.settings.releaseOnCpuBound = value;
 				    SaveProfile();
+			    }
+		    });
+	    });
+
+	openvr_pair::overlay::ui::DrawTextWrapped(
+	    "FPS-first holds your headset's native refresh by lowering render resolution under GPU load, then "
+	    "spends genuine spare GPU on extra sharpness. CPU bottlenecks are detected and left alone. Use the "
+	    "Advanced tab for raw thresholds.");
+}
+
+void DynamicResolutionPlugin::DrawAdvanced()
+{
+	// Any change here means the knobs no longer match a named preset.
+	auto markCustom = [&] {
+		profile_.settings.qualityPreset = QualityPreset::Custom;
+		SaveProfile();
+	};
+	openvr_pair::overlay::ui::DrawSettingTable(
+	    "dynamicres_advanced", 200.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+		    openvr_pair::overlay::ui::SettingRow(table, "Minimum scale", [&] {
+			    float value = static_cast<float>(profile_.settings.minScaleFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_min_scale", &value, 40.0f, 100.0f, "%.0f%%",
+			            "Quality floor: lowest render scale this module may write, as a % of your SteamVR scale.")) {
+				    profile_.settings.minScaleFraction = ClampScaleFraction(value / 100.0);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Maximum scale", [&] {
+			    float value = static_cast<float>(profile_.settings.maxScaleFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_max_scale", &value, 100.0f, 150.0f, "%.0f%%",
+			            "Quality ceiling: highest render scale, as a % of your SteamVR scale. >100% supersamples "
+			            "above your scale when the GPU is idle.")) {
+				    profile_.settings.maxScaleFraction = std::clamp(value / 100.0, 1.0, 2.0);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Step size", [&] {
+			    float value = static_cast<float>(profile_.settings.stepFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_step", &value, 1.0f, 25.0f, "%.0f%%",
+			            "Maximum adaptive scale change per controller step.")) {
+				    profile_.settings.stepFraction = std::clamp(value / 100.0, 0.01, 0.25);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Lower threshold", [&] {
+			    float value = static_cast<float>(profile_.settings.lowerGpuBudgetFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_lower_thr", &value, 50.0f, 100.0f, "%.0f%%",
+			            "Median app GPU time at this % of the frame budget classifies GPU-bound.")) {
+				    profile_.settings.lowerGpuBudgetFraction = std::clamp(value / 100.0, 0.50, 1.00);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Safety margin", [&] {
+			    float value = static_cast<float>(profile_.settings.gpuSafetyMarginFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_margin", &value, 70.0f, 100.0f, "%.0f%%",
+			            "A peak frame at this % of the frame budget lowers immediately, before frames drop.")) {
+				    profile_.settings.gpuSafetyMarginFraction = std::clamp(value / 100.0, 0.50, 1.00);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Headroom threshold", [&] {
+			    float value = static_cast<float>(profile_.settings.headroomGpuBudgetFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_headroom", &value, 30.0f, 95.0f, "%.0f%%",
+			            "Median app GPU time at or below this % of the budget is treated as headroom.")) {
+				    profile_.settings.headroomGpuBudgetFraction = std::clamp(value / 100.0, 0.30, 0.95);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Supersample gate", [&] {
+			    float value = static_cast<float>(profile_.settings.raiseAboveBaselineFraction * 100.0);
+			    if (openvr_pair::overlay::ui::SliderFloatWithTooltip(
+			            "##dynamicres_super_gate", &value, 30.0f, 95.0f, "%.0f%%",
+			            "Peak GPU must stay at or below this % of the budget before raising above your scale.")) {
+				    profile_.settings.raiseAboveBaselineFraction = std::clamp(value / 100.0, 0.30, 0.95);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Lower dwell", [&] {
+			    int value = profile_.settings.lowerRequiredTicks;
+			    if (openvr_pair::overlay::ui::SliderIntWithTooltip(
+			            "##dynamicres_lower_ticks", &value, 1, 10, "%d s",
+			            "Seconds of sustained GPU pressure before lowering (a hard peak breach acts at once).")) {
+				    profile_.settings.lowerRequiredTicks = std::clamp(value, 1, 30);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Raise dwell", [&] {
+			    int value = profile_.settings.raiseRequiredTicks;
+			    if (openvr_pair::overlay::ui::SliderIntWithTooltip(
+			            "##dynamicres_raise_ticks", &value, 1, 15, "%d s",
+			            "Seconds of headroom before recovering quality toward your scale.")) {
+				    profile_.settings.raiseRequiredTicks = std::clamp(value, 1, 30);
+				    markCustom();
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Supersample dwell", [&] {
+			    int value = profile_.settings.raiseAboveBaselineTicks;
+			    if (openvr_pair::overlay::ui::SliderIntWithTooltip(
+			            "##dynamicres_super_ticks", &value, 1, 30, "%d s",
+			            "Seconds of clean deep headroom before raising above your scale.")) {
+				    profile_.settings.raiseAboveBaselineTicks = std::clamp(value, 1, 60);
+				    markCustom();
 			    }
 		    });
 	    });
@@ -483,8 +613,14 @@ void DynamicResolutionPlugin::DrawStatus()
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Decision",
 		                                         [&] { openvr_pair::overlay::ui::DrawTextWrapped(lastReason_); });
+		    openvr_pair::overlay::ui::SettingRow(table, "Hold target", [&] {
+			    const double hz = lastFrameBudgetMs_ > 0.0 ? 1000.0 / lastFrameBudgetMs_ : 0.0;
+			    ImGui::Text("%.0f Hz (no reprojection)", hz);
+		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Scale", [&] {
-			    ImGui::Text("%.3f current / %.3f baseline", lastLiveScale_, profile_.restore.baselineScale);
+			    const double ceiling = CeilingScale(profile_.settings, profile_.restore.baselineScale);
+			    ImGui::Text("%.3f current / %.3f baseline / %.3f ceiling", lastLiveScale_,
+			                profile_.restore.baselineScale, ceiling);
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Next scale", [&] {
 			    if (lastActionCode_ == ResolutionAction::Lower || lastActionCode_ == ResolutionAction::Raise) {
@@ -494,12 +630,31 @@ void DynamicResolutionPlugin::DrawStatus()
 				    ImGui::TextUnformatted("-");
 			    }
 		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "GPU budget", [&] {
-			    ImGui::Text("%.2f / %.2f ms", lastClassification_.medianAppGpuMs, lastFrameBudgetMs_);
+		    openvr_pair::overlay::ui::SettingRow(table, "GPU app time", [&] {
+			    ImGui::Text("%.2f med / %.2f peak / %.2f ms", lastClassification_.medianAppGpuMs,
+			                lastClassification_.peakAppGpuMs, lastFrameBudgetMs_);
 			    if (displayFrequencyFallback_) {
 				    ImGui::SameLine();
 				    openvr_pair::overlay::ui::StatusBadge("90Hz fallback", StatusTone::Warn);
 			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "GPU headroom", [&] {
+			    const double budget = std::max(1.0, lastFrameBudgetMs_);
+			    const double headroom = 100.0 * (1.0 - lastClassification_.medianAppGpuMs / budget);
+			    ImGui::Text("%.0f%%", headroom);
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "CPU cadence", [&] {
+			    const double interval = lastClassification_.clientFrameIntervalMs;
+			    const double hz = interval > 0.0 ? 1000.0 / interval : 0.0;
+			    ImGui::Text("%.2f ms (%.0f Hz)", interval, hz);
+			    if (lastClassification_.cpuStalled) {
+				    ImGui::SameLine();
+				    openvr_pair::overlay::ui::StatusBadge("CPU-limited", StatusTone::Warn);
+			    }
+		    });
+		    openvr_pair::overlay::ui::SettingRow(table, "Over budget", [&] {
+			    ImGui::Text("%d of %d frames", lastClassification_.framesOverBudgetTotal,
+			                lastClassification_.framesConsideredTotal);
 		    });
 		    openvr_pair::overlay::ui::SettingRow(table, "Missed frames", [&] {
 			    ImGui::Text("%d of %d samples", lastClassification_.unstableSamples, lastClassification_.sampleCount);

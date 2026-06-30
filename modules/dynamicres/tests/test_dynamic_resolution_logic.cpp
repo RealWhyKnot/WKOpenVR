@@ -11,13 +11,19 @@ constexpr uint32_t kReprojectionReasonGpu = 0x02;
 constexpr uint32_t kReprojectionAsync = 0x04;
 constexpr uint32_t kReprojectionMotion = 0x08;
 
-dynamicres::DynamicResolutionTiming Timing(double appGpuMs, bool unstable, uint32_t reprojectionFlags = 0)
+dynamicres::DynamicResolutionTiming Timing(double appGpuMs, bool unstable, uint32_t reprojectionFlags = 0,
+                                           double peakMs = -1.0, double intervalMs = 0.0, int framesOver = 0,
+                                           int framesConsidered = 0)
 {
 	dynamicres::DynamicResolutionTiming t;
 	t.frameBudgetMs = 10.0;
 	t.preSubmitGpuMs = appGpuMs;
 	t.totalRenderGpuMs = appGpuMs + 1.0;
 	t.compositorRenderGpuMs = 1.0;
+	t.peakAppGpuMs = peakMs >= 0.0 ? peakMs : appGpuMs;
+	t.clientFrameIntervalMs = intervalMs;
+	t.framesOverBudget = framesOver;
+	t.framesConsidered = framesConsidered;
 	t.framePresents = unstable ? 2u : 1u;
 	t.droppedFrames = unstable ? 1u : 0u;
 	t.reprojectionFlags = reprojectionFlags;
@@ -25,10 +31,12 @@ dynamicres::DynamicResolutionTiming Timing(double appGpuMs, bool unstable, uint3
 }
 
 dynamicres::DynamicResolutionControllerInput Input(double appGpuMs, bool unstable, double currentScale = 1.0,
-                                                   uint32_t reprojectionFlags = 0)
+                                                   uint32_t reprojectionFlags = 0, double peakMs = -1.0,
+                                                   double intervalMs = 0.0, int framesOver = 0,
+                                                   int framesConsidered = 0)
 {
 	dynamicres::DynamicResolutionControllerInput input;
-	input.timing = Timing(appGpuMs, unstable, reprojectionFlags);
+	input.timing = Timing(appGpuMs, unstable, reprojectionFlags, peakMs, intervalMs, framesOver, framesConsidered);
 	input.baselineScale = 1.0;
 	input.currentScale = currentScale;
 	input.sceneRunning = true;
@@ -139,8 +147,10 @@ TEST(DynamicResolutionLogic, AsyncReprojectionModeAloneDoesNotCountAsUnstable)
 	const auto settings = FastSettings();
 	dynamicres::DynamicResolutionControllerOutput out;
 
+	// Mid-budget GPU (between headroom and lower thresholds) with async mode on: async never marks
+	// instability, and mid-budget app GPU is neither GPU-bound nor headroom.
 	for (int i = 0; i < 4; ++i) {
-		out = controller.Evaluate(Input(9.5, false, 1.0, kReprojectionAsync), settings);
+		out = controller.Evaluate(Input(7.5, false, 1.0, kReprojectionAsync), settings);
 	}
 
 	EXPECT_EQ(out.classification.unstableSamples, 0);
@@ -261,46 +271,69 @@ TEST(DynamicResolutionLogic, CpuBoundReleaseCanBeDisabled)
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
-TEST(DynamicResolutionLogic, DoesNotLowerOnNonGpuStall)
+TEST(DynamicResolutionLogic, MeasuredCpuStallDoesNotLower)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 
+	// GPU idle (4 ms of 10) but the CPU cadence is slow (13 ms): a measured CPU stall. Lowering
+	// resolution cannot help, so hold scale.
 	dynamicres::DynamicResolutionControllerOutput out;
 	for (int i = 0; i < 6; ++i) {
-		out = controller.Evaluate(Input(9.5, true, 1.0, kReprojectionReasonCpu), settings);
+		out = controller.Evaluate(Input(4.0, false, 1.0, 0, -1.0, 13.0), settings);
 	}
 
+	EXPECT_TRUE(out.classification.cpuStalled);
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
-TEST(DynamicResolutionLogic, AmbiguousHighGpuMissesDoNotLower)
+TEST(DynamicResolutionLogic, HighAppGpuLowersWithoutGpuReprojFlag)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 
+	// Sustained high app GPU work, no reprojection flag yet: lower proactively before frames drop.
 	dynamicres::DynamicResolutionControllerOutput out;
 	for (int i = 0; i < 6; ++i) {
-		out = controller.Evaluate(Input(9.5, true, 1.0), settings);
+		out = controller.Evaluate(Input(9.5, false, 1.0), settings);
 	}
 
-	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_LT(out.targetScale, 1.0);
 }
 
-TEST(DynamicResolutionLogic, MotionSmoothingFlagIsSurfacedWithoutGpuReason)
+TEST(DynamicResolutionLogic, MotionSmoothingWithHighGpuLowersToRecoverFullRate)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 
+	// Motion smoothing engaged (half-rate) with high app GPU: lower to climb back to full rate.
 	dynamicres::DynamicResolutionControllerOutput out;
 	for (int i = 0; i < 6; ++i) {
 		out = controller.Evaluate(Input(9.5, true, 1.0, kReprojectionMotion), settings);
 	}
 
 	EXPECT_TRUE(out.classification.motionSmoothingActive);
-	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_LT(out.targetScale, 1.0);
+}
+
+TEST(DynamicResolutionLogic, MotionSmoothingWithLowGpuDoesNotLower)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+
+	// Motion smoothing active but GPU is idle: the limiter is not the GPU, so hold scale.
+	dynamicres::DynamicResolutionControllerOutput out;
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(4.0, true, 1.0, kReprojectionMotion), settings);
+	}
+
+	EXPECT_TRUE(out.classification.motionSmoothingActive);
+	EXPECT_NE(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
@@ -385,4 +418,145 @@ TEST(DynamicResolutionLogic, SceneStopRequestsRestore)
 
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Restore);
 	EXPECT_DOUBLE_EQ(out.targetScale, 1.0);
+}
+
+TEST(DynamicResolutionLogic, PeakSpikeOverMarginLowersFast)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Median app GPU sits below the lower threshold, but a frame peaks past the safety margin.
+	// The tail signal lowers within a single full window (no multi-tick dwell).
+	for (int i = 0; i < 3; ++i) {
+		out = controller.Evaluate(Input(8.0, false, 1.0, 0, 9.5), settings);
+	}
+
+	EXPECT_TRUE(out.classification.gpuOverMargin);
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+}
+
+TEST(DynamicResolutionLogic, OverBudgetFrameFractionTriggersLower)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Median and peak look fine, but a sustained share of frames render over budget.
+	for (int i = 0; i < 4; ++i) {
+		out = controller.Evaluate(Input(7.5, false, 1.0, 0, 7.5, 0.0, 20, 90), settings);
+	}
+
+	EXPECT_TRUE(out.classification.gpuOverMargin);
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+}
+
+TEST(DynamicResolutionLogic, LowerStepEscalatesWithPeak)
+{
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionController flat;
+	dynamicres::DynamicResolutionController spiky;
+	dynamicres::DynamicResolutionControllerOutput flatOut;
+	dynamicres::DynamicResolutionControllerOutput spikyOut;
+
+	for (int i = 0; i < 4; ++i) {
+		flatOut = flat.Evaluate(Input(9.0, false, 1.0, 0, 9.0), settings);
+		spikyOut = spiky.Evaluate(Input(9.0, false, 1.0, 0, 9.9), settings);
+	}
+
+	ASSERT_EQ(flatOut.action, dynamicres::ResolutionAction::Lower);
+	ASSERT_EQ(spikyOut.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_LT(spikyOut.targetScale, flatOut.targetScale); // a worse tail cuts harder
+}
+
+TEST(DynamicResolutionLogic, RaiseBlockedByRecentOverBudget)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Headroom by the median metric, but a few frames went over budget: do not raise yet.
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(4.0, false, 0.8, 0, 4.0, 0.0, 1, 90), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::Headroom);
+	EXPECT_GT(out.classification.framesOverBudgetTotal, 0);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, SupersamplesAboveBaselineOnDeepHeadroom)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Sitting at baseline with deep, clean, sustained headroom: spend it on quality above baseline.
+	for (int i = 0; i < 12; ++i) {
+		out = controller.Evaluate(Input(3.0, false, 1.0), settings);
+	}
+
+	EXPECT_TRUE(out.classification.deepHeadroom);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Raise);
+	EXPECT_GT(out.targetScale, 1.0);
+	EXPECT_LE(out.targetScale, dynamicres::CeilingScale(settings, 1.0));
+}
+
+TEST(DynamicResolutionLogic, DoesNotSupersampleWhenAnyFrameOverBudget)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Deep median headroom but the tail still clips budget: never raise above baseline.
+	for (int i = 0; i < 12; ++i) {
+		out = controller.Evaluate(Input(3.0, false, 1.0, 0, 3.0, 0.0, 1, 90), settings);
+	}
+
+	EXPECT_GT(out.classification.framesOverBudgetTotal, 0);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+}
+
+TEST(DynamicResolutionLogic, BacksOffFromAboveBaselineOnGpuPressure)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Currently supersampled above baseline (1.30) when GPU load returns: lower immediately.
+	for (int i = 0; i < 4; ++i) {
+		out = controller.Evaluate(Input(9.5, true, 1.30, kReprojectionReasonGpu), settings);
+	}
+
+	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_LT(out.targetScale, 1.30);
+}
+
+TEST(DynamicResolutionLogic, ApplyQualityPresetSeedsKnobs)
+{
+	dynamicres::DynamicResolutionSettings settings;
+	dynamicres::ApplyQualityPreset(dynamicres::QualityPreset::MaxFps, settings);
+	EXPECT_EQ(settings.qualityPreset, dynamicres::QualityPreset::MaxFps);
+	EXPECT_DOUBLE_EQ(settings.minScaleFraction, 0.50);
+	EXPECT_DOUBLE_EQ(settings.maxScaleFraction, 1.00);
+	EXPECT_EQ(settings.lowerRequiredTicks, 1);
+
+	dynamicres::ApplyQualityPreset(dynamicres::QualityPreset::Quality, settings);
+	EXPECT_EQ(settings.qualityPreset, dynamicres::QualityPreset::Quality);
+	EXPECT_DOUBLE_EQ(settings.minScaleFraction, 0.80);
+	EXPECT_DOUBLE_EQ(settings.maxScaleFraction, 1.50);
+}
+
+TEST(DynamicResolutionLogic, CeilingScaleAllowsSupersampleButClampsHard)
+{
+	dynamicres::DynamicResolutionSettings settings;
+	settings.maxScaleFraction = 1.50;
+	EXPECT_DOUBLE_EQ(dynamicres::CeilingScale(settings, 1.0), 1.5);
+	EXPECT_DOUBLE_EQ(dynamicres::CeilingScale(settings, 1.5), 1.5); // hard clamp at 1.5
+
+	settings.maxScaleFraction = 1.00;
+	EXPECT_DOUBLE_EQ(dynamicres::CeilingScale(settings, 0.9), 0.9); // no supersampling
 }

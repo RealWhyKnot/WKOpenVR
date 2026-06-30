@@ -18,6 +18,7 @@ constexpr double kRaiseGain = 0.60;
 constexpr double kLowerGain = 0.80;
 constexpr double kMinStep = 0.03;
 constexpr double kMaxAdaptiveStep = 0.25;
+constexpr double kAboveBaselineStep = 0.05; // gentle additive nudge when supersampling above baseline
 
 double Median(std::vector<double> values)
 {
@@ -122,6 +123,72 @@ bool ScaleDiffers(double a, double b, double tolerance)
 	return std::abs(a - b) > std::max(0.0, tolerance);
 }
 
+const char* QualityPresetLabel(QualityPreset preset)
+{
+	switch (preset) {
+		case QualityPreset::MaxFps:
+			return "Max FPS";
+		case QualityPreset::FpsFirst:
+			return "FPS-first";
+		case QualityPreset::Balanced:
+			return "Balanced";
+		case QualityPreset::Quality:
+			return "Quality";
+		case QualityPreset::Custom:
+		default:
+			return "Custom";
+	}
+}
+
+double CeilingScale(const DynamicResolutionSettings& settings, double baselineScale)
+{
+	const double baseline = std::max(0.1, baselineScale);
+	const double fraction = std::isfinite(settings.maxScaleFraction) ? std::max(1.0, settings.maxScaleFraction) : 1.0;
+	return std::max(baseline, ClampScaleFraction(baseline * fraction));
+}
+
+void ApplyQualityPreset(QualityPreset preset, DynamicResolutionSettings& settings)
+{
+	settings.qualityPreset = preset;
+	switch (preset) {
+		case QualityPreset::MaxFps:
+			settings.minScaleFraction = 0.50;
+			settings.maxScaleFraction = 1.00;
+			settings.lowerGpuBudgetFraction = 0.82;
+			settings.gpuSafetyMarginFraction = 0.88;
+			settings.lowerRequiredTicks = 1;
+			settings.raiseRequiredTicks = 5;
+			break;
+		case QualityPreset::FpsFirst:
+			settings.minScaleFraction = 0.60;
+			settings.maxScaleFraction = 1.50;
+			settings.lowerGpuBudgetFraction = 0.85;
+			settings.gpuSafetyMarginFraction = 0.90;
+			settings.lowerRequiredTicks = 2;
+			settings.raiseRequiredTicks = 4;
+			break;
+		case QualityPreset::Balanced:
+			settings.minScaleFraction = 0.70;
+			settings.maxScaleFraction = 1.50;
+			settings.lowerGpuBudgetFraction = 0.90;
+			settings.gpuSafetyMarginFraction = 0.93;
+			settings.lowerRequiredTicks = 3;
+			settings.raiseRequiredTicks = 3;
+			break;
+		case QualityPreset::Quality:
+			settings.minScaleFraction = 0.80;
+			settings.maxScaleFraction = 1.50;
+			settings.lowerGpuBudgetFraction = 0.93;
+			settings.gpuSafetyMarginFraction = 0.95;
+			settings.lowerRequiredTicks = 4;
+			settings.raiseRequiredTicks = 3;
+			break;
+		case QualityPreset::Custom:
+		default:
+			break;
+	}
+}
+
 void DynamicResolutionController::Reset()
 {
 	samples_.clear();
@@ -187,40 +254,57 @@ DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const Dy
 	}
 
 	const double baseline = std::max(0.1, input.baselineScale);
-	const double current = std::clamp(input.currentScale, 0.1, std::max(2.0, baseline));
+	const double ceiling = CeilingScale(settings, baseline);
+	const double current = std::clamp(input.currentScale, 0.1, std::max(2.0, ceiling));
 	const double floor = FloorFor(settings, baseline);
-	if (out.classification.sampleCount >= MinWindowSamples(settings) &&
-	    out.classification.pressure != ResolutionPressure::GpuBound &&
-	    out.classification.pressure != ResolutionPressure::Headroom) {
+	const DynamicResolutionClassification& cls = out.classification;
+	if (cls.sampleCount >= MinWindowSamples(settings) && cls.pressure != ResolutionPressure::GpuBound &&
+	    cls.pressure != ResolutionPressure::Headroom) {
 		activeDirection_ = ResolutionAction::None;
 	}
 
-	if (out.classification.pressure == ResolutionPressure::GpuBound &&
-	    pressureTicks_ >=
-	        (activeDirection_ == ResolutionAction::Lower ? 1 : std::max(1, settings.lowerRequiredTicks)) &&
+	// Lower fast: a hard peak / over-budget breach acts in one tick; sustained median pressure
+	// waits the configured dwell. Lowering is sticky once engaged (fast-follow).
+	if (cls.pressure == ResolutionPressure::GpuBound &&
+	    pressureTicks_ >= (cls.gpuOverMargin || activeDirection_ == ResolutionAction::Lower
+	                           ? 1
+	                           : std::max(1, settings.lowerRequiredTicks)) &&
 	    current > floor + 0.005) {
 		out.action = ResolutionAction::Lower;
-		out.targetScale = std::max(floor, current * (1.0 - LowerStepFor(settings, out.classification)));
+		out.targetScale = std::max(floor, current * (1.0 - LowerStepFor(settings, cls)));
 		out.reason = "GPU-bound";
 		return out;
 	}
 
-	if (settings.releaseOnCpuBound && settings.allowRaiseBack &&
-	    out.classification.pressure == ResolutionPressure::CpuBound && out.classification.gpuHasHeadroom &&
-	    pressureTicks_ >= std::max(1, settings.cpuReleaseTicks) && current < baseline - 0.005) {
+	// CPU-bound with GPU headroom: recover toward baseline only (resolution cannot fix CPU).
+	if (settings.releaseOnCpuBound && settings.allowRaiseBack && cls.pressure == ResolutionPressure::CpuBound &&
+	    cls.gpuHasHeadroom && pressureTicks_ >= std::max(1, settings.cpuReleaseTicks) && current < baseline - 0.005) {
 		out.action = ResolutionAction::Raise;
-		out.targetScale = std::min(baseline, current * (1.0 + RaiseStepFor(settings, out.classification)));
+		out.targetScale = std::min(baseline, current * (1.0 + RaiseStepFor(settings, cls)));
 		out.reason = "CPU-bound; GPU headroom";
 		return out;
 	}
 
-	if (settings.allowRaiseBack && out.classification.pressure == ResolutionPressure::Headroom &&
+	// Recover toward baseline after a dip. Blocked if any frame was recently over budget.
+	if (settings.allowRaiseBack && cls.pressure == ResolutionPressure::Headroom && cls.framesOverBudgetTotal == 0 &&
 	    pressureTicks_ >=
 	        (activeDirection_ == ResolutionAction::Raise ? 1 : std::max(1, settings.raiseRequiredTicks)) &&
 	    current < baseline - 0.005) {
 		out.action = ResolutionAction::Raise;
-		out.targetScale = std::min(baseline, current * (1.0 + RaiseStepFor(settings, out.classification)));
+		out.targetScale = std::min(baseline, current * (1.0 + RaiseStepFor(settings, cls)));
 		out.reason = "GPU headroom";
+		return out;
+	}
+
+	// Supersample above baseline: only on deep, clean, sustained GPU headroom. A long dwell, a
+	// tiny additive step, and instant fallthrough to the Lower path keep this from costing FPS.
+	if (settings.allowRaiseBack && cls.pressure == ResolutionPressure::Headroom && cls.deepHeadroom &&
+	    cls.framesOverBudgetTotal == 0 && cls.unstableSamples == 0 && !cls.motionSmoothingActive &&
+	    pressureTicks_ >= std::max(1, settings.raiseAboveBaselineTicks) && current >= baseline - 0.005 &&
+	    current < ceiling - 0.005) {
+		out.action = ResolutionAction::Raise;
+		out.targetScale = std::min(ceiling, current + std::min(kAboveBaselineStep, StepCap(settings)));
+		out.reason = "GPU headroom (supersample)";
 		return out;
 	}
 
@@ -263,35 +347,63 @@ DynamicResolutionClassification DynamicResolutionController::Classify(const Dyna
 
 	std::vector<double> appGpu;
 	appGpu.reserve(samples_.size());
+	double intervalSum = 0.0;
+	int intervalSamples = 0;
 	for (const DynamicResolutionTiming& sample : samples_) {
-		appGpu.push_back(ComputeAppGpuMs(sample));
+		const double sampleAppGpu = ComputeAppGpuMs(sample);
+		appGpu.push_back(sampleAppGpu);
 		if (IsUnstableTiming(sample)) ++out.unstableSamples;
 		if ((sample.reprojectionFlags & kReprojectionReasonCpu) != 0) ++out.cpuReasonSamples;
 		if ((sample.reprojectionFlags & kReprojectionReasonGpu) != 0) ++out.gpuReasonSamples;
 		if ((sample.reprojectionFlags & kReprojectionMotion) != 0) out.motionSmoothingActive = true;
+		out.peakAppGpuMs = std::max(out.peakAppGpuMs, sample.peakAppGpuMs > 0.0 ? sample.peakAppGpuMs : sampleAppGpu);
+		out.framesOverBudgetTotal += std::max(0, sample.framesOverBudget);
+		out.framesConsideredTotal += std::max(0, sample.framesConsidered);
+		if (sample.clientFrameIntervalMs > 0.0) {
+			intervalSum += sample.clientFrameIntervalMs;
+			++intervalSamples;
+		}
 	}
 
 	out.sampleCount = static_cast<int>(samples_.size());
 	out.medianAppGpuMs = Median(appGpu);
+	out.clientFrameIntervalMs = intervalSamples > 0 ? intervalSum / intervalSamples : 0.0;
 	if (out.sampleCount < MinWindowSamples(settings)) {
 		out.pressure = ResolutionPressure::Waiting;
 		return out;
 	}
 
 	const double budget = std::max(1.0, out.frameBudgetMs);
-	const bool highGpu = out.medianAppGpuMs >= budget * settings.lowerGpuBudgetFraction;
+	const bool highGpuMedian = out.medianAppGpuMs >= budget * settings.lowerGpuBudgetFraction;
 	const bool lowGpu = out.medianAppGpuMs <= budget * settings.headroomGpuBudgetFraction;
-	const bool explicitGpuReason = out.gpuReasonSamples > 0;
+	const int overBudgetTrip =
+	    static_cast<int>(std::ceil(std::clamp(settings.overBudgetFraction, 0.0, 1.0) * out.framesConsideredTotal));
+	const bool overBudget = out.framesConsideredTotal > 0 && out.framesOverBudgetTotal >= std::max(1, overBudgetTrip);
 	const int raiseUnstableTolerance = RaiseUnstableTolerance(settings);
 	out.gpuHasHeadroom = lowGpu;
+	out.gpuOverMargin = out.peakAppGpuMs >= budget * settings.gpuSafetyMarginFraction || overBudget;
+	out.deepHeadroom = out.peakAppGpuMs <= budget * settings.raiseAboveBaselineFraction;
+	out.cpuStalled = out.clientFrameIntervalMs > budget * settings.cpuStallFraction && lowGpu;
 
-	if (out.unstableSamples > 0 && explicitGpuReason && highGpu) {
+	// Proactive GPU-bound: high *app* GPU work (median or tail) drives a lower BEFORE the runtime
+	// reprojects. App GPU is the work render resolution actually affects. Reprojection-reason and
+	// motion-smoothing flags become escalation signals, not preconditions.
+	if (highGpuMedian || out.gpuOverMargin ||
+	    (out.motionSmoothingActive && out.medianAppGpuMs >= budget * settings.headroomGpuBudgetFraction)) {
 		out.pressure = ResolutionPressure::GpuBound;
 	}
-	else if (lowGpu && out.gpuReasonSamples == 0 && out.unstableSamples <= raiseUnstableTolerance) {
+	else if (out.cpuStalled) {
+		// A measured CPU stall (slow cadence, GPU idle) is the limiter -- takes precedence over
+		// headroom so we never read it as "free GPU to spend".
+		out.pressure = ResolutionPressure::CpuBound;
+	}
+	else if (lowGpu && out.gpuReasonSamples == 0 && out.unstableSamples <= raiseUnstableTolerance &&
+	         !out.motionSmoothingActive) {
+		// Headroom tolerates an occasional non-GPU hitch (an isolated CPU-reason reprojection).
 		out.pressure = ResolutionPressure::Headroom;
 	}
 	else if (out.unstableSamples > 0) {
+		// More instability than headroom tolerates, no clear GPU reason: hold (lowering cannot help).
 		out.pressure = ResolutionPressure::CpuBound;
 	}
 	else {
@@ -315,7 +427,14 @@ double DynamicResolutionController::RaiseStepFor(const DynamicResolutionSettings
 double DynamicResolutionController::LowerStepFor(const DynamicResolutionSettings& settings,
                                                  const DynamicResolutionClassification& classification) const
 {
-	return ClampAdaptiveStep(kLowerGain * (Utilization(classification) - kLowerTargetUtil), StepCap(settings));
+	const double budget = std::max(1.0, classification.frameBudgetMs);
+	const double peakUtil = std::max(0.0, classification.peakAppGpuMs) / budget;
+	double step = std::max(kLowerGain * (Utilization(classification) - kLowerTargetUtil),
+	                       kLowerGain * (peakUtil - kLowerTargetUtil));
+	if (classification.gpuReasonSamples > 0 || classification.motionSmoothingActive) {
+		step *= 1.5; // confirmed drops -> cut harder
+	}
+	return ClampAdaptiveStep(step, StepCap(settings));
 }
 
 } // namespace wkopenvr::dynamicres
