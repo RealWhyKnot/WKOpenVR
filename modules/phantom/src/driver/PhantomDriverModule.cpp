@@ -315,6 +315,15 @@ public:
 	void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
 	                              std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
 
+	// Teardown helpers -- called from ServerTrackedDeviceProvider via the phantom::
+	// namespace free functions when the module is being disabled, so its virtual
+	// trackers stop floating before the module object is destroyed.
+	void SetVirtualMasterEnabled(bool enabled) { virtual_trackers_.SetMasterEnabled(enabled); }
+	void CollectVirtualDisconnects(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
+	{
+		virtual_trackers_.CollectDisconnects(out);
+	}
+
 private:
 	DeviceSlot& slot(uint32_t openVRID);
 	void ResolveSerialIfMissing(uint32_t openVRID, DeviceSlot& s);
@@ -961,9 +970,15 @@ bool PhantomModule::Init(DriverModuleContext& context)
 
 void PhantomModule::Shutdown()
 {
+	// Stop publishing and hand the virtual device objects to a process-lifetime
+	// store: SteamVR still holds raw pointers to them (openvr#1536), so they must
+	// outlive this module. The disconnect flush already ran in the core before
+	// Shutdown, so the devices report disconnected until the next vrserver restart.
+	virtual_trackers_.SetMasterEnabled(false);
+	virtual_trackers_.LeakDevicesForProcessLifetime();
 	g_active = nullptr;
 	shmem_.Close();
-	LOG("[phantom] PhantomModule shutdown");
+	LOG("[phantom] PhantomModule shutdown (virtual devices retained until vrserver restart)");
 }
 
 bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Response& response)
@@ -1338,6 +1353,16 @@ void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64
                               std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
 {
 	if (auto* m = g_active) m->CollectSilentPoseUpdates(triggeringOpenVRID, qpc_ns, qpc_freq, out);
+}
+
+void SetVirtualMasterEnabled(bool enabled)
+{
+	if (auto* m = g_active) m->SetVirtualMasterEnabled(enabled);
+}
+
+void CollectVirtualDisconnects(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
+{
+	if (auto* m = g_active) m->CollectVirtualDisconnects(out);
 }
 
 } // namespace phantom

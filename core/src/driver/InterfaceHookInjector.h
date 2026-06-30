@@ -3,6 +3,8 @@
 #include <openvr_driver.h>
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 class ServerTrackedDeviceProvider;
 
@@ -22,6 +24,14 @@ bool InjectHooks(ServerTrackedDeviceProvider* driver, vr::IVRDriverContext* pDri
 // so the rest of Cleanup (server.Stop, shmem.Close, VR_CLEANUP_SERVER_DRIVER_CONTEXT)
 // can tear down state the detours would otherwise have raced against.
 void DisableHooks();
+
+// Publish a batch of phantom virtual-tracker poses (used to flush disconnected
+// poses when the phantom module is disabled/torn down) through the ORIGINAL,
+// un-detoured TrackedDevicePoseUpdated, exactly like the per-frame synthetic
+// pose forwarder. This never re-enters the pose-hook detour or its state mutex,
+// so it is safe to call from RunFrame or the pose-exception teardown path (which
+// has already released the lock). No-op if hooks are not installed.
+void ForwardPhantomDisconnectPoses(const std::vector<std::pair<uint32_t, vr::DriverPose_t>>& updates);
 
 namespace InterfaceHooks {
 

@@ -580,6 +580,26 @@ bool ServerTrackedDeviceProvider::DisableActiveModuleByMask(uint32_t featureMask
 		}
 	}
 	if (found) {
+#if OPENVR_PAIR_HAS_PHANTOM_DRIVER
+		if (featureMask == pairdriver::kFeaturePhantom) {
+			// Stop further virtual publishing, then flush a disconnected pose for
+			// every active virtual tracker so SteamVR hides them promptly instead
+			// of floating their last pose. The phantom feature bit was cleared
+			// above, so the per-frame synthetic pump is already gated off and this
+			// is the last pose SteamVR sees; g_active is still valid (Shutdown,
+			// which retires the device objects, runs in DisableDetachedModule
+			// below). Published via the original TrackedDevicePoseUpdated, so it
+			// never re-enters the pose hook.
+			phantom::SetVirtualMasterEnabled(false);
+			std::vector<std::pair<uint32_t, vr::DriverPose_t>> disconnects;
+			phantom::CollectVirtualDisconnects(disconnects);
+			if (!disconnects.empty()) {
+				LOG("Phantom disable (%s): flushing %zu virtual-tracker disconnect pose(s)",
+				    ModuleDisableReason(reason), disconnects.size());
+				ForwardPhantomDisconnectPoses(disconnects);
+			}
+		}
+#endif
 		DisableDetachedModule(std::move(entry), reason, markClean);
 		if (markClean) {
 			StopIpcServerForFeatureMask(featureMask);
@@ -612,6 +632,12 @@ void ServerTrackedDeviceProvider::StopIpcServerForFeatureMask(uint32_t featureMa
 			captionsServer.reset();
 		}
 	}
+	else if (featureMask == pairdriver::kFeaturePhantom) {
+		if (phantomServer) {
+			phantomServer->Stop();
+			phantomServer.reset();
+		}
+	}
 }
 
 void ServerTrackedDeviceProvider::ReconcileSidecarFeatureFlags()
@@ -630,6 +656,13 @@ void ServerTrackedDeviceProvider::ReconcileSidecarFeatureFlags()
 		LOG("Runtime flag reconciliation: enable_captions.flag absent; disabling Captions module");
 		DisableActiveModuleByMask(pairdriver::kFeatureCaptions, "flag_removed", true);
 	}
+#if OPENVR_PAIR_HAS_PHANTOM_DRIVER
+	if ((featureFlags & pairdriver::kFeaturePhantom) != 0 &&
+	    !pairdriver::IsRuntimeFeatureFlagPresent(pairdriver::kFeaturePhantom)) {
+		LOG("Runtime flag reconciliation: enable_phantom.flag absent; disabling Phantom module");
+		DisableActiveModuleByMask(pairdriver::kFeaturePhantom, "flag_removed", true);
+	}
+#endif
 }
 
 void ServerTrackedDeviceProvider::Cleanup()

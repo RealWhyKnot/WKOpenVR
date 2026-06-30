@@ -63,6 +63,24 @@ public:
 	// dropout bridging already uses. Call on the pose-hook thread after Tick.
 	void CollectPoseUpdates(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
 
+	// Module-teardown flush: append a disconnected pose for every active virtual
+	// device and close its gate, so the umbrella can forward them via the original
+	// TrackedDevicePoseUpdated before the module is destroyed. Reads only the
+	// (stable) object id and a constant pose, so it is safe to call off the
+	// pose-hook thread (RunFrame / pose-exception teardown).
+	void CollectDisconnects(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
+
+	// Release ownership of the device objects into a process-lifetime store before
+	// the module is destroyed. SteamVR ignores live TrackedDeviceRemoved for
+	// generic trackers (openvr#1536) and keeps polling the raw pointers it was
+	// handed; freeing them would be a use-after-free. The devices are left with a
+	// closed gate (GetPose reports disconnected) until the next vrserver restart.
+	void LeakDevicesForProcessLifetime();
+
+	// Override the post-init settle delay before TrackedDeviceAdded. Defaults to
+	// kInitSettleDelay; tests set 0 to activate without waiting.
+	void SetInitSettleDelay(std::chrono::milliseconds delay) { settle_delay_ = delay; }
+
 	// Diagnostic: how many virtual devices are currently activated.
 	int ActiveCount() const;
 
@@ -82,12 +100,21 @@ private:
 	uint64_t diag_skip_invalid_ = 0;
 	uint64_t diag_skip_confidence_ = 0;
 
+	// Float watchdog: warn once if an enabled device keeps publishing the same
+	// position for kFloatWarnTicks ticks (~10 s at 90 Hz), which means the solver
+	// is stuck and the tracker is floating in place.
+	std::array<std::array<double, 3>, kBodyRoleCount> last_pub_pos_{};
+	std::array<uint32_t, kBodyRoleCount> static_pub_ticks_{};
+	std::array<bool, kBodyRoleCount> float_warned_{};
+
 	// Defer TrackedDeviceAdded for this long after driver init so SteamVR
 	// has time to enumerate real devices first. The exact duration is a
 	// tradeoff: too short and openvr#1536 regressions surface, too long
 	// and the user waits visibly for body trackers after launch. 3 s
 	// matches what SlimeVR and Amethyst settled on.
 	static constexpr std::chrono::milliseconds kInitSettleDelay{3000};
+	static constexpr uint32_t kFloatWarnTicks = 900;
+	std::chrono::milliseconds settle_delay_{kInitSettleDelay};
 };
 
 } // namespace phantom

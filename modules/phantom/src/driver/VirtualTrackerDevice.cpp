@@ -21,6 +21,18 @@ uint64_t Fnv1a64(const char* s)
 
 } // namespace
 
+vr::DriverPose_t MakeDisconnectedVirtualPose()
+{
+	vr::DriverPose_t p{};
+	p.qWorldFromDriverRotation = {1, 0, 0, 0};
+	p.qDriverFromHeadRotation = {1, 0, 0, 0};
+	p.qRotation = {1, 0, 0, 0};
+	p.result = vr::TrackingResult_Running_OutOfRange;
+	p.poseIsValid = false;
+	p.deviceIsConnected = false;
+	return p;
+}
+
 VirtualTrackerDevice::VirtualTrackerDevice(BodyRole role) : role_(role)
 {
 	char buf[96];
@@ -80,6 +92,13 @@ void VirtualTrackerDevice::Deactivate()
 	prop_container_ = vr::k_ulInvalidPropertyContainer;
 }
 
+void VirtualTrackerDevice::EnterStandby()
+{
+	report_connected_.store(false, std::memory_order_release);
+	LOG("[phantom] VirtualTrackerDevice standby: role=%s serial=%s (reporting disconnected until resumed)",
+	    BodyRoleToKey(role_), serial_.c_str());
+}
+
 void VirtualTrackerDevice::DebugRequest(const char* /*pchRequest*/, char* pchResponseBuffer,
                                         uint32_t unResponseBufferSize)
 {
@@ -90,6 +109,11 @@ void VirtualTrackerDevice::DebugRequest(const char* /*pchRequest*/, char* pchRes
 
 vr::DriverPose_t VirtualTrackerDevice::GetPose()
 {
+	// Disabled / blocked / standby: report disconnected so SteamVR hides the
+	// device immediately, regardless of the last cached pose.
+	if (!report_connected_.load(std::memory_order_acquire)) {
+		return MakeDisconnectedVirtualPose();
+	}
 	// Single-reader path off SteamVR's worker. The acquire on pose_epoch_
 	// is paired with the release in Publish; a torn read returns a stale
 	// pose that is still valid (last-known) rather than a half-written
@@ -101,6 +125,10 @@ vr::DriverPose_t VirtualTrackerDevice::GetPose()
 void VirtualTrackerDevice::Publish(const vr::DriverPose_t& pose)
 {
 	last_pose_ = pose;
+	// A valid publish implies the device is connected; this also reopens the gate
+	// after a disable/block/standby once a fresh pose is available.
+	report_connected_.store(true, std::memory_order_release);
+	pushed_connected_ = true;
 	pose_epoch_.fetch_add(1, std::memory_order_release);
 	// Do NOT call TrackedDevicePoseUpdated here: this runs inside the umbrella's
 	// pose hook (holding its state mutex), and TrackedDevicePoseUpdated re-enters
@@ -108,6 +136,22 @@ void VirtualTrackerDevice::Publish(const vr::DriverPose_t& pose)
 	// pose pending; the manager drains it through CollectSilentPoseUpdates, which
 	// the umbrella forwards after releasing the lock.
 	pending_ = true;
+}
+
+void VirtualTrackerDevice::PublishDisconnect()
+{
+	last_pose_ = MakeDisconnectedVirtualPose();
+	report_connected_.store(false, std::memory_order_release);
+	pushed_connected_ = false;
+	pose_epoch_.fetch_add(1, std::memory_order_release);
+	// Same out-of-lock channel as Publish: the manager drains the pending pose and
+	// the umbrella forwards it via the original TrackedDevicePoseUpdated.
+	pending_ = true;
+}
+
+void VirtualTrackerDevice::SetReportConnected(bool connected)
+{
+	report_connected_.store(connected, std::memory_order_release);
 }
 
 bool VirtualTrackerDevice::TakePendingPose(vr::DriverPose_t& out)

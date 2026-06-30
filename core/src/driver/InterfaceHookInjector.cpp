@@ -120,6 +120,34 @@ static Hook<void (*)(vr::IVRServerDriverHost*, uint32_t, const vr::DriverPose_t&
 static Hook<void (*)(vr::IVRServerDriverHost*, uint32_t, const vr::DriverPose_t&, uint32_t)>
     TrackedDevicePoseUpdatedHook006("IVRServerDriverHost006::TrackedDevicePoseUpdated");
 
+void ForwardPhantomDisconnectPoses(const std::vector<std::pair<uint32_t, vr::DriverPose_t>>& updates)
+{
+	if (updates.empty()) return;
+	vr::IVRServerDriverHost* host = vr::VRServerDriverHost();
+	if (!host) return;
+	// Use whichever pose-update trampoline is installed so we bypass the detour
+	// (no re-entry into HandleDevicePoseUpdated / stateMutex). If neither hook is
+	// installed there is no detour to avoid, so the host vtable is safe.
+	auto originalFunc = TrackedDevicePoseUpdatedHook006.originalFunc ? TrackedDevicePoseUpdatedHook006.originalFunc
+	                                                                 : TrackedDevicePoseUpdatedHook005.originalFunc;
+	try {
+		for (const auto& update : updates) {
+			if (originalFunc) {
+				originalFunc(host, update.first, update.second, (uint32_t)sizeof(vr::DriverPose_t));
+			}
+			else {
+				host->TrackedDevicePoseUpdated(update.first, update.second, (uint32_t)sizeof(vr::DriverPose_t));
+			}
+		}
+	}
+	catch (const std::exception& ex) {
+		PoseHookContainmentFault(0, ex.what());
+	}
+	catch (...) {
+		PoseHookContainmentFault(0, nullptr);
+	}
+}
+
 static void DetourTrackedDevicePoseUpdated005(vr::IVRServerDriverHost* _this, uint32_t unWhichDevice,
                                               const vr::DriverPose_t& newPose, uint32_t unPoseStructSize)
 {

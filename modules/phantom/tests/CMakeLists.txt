@@ -36,19 +36,26 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_ui_logic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_metrics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_trajectory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_virtual_tracker_lifecycle.cpp
     # Compile the driver-side sources directly so the test binary does not
     # have to link the full driver DLL (which would drag in MinHook,
-    # OpenVR runtime, IPC, etc.).
+    # OpenVR runtime, IPC, etc.). VirtualTracker* use a header-only fake driver
+    # context (FakeDriverHost.h) plus teststubs/ for Logging / DebugLogging.
     ${PH_DRIVER_SRC}/PoseHistory.cpp
     ${PH_DRIVER_SRC}/DeadReckoner.cpp
     ${PH_DRIVER_SRC}/BlendController.cpp
     ${PH_DRIVER_SRC}/BodyCompletionSolver.cpp
     ${PH_DRIVER_SRC}/DropoutState.cpp
     ${PH_DRIVER_SRC}/IkFallback.cpp
+    ${PH_DRIVER_SRC}/VirtualTrackerDevice.cpp
+    ${PH_DRIVER_SRC}/VirtualTrackerManager.cpp
     ${PH_COMMON_SRC}/PhantomInferenceShmem.cpp
 )
 
 target_include_directories(phantom_tests
+    # teststubs first: shadow the driver Logging.h / common DebugLogging.h whose
+    # backing .cpp files the unit-test target does not link.
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/teststubs
     PRIVATE ${PH_DRIVER_SRC}
     PRIVATE ${PH_COMMON_SRC}
     PRIVATE ${PH_OVERLAY_SRC}

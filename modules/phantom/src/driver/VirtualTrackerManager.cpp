@@ -29,11 +29,13 @@ void VirtualTrackerManager::SetEnabled(BodyRole role, bool enabled)
 	else if (!enabled && devices_[idx]) {
 		// SteamVR does not honour TrackedDeviceRemoved live for generic
 		// trackers; the slot stays activated for the rest of the session.
-		// Mark it disabled so future Tick() calls stop publishing poses
-		// and the device goes "stale" (SteamVR drops it after its own
-		// timeout). Next vrserver restart will not re-activate.
-		LOG("[phantom] virtual role %s disabled; pose publishing halted "
-		    "(virtual device stays until vrserver restart)",
+		// Close the gate now so GetPose reports disconnected immediately;
+		// the next Tick pushes a disconnected pose through the safe channel
+		// so SteamVR hides the device promptly instead of floating its last
+		// pose. Next vrserver restart will not re-activate it.
+		devices_[idx]->SetReportConnected(false);
+		LOG("[phantom] virtual role %s disabled; reporting disconnected "
+		    "(virtual device retained until vrserver restart)",
 		    BodyRoleToKey(role));
 	}
 }
@@ -51,6 +53,12 @@ void VirtualTrackerManager::SetRoleBlocked(BodyRole role, bool blocked)
 	if (idx >= blocked_.size()) return;
 	const bool was_blocked = blocked_[idx];
 	blocked_[idx] = blocked;
+	// A newly-blocked role must stop floating just like a disabled one: close the
+	// gate now (GetPose reports disconnected) and let the next Tick push the
+	// disconnected pose. Unblocking reopens via Tick's next valid Publish.
+	if (blocked && !was_blocked && devices_[idx]) {
+		devices_[idx]->SetReportConnected(false);
+	}
 	if (was_blocked != blocked && BodyRoleToControllerType(role) != nullptr) {
 		LOG("[phantom] virtual role %s %s by physical tracker assignment", BodyRoleToKey(role),
 		    blocked ? "blocked" : "unblocked");
@@ -128,33 +136,39 @@ void VirtualTrackerManager::MaybeActivate(BodyRole role)
 {
 	const auto idx = static_cast<size_t>(role);
 	if (idx >= devices_.size()) return;
-	if (devices_[idx]) return; // already activated
+	// Already live. A device that exists but is no longer Activated() (SteamVR
+	// called Deactivate after a disconnect) falls through and is re-registered
+	// below, reusing the same object so re-enable works within a session.
+	if (devices_[idx] && devices_[idx]->Activated()) return;
 	if (!MasterEnabled()) return;
 	if (!enabled_[idx]) return;
 	if (blocked_[idx]) return;
 	if (!hmd_pose_seen_.load(std::memory_order_acquire)) return;
 
-	// openvr#1536 mitigation: wait at least kInitSettleDelay past driver
+	// openvr#1536 mitigation: wait at least settle_delay_ past driver
 	// init before any TrackedDeviceAdded call so SteamVR has finished
 	// enumerating real devices.
-	if (std::chrono::steady_clock::now() - init_time_ < kInitSettleDelay) {
+	if (std::chrono::steady_clock::now() - init_time_ < settle_delay_) {
 		return;
 	}
 
-	auto device = std::make_unique<VirtualTrackerDevice>(role);
-	const std::string serial = device->Serial();
+	const bool reactivating = static_cast<bool>(devices_[idx]);
+	if (!devices_[idx]) {
+		devices_[idx] = std::make_unique<VirtualTrackerDevice>(role);
+	}
+	const std::string serial = devices_[idx]->Serial();
 	if (!vr::VRServerDriverHost()) {
 		LOG("[phantom] cannot activate virtual %s: VRServerDriverHost null", BodyRoleToKey(role));
 		return;
 	}
 	const bool ok = vr::VRServerDriverHost()->TrackedDeviceAdded(serial.c_str(), vr::TrackedDeviceClass_GenericTracker,
-	                                                             device.get());
+	                                                             devices_[idx].get());
 	if (!ok) {
 		LOG("[phantom] TrackedDeviceAdded failed for virtual %s (serial=%s)", BodyRoleToKey(role), serial.c_str());
 		return;
 	}
-	devices_[idx] = std::move(device);
-	LOG("[phantom] virtual %s activated (serial=%s)", BodyRoleToKey(role), serial.c_str());
+	LOG("[phantom] virtual %s %s (serial=%s)", BodyRoleToKey(role), reactivating ? "re-registered" : "activated",
+	    serial.c_str());
 }
 
 void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose, const BodyCompletionResult& body,
@@ -175,12 +189,30 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose, const BodyCom
 
 		auto& dev = devices_[i];
 		if (!dev || !dev->Activated()) continue;
-		if (!enabled_[i]) continue;
-		if (blocked_[i]) continue;
+
+		const bool allow = enabled_[i] && !blocked_[i];
+		if (!allow) {
+			// Disabled or blocked: push a disconnected pose once (one-shot) so
+			// SteamVR hides the device instead of floating its last valid pose.
+			if (dev->PushedConnected()) {
+				dev->PublishDisconnect();
+				LOG("[phantom] virtual role %s retracted; disconnected pose queued", BodyRoleToKey(role));
+			}
+			static_pub_ticks_[i] = 0;
+			float_warned_[i] = false;
+			continue;
+		}
 
 		const auto& solved = body.roles[i];
+		bool fresh_publish = false;
 		if (solved.valid && solved.confidence >= min_confidence) {
-			dev->Publish(PoseFromCompletion(hmd_pose, solved));
+			const vr::DriverPose_t pose = PoseFromCompletion(hmd_pose, solved);
+			const double dx = pose.vecPosition[0] - last_pub_pos_[i][0];
+			const double dy = pose.vecPosition[1] - last_pub_pos_[i][1];
+			const double dz = pose.vecPosition[2] - last_pub_pos_[i][2];
+			fresh_publish = (dx * dx + dy * dy + dz * dz) >= 1e-12;
+			last_pub_pos_[i] = {pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]};
+			dev->Publish(pose);
 			if (debug_logging_enabled) ++diag_published_;
 		}
 		else if (!solved.valid) {
@@ -188,6 +220,18 @@ void VirtualTrackerManager::Tick(const vr::DriverPose_t& hmd_pose, const BodyCom
 		}
 		else {
 			if (debug_logging_enabled) ++diag_skip_confidence_;
+		}
+
+		// Float watchdog: an enabled device whose published position has not
+		// changed for kFloatWarnTicks ticks is stuck/floating; warn once.
+		if (fresh_publish) {
+			static_pub_ticks_[i] = 0;
+			float_warned_[i] = false;
+		}
+		else if (++static_pub_ticks_[i] >= kFloatWarnTicks && !float_warned_[i]) {
+			float_warned_[i] = true;
+			LOG("[phantom][warn] virtual role %s pose unchanged for %u ticks; possible floating tracker",
+			    BodyRoleToKey(role), static_pub_ticks_[i]);
 		}
 	}
 
@@ -222,6 +266,36 @@ void VirtualTrackerManager::CollectPoseUpdates(std::vector<std::pair<uint32_t, v
 			out.emplace_back(static_cast<uint32_t>(dev->ObjectId()), pose);
 		}
 	}
+}
+
+void VirtualTrackerManager::CollectDisconnects(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out)
+{
+	int n = 0;
+	for (uint8_t i = 0; i < kBodyRoleCount; ++i) {
+		auto& dev = devices_[i];
+		if (!dev || !dev->Activated()) continue;
+		dev->SetReportConnected(false);
+		out.emplace_back(static_cast<uint32_t>(dev->ObjectId()), MakeDisconnectedVirtualPose());
+		++n;
+	}
+	if (n > 0) LOG("[phantom] collected %d virtual-tracker disconnect pose(s) for teardown", n);
+}
+
+void VirtualTrackerManager::LeakDevicesForProcessLifetime()
+{
+	// SteamVR keeps polling the raw device pointers it was handed (it ignores
+	// live TrackedDeviceRemoved for generic trackers, openvr#1536), so the
+	// objects must outlive this module. Move them into a never-freed store; their
+	// gate is already closed, so GetPose reports disconnected until restart.
+	static std::vector<std::unique_ptr<VirtualTrackerDevice>> s_retired;
+	int n = 0;
+	for (auto& dev : devices_) {
+		if (!dev) continue;
+		dev->SetReportConnected(false);
+		s_retired.push_back(std::move(dev));
+		++n;
+	}
+	if (n > 0) LOG("[phantom] retained %d virtual-tracker device(s) past shutdown (until vrserver restart)", n);
 }
 
 int VirtualTrackerManager::ActiveCount() const

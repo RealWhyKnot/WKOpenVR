@@ -68,4 +68,11 @@ void OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_
 bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::DriverPose_t& pose);
 void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
                               std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
+
+// Teardown helpers used by ServerTrackedDeviceProvider when the module is being
+// disabled: stop virtual publishing, then drain a disconnected pose for every
+// active virtual tracker so they can be forwarded (out-of-lock) before the
+// module is destroyed. Safe no-ops when the module is not initialised.
+void SetVirtualMasterEnabled(bool enabled);
+void CollectVirtualDisconnects(std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
 } // namespace phantom
