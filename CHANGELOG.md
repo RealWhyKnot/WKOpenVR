@@ -82,6 +82,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Selectable virtual tracker render model, default Vive Tracker 3.0 (95ee154)
 - **dynamicres:** Drive FPS toward native refresh with measured bottleneck detection (76c9650)
 - **calibration:** Surface witness-puck health and felt-jump rate in diagnostics (fcedd6a)
+- **calibration:** Witness continuous drift correction + offline drift oracle (8a7b9cc)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -262,6 +263,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Prefer re-anchor over destructive clear in recovery (3ca8ff9)
 - **calibration:** Use head-mount witness for recovery in all tracking styles (12ed38a)
 - **release:** Use central date for release automation (1b13080)
+- **calibration:** Reserve witness vectors for clang-tidy (4e8e5f4)
 
 ---
 
