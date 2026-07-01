@@ -147,10 +147,10 @@ TEST(DynamicResolutionLogic, AsyncReprojectionModeAloneDoesNotCountAsUnstable)
 	const auto settings = FastSettings();
 	dynamicres::DynamicResolutionControllerOutput out;
 
-	// Mid-budget GPU (between headroom and lower thresholds) with async mode on: async never marks
-	// instability, and mid-budget app GPU is neither GPU-bound nor headroom.
+	// Mid-budget GPU (between the 8.0 ms headroom and 8.5 ms lower thresholds) with async mode on:
+	// async never marks instability, and mid-budget app GPU is neither GPU-bound nor headroom.
 	for (int i = 0; i < 4; ++i) {
-		out = controller.Evaluate(Input(7.5, false, 1.0, kReprojectionAsync), settings);
+		out = controller.Evaluate(Input(8.2, false, 1.0, kReprojectionAsync), settings);
 	}
 
 	EXPECT_EQ(out.classification.unstableSamples, 0);
@@ -247,7 +247,7 @@ TEST(DynamicResolutionLogic, CpuBoundWithoutGpuHeadroomHoldsScale)
 
 	dynamicres::DynamicResolutionControllerOutput out;
 	for (int i = 0; i < 6; ++i) {
-		out = controller.Evaluate(Input(8.0, true, 0.8, kReprojectionReasonCpu), settings);
+		out = controller.Evaluate(Input(9.0, true, 0.8, kReprojectionReasonCpu), settings);
 	}
 
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::CpuBound);
@@ -288,20 +288,20 @@ TEST(DynamicResolutionLogic, MeasuredCpuStallDoesNotLower)
 	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
-TEST(DynamicResolutionLogic, HighAppGpuLowersWithoutGpuReprojFlag)
+TEST(DynamicResolutionLogic, HighAppGpuAloneDoesNotLower)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 
-	// Sustained high app GPU work, no reprojection flag yet: lower proactively before frames drop.
+	// Sustained high app GPU work but the runtime is holding refresh (no reprojection, no dropped
+	// frames): a game may safely spend most of the budget, so hold -- do not lower.
 	dynamicres::DynamicResolutionControllerOutput out;
 	for (int i = 0; i < 6; ++i) {
 		out = controller.Evaluate(Input(9.5, false, 1.0), settings);
 	}
 
-	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
-	EXPECT_LT(out.targetScale, 1.0);
+	EXPECT_NE(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
 }
 
 TEST(DynamicResolutionLogic, MotionSmoothingWithHighGpuLowersToRecoverFullRate)
@@ -420,37 +420,36 @@ TEST(DynamicResolutionLogic, SceneStopRequestsRestore)
 	EXPECT_DOUBLE_EQ(out.targetScale, 1.0);
 }
 
-TEST(DynamicResolutionLogic, PeakSpikeOverMarginLowersFast)
+TEST(DynamicResolutionLogic, PeakSpikeWithoutDropsDoesNotLower)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 	dynamicres::DynamicResolutionControllerOutput out;
 
-	// Median app GPU sits below the lower threshold, but a frame peaks past the safety margin.
-	// The tail signal lowers within a single full window (no multi-tick dwell).
-	for (int i = 0; i < 3; ++i) {
-		out = controller.Evaluate(Input(8.0, false, 1.0, 0, 9.5), settings);
+	// A single frame peaks past the safety margin, but the runtime still presented every frame (no
+	// reprojection, no dropped frames). A stray tail spike must not lower on its own.
+	for (int i = 0; i < 4; ++i) {
+		out = controller.Evaluate(Input(6.0, false, 1.0, 0, 9.5), settings);
 	}
 
-	EXPECT_TRUE(out.classification.gpuOverMargin);
-	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_NE(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_NE(out.action, dynamicres::ResolutionAction::Lower);
 }
 
-TEST(DynamicResolutionLogic, OverBudgetFrameFractionTriggersLower)
+TEST(DynamicResolutionLogic, OverBudgetShareAloneDoesNotLower)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 	dynamicres::DynamicResolutionControllerOutput out;
 
-	// Median and peak look fine, but a sustained share of frames render over budget.
+	// A share of frames render over the budget estimate, but the runtime still held refresh (no
+	// reprojection, no dropped frames). Predicted over-budget alone is not a real drop -- do not lower.
 	for (int i = 0; i < 4; ++i) {
 		out = controller.Evaluate(Input(7.5, false, 1.0, 0, 7.5, 0.0, 20, 90), settings);
 	}
 
-	EXPECT_TRUE(out.classification.gpuOverMargin);
-	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	EXPECT_NE(out.classification.pressure, dynamicres::ResolutionPressure::GpuBound);
+	EXPECT_NE(out.action, dynamicres::ResolutionAction::Lower);
 }
 
 TEST(DynamicResolutionLogic, LowerStepEscalatesWithPeak)
@@ -461,9 +460,10 @@ TEST(DynamicResolutionLogic, LowerStepEscalatesWithPeak)
 	dynamicres::DynamicResolutionControllerOutput flatOut;
 	dynamicres::DynamicResolutionControllerOutput spikyOut;
 
+	// Both are GPU-bound (reprojecting) at the same median; only the tail peak differs.
 	for (int i = 0; i < 4; ++i) {
-		flatOut = flat.Evaluate(Input(9.0, false, 1.0, 0, 9.0), settings);
-		spikyOut = spiky.Evaluate(Input(9.0, false, 1.0, 0, 9.9), settings);
+		flatOut = flat.Evaluate(Input(9.0, true, 1.0, kReprojectionReasonGpu, 9.0), settings);
+		spikyOut = spiky.Evaluate(Input(9.0, true, 1.0, kReprojectionReasonGpu, 9.9), settings);
 	}
 
 	ASSERT_EQ(flatOut.action, dynamicres::ResolutionAction::Lower);
@@ -471,20 +471,68 @@ TEST(DynamicResolutionLogic, LowerStepEscalatesWithPeak)
 	EXPECT_LT(spikyOut.targetScale, flatOut.targetScale); // a worse tail cuts harder
 }
 
-TEST(DynamicResolutionLogic, RaiseBlockedByRecentOverBudget)
+TEST(DynamicResolutionLogic, RaiseRecoversDespiteOccasionalOverBudget)
 {
 	dynamicres::DynamicResolutionController controller;
 	const auto settings = FastSettings();
 	dynamicres::DynamicResolutionControllerOutput out;
 
-	// Headroom by the median metric, but a few frames went over budget: do not raise yet.
+	// Headroom by the median metric with a stray over-budget frame but no reprojection/dropped
+	// frames: a predicted over-budget frame must no longer pin the resolution down (the old ratchet).
 	for (int i = 0; i < 6; ++i) {
 		out = controller.Evaluate(Input(4.0, false, 0.8, 0, 4.0, 0.0, 1, 90), settings);
 	}
 
 	EXPECT_EQ(out.classification.pressure, dynamicres::ResolutionPressure::Headroom);
 	EXPECT_GT(out.classification.framesOverBudgetTotal, 0);
-	EXPECT_EQ(out.action, dynamicres::ResolutionAction::None);
+	EXPECT_EQ(out.action, dynamicres::ResolutionAction::Raise);
+	EXPECT_GT(out.targetScale, 0.8);
+}
+
+TEST(DynamicResolutionLogic, RaiseWaitsForGpuDropToClear)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// Below baseline with low median GPU, but a GPU-reason reprojection is still in the window: the
+	// GPU is actively failing to hold refresh, so recovery must wait -- it does not raise.
+	for (int i = 0; i < 6; ++i) {
+		out = controller.Evaluate(Input(7.0, true, 0.8, kReprojectionReasonGpu), settings);
+	}
+
+	EXPECT_GT(out.classification.gpuReasonSamples, 0);
+	EXPECT_NE(out.action, dynamicres::ResolutionAction::Raise);
+}
+
+TEST(DynamicResolutionLogic, RecoversAfterReprojClears)
+{
+	dynamicres::DynamicResolutionController controller;
+	const auto settings = FastSettings();
+	dynamicres::DynamicResolutionControllerOutput out;
+
+	// A real GPU-reason reprojection lowers the scale.
+	for (int i = 0; i < 5; ++i) {
+		out = controller.Evaluate(Input(9.5, true, 1.0, kReprojectionReasonGpu), settings);
+	}
+	ASSERT_EQ(out.action, dynamicres::ResolutionAction::Lower);
+	double scale = out.targetScale;
+	controller.NoteWrite(out.action, scale, out.classification, settings);
+	ASSERT_LT(scale, 1.0);
+
+	// The drops stop and the scene runs clean: the scale climbs back to baseline (no ratchet).
+	bool raised = false;
+	for (int tick = 0; tick < 20 && scale < 0.995; ++tick) {
+		out = controller.Evaluate(Input(4.0, false, scale), settings);
+		if (out.action == dynamicres::ResolutionAction::Raise) {
+			raised = true;
+			scale = out.targetScale;
+			controller.NoteWrite(out.action, scale, out.classification, settings);
+		}
+	}
+
+	EXPECT_TRUE(raised);
+	EXPECT_NEAR(scale, 1.0, 0.005);
 }
 
 TEST(DynamicResolutionLogic, SupersamplesAboveBaselineOnDeepHeadroom)
@@ -543,11 +591,42 @@ TEST(DynamicResolutionLogic, ApplyQualityPresetSeedsKnobs)
 	EXPECT_DOUBLE_EQ(settings.minScaleFraction, 0.50);
 	EXPECT_DOUBLE_EQ(settings.maxScaleFraction, 1.00);
 	EXPECT_EQ(settings.lowerRequiredTicks, 1);
+	EXPECT_DOUBLE_EQ(settings.headroomGpuBudgetFraction, 0.75);
+	EXPECT_EQ(settings.settleTicks, 1);
 
 	dynamicres::ApplyQualityPreset(dynamicres::QualityPreset::Quality, settings);
 	EXPECT_EQ(settings.qualityPreset, dynamicres::QualityPreset::Quality);
 	EXPECT_DOUBLE_EQ(settings.minScaleFraction, 0.80);
 	EXPECT_DOUBLE_EQ(settings.maxScaleFraction, 1.50);
+	EXPECT_DOUBLE_EQ(settings.headroomGpuBudgetFraction, 0.85);
+	EXPECT_EQ(settings.settleTicks, 3);
+}
+
+TEST(DynamicResolutionLogic, ReconcilePresetRederivesStaleNamedPresetKnobs)
+{
+	// A profile saved by an older build pins the Quality preset but stale recovery knobs.
+	dynamicres::DynamicResolutionSettings settings;
+	settings.qualityPreset = dynamicres::QualityPreset::Quality;
+	settings.headroomGpuBudgetFraction = 0.70;
+	settings.settleTicks = 0;
+
+	dynamicres::ReconcilePresetSettings(settings);
+
+	EXPECT_DOUBLE_EQ(settings.headroomGpuBudgetFraction, 0.85);
+	EXPECT_EQ(settings.settleTicks, 3);
+}
+
+TEST(DynamicResolutionLogic, ReconcilePresetLeavesCustomUntouched)
+{
+	dynamicres::DynamicResolutionSettings settings;
+	settings.qualityPreset = dynamicres::QualityPreset::Custom;
+	settings.headroomGpuBudgetFraction = 0.66;
+	settings.settleTicks = 0;
+
+	dynamicres::ReconcilePresetSettings(settings);
+
+	EXPECT_DOUBLE_EQ(settings.headroomGpuBudgetFraction, 0.66);
+	EXPECT_EQ(settings.settleTicks, 0);
 }
 
 TEST(DynamicResolutionLogic, CeilingScaleAllowsSupersampleButClampsHard)

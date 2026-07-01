@@ -45,7 +45,7 @@ struct DynamicResolutionSettings
 	double lowerGpuBudgetFraction = 0.85;     // median app GPU >= this*budget -> GPU-bound
 	double gpuSafetyMarginFraction = 0.90;    // peak app GPU >= this*budget -> proactive lower
 	double overBudgetFraction = 0.15;         // share of frames over budget that forces a lower
-	double headroomGpuBudgetFraction = 0.70;  // median app GPU <= this*budget -> headroom
+	double headroomGpuBudgetFraction = 0.80;  // median app GPU <= this*budget -> headroom (recovery reachable)
 	double raiseAboveBaselineFraction = 0.65; // peak app GPU <= this*budget gates >baseline raises
 	double cpuStallFraction = 1.05;           // frame interval > this*budget (GPU idle) -> CPU-bound
 	int windowSize = 6;
@@ -53,7 +53,7 @@ struct DynamicResolutionSettings
 	int raiseRequiredTicks = 4;
 	int cpuReleaseTicks = 4;
 	int raiseAboveBaselineTicks = 8;
-	int settleTicks = 0;
+	int settleTicks = 2;
 	int noEffectLimit = 3;
 	bool allowRaiseBack = true;
 	bool releaseOnCpuBound = true;
@@ -130,6 +130,10 @@ double CeilingScale(const DynamicResolutionSettings& settings, double baselineSc
 
 // Seeds settings to a named quality/FPS bias. Does not touch persistence-only fields.
 void ApplyQualityPreset(QualityPreset preset, DynamicResolutionSettings& settings);
+
+// Re-derives preset-owned knobs when the profile is pinned to a built-in preset (not Custom), so
+// named-preset users track the current preset definition instead of stale saved values.
+void ReconcilePresetSettings(DynamicResolutionSettings& settings);
 
 class DynamicResolutionController
 {

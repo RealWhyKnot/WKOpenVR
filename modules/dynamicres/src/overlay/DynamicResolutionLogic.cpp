@@ -156,36 +156,54 @@ void ApplyQualityPreset(QualityPreset preset, DynamicResolutionSettings& setting
 			settings.maxScaleFraction = 1.00;
 			settings.lowerGpuBudgetFraction = 0.82;
 			settings.gpuSafetyMarginFraction = 0.88;
+			settings.headroomGpuBudgetFraction = 0.75; // recover conservatively; favor holding FPS headroom
 			settings.lowerRequiredTicks = 1;
 			settings.raiseRequiredTicks = 5;
+			settings.settleTicks = 1;
 			break;
 		case QualityPreset::FpsFirst:
 			settings.minScaleFraction = 0.60;
 			settings.maxScaleFraction = 1.50;
 			settings.lowerGpuBudgetFraction = 0.85;
 			settings.gpuSafetyMarginFraction = 0.90;
+			settings.headroomGpuBudgetFraction = 0.80;
 			settings.lowerRequiredTicks = 2;
 			settings.raiseRequiredTicks = 4;
+			settings.settleTicks = 2;
 			break;
 		case QualityPreset::Balanced:
 			settings.minScaleFraction = 0.70;
 			settings.maxScaleFraction = 1.50;
 			settings.lowerGpuBudgetFraction = 0.90;
 			settings.gpuSafetyMarginFraction = 0.93;
+			settings.headroomGpuBudgetFraction = 0.80;
 			settings.lowerRequiredTicks = 3;
 			settings.raiseRequiredTicks = 3;
+			settings.settleTicks = 2;
 			break;
 		case QualityPreset::Quality:
 			settings.minScaleFraction = 0.80;
 			settings.maxScaleFraction = 1.50;
 			settings.lowerGpuBudgetFraction = 0.93;
 			settings.gpuSafetyMarginFraction = 0.95;
+			settings.headroomGpuBudgetFraction = 0.85; // recover eagerly toward baseline; favor sharpness
 			settings.lowerRequiredTicks = 4;
 			settings.raiseRequiredTicks = 3;
+			settings.settleTicks = 3;
 			break;
 		case QualityPreset::Custom:
 		default:
 			break;
+	}
+}
+
+void ReconcilePresetSettings(DynamicResolutionSettings& settings)
+{
+	// A profile pinned to a built-in preset should track the current preset definition, not stale
+	// knob values saved by an older build. Editing any knob in the UI moves the profile to Custom,
+	// so a named preset here means the user never customized -- safe to re-derive.
+	if (settings.qualityPreset != QualityPreset::Custom) {
+		ApplyQualityPreset(settings.qualityPreset, settings);
 	}
 }
 
@@ -285,8 +303,10 @@ DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const Dy
 		return out;
 	}
 
-	// Recover toward baseline after a dip. Blocked if any frame was recently over budget.
-	if (settings.allowRaiseBack && cls.pressure == ResolutionPressure::Headroom && cls.framesOverBudgetTotal == 0 &&
+	// Recover toward baseline after a dip. Blocked only by an actual recent GPU drop -- a stray
+	// over-budget frame no longer pins the resolution down (that was a one-way ratchet to the floor).
+	if (settings.allowRaiseBack && cls.pressure == ResolutionPressure::Headroom && cls.gpuReasonSamples == 0 &&
+	    cls.unstableSamples <= RaiseUnstableTolerance(settings) &&
 	    pressureTicks_ >=
 	        (activeDirection_ == ResolutionAction::Raise ? 1 : std::max(1, settings.raiseRequiredTicks)) &&
 	    current < baseline - 0.005) {
@@ -385,11 +405,15 @@ DynamicResolutionClassification DynamicResolutionController::Classify(const Dyna
 	out.deepHeadroom = out.peakAppGpuMs <= budget * settings.raiseAboveBaselineFraction;
 	out.cpuStalled = out.clientFrameIntervalMs > budget * settings.cpuStallFraction && lowGpu;
 
-	// Proactive GPU-bound: high *app* GPU work (median or tail) drives a lower BEFORE the runtime
-	// reprojects. App GPU is the work render resolution actually affects. Reprojection-reason and
-	// motion-smoothing flags become escalation signals, not preconditions.
-	if (highGpuMedian || out.gpuOverMargin ||
-	    (out.motionSmoothingActive && out.medianAppGpuMs >= budget * settings.headroomGpuBudgetFraction)) {
+	// Reactive GPU-bound: lower only when the runtime is *actually* failing to hold refresh for a
+	// GPU reason -- a GPU-reason reprojection, or dropped/mispresented frames while app GPU is high
+	// and the CPU is not the cause. A game may safely spend most of the frame budget, so app-GPU
+	// utilization and the peak/over-budget shares now only size the step (LowerStepFor) and escalate
+	// confirmed drops; they no longer trigger a lower on their own. Lowering render resolution cannot
+	// fix a CPU limit.
+	const bool gpuDropping =
+	    out.gpuReasonSamples > 0 || (out.unstableSamples > 0 && highGpuMedian && out.cpuReasonSamples == 0);
+	if (gpuDropping) {
 		out.pressure = ResolutionPressure::GpuBound;
 	}
 	else if (out.cpuStalled) {

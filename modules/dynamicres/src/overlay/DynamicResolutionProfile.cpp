@@ -90,7 +90,9 @@ DynamicResolutionProfile LoadDynamicResolutionProfile()
 	if (path.empty()) return {};
 	std::ifstream in(path);
 	if (!in) return {};
-	return ParseDynamicResolutionProfile(in);
+	DynamicResolutionProfile profile = ParseDynamicResolutionProfile(in);
+	ReconcilePresetSettings(profile.settings);
+	return profile;
 }
 
 void SaveDynamicResolutionProfile(const DynamicResolutionProfile& profile)
