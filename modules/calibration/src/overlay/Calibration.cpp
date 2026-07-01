@@ -34,6 +34,7 @@
 #include "RecoveryPolicy.h"
 #include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
+#include "WitnessCorrection.h"
 
 // Boundary capture session tick (defined in UserInterfaceTabsBoundary.cpp).
 // Called each CalibrationTick so capture runs independent of which tab is
@@ -884,6 +885,105 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 
 	ApplyHeadMountShadowOffset(ctx, result.headFromTracker, savedDelta, result.residualMm, time);
 	ResetHeadMountShadowOffsetRuntime(/*clearStableWindows=*/true);
+}
+
+// Experimental witness-based continuous drift correction. Runs independently of
+// the mode-gated shadow estimator above so it works in Continuous with the witness
+// bound but head-mount mode Off (the common field setup). T1 auto-calibrates the
+// baseline HMD<->witness offset; T2 applies the slew-limited step that closes
+// sub-30 cm drift between paired-motion solves. Both default off, each gated by its
+// own experimental flag. Pure math + validation live in WitnessCorrection.h /
+// WitnessDriftReplay.h (offline-validated ~50-68% typical drift reduction).
+namespace {
+struct WitnessCorrectionRuntime
+{
+	spacecal::witness_correction::BaselineAccumulator accum;
+	double lastCorrectionTime = -1.0;
+	double lastLogTime = -1.0;
+	double appliedTotalCm = 0.0;
+};
+WitnessCorrectionRuntime g_witnessCorrection;
+} // namespace
+
+static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time)
+{
+	const bool wantAutoCal = ctx.headMount.experimentalWitnessAutoCalibrate;
+	const bool wantCorrection = ctx.headMount.experimentalWitnessCorrection;
+	auto bail = [&]() {
+		g_witnessCorrection.accum.Reset();
+	};
+
+	if (!wantAutoCal && !wantCorrection) return bail();
+	if (ctx.state != CalibrationState::Continuous && ctx.state != CalibrationState::ContinuousStandby) return bail();
+	if (!ctx.validProfile) return bail();
+
+	const int32_t dev = ctx.headMount.deviceID;
+	if (dev < 0 || dev >= (int32_t)vr::k_unMaxTrackedDeviceCount) return bail();
+	if (!spacecal::headmount::PoseIsRunningOk(ctx.devicePoses[dev]) ||
+	    !spacecal::headmount::PoseIsRunningOk(ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd]))
+		return bail();
+
+	// Never auto-calibrate or correct against an unhealthy calibration.
+	const double profileFitRmsMm = CurrentProfileFitRmsMm();
+	if (!(std::isfinite(profileFitRmsMm) && profileFitRmsMm <= spacecal::headmount::kShadowProfileHealthyRmsMm))
+		return bail();
+
+	const Eigen::Affine3d hmdRef = DriverPoseToAffine(ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd]);
+	const Eigen::Affine3d trackerTgt = DriverPoseToAffine(ctx.devicePoses[dev]);
+	const Eigen::Affine3d C = CalibrationTransformFromContext(ctx); // targetToReference
+	const Eigen::Affine3d localOffsetPose = hmdRef.inverse() * (C * trackerTgt);
+	const Eigen::Vector3d localOffset = localOffsetPose.translation();
+
+	// T1: auto-calibrate the baseline HMD<->witness offset if none exists.
+	if (!ctx.headMount.offsetCalibrated) {
+		if (!wantAutoCal) return;
+		g_witnessCorrection.accum.Add(localOffset, time);
+		if (g_witnessCorrection.accum.Ready(time)) {
+			Eigen::AffineCompact3d savedLocalOffset;
+			savedLocalOffset.linear() = localOffsetPose.linear();
+			savedLocalOffset.translation() = g_witnessCorrection.accum.Mean();
+			ctx.headMount.headFromTracker = Eigen::AffineCompact3d(savedLocalOffset.inverse());
+			ctx.headMount.offsetCalibrated = true;
+			ctx.NoteHeadMountOffsetChanged();
+			SaveProfile(ctx);
+			const Eigen::Vector3d bcm = g_witnessCorrection.accum.Mean() * 100.0;
+			char buf[224];
+			std::snprintf(
+			    buf, sizeof buf,
+			    "witness_auto_calibrate: committed baseline offset cm=(%.2f,%.2f,%.2f) samples=%d std_mm=%.2f", bcm.x(),
+			    bcm.y(), bcm.z(), g_witnessCorrection.accum.count, g_witnessCorrection.accum.StdM() * 1000.0);
+			Metrics::WriteLogAnnotation(buf);
+			g_witnessCorrection.accum.Reset();
+		}
+		return;
+	}
+
+	// T2: apply the slew-limited correction between paired-motion solves.
+	if (!wantCorrection) return;
+	const Eigen::Vector3d baselineOffset = Eigen::Affine3d(ctx.headMount.headFromTracker.inverse()).translation();
+	const double dt = (g_witnessCorrection.lastCorrectionTime > 0.0 && time > g_witnessCorrection.lastCorrectionTime)
+	                      ? (time - g_witnessCorrection.lastCorrectionTime)
+	                      : (1.0 / 3.5);
+	g_witnessCorrection.lastCorrectionTime = time;
+	const Eigen::Vector3d deltaCm = spacecal::witness_correction::CorrectionDeltaCm(
+	    localOffset, baselineOffset, hmdRef.rotation(), ctx.autoLockMadFloor, dt);
+	if (deltaCm.squaredNorm() <= 0.0) return;
+
+	ctx.calibratedTranslation += deltaCm;
+	ScanAndApplyProfile(ctx, /*snap=*/false, "witness_correction");
+	g_witnessCorrection.appliedTotalCm += deltaCm.norm();
+
+	if (time - g_witnessCorrection.lastLogTime >= 1.0) {
+		g_witnessCorrection.lastLogTime = time;
+		const double driftMm = (localOffset - baselineOffset).norm() * 1000.0;
+		char buf[256];
+		std::snprintf(buf, sizeof buf,
+		              "witness_correction_applied: drift_mm=%.2f step_mm=%.3f mad_floor_mm=%.2f"
+		              " session_total_cm=%.2f cal_mag_cm=%.2f",
+		              driftMm, deltaCm.norm() * 10.0, ctx.autoLockMadFloor * 1000.0, g_witnessCorrection.appliedTotalCm,
+		              ctx.calibratedTranslation.norm());
+		Metrics::WriteLogAnnotation(buf);
+	}
 }
 
 void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& refWorld,
@@ -2590,6 +2690,7 @@ void CalibrationTick(double time)
 
 	TickHeadMountSourceTransitionGuard(ctx, time);
 	TickHeadMountShadowOffsetEstimator(ctx, time);
+	TickWitnessContinuousCorrection(ctx, time);
 
 	if (!CollectSample(ctx)) {
 		return;
@@ -3317,6 +3418,10 @@ void CalibrationTick(double time)
 		};
 		setExperimentFlag(spacecal::calibration_experiments::HeadsetOffsetAutoCorrect,
 		                  ctx.headMount.experimentalAutoCorrectOffset);
+		setExperimentFlag(spacecal::calibration_experiments::WitnessOffsetAutoCalibrate,
+		                  ctx.headMount.experimentalWitnessAutoCalibrate);
+		setExperimentFlag(spacecal::calibration_experiments::WitnessContinuousCorrection,
+		                  ctx.headMount.experimentalWitnessCorrection);
 		Metrics::SetTickExperimentalFlags(experimentalFlags);
 	}
 

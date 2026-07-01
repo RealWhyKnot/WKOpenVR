@@ -9,6 +9,12 @@ namespace spacecal::calibration_experiments {
 enum ExperimentFlag : uint32_t
 {
 	HeadsetOffsetAutoCorrect = 1u << 0,
+	// Witness-based continuous drift correction (offline-validated on real
+	// recordings: ~50-89% typical sub-30 cm drift reduction). Auto-calibrate
+	// snapshots the HMD<->witness baseline offset; correction applies the
+	// slew-limited step that closes the witness-vs-calibration drift.
+	WitnessOffsetAutoCalibrate = 1u << 1,
+	WitnessContinuousCorrection = 1u << 2,
 };
 
 inline bool EnvFlagEnabled(const char* value)

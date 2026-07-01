@@ -464,6 +464,28 @@ void CCal_DrawSettings()
 						    SaveProfile(CalCtx);
 					    }
 				    });
+				    openvr_pair::overlay::ui::SettingRow(table, "Witness auto-calibrate offset", [&] {
+					    if (ExperimentCheckbox(
+					            "witness_auto_calibrate", "##head_mount_experimental_witness_auto_calibrate",
+					            &CalCtx.headMount.experimentalWitnessAutoCalibrate,
+					            "Capture the headset<->head-tracker baseline offset automatically while continuous "
+					            "calibration is healthy, instead of running the manual offset wizard. Enables the "
+					            "witness drift diagnostics and the continuous correction below. "
+					            "Experimental. Default off.")) {
+						    SaveProfile(CalCtx);
+					    }
+				    });
+				    openvr_pair::overlay::ui::SettingRow(table, "Witness continuous correction", [&] {
+					    if (ExperimentCheckbox(
+					            "witness_continuous_correction", "##head_mount_experimental_witness_correction",
+					            &CalCtx.headMount.experimentalWitnessCorrection,
+					            "Between paired-motion solves, apply a slow, dead-banded correction that closes the "
+					            "sub-30 cm drift the head-mounted tracker sees between the headset and its calibrated "
+					            "position. Needs the baseline offset (auto-calibrate above or the offset wizard). "
+					            "Experimental. Default off.")) {
+						    SaveProfile(CalCtx);
+					    }
+				    });
 			    });
 			ImGui::EndGroupPanel();
 		}

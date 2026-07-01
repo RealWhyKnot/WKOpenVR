@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "MotionRecording.h"
+#include "WitnessDriftReplay.h"
 #include "CalibrationExperimentFlags.h"
 #include "Win32Text.h"
 
@@ -602,6 +603,32 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			PrintQualitySummary(input.name, sampleWindow, result);
 			++replayed;
 		}
+
+		// Witness-drift oracle: offset solve + continuous-correction model on the
+		// recorded raw HMD + witness poses (sample-window independent, so once per
+		// input). WKOPENVR_REPLAY_CORRECTION=0 measures the uncorrected baseline.
+		replay::WitnessDriftOptions driftOpts;
+		driftOpts.applyContinuousCorrection = EnvFlag("WKOPENVR_REPLAY_CORRECTION", true);
+		driftOpts.correctionSlewMps = EnvDouble("WKOPENVR_REPLAY_SLEW_MPS", driftOpts.correctionSlewMps);
+		driftOpts.correctionDeadbandM =
+		    EnvDouble("WKOPENVR_REPLAY_DEADBAND_MM", driftOpts.correctionDeadbandM * 1000.0) / 1000.0;
+		const auto drift = replay::ComputeWitnessDrift(recording, driftOpts);
+		std::cout << "[witness-drift] " << input.name << " correction=" << (driftOpts.applyContinuousCorrection ? 1 : 0)
+		          << " slew_mps=" << driftOpts.correctionSlewMps
+		          << " deadband_mm=" << (driftOpts.correctionDeadbandM * 1000.0)
+		          << " calibrated=" << (drift.calibrated ? 1 : 0) << " note=" << drift.note
+		          << " baseline_offset_mm=" << drift.baselineOffsetMm << " baseline_samples=" << drift.baselineSamples
+		          << " drift_samples=" << drift.driftSamples << " uncorrected_rms_mm=" << drift.uncorrectedRmsMm
+		          << " corrected_rms_mm=" << drift.correctedRmsMm << " reduction_pct=" << drift.reductionPct
+		          << " subcap_samples=" << drift.subCapSamples << " subcap_unc_rms_mm=" << drift.subCapUncorrectedRmsMm
+		          << " subcap_cor_rms_mm=" << drift.subCapCorrectedRmsMm
+		          << " subcap_reduction_pct=" << drift.subCapReductionPct
+		          << " uncorrected_p50_mm=" << drift.uncorrectedP50Mm << " corrected_p50_mm=" << drift.correctedP50Mm
+		          << " uncorrected_p95_mm=" << drift.uncorrectedP95Mm << " corrected_p95_mm=" << drift.correctedP95Mm
+		          << " uncorrected_peak_mm=" << drift.uncorrectedPeakMm
+		          << " corrected_peak_mm=" << drift.correctedPeakMm << " reloc_total=" << drift.relocTotal
+		          << " reloc_measured=" << drift.relocMeasured << " reloc_flip_like=" << drift.relocFlipLike
+		          << " reloc_mean_drift_mm=" << drift.relocMeanDriftMm << "\n";
 	}
 
 	EXPECT_GT(replayed, 0u) << "No retained recordings contained replayable rows; skipped " << skippedEmpty

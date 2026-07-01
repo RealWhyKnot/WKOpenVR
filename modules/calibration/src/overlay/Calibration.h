@@ -179,6 +179,12 @@ struct HeadMountConfig
 	bool offsetCalibrated = false;
 	bool autoCorrectOffset = true;
 	bool experimentalAutoCorrectOffset = false;
+	// Experimental witness-based continuous drift correction (default OFF).
+	// AutoCalibrate: snapshot the HMD<->witness baseline offset without the manual
+	// modal, so the correction/diagnostic have a reference. Correction: apply the
+	// slew-limited step that closes sub-30 cm witness-vs-calibration drift.
+	bool experimentalWitnessAutoCalibrate = false;
+	bool experimentalWitnessCorrection = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
 	// head-mounted tracker (0..100, 0 = off). Tames lighthouse position jitter.
