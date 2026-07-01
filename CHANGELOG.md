@@ -266,6 +266,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Reserve witness vectors for clang-tidy (4e8e5f4)
 - **dynamicres:** Lower only on real GPU drops and reconcile presets on load (1ed974e)
 - **facetracking:** Keep eye-wide in sync with eyelids and clear stale host frames (1c9fea2)
+- **calibration:** Weight continuous solve by geometry to hold alignment far from origin (a72ac38)
+- **calibration:** Bound experimental witness correction so it cannot diverge (195ca7d)
 
 ---
 
