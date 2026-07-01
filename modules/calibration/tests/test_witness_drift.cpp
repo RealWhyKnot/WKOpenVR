@@ -83,6 +83,7 @@ TEST(CorrectionModelTest, BeyondThirtyCentimetreCapNotChased)
 TEST(CorrectionModelTest, JitterInsideDeadbandNotChased)
 {
 	std::vector<Eigen::Vector3d> drift;
+	drift.reserve(200);
 	for (int i = 0; i < 200; ++i)
 		drift.emplace_back(0.002 * std::sin(i * 0.5), 0.0, 0.0); // <= 2 mm < 3 mm band
 	WitnessDriftOptions opts;

@@ -201,6 +201,8 @@ inline CorrectionModelResult RunCorrectionModel(const std::vector<Eigen::Vector3
 	const double capMm = opts.correctionMaxM * 1000.0;
 	std::vector<double> su;
 	std::vector<double> sc;
+	su.reserve(unc.size());
+	sc.reserve(unc.size());
 	for (std::size_t i = 0; i < unc.size(); ++i) {
 		if (unc[i] < capMm) {
 			su.push_back(unc[i]);
