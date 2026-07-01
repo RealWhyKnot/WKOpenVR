@@ -510,6 +510,18 @@ void CCal_DrawSettings()
 		ImGui::SetTooltip("Re-run the first-run setup wizard. Useful after changing your hardware\n"
 		                  "(adding/removing a tracking system) or if you want to start fresh.");
 	}
+	ImGui::SameLine();
+	if (ImGui::Button("Clear head-tracker offset")) {
+		CalCtx.headMount.offsetCalibrated = false;
+		CalCtx.headMount.offsetWitnessAutoCaptured = false;
+		CalCtx.headMount.headFromTracker = Eigen::AffineCompact3d::Identity();
+		CalCtx.NoteHeadMountOffsetChanged();
+		SaveProfile(CalCtx);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Clear the stored headset<->head-tracker offset (manual or auto-captured).\n"
+		                  "Use if the offset was set wrong; re-run the offset wizard to set a new one.");
+	}
 	ImGui::EndGroupPanel();
 
 	// Section: Contributors credits

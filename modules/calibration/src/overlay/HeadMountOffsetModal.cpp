@@ -387,6 +387,7 @@ bool DrawOffsetModal()
 				if (ImGui::Button("Save##hmt_save")) {
 					CalCtx.headMount.headFromTracker = s.lastResult.headFromTracker;
 					CalCtx.headMount.offsetCalibrated = true;
+					CalCtx.headMount.offsetWitnessAutoCaptured = false; // manual offset: guard must not auto-invalidate
 					CalCtx.NoteHeadMountOffsetChanged();
 					const bool seededRelativeLock = CCal_SeedHeadMountProxyRelativeLock("offset_save");
 					SaveProfile(CalCtx);

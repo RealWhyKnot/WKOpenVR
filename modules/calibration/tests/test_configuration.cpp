@@ -641,6 +641,8 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::Off) << "v3 profile must default head_mount.mode to Off";
 	EXPECT_TRUE(ctx.headMount.trackerSerial.empty()) << "v3 profile must default head_mount.trackerSerial to empty";
 	EXPECT_FALSE(ctx.headMount.offsetCalibrated) << "v3 profile must default head_mount.offsetCalibrated to false";
+	EXPECT_FALSE(ctx.headMount.offsetWitnessAutoCaptured)
+	    << "profile without the key must default offsetWitnessAutoCaptured to false (manual offset)";
 	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
 	EXPECT_FALSE(ctx.headMount.experimentalAutoCorrectOffset)
 	    << "v3 profile must default experimental head-mount auto-correct to false";
@@ -669,6 +671,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.trackerSerial = "LHR-AABBCCDD";
 	src.headMount.trackerTrackingSystem = "lighthouse";
 	src.headMount.offsetCalibrated = true;
+	src.headMount.offsetWitnessAutoCaptured = true;
 	src.headMount.autoCorrectOffset = false;
 	src.headMount.experimentalAutoCorrectOffset = true;
 	src.headMount.experimentalWitnessAutoCalibrate = true;
@@ -708,6 +711,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_EQ(dst.headMount.trackerTrackingSystem, "lighthouse");
 	EXPECT_TRUE(dst.headMount.hideTracker);
 	EXPECT_TRUE(dst.headMount.offsetCalibrated);
+	EXPECT_TRUE(dst.headMount.offsetWitnessAutoCaptured);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
 	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
 	EXPECT_TRUE(dst.headMount.experimentalWitnessAutoCalibrate);

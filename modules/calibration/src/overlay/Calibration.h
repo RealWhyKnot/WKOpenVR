@@ -177,6 +177,10 @@ struct HeadMountConfig
 	Eigen::AffineCompact3d headFromTracker = Eigen::AffineCompact3d::Identity();
 	bool hideTracker = true;
 	bool offsetCalibrated = false;
+	// True only when offsetCalibrated was auto-captured by the witness path (T1),
+	// not the manual offset wizard. Gates the runaway guard's auto-invalidate so a
+	// manually-set offset is never clobbered. Default false => treated as manual.
+	bool offsetWitnessAutoCaptured = false;
 	bool autoCorrectOffset = true;
 	bool experimentalAutoCorrectOffset = false;
 	// Experimental witness-based continuous drift correction (default OFF).

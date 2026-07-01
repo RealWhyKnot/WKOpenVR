@@ -95,4 +95,60 @@ inline Eigen::Vector3d CorrectionDeltaCm(const Eigen::Vector3d& localOffset, con
 	return (hmdWorldRot * deltaLocal) * 100.0;
 }
 
+// Runaway / non-convergence guard. The per-tick step is already capped (slew +
+// 30 cm error gate), but the loop can still walk the calibration away without
+// bound if it fights the solver against a bad baseline: field logs showed 56.8 cm
+// applied while the measured drift never fell below ~42 mm. Two independent trips
+// bound that: a hard cumulative cap, and a "corrected a lot but drift never shrank
+// over a window" convergence check. On a trip the caller re-baselines (a witness-
+// captured offset) and backs off -- self-healing, no user action.
+constexpr double kMaxCumulativeCorrectionM = 0.20; // below the 0.30 m reloc cap; above any legit shrinking total
+constexpr double kNonConvergeWindowSec = 60.0;
+constexpr double kNonConvergeMinAppliedCm = 5.0; // only judge convergence once this much was applied in-window
+constexpr double kNonConvergeMinDriftMm = 20.0;  // drift still this high after correcting => loop not working
+
+struct RunawayGuardState
+{
+	double appliedTotalCm = 0.0;
+	double windowStartTime = -1.0;
+	double appliedAtWindowStartCm = 0.0;
+	double lastDriftMm = 0.0;
+};
+
+enum class GuardVerdict
+{
+	Ok,
+	TripCumulative,
+	TripNonConverge
+};
+
+// Evaluate the guard for this correction tick. `appliedTotalCm` is the cumulative
+// applied correction, `driftMm` the current witness-vs-calibration drift, `now`
+// the tick time. Advances the convergence window in place. Trips when cumulative
+// meets the cap, or when a full window elapsed in which >= kNonConvergeMinAppliedCm
+// was applied yet drift stayed >= kNonConvergeMinDriftMm.
+inline GuardVerdict EvaluateRunawayGuard(RunawayGuardState& g, double appliedTotalCm, double driftMm, double now)
+{
+	g.appliedTotalCm = appliedTotalCm;
+	g.lastDriftMm = driftMm;
+	if (appliedTotalCm * 0.01 >= kMaxCumulativeCorrectionM) return GuardVerdict::TripCumulative;
+	if (g.windowStartTime < 0.0) {
+		g.windowStartTime = now;
+		g.appliedAtWindowStartCm = appliedTotalCm;
+	}
+	if (now - g.windowStartTime >= kNonConvergeWindowSec) {
+		const bool wasCorrecting = (appliedTotalCm - g.appliedAtWindowStartCm) >= kNonConvergeMinAppliedCm;
+		const bool notShrinking = driftMm >= kNonConvergeMinDriftMm;
+		g.windowStartTime = now; // reset the window regardless of verdict
+		g.appliedAtWindowStartCm = appliedTotalCm;
+		if (wasCorrecting && notShrinking) return GuardVerdict::TripNonConverge;
+	}
+	return GuardVerdict::Ok;
+}
+
+inline void ResetRunawayGuard(RunawayGuardState& g)
+{
+	g = RunawayGuardState{};
+}
+
 } // namespace spacecal::witness_correction

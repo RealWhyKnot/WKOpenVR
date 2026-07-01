@@ -901,6 +901,7 @@ struct WitnessCorrectionRuntime
 	double lastCorrectionTime = -1.0;
 	double lastLogTime = -1.0;
 	double appliedTotalCm = 0.0;
+	spacecal::witness_correction::RunawayGuardState guard;
 };
 WitnessCorrectionRuntime g_witnessCorrection;
 } // namespace
@@ -911,6 +912,8 @@ static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time
 	const bool wantCorrection = ctx.headMount.experimentalWitnessCorrection;
 	auto bail = [&]() {
 		g_witnessCorrection.accum.Reset();
+		spacecal::witness_correction::ResetRunawayGuard(g_witnessCorrection.guard);
+		g_witnessCorrection.appliedTotalCm = 0.0;
 	};
 
 	if (!wantAutoCal && !wantCorrection) return bail();
@@ -934,9 +937,25 @@ static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time
 	const Eigen::Affine3d localOffsetPose = hmdRef.inverse() * (C * trackerTgt);
 	const Eigen::Vector3d localOffset = localOffsetPose.translation();
 
-	// T1: auto-calibrate the baseline HMD<->witness offset if none exists.
+	// Settled gate for both T1 (baseline capture) and T2 (correction): the
+	// calibration must be settled so the baseline is never snapshotted mid-motion
+	// and the correction never fights the active solver (the field runaway was a
+	// not-settled tug-of-war). These auto-lock inputs are one CalibrationTick
+	// (~0.3 s) old -- this tick runs before CollectSample/UpdateAutoLockDetector --
+	// which is conservative (only delays enabling, never a false "settled").
+	const double secsSinceLastFlip = ctx.autoLockLastFlipTime > 0.0 ? (time - ctx.autoLockLastFlipTime) : 0.0;
+	const bool settled = spacecal::autolock::IsSettled(ctx.autoLockEffectivelyLocked, g_lastAutoLockTranslMad,
+	                                                   ctx.autoLockMadFloor, secsSinceLastFlip);
+
+	// T1: auto-calibrate the baseline HMD<->witness offset if none exists. Only
+	// accumulate while settled; drop a partial window if the calibration leaves the
+	// settled band so no mid-motion sample survives into the baseline.
 	if (!ctx.headMount.offsetCalibrated) {
 		if (!wantAutoCal) return;
+		if (!settled) {
+			g_witnessCorrection.accum.Reset();
+			return;
+		}
 		g_witnessCorrection.accum.Add(localOffset, time);
 		if (g_witnessCorrection.accum.Ready(time)) {
 			Eigen::AffineCompact3d savedLocalOffset;
@@ -944,6 +963,7 @@ static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time
 			savedLocalOffset.translation() = g_witnessCorrection.accum.Mean();
 			ctx.headMount.headFromTracker = Eigen::AffineCompact3d(savedLocalOffset.inverse());
 			ctx.headMount.offsetCalibrated = true;
+			ctx.headMount.offsetWitnessAutoCaptured = true; // witness-captured => guard may auto-invalidate
 			ctx.NoteHeadMountOffsetChanged();
 			SaveProfile(ctx);
 			const Eigen::Vector3d bcm = g_witnessCorrection.accum.Mean() * 100.0;
@@ -958,8 +978,12 @@ static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time
 		return;
 	}
 
-	// T2: apply the slew-limited correction between paired-motion solves.
+	// T2: apply the slew-limited correction between paired-motion solves. Only
+	// while settled, so it never fights the active solver (the field 56.8 cm
+	// runaway was a not-settled tug-of-war). The runaway guard below bounds any
+	// residual divergence and re-baselines a bad witness offset with no user action.
 	if (!wantCorrection) return;
+	if (!settled) return;
 	const Eigen::Vector3d baselineOffset = Eigen::Affine3d(ctx.headMount.headFromTracker.inverse()).translation();
 	const double dt = (g_witnessCorrection.lastCorrectionTime > 0.0 && time > g_witnessCorrection.lastCorrectionTime)
 	                      ? (time - g_witnessCorrection.lastCorrectionTime)
@@ -973,9 +997,35 @@ static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time
 	ScanAndApplyProfile(ctx, /*snap=*/false, "witness_correction");
 	g_witnessCorrection.appliedTotalCm += deltaCm.norm();
 
+	const double driftMm = (localOffset - baselineOffset).norm() * 1000.0;
+	const auto verdict = spacecal::witness_correction::EvaluateRunawayGuard(
+	    g_witnessCorrection.guard, g_witnessCorrection.appliedTotalCm, driftMm, time);
+	if (verdict != spacecal::witness_correction::GuardVerdict::Ok) {
+		// Runaway or non-convergence. Back off, and if the baseline was witness-
+		// captured, invalidate it so T1 re-captures a fresh one next settled window
+		// (self-heal, zero user action). A manual offset is the user's declared
+		// truth -- back off but preserve it.
+		const bool witnessCaptured = ctx.headMount.offsetWitnessAutoCaptured;
+		char buf[224];
+		std::snprintf(
+		    buf, sizeof buf, "witness_guard_tripped: reason=%s applied_total_cm=%.2f drift_mm=%.2f witness_captured=%d",
+		    verdict == spacecal::witness_correction::GuardVerdict::TripCumulative ? "cumulative" : "non_converge",
+		    g_witnessCorrection.appliedTotalCm, driftMm, witnessCaptured ? 1 : 0);
+		Metrics::WriteLogAnnotation(buf);
+		if (witnessCaptured) {
+			ctx.headMount.offsetCalibrated = false;
+			ctx.headMount.offsetWitnessAutoCaptured = false;
+			ctx.NoteHeadMountOffsetChanged();
+			SaveProfile(ctx);
+		}
+		g_witnessCorrection.accum.Reset();
+		spacecal::witness_correction::ResetRunawayGuard(g_witnessCorrection.guard);
+		g_witnessCorrection.appliedTotalCm = 0.0;
+		return;
+	}
+
 	if (time - g_witnessCorrection.lastLogTime >= 1.0) {
 		g_witnessCorrection.lastLogTime = time;
-		const double driftMm = (localOffset - baselineOffset).norm() * 1000.0;
 		char buf[256];
 		std::snprintf(buf, sizeof buf,
 		              "witness_correction_applied: drift_mm=%.2f step_mm=%.3f mad_floor_mm=%.2f"

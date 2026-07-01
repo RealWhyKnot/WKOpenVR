@@ -358,6 +358,10 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 		hm.trackerTrackingSystem = obj["tracker_tracking_system"].get<std::string>();
 	if (obj["hide_tracker"].is<bool>()) hm.hideTracker = obj["hide_tracker"].get<bool>();
 	if (obj["offset_calibrated"].is<bool>()) hm.offsetCalibrated = obj["offset_calibrated"].get<bool>();
+	// Missing key (older profiles, manual-wizard offsets) => false => treated as a
+	// manual offset the runaway guard will not auto-invalidate.
+	if (obj["offset_witness_auto_captured"].is<bool>())
+		hm.offsetWitnessAutoCaptured = obj["offset_witness_auto_captured"].get<bool>();
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
 	if (obj["experimental_auto_correct_offset"].is<bool>())
 		hm.experimentalAutoCorrectOffset = obj["experimental_auto_correct_offset"].get<bool>();
@@ -437,6 +441,7 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	obj["tracker_tracking_system"].set<std::string>(hm.trackerTrackingSystem);
 	bool hide = hm.hideTracker;
 	bool offcal = hm.offsetCalibrated;
+	bool offWitnessAuto = hm.offsetWitnessAutoCaptured;
 	bool autoCorrect = hm.autoCorrectOffset;
 	bool experimentalAutoCorrect = hm.experimentalAutoCorrectOffset;
 	bool experimentalWitnessAutoCal = hm.experimentalWitnessAutoCalibrate;
@@ -444,6 +449,7 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
+	obj["offset_witness_auto_captured"].set<bool>(offWitnessAuto);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
 	obj["experimental_auto_correct_offset"].set<bool>(experimentalAutoCorrect);
 	obj["experimental_witness_auto_calibrate"].set<bool>(experimentalWitnessAutoCal);

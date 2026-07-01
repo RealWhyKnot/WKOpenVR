@@ -83,6 +83,7 @@ inline bool BindHeadMountToContinuousTarget(CalibrationContext& ctx)
 			hm.offsetCalibrated = false;
 			changed = true;
 		}
+		hm.offsetWitnessAutoCaptured = false;
 		hm.headFromTracker = Eigen::AffineCompact3d::Identity();
 		ctx.NoteHeadMountOffsetChanged();
 	}

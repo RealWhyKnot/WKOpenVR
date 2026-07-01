@@ -12,6 +12,10 @@
 
 using spacecal::witness_correction::BaselineAccumulator;
 using spacecal::witness_correction::CorrectionDeltaCm;
+using spacecal::witness_correction::EvaluateRunawayGuard;
+using spacecal::witness_correction::GuardVerdict;
+using spacecal::witness_correction::ResetRunawayGuard;
+using spacecal::witness_correction::RunawayGuardState;
 
 namespace {
 constexpr double kDt = 1.0 / 3.5; // continuous-cal cadence
@@ -105,4 +109,62 @@ TEST(WitnessCorrectionDeltaTest, AdaptiveDeadbandWidensWithMadFloor)
 	    CorrectionDeltaCm(drift, Eigen::Vector3d::Zero(), Eigen::Matrix3d::Identity(), 0.012, kDt);
 	EXPECT_GT(lowFloor.norm(), 0.0);
 	EXPECT_LT(highFloor.norm(), 1e-9) << "a wide mad floor suppresses correction of small drift";
+}
+
+// --- Runaway / non-convergence guard (the safety net that bounds the field
+// 56.8 cm divergence). Cap = 0.20 m; window = 60 s / >=5 cm applied / >=20 mm drift.
+
+TEST(WitnessRunawayGuardTest, TripsOnCumulativeCap)
+{
+	RunawayGuardState g;
+	// 25 cm cumulative exceeds the 20 cm cap regardless of drift or window.
+	EXPECT_EQ(EvaluateRunawayGuard(g, 25.0, 5.0, 0.0), GuardVerdict::TripCumulative);
+}
+
+TEST(WitnessRunawayGuardTest, OkBelowCapWithinWindow)
+{
+	RunawayGuardState g;
+	EXPECT_EQ(EvaluateRunawayGuard(g, 3.0, 5.0, 0.0), GuardVerdict::Ok);
+}
+
+TEST(WitnessRunawayGuardTest, NonConvergeTripsWhenDriftStaysHigh)
+{
+	RunawayGuardState g;
+	EXPECT_EQ(EvaluateRunawayGuard(g, 0.0, 42.0, 0.0), GuardVerdict::Ok); // opens the window
+	// 61 s later: >=5 cm applied yet drift never fell below 20 mm -> loop not working.
+	EXPECT_EQ(EvaluateRunawayGuard(g, 8.0, 42.0, 61.0), GuardVerdict::TripNonConverge);
+}
+
+TEST(WitnessRunawayGuardTest, NonConvergeNoTripWhenDriftShrinks)
+{
+	RunawayGuardState g;
+	EvaluateRunawayGuard(g, 0.0, 42.0, 0.0);
+	// Applied a lot, but drift dropped under the 20 mm floor -> the loop is working.
+	EXPECT_EQ(EvaluateRunawayGuard(g, 8.0, 5.0, 61.0), GuardVerdict::Ok);
+}
+
+TEST(WitnessRunawayGuardTest, NonConvergeNoTripWhenLittleApplied)
+{
+	RunawayGuardState g;
+	EvaluateRunawayGuard(g, 0.0, 42.0, 0.0);
+	// Only 2 cm applied over the window (<5 cm) -> not enough correction to judge.
+	EXPECT_EQ(EvaluateRunawayGuard(g, 2.0, 42.0, 61.0), GuardVerdict::Ok);
+}
+
+TEST(WitnessRunawayGuardTest, WindowResetsAndJudgesIndependently)
+{
+	RunawayGuardState g;
+	EvaluateRunawayGuard(g, 0.0, 42.0, 0.0);                                // window A opens
+	EXPECT_EQ(EvaluateRunawayGuard(g, 2.0, 42.0, 61.0), GuardVerdict::Ok);  // window A: <5 cm, resets to B at t=61
+	// Window B (from t=61): +8 cm applied, drift still high -> trips independently.
+	EXPECT_EQ(EvaluateRunawayGuard(g, 10.0, 42.0, 122.0), GuardVerdict::TripNonConverge);
+}
+
+TEST(WitnessRunawayGuardTest, ResetClears)
+{
+	RunawayGuardState g;
+	EvaluateRunawayGuard(g, 10.0, 42.0, 0.0);
+	ResetRunawayGuard(g);
+	EXPECT_EQ(g.appliedTotalCm, 0.0);
+	EXPECT_LT(g.windowStartTime, 0.0);
 }
