@@ -253,8 +253,12 @@ public sealed class FrameWriter(string shmemName, HostLogger logger) : IDisposab
     {
         int replaced = 0;
 
-        body.eye_openness_l = SanitizeUnit(body.eye_openness_l, 1.0f, ref replaced);
-        body.eye_openness_r = SanitizeUnit(body.eye_openness_r, 1.0f, ref replaced);
+        // Invalid openness falls back to neutral (0.5), not fully-open (1.0). A
+        // 1.0 fallback forces an eye wide open on bad data, which -- blended into
+        // the EyeLid OSC params -- reads as a stuck-open eye. 0.5 matches the pupil
+        // fallback, and eye_confidence below drops to 0 so consumers can gate.
+        body.eye_openness_l = SanitizeUnit(body.eye_openness_l, 0.5f, ref replaced);
+        body.eye_openness_r = SanitizeUnit(body.eye_openness_r, 0.5f, ref replaced);
         body.pupil_dilation_l = SanitizeUnit(body.pupil_dilation_l, 0.5f, ref replaced);
         body.pupil_dilation_r = SanitizeUnit(body.pupil_dilation_r, 0.5f, ref replaced);
         body.eye_confidence_l = SanitizeUnit(body.eye_confidence_l, 0.0f, ref replaced);

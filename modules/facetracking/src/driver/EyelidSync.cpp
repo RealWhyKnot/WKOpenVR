@@ -19,6 +19,17 @@ static constexpr float kWinkDwellMs = 120.f;   // ms asymmetry must hold
 static constexpr float kCloseTauMs = 18.f; // closing (eye shutting) -- fast attack
 static constexpr float kOpenTauMs = 70.f;  // opening (eye reopening) -- cosmetic
 
+// Ours expression slots for the eye-wide shapes (see
+// core/src/common/facetracking/UpstreamShapeMap.h: upstream EyeWideLeft[3] ->
+// ours 8, EyeWideRight[2] -> ours 9). These are synced alongside eye openness
+// because the VRChat EyeLid params blend eye_openness*0.75 + EyeWide*0.25, so an
+// asymmetric EyeWide would otherwise leak straight past the openness sync and
+// hold one lid open. They are kept in the ours array (not upstream_expressions)
+// because FaceSignalProcessor mirrors ours -> upstream after EyelidSync runs, so
+// a write to upstream here would be overwritten before OSC publish.
+static constexpr uint32_t kOursEyeWideLeft = 8;
+static constexpr uint32_t kOursEyeWideRight = 9;
+
 EyelidSync::EyelidSync()
     : wink_start_qpc_(0), wink_stable_(false), smooth_l_(0.5f), smooth_r_(0.5f), smooth_init_(false), last_qpc_(0),
       qpc_freq_{}
@@ -132,6 +143,24 @@ void EyelidSync::Apply(protocol::FaceTrackingFrameBody& frame, uint8_t strength_
 
 	frame.eye_openness_l = std::max(0.f, std::min(1.f, smooth_l_));
 	frame.eye_openness_r = std::max(0.f, std::min(1.f, smooth_r_));
+
+	// Sync the per-eye EyeWide shapes toward the same eyelid target. The EyeLid
+	// OSC params (FaceOscPublisher) are eye_openness*0.75 + EyeWide*0.25; without
+	// this, a one-eye EyeWide spike (a common tracker artefact) rides through the
+	// 0.25 term and keeps that lid open even though openness is synchronized. A
+	// synced-closed eye cannot be "wide", so pull both toward min (most-closed) or
+	// max (most-open) by the same strength k. Gated on expression validity because
+	// EyeWide is an expression shape (flag 0x2), and written to the ours array so
+	// the later ours->upstream mirror carries it to the published value.
+	if (frame.flags & 0x2u) {
+		const float wide_l = frame.expressions[kOursEyeWideLeft];
+		const float wide_r = frame.expressions[kOursEyeWideRight];
+		const float wide_target = (sync_mode == protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN)
+		                              ? std::max(wide_l, wide_r)
+		                              : std::min(wide_l, wide_r);
+		frame.expressions[kOursEyeWideLeft] = wide_l + k * (wide_target - wide_l);
+		frame.expressions[kOursEyeWideRight] = wide_r + k * (wide_target - wide_r);
+	}
 }
 
 } // namespace facetracking

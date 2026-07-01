@@ -826,6 +826,12 @@ public sealed class SubprocessManager : IDisposable
                 int clampedSignals = 0;
                 if (shapes is not null)
                 {
+                    // Clear first so a shape that fails validation this frame reads
+                    // as 0 (inactive) rather than retaining the previous frame's
+                    // value. A stale upstream shape -- e.g. a one-eye EyeWide spike --
+                    // otherwise leaks into blended OSC outputs like EyeLid and holds
+                    // a lid open after the tracker has moved on.
+                    Array.Clear(upstreamShapes, 0, upstreamShapes.Length);
                     int n = Math.Min(shapes.Length, upstreamShapes.Length);
                     for (int i = 0; i < n; i++)
                     {
@@ -844,6 +850,21 @@ public sealed class SubprocessManager : IDisposable
                         }
                     }
                 }
+
+                // Reset per-frame eye state to neutral + zero confidence before
+                // decoding. A decode failure below then publishes an honest neutral
+                // value instead of silently reusing the previous frame's, which
+                // pinned a lid / gaze / pupil open when tracking briefly dropped.
+                // Valid decodes overwrite these and raise confidence to 1. OriginHmd
+                // is a fixed IPD offset (not tracked per-frame) so it is left alone.
+                eyeSink.LeftOpenness = 0.5f;
+                eyeSink.RightOpenness = 0.5f;
+                eyeSink.PupilDilationLeft = 0.5f;
+                eyeSink.PupilDilationRight = 0.5f;
+                eyeSink.Left.DirHmd = new Vector3(0.0f, 0.0f, -1.0f);
+                eyeSink.Right.DirHmd = new Vector3(0.0f, 0.0f, -1.0f);
+                eyeSink.Left.Confidence = 0.0f;
+                eyeSink.Right.Confidence = 0.0f;
 
                 // Eye data.
                 int validEyeSignals = 0;

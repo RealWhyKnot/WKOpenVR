@@ -175,3 +175,78 @@ TEST(EyelidSync, SmootherFastCloseSlowOpen)
 	EXPECT_LT(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 0.0), 0.8f);
 	EXPECT_FLOAT_EQ(facetracking::EyelidSync::SmoothToward(0.2f, 0.8f, 1.0), 0.8f);
 }
+
+// The VRChat EyeLid params blend eye_openness*0.75 + EyeWide*0.25, so eyelid sync
+// must equalize the per-eye EyeWide shapes too or a one-eye EyeWide spike keeps
+// that lid open despite openness being synced. EyeWide lives in the ours
+// expression array: EyeWideLeft=8, EyeWideRight=9 (UpstreamShapeMap.h). The block
+// is gated on expression validity (flag 0x2).
+namespace {
+constexpr int kOursEyeWideLeftIdx = 8;
+constexpr int kOursEyeWideRightIdx = 9;
+
+protocol::FaceTrackingFrameBody MakeFrameWithWide(float lid_l, float lid_r, float wide_l, float wide_r)
+{
+	protocol::FaceTrackingFrameBody f = MakeFrame(lid_l, lid_r);
+	f.flags = 0x1 | 0x2; // eye + expression valid
+	f.expressions[kOursEyeWideLeftIdx] = wide_l;
+	f.expressions[kOursEyeWideRightIdx] = wide_r;
+	return f;
+}
+} // namespace
+
+TEST(EyelidSync, EyeWideSyncedToMostClosed)
+{
+	facetracking::EyelidSync sync;
+	// Left eye reports fully wide, right eye not wide. Most-closed sync must pull
+	// both EyeWide values to the more-closed (min) target so the EyeLid blend is
+	// symmetric. Direct blend (no smoother) collapses in one call at strength 100.
+	protocol::FaceTrackingFrameBody f = MakeFrameWithWide(0.0f, 0.0f, 1.0f, 0.0f);
+	sync.Apply(f, 100, false, protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED);
+
+	EXPECT_NEAR(f.expressions[kOursEyeWideLeftIdx], 0.0f, 1e-4f);
+	EXPECT_NEAR(f.expressions[kOursEyeWideRightIdx], 0.0f, 1e-4f);
+}
+
+TEST(EyelidSync, EyeWideSyncedToMostOpen)
+{
+	facetracking::EyelidSync sync;
+	protocol::FaceTrackingFrameBody f = MakeFrameWithWide(0.9f, 0.9f, 1.0f, 0.0f);
+	sync.Apply(f, 100, false, protocol::FACETRACKING_EYELID_SYNC_MOST_OPEN);
+
+	EXPECT_NEAR(f.expressions[kOursEyeWideLeftIdx], 1.0f, 1e-4f);
+	EXPECT_NEAR(f.expressions[kOursEyeWideRightIdx], 1.0f, 1e-4f);
+}
+
+TEST(EyelidSync, EyeWidePartialBlendAtHalfStrength)
+{
+	facetracking::EyelidSync sync;
+	// Strength 50, most-closed: each EyeWide moves halfway to min(1,0)=0.
+	protocol::FaceTrackingFrameBody f = MakeFrameWithWide(0.0f, 0.0f, 1.0f, 0.0f);
+	sync.Apply(f, 50, false, protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED);
+
+	EXPECT_NEAR(f.expressions[kOursEyeWideLeftIdx], 0.5f, 1e-4f);
+	EXPECT_NEAR(f.expressions[kOursEyeWideRightIdx], 0.0f, 1e-4f);
+}
+
+TEST(EyelidSync, EyeWideUntouchedWhenExpressionInvalid)
+{
+	facetracking::EyelidSync sync;
+	// Eye valid but expression flag (0x2) clear: EyeWide must be left alone.
+	protocol::FaceTrackingFrameBody f = MakeFrameWithWide(0.0f, 0.0f, 1.0f, 0.0f);
+	f.flags = 0x1; // drop expression-valid bit
+	sync.Apply(f, 100, false, protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED);
+
+	EXPECT_FLOAT_EQ(f.expressions[kOursEyeWideLeftIdx], 1.0f);
+	EXPECT_FLOAT_EQ(f.expressions[kOursEyeWideRightIdx], 0.0f);
+}
+
+TEST(EyelidSync, EyeWideUntouchedAtStrengthZero)
+{
+	facetracking::EyelidSync sync;
+	protocol::FaceTrackingFrameBody f = MakeFrameWithWide(0.0f, 0.0f, 1.0f, 0.0f);
+	sync.Apply(f, 0, false, protocol::FACETRACKING_EYELID_SYNC_MOST_CLOSED);
+
+	EXPECT_FLOAT_EQ(f.expressions[kOursEyeWideLeftIdx], 1.0f);
+	EXPECT_FLOAT_EQ(f.expressions[kOursEyeWideRightIdx], 0.0f);
+}
