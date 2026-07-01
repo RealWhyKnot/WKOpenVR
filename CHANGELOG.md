@@ -264,6 +264,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Use head-mount witness for recovery in all tracking styles (12ed38a)
 - **release:** Use central date for release automation (1b13080)
 - **calibration:** Reserve witness vectors for clang-tidy (4e8e5f4)
+- **dynamicres:** Lower only on real GPU drops and reconcile presets on load (1ed974e)
+- **facetracking:** Keep eye-wide in sync with eyelids and clear stale host frames (1c9fea2)
 
 ---
 
