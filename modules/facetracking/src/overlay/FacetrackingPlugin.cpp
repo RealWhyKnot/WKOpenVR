@@ -282,6 +282,8 @@ void FacetrackingPlugin::PushConfigToDriver()
 		cfg.vergence_lock_strength = static_cast<uint8_t>(p.vergence_lock_strength);
 		cfg.gaze_smoothing = static_cast<uint8_t>(p.gaze_smoothing);
 		cfg.openness_smoothing = static_cast<uint8_t>(p.openness_smoothing);
+		cfg.eye_close_assist_enabled = p.eye_close_assist_enabled ? 1 : 0;
+		cfg.eye_close_assist_strength = static_cast<uint8_t>(std::clamp(p.eye_close_assist_strength, 0, 100));
 		{
 			const int mouth = std::clamp(p.smile_mouth_open_strength, 0, 100);
 			const int brow = std::clamp(p.eyelid_brow_sync_strength, 0, 100);
@@ -317,12 +319,13 @@ void FacetrackingPlugin::PushConfigToDriver()
 		last_error_.clear();
 		FT_LOG_OVL("[ipc] config pushed: osc_enabled=%d active_module='%s' eyelid=%d/%d/mode=%d "
 		           "vergence=%d/%d calib_mode=%d corr=0x%02x corr_strengths=0x%04x "
-		           "smooth(gaze=%d open=%d)",
+		           "smooth(gaze=%d open=%d) eye_close=%d/%d",
 		           (int)cfg.output_osc_enabled, cfg.active_module_uuid, (int)cfg.eyelid_sync_enabled,
 		           (int)cfg.eyelid_sync_strength, (int)cfg.eyelid_sync_mode, (int)cfg.vergence_lock_enabled,
 		           (int)cfg.vergence_lock_strength, (int)cfg.continuous_calib_mode,
 		           (int)cfg.expression_correction_flags, (int)cfg.expression_correction_strengths,
-		           (int)cfg.gaze_smoothing, (int)cfg.openness_smoothing);
+		           (int)cfg.gaze_smoothing, (int)cfg.openness_smoothing, (int)cfg.eye_close_assist_enabled,
+		           (int)cfg.eye_close_assist_strength);
 		PushShapeTuningToDriver();
 	}
 	catch (const std::exception& e) {
@@ -426,16 +429,14 @@ bool FacetrackingPlugin::SendShapeTuningRequest(uint16_t index, FaceShapeTuningV
 	protocol::Request req(protocol::RequestSetFaceShapeTuning);
 	auto& tune = req.setFaceShapeTuning;
 	tune.index = index;
-	tune.scale_percent = static_cast<uint16_t>(value.scale_percent);
-	tune.min_percent = static_cast<uint16_t>(value.min_percent);
-	tune.max_percent = static_cast<uint16_t>(value.max_percent);
+	tune.min_percent = static_cast<int16_t>(value.min_percent);
+	tune.max_percent = static_cast<int16_t>(value.max_percent);
 
 	auto resp = ipc_.SendBlocking(req);
 	if (resp.type != protocol::ResponseSuccess) {
 		last_error_ = "Driver rejected SetFaceShapeTuning (type=" + std::to_string(resp.type) + ")";
-		FT_LOG_OVL("[ipc] driver rejected face shape tuning: index=%u scale=%u min=%u max=%u type=%d", (unsigned)index,
-		           (unsigned)value.scale_percent, (unsigned)value.min_percent, (unsigned)value.max_percent,
-		           (int)resp.type);
+		FT_LOG_OVL("[ipc] driver rejected face shape tuning: index=%u min=%d max=%d type=%d", (unsigned)index,
+		           (int)value.min_percent, (int)value.max_percent, (int)resp.type);
 		return false;
 	}
 	return true;
@@ -481,8 +482,7 @@ void FacetrackingPlugin::SetGlobalShapeTuning(uint32_t index, FaceShapeTuningVal
 
 	FaceShapeTuningValue& current = profile_.current.global_shape_tuning[index];
 	const FaceShapeTuningValue old = ClampFaceShapeTuningValue(current);
-	if (old.scale_percent == value.scale_percent && old.min_percent == value.min_percent &&
-	    old.max_percent == value.max_percent) {
+	if (old.min_percent == value.min_percent && old.max_percent == value.max_percent) {
 		return;
 	}
 
@@ -506,8 +506,7 @@ void FacetrackingPlugin::SetAvatarShapeTuning(const std::string& avatarKey, uint
 	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
 	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, normalized);
 	const FaceShapeTuningValue old = ClampFaceShapeTuningValue(values[index]);
-	if (old.scale_percent == value.scale_percent && old.min_percent == value.min_percent &&
-	    old.max_percent == value.max_percent) {
+	if (old.min_percent == value.min_percent && old.max_percent == value.max_percent) {
 		return;
 	}
 
@@ -528,17 +527,6 @@ void FacetrackingPlugin::SetAvatarShapeTuning(const std::string& avatarKey, uint
 	}
 }
 
-void FacetrackingPlugin::SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent)
-{
-	if (index >= protocol::FACETRACKING_EXPRESSION_COUNT) return;
-	const int value = std::clamp(percent, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
-	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
-	FaceShapeScaleArray& values = ShapeTuningForAvatar(profile_.current, normalized);
-	FaceShapeTuningValue next = values[index];
-	next.scale_percent = value;
-	SetAvatarShapeTuning(normalized, index, next);
-}
-
 void FacetrackingPlugin::ResetAvatarShapeTuning(const std::string& avatarKey)
 {
 	const std::string normalized = NormalizeAvatarShapeTuningKey(avatarKey);
@@ -553,11 +541,6 @@ void FacetrackingPlugin::ResetGlobalShapeTuning()
 {
 	profile_.current.global_shape_tuning = DefaultFaceShapeScales();
 	PushShapeTuningToDriver();
-}
-
-void FacetrackingPlugin::SetCurrentAvatarShapeScale(uint32_t index, int percent)
-{
-	SetAvatarShapeScale(CurrentAvatarTuningKey(), index, percent);
 }
 
 void FacetrackingPlugin::ResetCurrentAvatarShapeTuning()

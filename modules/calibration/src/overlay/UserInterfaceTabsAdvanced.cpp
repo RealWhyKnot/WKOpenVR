@@ -15,6 +15,11 @@
 void DrawVectorElement(const std::string id, const char* text, double* value, int defaultValue = 0,
                        const char* defaultValueStr = " 0 ");
 
+// Forward decl (defined in Calibration.cpp). Declared locally rather than via
+// CalibrationInternal.h because that header pulls in <openvr_driver.h>, which
+// conflicts with the <openvr.h> this translation unit already includes.
+void SendFreezeAllTracking();
+
 static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max,
                             int flags = ImGuiSliderFlags_AlwaysClamp)
 {
@@ -446,6 +451,31 @@ void CCal_DrawSettings()
 			ImVec2 panel_size_inner{panel_size.x - 11 * 2, 0};
 			ImGui::BeginGroupPanel("Playspace scale", panel_size_inner);
 			DrawVectorElement("cc_playspace_scale", "Playspace Scale", &CalCtx.calibratedScale, 1, " 1 ");
+			ImGui::EndGroupPanel();
+		}
+
+		{
+			ImGui::BeginGroupPanel("Freeze all tracking", panel_size);
+			bool frozen = CalCtx.freezeAllTracking;
+			if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+			        "Freeze all tracking##freeze_all_tracking", &frozen,
+			        "Hold every tracker and controller perfectly still until you turn this off -- a time freeze.\n\n"
+			        "While frozen your controllers can't aim the laser, so toggle it back off from this window on the "
+			        "desktop, or with the Ctrl+Alt+F hotkey.")) {
+				CalCtx.freezeAllTracking = frozen;
+				SendFreezeAllTracking();
+				Metrics::LogAnnotationf("freeze_all_tracking: source=ui frozen=%d include_hmd=%d",
+				                        (int)CalCtx.freezeAllTracking, (int)CalCtx.freezeIncludeHmd);
+			}
+			ImGui::Indent();
+			if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+			        "Include headset##freeze_include_hmd", &CalCtx.freezeIncludeHmd,
+			        "Also freeze the headset view. This is the literal time freeze, but the rendered image locks to "
+			        "your head (turning your head won't update the view), which can be disorienting. Default off.")) {
+				if (CalCtx.freezeAllTracking) SendFreezeAllTracking();
+				SaveProfile(CalCtx);
+			}
+			ImGui::Unindent();
 			ImGui::EndGroupPanel();
 		}
 

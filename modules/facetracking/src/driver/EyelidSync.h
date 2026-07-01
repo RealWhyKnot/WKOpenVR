@@ -37,6 +37,13 @@ public:
 	// tests.
 	static float SmoothToward(float current, float target, double dtSeconds);
 
+	// Pure "close knee" remap of one eye's openness (0 = closed, 1 = open) toward
+	// fully-closed. strength 0..100: 0 is identity; higher pulls a wider band of
+	// near-closed openness to exactly 0 so avatars whose eyes never fully shut can
+	// still blink. Monotonic in openness; openness == 1 stays 1. Applied per-eye
+	// before Apply() so a real wink stays asymmetric. Exposed static for tests.
+	static float ApplyCloseKnee(float openness, uint8_t strength);
+
 private:
 	// Wink-dwell timer: QPC tick at which the current asymmetric state started.
 	// 0 means no asymmetric state is in progress.

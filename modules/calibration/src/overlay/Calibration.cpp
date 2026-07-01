@@ -40,16 +40,17 @@
 // Called each CalibrationTick so capture runs independent of which tab is
 // visible. No-op when CaptureState is not Active.
 void CCal_TickBoundaryCapture();
-#include "TrackerLiveness.h"     // spacecal::liveness::* -- detect non-HMD calibration anchor
-                                 // going silent under SteamVR's "Running_OK + poseIsValid stays true
-                                 // while pose hash is frozen" disconnect path.
-#include "RotationMatrix3.h"     // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
-#include "AutoLockHysteresis.h"  // spacecal::autolock::VerdictWithHysteresis -- AUTO Lock
-                                 // hysteresis + stationary-gate constants and pure helpers.
-#include "WarmRestart.h"         // spacecal::warm_restart::ShouldEngage -- proximity-edge
-                                 // decision for the saved-profile snap path.
-#include "TargetStabilityGate.h" // spacecal::target_stability -- defer the continuous solve
-                                 // while the target tracking link is flapping.
+#include "TrackerLiveness.h"           // spacecal::liveness::* -- detect non-HMD calibration anchor
+                                       // going silent under SteamVR's "Running_OK + poseIsValid stays true
+                                       // while pose hash is frozen" disconnect path.
+#include "RotationMatrix3.h"           // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
+#include "AutoLockHysteresis.h"        // spacecal::autolock::VerdictWithHysteresis -- AUTO Lock
+#include "ContinuousPrecisionFusion.h" // spacecal::precision -- confidence-weighted continuous fusion
+                                       // hysteresis + stationary-gate constants and pure helpers.
+#include "WarmRestart.h"               // spacecal::warm_restart::ShouldEngage -- proximity-edge
+                                       // decision for the saved-profile snap path.
+#include "TargetStabilityGate.h"       // spacecal::target_stability -- defer the continuous solve
+                                       // while the target tracking link is flapping.
 
 #include <string>
 #include <vector>
@@ -1326,6 +1327,48 @@ CalibrationContext::Speed CalibrationContext::ResolvedCalibrationSpeed() const
 SCIPCClient Driver;
 protocol::DriverPoseShmem shmem;
 
+void SendFreezeAllTracking()
+{
+	protocol::Request req(protocol::RequestSetFreezeAllTracking);
+	req.freeze.frozen = CalCtx.freezeAllTracking;
+	req.freeze.includeHmd = CalCtx.freezeIncludeHmd;
+	try {
+		Driver.SendBlocking(req);
+	}
+	catch (const std::exception& e) {
+		char buf[200];
+		std::snprintf(buf, sizeof buf, "[freeze] state push failed: %s", e.what());
+		Metrics::WriteLogAnnotation(buf);
+	}
+}
+
+// Global freeze hotkey + heartbeat. Runs every CalibrationTick (before the tick's
+// pose-reactive work) so the hotkey works regardless of which tab is shown and
+// even when another app has focus (GetAsyncKeyState reads global key state). While
+// frozen, resend the state at ~1 Hz so the driver fails open to live tracking if
+// this overlay dies. Default chord: Ctrl+Alt+F.
+static void TickFreezeAllTracking(CalibrationContext& ctx, double time)
+{
+	const bool chordDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000) &&
+	                       (GetAsyncKeyState('F') & 0x8000);
+	static bool s_chordDownLast = false;
+	if (chordDown && !s_chordDownLast) {
+		ctx.freezeAllTracking = !ctx.freezeAllTracking;
+		SendFreezeAllTracking();
+		Metrics::LogAnnotationf("freeze_all_tracking: source=hotkey frozen=%d include_hmd=%d",
+		                        (int)ctx.freezeAllTracking, (int)ctx.freezeIncludeHmd);
+	}
+	s_chordDownLast = chordDown;
+
+	if (ctx.freezeAllTracking) {
+		static double s_lastHeartbeat = -1e9;
+		if (time - s_lastHeartbeat >= 1.0) {
+			s_lastHeartbeat = time;
+			SendFreezeAllTracking();
+		}
+	}
+}
+
 void InitCalibrator()
 {
 	Driver.Connect();
@@ -1431,6 +1474,11 @@ void StartContinuousCalibration(const char* reason)
 	CalCtx.hasAppliedCalibrationResult = false;
 	CalCtx.continuousStartSnapshot = CalCtx.CaptureProfileSnapshot();
 	CalCtx.lastAcceptedContinuousSnapshot = {};
+	// Seed the fusion confidence: a persisted (banked) calibration starts trusted,
+	// so a far-from-origin session can't wipe it; a fresh start earns confidence
+	// from its first candidate.
+	CalCtx.continuousConfidencePrecision = CalCtx.validProfile ? spacecal::precision::kSeedPriorPrecision : 0.0;
+	CalCtx.lastFusionGain = 1.0;
 	AssignTargets();
 	if (CalCtx.headMount.mode != HeadMountMode::Off || !CalCtx.headMount.trackerSerial.empty()) {
 		if (wkopenvr::headmount::BindHeadMountToContinuousTarget(CalCtx)) {
@@ -1517,6 +1565,8 @@ void EndContinuousCalibration()
 	}
 	CalCtx.continuousStartSnapshot = {};
 	CalCtx.lastAcceptedContinuousSnapshot = {};
+	CalCtx.continuousConfidencePrecision = 0.0;
+	CalCtx.lastFusionGain = 1.0;
 	// The selected snapshot above already persisted the final offset, so no
 	// throttled save is still pending.
 	CalCtx.continuousSaveDirty = false;
@@ -1553,6 +1603,15 @@ void CalibrationTick(double time)
 	}
 
 	auto& ctx = CalCtx;
+
+	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
+	// the toggle stays responsive and the driver keeps getting heartbeats. While
+	// frozen, hold everything: skip the rest of the pose-reactive tick so the
+	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
+	// destructive auto-recovery, especially when the HMD is left live).
+	TickFreezeAllTracking(ctx, time);
+	if (ctx.freezeAllTracking) return;
+
 	if ((time - ctx.timeLastTick) < 0.05) return;
 
 	// Resolve LockMode -> lockRelativePosition every tick before any code
@@ -3280,8 +3339,27 @@ void CalibrationTick(double time)
 			Metrics::WriteLogAnnotation(firstBuf);
 		}
 
-		ctx.calibratedRotation = calibration.EulerRotation();
-		ctx.calibratedTranslation = candidateTranslationCm;
+		if (inContinuousState) {
+			// Confidence-weighted fusion: treat this candidate as a measurement of
+			// the constant calibration C, weighted by its geometry precision. A
+			// far-from-origin candidate (large lever arm -> low precision) barely
+			// moves a well-established calibration; a near-origin one refines it.
+			// See ContinuousPrecisionFusion.h.
+			const Eigen::AffineCompact3d currentC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
+			const double measPrec = spacecal::precision::MeasurementPrecision(calibration.MeanSquaredLeverArmM2());
+			const double gain = spacecal::precision::FusionGain(ctx.continuousConfidencePrecision, measPrec);
+			const Eigen::AffineCompact3d fusedC =
+			    spacecal::precision::Fuse(currentC, calibration.Transformation(), gain);
+			ctx.continuousConfidencePrecision =
+			    std::min(ctx.continuousConfidencePrecision + measPrec, spacecal::precision::kMaxConfidence);
+			ctx.lastFusionGain = gain;
+			ctx.calibratedRotation = fusedC.rotation().eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
+			ctx.calibratedTranslation = fusedC.translation() * 100.0;
+		}
+		else {
+			ctx.calibratedRotation = calibration.EulerRotation();
+			ctx.calibratedTranslation = candidateTranslationCm;
+		}
 		ctx.refToTargetPose = calibration.RelativeTransformation();
 		ctx.relativePosCalibrated = calibration.isRelativeTransformationCalibrated();
 		if (inContinuousState && ctx.relativePosCalibrated && ctx.headMountNeedsFreshRelativePose) {

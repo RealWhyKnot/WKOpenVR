@@ -20,6 +20,18 @@
 
 namespace openvr_pair::common {
 
+// Pure decision for the dev-only sidecar hot-reload watch: should the supervisor
+// kill and respawn its host to pick up a rebuilt binary? True only when the host
+// is one we spawned ourselves (not attached to a prior-session process), we have
+// a spawn-time baseline, and the on-disk last-write time now differs. Extracted
+// as a free function so it can be unit-tested without a live process.
+inline bool ShouldHotReloadHost(bool attachedToExisting, bool haveHandle, uint64_t baselineWrite, uint64_t diskWrite)
+{
+	if (attachedToExisting || !haveHandle) return false;
+	if (baselineWrite == 0 || diskWrite == 0) return false;
+	return diskWrite != baselineWrite;
+}
+
 // Shared base for the C++ supervisors that spawn and manage feature-host
 // sidecar processes -- currently the facetracking C# host and the captions
 // C++ host.
@@ -144,6 +156,11 @@ private:
 	bool Spawn();
 	void Kill();
 	void MonitorLoop();
+
+	// Last-write time (FILETIME as a 64-bit value) of host_exe_path_ as it was
+	// when the currently tracked process was spawned. 0 when unknown/attached.
+	// Drives the dev-only hot-reload watch; see ShouldHotReloadHost.
+	uint64_t QueryExeWriteTime() const;
 	bool EnsureOwnerLease();
 	void HeartbeatOwnerLease(sidecar_owner::LeaseState state = sidecar_owner::LeaseState::Alive);
 	void MarkOwnerLeaseShuttingDown();
@@ -162,6 +179,7 @@ private:
 	bool attached_to_existing_ = false;
 	int consecutive_fast_exits_ = 0;
 	bool halted_ = false;
+	uint64_t watched_exe_write_ = 0; // exe mtime at last spawn; process_mutex_
 	uint32_t last_exit_code_ = 0;
 	std::string last_exit_description_;
 

@@ -127,6 +127,31 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_FALSE(dst.floorEnabled);
 }
 
+// v40 freeze-all-tracking: the "Include headset" preference persists; the active
+// freeze state is runtime-only and must never be written to the profile (a
+// persisted freeze would look like totally broken tracking on next launch).
+TEST(ConfigurationTest, FreezeIncludeHmdPersistsButActiveFreezeDoesNot)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;      // settings are only serialized for a valid profile
+	src.freezeIncludeHmd = true;  // preference: should persist
+	src.freezeAllTracking = true; // runtime state: must NOT persist
+
+	std::stringstream io;
+	WriteProfile(src, io);
+	const std::string json = io.str();
+	EXPECT_NE(json.find("freeze_include_hmd"), std::string::npos);
+	EXPECT_EQ(json.find("freeze_all_tracking"), std::string::npos)
+	    << "active freeze is runtime-only and must never be saved";
+
+	CalibrationContext dst; // fresh: freezeAllTracking defaults off
+	ParseProfile(dst, io);
+	EXPECT_TRUE(dst.freezeIncludeHmd);
+	EXPECT_FALSE(dst.freezeAllTracking) << "active freeze must load as off";
+}
+
 // ---------------------------------------------------------------------------
 // Default-only fields are not written and load as defaults. The skip-if-
 // default optimization means a brand-new context's saved JSON shouldn't

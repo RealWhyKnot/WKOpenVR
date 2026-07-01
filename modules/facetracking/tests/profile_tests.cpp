@@ -92,6 +92,29 @@ TEST(FacetrackingProfiles, DefaultContinuousCalibrationModeIsOff)
 	EXPECT_EQ(p.continuous_calib_mode, 0);
 }
 
+TEST(FacetrackingProfiles, EyeCloseAssistDefaultsOffAndRoundTrips)
+{
+	FacetrackingProfile defaults;
+	EXPECT_FALSE(defaults.eye_close_assist_enabled);
+
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+
+	FacetrackingProfileStore store;
+	store.current.eye_close_assist_enabled = true;
+	store.current.eye_close_assist_strength = 85;
+	ASSERT_TRUE(store.Save());
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	EXPECT_TRUE(loaded.current.eye_close_assist_enabled);
+	EXPECT_EQ(loaded.current.eye_close_assist_strength, 85);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
 TEST(FacetrackingProfiles, LegacyContinuousCalibrationModeLoadsOffAndIsPersisted)
 {
 	auto temp = MakeProfileTempDir();
@@ -135,9 +158,9 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 
 	FacetrackingProfileStore store;
 	FaceShapeScaleArray values = DefaultFaceShapeScales();
-	values[26].scale_percent = 80;  // JawOpen
-	values[45].scale_percent = 60;  // MouthSmileLeft
-	values[46].scale_percent = 150; // MouthSmileRight
+	values[26].max_percent = 80;  // JawOpen
+	values[45].max_percent = 60;  // MouthSmileLeft
+	values[46].max_percent = 150; // MouthSmileRight
 	store.current.avatar_shape_tuning["avtr_test"] = values;
 	ASSERT_TRUE(store.Save());
 
@@ -150,6 +173,7 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 	ASSERT_NE(avatarIt, tuningObj.end());
 	ASSERT_TRUE(avatarIt->second.is<picojson::object>());
 	const auto& shapeObj = avatarIt->second.get<picojson::object>();
+	// min at default 0 -> shorthand encodes max as a bare number.
 	EXPECT_EQ(shapeObj.at("JawOpen").get<double>(), 80.0);
 	EXPECT_EQ(shapeObj.at("MouthSmileLeft").get<double>(), 60.0);
 	EXPECT_EQ(shapeObj.at("MouthSmileRight").get<double>(), 150.0);
@@ -159,16 +183,16 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 	ASSERT_TRUE(loaded.Load());
 	const FaceShapeScaleArray* loadedValues = FindShapeTuningForAvatar(loaded.current, "avtr_test");
 	ASSERT_NE(loadedValues, nullptr);
-	EXPECT_EQ((*loadedValues)[26].scale_percent, 80);
-	EXPECT_EQ((*loadedValues)[45].scale_percent, 60);
-	EXPECT_EQ((*loadedValues)[46].scale_percent, 150);
+	EXPECT_EQ((*loadedValues)[26].max_percent, 80);
+	EXPECT_EQ((*loadedValues)[45].max_percent, 60);
+	EXPECT_EQ((*loadedValues)[46].max_percent, 150);
 	EXPECT_TRUE(IsDefaultFaceShapeTuningValue((*loadedValues)[47]));
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
 }
 
-TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsScaleMinAndMax)
+TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsMinAndMax)
 {
 	auto temp = MakeProfileTempDir();
 	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
@@ -176,8 +200,7 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsScaleMinAndMax)
 
 	FacetrackingProfileStore store;
 	FaceShapeScaleArray values = DefaultFaceShapeScales();
-	values[8].scale_percent = 175; // EyeWideLeft
-	values[8].min_percent = 10;
+	values[8].min_percent = 10; // EyeWideLeft: non-default min -> {min,max} object
 	values[8].max_percent = 70;
 	store.current.avatar_shape_tuning["avtr_test"] = values;
 	ASSERT_TRUE(store.Save());
@@ -190,7 +213,7 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsScaleMinAndMax)
 	const auto& shapeObj = tuningObj.at("avtr_test").get<picojson::object>();
 	ASSERT_TRUE(shapeObj.at("EyeWideLeft").is<picojson::object>());
 	const auto& valueObj = shapeObj.at("EyeWideLeft").get<picojson::object>();
-	EXPECT_EQ(valueObj.at("scale").get<double>(), 175.0);
+	EXPECT_EQ(valueObj.find("scale"), valueObj.end());
 	EXPECT_EQ(valueObj.at("min").get<double>(), 10.0);
 	EXPECT_EQ(valueObj.at("max").get<double>(), 70.0);
 
@@ -198,7 +221,6 @@ TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsScaleMinAndMax)
 	ASSERT_TRUE(loaded.Load());
 	const FaceShapeScaleArray* loadedValues = FindShapeTuningForAvatar(loaded.current, "avtr_test");
 	ASSERT_NE(loadedValues, nullptr);
-	EXPECT_EQ((*loadedValues)[8].scale_percent, 175);
 	EXPECT_EQ((*loadedValues)[8].min_percent, 10);
 	EXPECT_EQ((*loadedValues)[8].max_percent, 70);
 
@@ -213,9 +235,9 @@ TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsSparseValues)
 	const auto path = ProfilePathUnder(temp);
 
 	FacetrackingProfileStore store;
-	store.current.global_shape_tuning[26].scale_percent = 80;  // JawOpen
-	store.current.global_shape_tuning[45].scale_percent = 60;  // MouthSmileLeft
-	store.current.global_shape_tuning[46].scale_percent = 150; // MouthSmileRight
+	store.current.global_shape_tuning[26].max_percent = 80;  // JawOpen
+	store.current.global_shape_tuning[45].max_percent = 60;  // MouthSmileLeft
+	store.current.global_shape_tuning[46].max_percent = 150; // MouthSmileRight
 	ASSERT_TRUE(store.Save());
 
 	picojson::value saved = ReadProfileJson(path);
@@ -230,24 +252,23 @@ TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsSparseValues)
 
 	FacetrackingProfileStore loaded;
 	ASSERT_TRUE(loaded.Load());
-	EXPECT_EQ(loaded.current.global_shape_tuning[26].scale_percent, 80);
-	EXPECT_EQ(loaded.current.global_shape_tuning[45].scale_percent, 60);
-	EXPECT_EQ(loaded.current.global_shape_tuning[46].scale_percent, 150);
+	EXPECT_EQ(loaded.current.global_shape_tuning[26].max_percent, 80);
+	EXPECT_EQ(loaded.current.global_shape_tuning[45].max_percent, 60);
+	EXPECT_EQ(loaded.current.global_shape_tuning[46].max_percent, 150);
 	EXPECT_TRUE(IsDefaultFaceShapeTuningValue(loaded.current.global_shape_tuning[47]));
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
 }
 
-TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsScaleMinAndMax)
+TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsMinAndMax)
 {
 	auto temp = MakeProfileTempDir();
 	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
 	const auto path = ProfilePathUnder(temp);
 
 	FacetrackingProfileStore store;
-	store.current.global_shape_tuning[8].scale_percent = 175; // EyeWideLeft
-	store.current.global_shape_tuning[8].min_percent = 10;
+	store.current.global_shape_tuning[8].min_percent = 10; // EyeWideLeft
 	store.current.global_shape_tuning[8].max_percent = 70;
 	ASSERT_TRUE(store.Save());
 
@@ -258,15 +279,44 @@ TEST(FacetrackingProfiles, GlobalShapeTuningRoundTripsScaleMinAndMax)
 	const auto& shapeObj = tuning->get<picojson::object>();
 	ASSERT_TRUE(shapeObj.at("EyeWideLeft").is<picojson::object>());
 	const auto& valueObj = shapeObj.at("EyeWideLeft").get<picojson::object>();
-	EXPECT_EQ(valueObj.at("scale").get<double>(), 175.0);
+	EXPECT_EQ(valueObj.find("scale"), valueObj.end());
 	EXPECT_EQ(valueObj.at("min").get<double>(), 10.0);
 	EXPECT_EQ(valueObj.at("max").get<double>(), 70.0);
 
 	FacetrackingProfileStore loaded;
 	ASSERT_TRUE(loaded.Load());
-	EXPECT_EQ(loaded.current.global_shape_tuning[8].scale_percent, 175);
 	EXPECT_EQ(loaded.current.global_shape_tuning[8].min_percent, 10);
 	EXPECT_EQ(loaded.current.global_shape_tuning[8].max_percent, 70);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, LegacyScaleTuningMigratesToMinMax)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+	const auto path = ProfilePathUnder(temp);
+	// Old-format profile: bare number was scale-only; object carried scale/min/max.
+	WriteText(path, "{\n"
+	                "  \"global_shape_tuning\": {\n"
+	                "    \"JawOpen\": 150,\n"
+	                "    \"MouthSmileLeft\": { \"scale\": 150, \"min\": 0, \"max\": 200 },\n"
+	                "    \"EyeWideLeft\": { \"scale\": 175, \"min\": 10, \"max\": 70 }\n"
+	                "  }\n"
+	                "}\n");
+
+	FacetrackingProfileStore store;
+	ASSERT_TRUE(store.Load());
+	// Bare number (old scale) -> new max, min stays 0. Exact behavior preservation.
+	EXPECT_EQ(store.current.global_shape_tuning[26].min_percent, 0);
+	EXPECT_EQ(store.current.global_shape_tuning[26].max_percent, 150);
+	// Object with default ceiling (max==200): old scale becomes the new max.
+	EXPECT_EQ(store.current.global_shape_tuning[45].min_percent, 0);
+	EXPECT_EQ(store.current.global_shape_tuning[45].max_percent, 150);
+	// Object with explicit floor+ceiling: floor -> at-rest min, ceiling -> max.
+	EXPECT_EQ(store.current.global_shape_tuning[8].min_percent, 10);
+	EXPECT_EQ(store.current.global_shape_tuning[8].max_percent, 70);
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
@@ -311,9 +361,9 @@ TEST(FacetrackingProfiles, GlobalAndAvatarShapeTuningCoexist)
 	const auto path = ProfilePathUnder(temp);
 
 	FacetrackingProfileStore store;
-	store.current.global_shape_tuning[26].scale_percent = 70;
+	store.current.global_shape_tuning[26].max_percent = 70;
 	FaceShapeScaleArray avatar = DefaultFaceShapeScales();
-	avatar[26].scale_percent = 140;
+	avatar[26].max_percent = 140;
 	store.current.avatar_shape_tuning["avtr_test"] = avatar;
 	ASSERT_TRUE(store.Save());
 
@@ -323,10 +373,10 @@ TEST(FacetrackingProfiles, GlobalAndAvatarShapeTuningCoexist)
 
 	FacetrackingProfileStore loaded;
 	ASSERT_TRUE(loaded.Load());
-	EXPECT_EQ(loaded.current.global_shape_tuning[26].scale_percent, 70);
+	EXPECT_EQ(loaded.current.global_shape_tuning[26].max_percent, 70);
 	const FaceShapeScaleArray* loadedAvatar = FindShapeTuningForAvatar(loaded.current, "avtr_test");
 	ASSERT_NE(loadedAvatar, nullptr);
-	EXPECT_EQ((*loadedAvatar)[26].scale_percent, 140);
+	EXPECT_EQ((*loadedAvatar)[26].max_percent, 140);
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
@@ -337,17 +387,16 @@ TEST(FacetrackingProfiles, CombineShapeTuningUsesAvatarOverridesOverGlobal)
 	FaceShapeScaleArray global = DefaultFaceShapeScales();
 	FaceShapeScaleArray avatar = DefaultFaceShapeScales();
 
-	global[26].scale_percent = 70;
-	global[45].scale_percent = 80;
+	global[26].max_percent = 70;
 	global[45].min_percent = 10;
 	global[45].max_percent = 90;
-	avatar[45].scale_percent = 150;
+	avatar[45].max_percent = 150;
 
 	const FaceShapeScaleArray combined = CombineShapeTuning(global, avatar);
-	EXPECT_EQ(combined[26].scale_percent, 70);
-	EXPECT_EQ(combined[45].scale_percent, 150);
+	EXPECT_EQ(combined[26].max_percent, 70);
+	// Avatar override wins wholesale over the global entry for slot 45.
+	EXPECT_EQ(combined[45].max_percent, 150);
 	EXPECT_EQ(combined[45].min_percent, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT);
-	EXPECT_EQ(combined[45].max_percent, protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT);
 	EXPECT_TRUE(IsDefaultFaceShapeTuningValue(combined[46]));
 }
 

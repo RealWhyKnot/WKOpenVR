@@ -1,6 +1,8 @@
 #include "ServerTrackedDeviceProvider.h"
 #include "DebugLogging.h"
+#include "DevTuning.h"
 #include "FeatureFlags.h"
+#include "FreezeHoldLogic.h"
 #include "InterfaceHookInjector.h"
 #include "IsometryTransform.h"
 #include "Logging.h"
@@ -646,6 +648,20 @@ void ServerTrackedDeviceProvider::ReconcileSidecarFeatureFlags()
 	if (lastSidecarFlagCheckMs != 0 && nowMs - lastSidecarFlagCheckMs < 1000) return;
 	lastSidecarFlagCheckMs = nowMs;
 
+	// Dev-only live tuning: re-read <resources>\dev_tuning.ini if it changed so
+	// numeric knobs can be tweaked in VR without a rebuild or SteamVR restart.
+	// A no-op on release builds (the file is never read there). Reuses this ~1 Hz
+	// housekeeping tick rather than checking the file every frame.
+	{
+		static const std::wstring devTuningResources = pairdriver::GetDriverResourcesDir();
+		if (!devTuningResources.empty()) {
+			static const std::wstring devTuningPath = devTuningResources + L"\\dev_tuning.ini";
+			if (openvr_pair::common::devtuning::MaybeReloadFromFile(devTuningPath)) {
+				LOG("[devtuning] reloaded %.260ls", devTuningPath.c_str());
+			}
+		}
+	}
+
 	if ((featureFlags & pairdriver::kFeatureFaceTracking) != 0 &&
 	    !pairdriver::IsRuntimeFeatureFlagPresent(pairdriver::kFeatureFaceTracking)) {
 		LOG("Runtime flag reconciliation: enable_facetracking.flag absent; disabling FaceTracking module");
@@ -744,6 +760,23 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(uint32_t featureMask, const p
 	if (request.type == protocol::RequestHandshake) {
 		response.type = protocol::ResponseHandshake;
 		response.protocol.version = protocol::Version;
+		return true;
+	}
+
+	// v40 "Freeze all tracking": device-wide, so handled here directly rather
+	// than delegated to a feature module (like RequestHandshake above). The
+	// pose hook reads these atomics; the heartbeat stamp lets a frozen state
+	// self-expire if the overlay stops resending (see FreezeActive).
+	if (request.type == protocol::RequestSetFreezeAllTracking) {
+		const bool frozen = request.freeze.frozen;
+		m_freezeAllTracking.store(frozen, std::memory_order_release);
+		m_freezeIncludeHmd.store(request.freeze.includeHmd, std::memory_order_release);
+		if (frozen) {
+			LARGE_INTEGER now{};
+			QueryPerformanceCounter(&now);
+			m_freezeHeartbeatQpc.store(now.QuadPart, std::memory_order_release);
+		}
+		response.type = protocol::ResponseSuccess;
 		return true;
 	}
 
@@ -1256,6 +1289,23 @@ void ServerTrackedDeviceProvider::ApplyLockedHeadsetSmoothing(vr::DriverPose_t& 
 	}
 }
 
+// The overlay resends the freeze request at ~1 Hz while frozen. If three of
+// those heartbeats are missed the driver assumes the overlay is gone (crashed,
+// closed) and fails open to live tracking -- a frozen headset with no working
+// controllers must never be a dead end. Comfortably above the resend period.
+static const double kFreezeHeartbeatTimeoutSec = 3.0;
+
+bool ServerTrackedDeviceProvider::FreezeActive() const
+{
+	if (!m_freezeAllTracking.load(std::memory_order_acquire)) return false;
+	if (qpcFreq.QuadPart == 0) return false;
+	LARGE_INTEGER now{};
+	QueryPerformanceCounter(&now);
+	const int64_t last = m_freezeHeartbeatQpc.load(std::memory_order_acquire);
+	const double ageSec = static_cast<double>(now.QuadPart - last) / static_cast<double>(qpcFreq.QuadPart);
+	return ageSec <= kFreezeHeartbeatTimeoutSec;
+}
+
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t& pose)
 {
 	// Apply debug pose before anything else
@@ -1287,6 +1337,17 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	std::unique_lock<std::mutex> lock(stateMutex);
 
 	auto& tf = transforms[openVRID];
+
+	// v40 "Freeze all tracking": while the time-freeze toggle is active, replay
+	// this device's last forwarded pose and skip the whole pipeline so it holds
+	// perfectly still. Runs before any modification; the HMD is held only when
+	// the user opted in (otherwise it stays live so they can look around).
+	if (wkopenvr::freeze::ShouldHold(FreezeActive(), m_freezeIncludeHmd.load(std::memory_order_acquire), openVRID,
+	                                 tf.lastForwardedValid)) {
+		wkopenvr::freeze::MakeHeldPose(pose, tf.lastForwardedPose);
+		return true;
+	}
+
 	const vr::DriverPose_t rawSmoothingInput = pose;
 
 	// Resolve the smoothing strength for this device. The user picks a 0..100
@@ -1758,6 +1819,12 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	}
 #endif
 
+	// Remember the fully-processed pose we are about to forward so a later freeze
+	// can hold the device here with no visible jump. Under stateMutex (held for
+	// the whole hook body), so this is safe against the IPC thread's writes.
+	tf.lastForwardedPose = pose;
+	tf.lastForwardedValid = true;
+
 	return true;
 }
 
@@ -1767,6 +1834,9 @@ ServerTrackedDeviceProvider::CollectPhantomSyntheticPoseUpdates(uint32_t trigger
 	std::vector<std::pair<uint32_t, vr::DriverPose_t>> updates;
 #if OPENVR_PAIR_HAS_PHANTOM_DRIVER
 	if ((featureFlags & pairdriver::kFeaturePhantom) == 0) return updates;
+	// v40 "Freeze all tracking": don't emit synthetic poses for absent-mode
+	// virtual trackers while frozen, so they hold still with everything else.
+	if (FreezeActive()) return updates;
 	LARGE_INTEGER qpcNow{};
 	LARGE_INTEGER qpcFreq{};
 	if (!QueryPerformanceCounter(&qpcNow) || !QueryPerformanceFrequency(&qpcFreq)) {

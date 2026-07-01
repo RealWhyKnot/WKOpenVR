@@ -134,6 +134,16 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_LOCKED_SNAP = "1"
 		WKOPENVR_REPLAY_TRACKING_STYLE = "locked"
 	}
+	# Far-from-origin fix A/B: relpose-locked head-mount solve, uniform vs
+	# geometry-precision-weighted. Compare applied_mag_wander_cm across the pair.
+	$Catalog["relpose_uniform"] = New-Scenario "relpose_uniform" @{
+		WKOPENVR_REPLAY_LOCK_REL         = "1"
+		WKOPENVR_REPLAY_PRECISION_WEIGHT = "0"
+	}
+	$Catalog["relpose_weighted"] = New-Scenario "relpose_weighted" @{
+		WKOPENVR_REPLAY_LOCK_REL         = "1"
+		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
+	}
 	$Catalog["all"] = New-Scenario "all" @{
 		WKOPENVR_REPLAY_QUARANTINE = "1"
 		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
@@ -203,6 +213,12 @@ function Parse-ReplayLine {
 		FinalErrorMm = $Values["final_error_mm"]
 		MedianRelPoseMadMm = $Values["median_relpose_mad_mm"]
 		FinalRelPoseMadMm = $Values["final_relpose_mad_mm"]
+		LockRel = $Values["lock_rel"]
+		PrecisionWeight = $Values["precision_weight"]
+		PeakAppliedMagCm = $Values["peak_applied_mag_cm"]
+		AppliedMagWanderCm = $Values["applied_mag_wander_cm"]
+		PeakAppliedStepCm = $Values["peak_applied_step_cm"]
+		TotalAppliedPathCm = $Values["total_applied_path_cm"]
 		HoldoutRmsMm = $Values["holdout_rms_mm"]
 		HoldoutP90Mm = $Values["holdout_p90_mm"]
 		HoldoutP95Mm = $Values["holdout_p95_mm"]

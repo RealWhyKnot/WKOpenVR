@@ -106,25 +106,23 @@ bool IsShapeModified(const FaceShapeTuningValue& value)
 const char* ShapeScaleStateLabel(const FaceShapeTuningValue& value)
 {
 	const FaceShapeTuningValue clamped = ClampFaceShapeTuningValue(value);
-	if (clamped.min_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT ||
-	    clamped.max_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT) {
-		return "Limited";
-	}
-	if (clamped.scale_percent < protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return "Under";
-	if (clamped.scale_percent > protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return "Over";
-	return "Default";
+	const int dmin = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
+	const int dmax = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
+	if (clamped.min_percent == dmin && clamped.max_percent == dmax) return "Default";
+	// Range pushed outward (reaches extremes more easily) vs pulled inward (softer).
+	if (clamped.max_percent >= dmax && clamped.min_percent <= dmin) return "Stronger";
+	if (clamped.max_percent <= dmax && clamped.min_percent >= dmin) return "Softer";
+	return "Tuned";
 }
 
 StatusTone ShapeScaleStateTone(const FaceShapeTuningValue& value)
 {
 	const FaceShapeTuningValue clamped = ClampFaceShapeTuningValue(value);
-	if (clamped.min_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT ||
-	    clamped.max_percent != protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT) {
-		return StatusTone::Info;
-	}
-	if (clamped.scale_percent < protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return StatusTone::Warn;
-	if (clamped.scale_percent > protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT) return StatusTone::Info;
-	return StatusTone::Idle;
+	const int dmin = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
+	const int dmax = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
+	if (clamped.min_percent == dmin && clamped.max_percent == dmax) return StatusTone::Idle;
+	if (clamped.max_percent <= dmax && clamped.min_percent >= dmin) return StatusTone::Warn;
+	return StatusTone::Info;
 }
 
 StatusTone AvatarSourceTone(const std::string& source)
@@ -201,16 +199,6 @@ void DrawShapeValueMeter(float preTuning, float postTuning, bool live)
 	const ImU32 rawColor = ImGui::GetColorU32(ImGuiCol_Text);
 	drawList->AddCircleFilled(ImVec2(rawX, (min.y + max.y) * 0.5f), 3.0f, rawColor);
 	TooltipForLastItem("Bar scale is 0..100%. Output is limited to the avatar parameter range.");
-}
-
-bool DrawPercentSlider(const char* label, int& value, int minValue, int maxValue, const char* tooltip,
-                       bool& deactivatedAfterEdit)
-{
-	ImGui::SetNextItemWidth(-1.0f);
-	const bool changed = ImGui::SliderInt(label, &value, minValue, maxValue, "%d%%");
-	if (ImGui::IsItemDeactivatedAfterEdit()) deactivatedAfterEdit = true;
-	TooltipForLastItem(tooltip);
-	return changed;
 }
 
 void SyncRenameBuffer(FacetrackingPlugin& plugin, const std::string& avatarKey)
@@ -598,7 +586,7 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 	if (ImGui::Checkbox("Modified only##ft_shape_modified_only", &g_state.modified_only)) {
 		visibleIndices = VisibleShapeIndices(values);
 	}
-	TooltipForLastItem("Show only expressions that differ from 100%.");
+	TooltipForLastItem("Show only expressions that differ from the default range.");
 
 	const auto& telemetry = plugin.driver_telemetry_.Snapshot();
 	const bool liveValuesAvailable =
@@ -641,17 +629,45 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 			ImGui::TableSetColumnIndex(2);
 			bool changed = false;
 			bool saveAfterEdit = false;
-			int scale = tuning.scale_percent;
 			int minValue = tuning.min_percent;
 			int maxValue = tuning.max_percent;
-			changed |= DrawPercentSlider("Scale##scale", scale, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT,
-			                             "Multiplier applied before output limits.", saveAfterEdit);
-			changed |= DrawPercentSlider("Min##min", minValue, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT,
-			                             "Lowest value this expression can output after scaling.", saveAfterEdit);
-			changed |= DrawPercentSlider("Max##max", maxValue, 0, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT,
-			                             "Highest value this expression can output after scaling.", saveAfterEdit);
+			const int limit = protocol::FACETRACKING_SHAPE_TUNING_LIMIT_PERCENT;
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::DragIntRange2("##outrange", &minValue, &maxValue, 1.0f, -limit, limit, "Min %d%%", "Max %d%%")) {
+				changed = true;
+			}
+			if (ImGui::IsItemDeactivatedAfterEdit()) saveAfterEdit = true;
+			TooltipForLastItem("Min = shown when your face is at rest. Max = shown at full effort.\n"
+			                   "Max above 100%% reaches full with less movement (then clamps);\n"
+			                   "Min below 0%% keeps it at rest until a larger movement.\n"
+			                   "Output always stays within 0..100%%.");
+
+			// Quick presets. min = output at rest, max = output at full effort.
+			struct TuningPreset
+			{
+				const char* label;
+				int lo;
+				int hi;
+				const char* tip;
+			};
+			static const TuningPreset kPresets[] = {
+			    {"Natural", 0, 100, "No change."},
+			    {"Stronger", 0, 150, "Reaches full with less movement."},
+			    {"Subtle", 0, 70, "Softer -- never reaches full."},
+			    {"Sticky rest", -60, 100, "Ignores small movement; stays at rest longer."},
+			};
+			for (size_t pi = 0; pi < IM_ARRAYSIZE(kPresets); ++pi) {
+				if (pi != 0) ImGui::SameLine();
+				if (ImGui::SmallButton(kPresets[pi].label)) {
+					minValue = kPresets[pi].lo;
+					maxValue = kPresets[pi].hi;
+					changed = true;
+					saveAfterEdit = true;
+				}
+				TooltipForLastItem(kPresets[pi].tip);
+			}
+
 			if (changed) {
-				tuning.scale_percent = scale;
 				tuning.min_percent = minValue;
 				tuning.max_percent = maxValue;
 				tuning = ClampFaceShapeTuningValue(tuning);

@@ -31,6 +31,39 @@ protocol::FaceTrackingFrameBody MakeFrame(float lid_l, float lid_r, float conf_l
 
 } // namespace
 
+TEST(EyelidCloseKnee, StrengthZeroIsIdentity)
+{
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(0.3f, 0), 0.3f);
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(1.0f, 0), 1.0f);
+}
+
+TEST(EyelidCloseKnee, MaxStrengthZeroesResidualOpenness)
+{
+	// strength 100 -> knee at 0.5; anything <= 50% open reads fully closed.
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(0.5f, 100), 0.0f);
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(0.3f, 100), 0.0f);
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(0.0f, 100), 0.0f);
+}
+
+TEST(EyelidCloseKnee, FullyOpenStaysOpen)
+{
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(1.0f, 100), 1.0f);
+	EXPECT_FLOAT_EQ(facetracking::EyelidSync::ApplyCloseKnee(1.0f, 50), 1.0f);
+}
+
+TEST(EyelidCloseKnee, RescalesAboveKneeAndIsMonotonic)
+{
+	// strength 100, knee 0.5: 0.75 open -> (0.75 - 0.5) / (1 - 0.5) = 0.5.
+	EXPECT_NEAR(facetracking::EyelidSync::ApplyCloseKnee(0.75f, 100), 0.5f, 1e-6f);
+	float prev = -1.0f;
+	for (int i = 0; i <= 10; ++i) {
+		const float open = static_cast<float>(i) / 10.0f;
+		const float out = facetracking::EyelidSync::ApplyCloseKnee(open, 100);
+		EXPECT_GE(out, prev);
+		prev = out;
+	}
+}
+
 TEST(EyelidSync, StrengthZeroIsNoOp)
 {
 	facetracking::EyelidSync sync;

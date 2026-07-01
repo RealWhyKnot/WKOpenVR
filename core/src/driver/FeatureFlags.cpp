@@ -17,35 +17,6 @@ namespace {
 
 namespace module_registry = openvr_pair::common::modules;
 
-// Returns the absolute path of <root>\resources, where <root> is the driver
-// folder SteamVR loaded the DLL from. We resolve our own DLL path with
-// GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) using the address
-// of this very function, which works regardless of what the DLL was renamed
-// to and regardless of how SteamVR resolved it. Walk up from
-//   <root>\bin\win64\driver_wkopenvr.dll
-// to <root> (three pop-segments) then append "\resources".
-std::wstring GetResourcesDir()
-{
-	HMODULE hMod = nullptr;
-	if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-	                        reinterpret_cast<LPCWSTR>(&GetResourcesDir), &hMod)) {
-		return {};
-	}
-
-	wchar_t buf[MAX_PATH];
-	DWORD len = GetModuleFileNameW(hMod, buf, MAX_PATH);
-	if (len == 0 || len >= MAX_PATH) return {};
-
-	std::wstring path(buf, len);
-	for (int i = 0; i < 3; ++i) {
-		size_t slash = path.find_last_of(L"\\/");
-		if (slash == std::wstring::npos) return {};
-		path.resize(slash);
-	}
-	path += L"\\resources";
-	return path;
-}
-
 bool FlagFileExists(const std::wstring& resourcesDir, const wchar_t* flagName)
 {
 	std::wstring path = resourcesDir + L"\\" + flagName;
@@ -146,9 +117,38 @@ void ApplyRepeatedActiveOnlyBackoff(SafetyGateResult* gates, size_t gateCount)
 
 } // namespace
 
+// Resolve <root>\resources, where <root> is the driver folder SteamVR loaded the
+// DLL from. We resolve our own DLL path with
+// GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) using the address of
+// this very function, which works regardless of what the DLL was renamed to and
+// regardless of how SteamVR resolved it. Walk up from
+//   <root>\bin\win64\driver_wkopenvr.dll
+// to <root> (three pop-segments) then append "\resources".
+std::wstring GetDriverResourcesDir()
+{
+	HMODULE hMod = nullptr;
+	if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+	                        reinterpret_cast<LPCWSTR>(&GetDriverResourcesDir), &hMod)) {
+		return {};
+	}
+
+	wchar_t buf[MAX_PATH];
+	DWORD len = GetModuleFileNameW(hMod, buf, MAX_PATH);
+	if (len == 0 || len >= MAX_PATH) return {};
+
+	std::wstring path(buf, len);
+	for (int i = 0; i < 3; ++i) {
+		size_t slash = path.find_last_of(L"\\/");
+		if (slash == std::wstring::npos) return {};
+		path.resize(slash);
+	}
+	path += L"\\resources";
+	return path;
+}
+
 uint32_t DetectFeatureFlags()
 {
-	std::wstring dir = GetResourcesDir();
+	std::wstring dir = GetDriverResourcesDir();
 	if (dir.empty()) {
 		LOG("DetectFeatureFlags: unable to resolve driver resources directory; treating all features as disabled");
 		return 0;
@@ -216,7 +216,7 @@ uint32_t DetectFeatureFlags()
 
 bool IsRuntimeFeatureFlagPresent(uint32_t featureMask)
 {
-	std::wstring dir = GetResourcesDir();
+	std::wstring dir = GetDriverResourcesDir();
 	if (dir.empty()) return false;
 	const module_registry::ModuleInfo* module = ModuleForFeatureMask(featureMask);
 	return module && ModuleFlagFileExists(dir, *module);

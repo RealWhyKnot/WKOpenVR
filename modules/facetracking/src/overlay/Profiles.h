@@ -10,7 +10,9 @@
 
 struct FaceShapeTuningValue
 {
-	int scale_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
+	// Affine output-remap endpoints (percent). min = output at rest (input 0),
+	// max = output at full effort (input 1); output clamps to 0..1. Signed: min may
+	// be negative, max may exceed 100. Defaults are pass-through.
 	int min_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
 	int max_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
 };
@@ -63,6 +65,11 @@ struct FacetrackingProfile
 	int gaze_smoothing = 0;     // 0..100
 	int openness_smoothing = 0; // 0..100
 
+	// Eye-close assist: makes eyes reach fully-closed more easily on avatars whose
+	// eyes stay slightly open. Off by default so existing setups are unchanged.
+	bool eye_close_assist_enabled = false;
+	int eye_close_assist_strength = 60; // 0..100
+
 	// Avatar-expression shaping. These are preference controls, not baseline
 	// compatibility behaviour, so new profiles keep them disabled.
 	bool mouth_close_compensation_enabled = false;
@@ -81,8 +88,9 @@ struct FacetrackingProfile
 	// multi-run has a stable priority.
 	std::vector<std::string> enabled_module_uuids;
 
-	// Expression output tuning. Values are percentages in [0, 200], with 100
-	// meaning pass-through. Final published output remains limited to 0..1.
+	// Expression output tuning. Per shape: min = output at rest, max = output at
+	// full effort (signed percents in [-200, 200], default 0/100 = pass-through).
+	// Final published output remains limited to 0..1.
 	FaceShapeScaleArray global_shape_tuning = DefaultFaceShapeScales();
 	std::map<std::string, FaceShapeScaleArray> avatar_shape_tuning;
 	std::map<std::string, AvatarShapeTuningMetadata> avatar_shape_metadata;

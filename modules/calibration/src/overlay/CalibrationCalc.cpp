@@ -4,7 +4,8 @@
 #include "Protocol.h"
 #include "CalibrationRejectReason.h"
 #include "RuntimeHealthSummary.h"
-#include "RotationMatrix3.h" // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
+#include "RotationMatrix3.h"           // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
+#include "ContinuousPrecisionFusion.h" // spacecal::precision::kLeverRegM2 -- geometry weight.
 
 #include <algorithm>
 #include <cmath>
@@ -1394,6 +1395,7 @@ private:
 	Eigen::Matrix<double, 4, Eigen::Dynamic> quatAvg;
 	Eigen::Vector3d accum = Eigen::Vector3d::Zero();
 	int i = 0;
+	double weightSum = 0.0;
 
 public:
 	PoseAverager(size_t n_samples) { quatAvg.resize(4, n_samples); }
@@ -1444,6 +1446,58 @@ public:
 
 		return accum.Average();
 	}
+
+	// Precision-weighted variants: each sample contributes proportional to `w`.
+	// A per-sample C-estimate's translation error scales with the lever arm
+	// (distance of ref/target from their tracking origins) times angular jitter,
+	// so weighting by 1/lever-arm^2 is the Gauss-Markov-optimal fusion -- it
+	// down-weights far-from-origin (low-precision) samples instead of trusting
+	// them equally. Weighted quaternion mean: scale each column by sqrt(w) so
+	// quatAvg * quatAvg^T = sum(w * q q^T).
+	template <typename P> void PushWeighted(const P& pose, double w)
+	{
+		if (!(w > 0.0)) return;
+		const double sw = std::sqrt(w);
+		const Eigen::Quaterniond rot(pose.rotation());
+		quatAvg.col(i++) = sw * Eigen::Vector4d(rot.w(), rot.x(), rot.y(), rot.z());
+		accum += w * pose.translation();
+		weightSum += w;
+	}
+
+	Eigen::AffineCompact3d WeightedAverage()
+	{
+		Eigen::Matrix4d quatMul = quatAvg.leftCols(i) * quatAvg.leftCols(i).transpose();
+		Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
+		solver.compute(quatMul);
+
+		Eigen::Vector4d quatAvgV = solver.eigenvectors().col(3).real().normalized();
+		Eigen::Quaterniond avgQ(quatAvgV(0), quatAvgV(1), quatAvgV(2), quatAvgV(3));
+		avgQ.normalize();
+
+		Eigen::AffineCompact3d pose(avgQ);
+		pose.pretranslate(accum * (weightSum > 0.0 ? 1.0 / weightSum : 0.0));
+
+		return pose;
+	}
+
+	template <typename XS, typename F, typename W>
+	static Eigen::AffineCompact3d WeightedAverageFor(const XS& samples, const F& poseProvider, const W& weightProvider)
+	{
+		int sampleCount = 0;
+		for (auto& sample : samples) {
+			if (!sample.valid) continue;
+			sampleCount++;
+		}
+
+		PoseAverager accum(sampleCount);
+
+		for (auto& sample : samples) {
+			if (!sample.valid) continue;
+			accum.PushWeighted(poseProvider(sample), weightProvider(sample));
+		}
+
+		return accum.WeightedAverage();
+	}
 };
 } // namespace
 
@@ -1470,11 +1524,40 @@ Eigen::AffineCompact3d CalibrationCalc::EstimateRefToTargetPose(const Eigen::Aff
 bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d& out) const
 {
 	// R * S * T^-1 = C
-	out = PoseAverager::AverageFor(m_samples, [&](const auto& sample) {
+	const auto estimateFor = [&](const auto& sample) {
 		return Eigen::AffineCompact3d(sample.ref.ToAffine() * m_refToTargetPose * sample.target.ToAffine().inverse());
-	});
+	};
 
+	if (m_usePrecisionWeightedRelPose) {
+		// Each per-sample estimate's translation error scales with the lever arm
+		// -- the distance of the HMD/target from their tracking origins -- times
+		// the tracker's angular jitter. Weight by geometric precision so a
+		// far-from-origin reading (large lever arm, wildly uncertain) counts for
+		// almost nothing next to a near-origin one, instead of being trusted
+		// equally. This is why the same jitter is harmless near origin and blows
+		// the calibration up far from it. kLeverRegM2 is the positional/angular
+		// noise ratio (m^2): it caps the weight at origin so it stays finite.
+		out = PoseAverager::WeightedAverageFor(m_samples, estimateFor, [&](const auto& sample) {
+			return 1.0 / (spacecal::precision::kLeverRegM2 + sample.ref.trans.squaredNorm() +
+			              sample.target.trans.squaredNorm());
+		});
+		return true;
+	}
+
+	out = PoseAverager::AverageFor(m_samples, estimateFor);
 	return true;
+}
+
+double CalibrationCalc::MeanSquaredLeverArmM2() const
+{
+	double sum = 0.0;
+	int n = 0;
+	for (const auto& sample : m_samples) {
+		if (!sample.valid) continue;
+		sum += sample.ref.trans.squaredNorm() + sample.target.trans.squaredNorm();
+		++n;
+	}
+	return n > 0 ? sum / n : 0.0;
 }
 
 namespace {

@@ -58,6 +58,27 @@ void DrawSettingsTab(FacetrackingPlugin& plugin)
 
 	if (!p.eyelid_sync_enabled) ImGui::EndDisabled();
 
+	// ---- Eye Closure Assistance ----
+	DrawSectionHeading("Eye Closure Assistance");
+
+	if (CheckboxWithTooltip("Easier eye close", &p.eye_close_assist_enabled,
+	                        "Helps your eyes reach fully closed on avatars where they stay\n"
+	                        "slightly open even when your real eyes are shut.\n"
+	                        "Strength 0 = no effect even when enabled.")) {
+		plugin.PushConfigToDriver();
+	}
+
+	if (!p.eye_close_assist_enabled) ImGui::BeginDisabled();
+
+	if (SliderIntWithTooltip("Close strength##eye_close_assist", &p.eye_close_assist_strength, 0, 100, "%d%%",
+	                         "How easily your eyes snap shut. Higher counts more of your\n"
+	                         "near-closed range as fully closed, so stubborn avatars blink.\n"
+	                         "Too high can make relaxed eyes look half-closed -- back off if so.")) {
+		plugin.PushConfigToDriver();
+	}
+
+	if (!p.eye_close_assist_enabled) ImGui::EndDisabled();
+
 	// ---- Expression Corrections ----
 	DrawSectionHeading("Expression Corrections");
 

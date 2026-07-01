@@ -1,6 +1,7 @@
 #include "SkeletalHookInjector.h"
 #include "SkeletalDiagnostics.h"
 #include "SkeletalSmoothingMath.h"
+#include "DevTuning.h"
 #include "FeatureFlags.h"
 #include "Hooking.h"
 #include "DriverMemoryProbe.h"
@@ -570,12 +571,17 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponentImpl(vr::IVRDriverIn
 	// v12 behaviour exactly. Precompute the alpha for each of the 5 fingers on
 	// this hand once per call so the per-bone inner loop is just a lookup.
 	const int handBase = handedness * 5;
+	// Dev-only live knob: max smoothing strength at smoothness=100. Read once per
+	// call (not per finger). Defaults to the shipped constant, so on release (and
+	// with no dev_tuning.ini) the mapping is byte-identical to before.
+	const float maxSmoothStrength = static_cast<float>(openvr_pair::common::devtuning::Get(
+	    "smoothing.finger_max_strength", skeletal::math::kDefaultMaxSmoothStrength));
 	float alphaPerFinger[5];
 	bool anySmoothing = false;
 	for (int f = 0; f < 5; ++f) {
 		uint8_t s = cfg.per_finger_smoothness[handBase + f];
 		if (s == 0) s = cfg.smoothness;
-		alphaPerFinger[f] = skeletal::math::SmoothnessToAlpha(s);
+		alphaPerFinger[f] = skeletal::math::SmoothnessToAlpha(s, maxSmoothStrength);
 		const bool fingerEnabled = ((cfg.finger_mask >> (handBase + f)) & 1u) != 0;
 		if (s != 0 && fingerEnabled) anySmoothing = true;
 	}

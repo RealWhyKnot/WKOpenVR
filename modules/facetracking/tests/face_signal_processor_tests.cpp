@@ -92,7 +92,6 @@ std::array<protocol::FaceShapeTuningParams, protocol::FACETRACKING_EXPRESSION_CO
 {
 	std::array<protocol::FaceShapeTuningParams, protocol::FACETRACKING_EXPRESSION_COUNT> tuning{};
 	for (auto& shape : tuning) {
-		shape.scale_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT;
 		shape.min_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
 		shape.max_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
 	}
@@ -130,7 +129,7 @@ TEST(FaceSignalProcessor, ShapeTuningUnderextendsInternalAndUpstreamSlots)
 	protocol::FaceTrackingConfig cfg = MakeConfig();
 	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 	auto tuning = MakeDefaultShapeTuning();
-	tuning[kOursMouthSmileLeft].scale_percent = 60;
+	tuning[kOursMouthSmileLeft].max_percent = 60; // full effort tops out at 60%
 
 	frame.expressions[kOursMouthSmileLeft] = 1.0f;
 	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 1.0f;
@@ -147,7 +146,7 @@ TEST(FaceSignalProcessor, ShapeTuningBoostsInternalAndUpstreamSlotsWithinOutputR
 	protocol::FaceTrackingConfig cfg = MakeConfig();
 	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 	auto tuning = MakeDefaultShapeTuning();
-	tuning[kOursMouthSmileLeft].scale_percent = 150;
+	tuning[kOursMouthSmileLeft].max_percent = 150; // reaches full with less movement
 
 	frame.expressions[kOursMouthSmileLeft] = 0.40f;
 	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 0.40f;
@@ -164,7 +163,7 @@ TEST(FaceSignalProcessor, ShapeTuningClampsOutputAtValidSignalMaximum)
 	protocol::FaceTrackingConfig cfg = MakeConfig();
 	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 	auto tuning = MakeDefaultShapeTuning();
-	tuning[kOursMouthSmileLeft].scale_percent = 500;
+	tuning[kOursMouthSmileLeft].max_percent = 500; // clamped to the signed limit, output caps at 1.0
 
 	frame.expressions[kOursMouthSmileLeft] = 1.0f;
 
@@ -180,8 +179,7 @@ TEST(FaceSignalProcessor, ShapeTuningCapsOutputAtConfiguredMaximum)
 	protocol::FaceTrackingConfig cfg = MakeConfig();
 	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 	auto tuning = MakeDefaultShapeTuning();
-	tuning[kOursMouthSmileLeft].scale_percent = 200;
-	tuning[kOursMouthSmileLeft].max_percent = 70;
+	tuning[kOursMouthSmileLeft].max_percent = 70; // full effort tops out at 70%
 
 	frame.expressions[kOursMouthSmileLeft] = 1.0f;
 	frame.upstream_expressions[kUpstreamMouthCornerPullLeft] = 1.0f;
@@ -198,11 +196,10 @@ TEST(FaceSignalProcessor, ShapeTuningRaisesOutputAtConfiguredMinimum)
 	protocol::FaceTrackingConfig cfg = MakeConfig();
 	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 	auto tuning = MakeDefaultShapeTuning();
-	tuning[kOursMouthSmileLeft].scale_percent = 0;
-	tuning[kOursMouthSmileLeft].min_percent = 25;
+	tuning[kOursMouthSmileLeft].min_percent = 25; // output at rest is 25%
 	tuning[kOursMouthSmileLeft].max_percent = 80;
 
-	frame.expressions[kOursMouthSmileLeft] = 1.0f;
+	frame.expressions[kOursMouthSmileLeft] = 0.0f; // at rest
 
 	processor.Apply(frame, cfg, tuning.data());
 
@@ -216,7 +213,6 @@ TEST(FaceSignalProcessor, ShapeTuningHighConfiguredBoundsClampToValidSignalMaxim
 	protocol::FaceTrackingConfig cfg = MakeConfig();
 	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
 	auto tuning = MakeDefaultShapeTuning();
-	tuning[kOursMouthSmileLeft].scale_percent = 200;
 	tuning[kOursMouthSmileLeft].min_percent = 200;
 	tuning[kOursMouthSmileLeft].max_percent = 200;
 
@@ -226,6 +222,57 @@ TEST(FaceSignalProcessor, ShapeTuningHighConfiguredBoundsClampToValidSignalMaxim
 
 	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.0f, 1e-6f);
 	EXPECT_NEAR(frame.upstream_expressions[kUpstreamMouthCornerPullLeft], 1.0f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningDefaultRangeIsIdentity)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	auto tuning = MakeDefaultShapeTuning(); // min=0, max=100
+
+	frame.expressions[kOursMouthSmileLeft] = 0.42f;
+
+	processor.Apply(frame, cfg, tuning.data());
+
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 0.42f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningMaxAboveFullReachesFullAtHalfInput)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	auto tuning = MakeDefaultShapeTuning();
+	tuning[kOursMouthSmileLeft].max_percent = 200; // out = clamp01(2*in)
+
+	frame.expressions[kOursMouthSmileLeft] = 0.50f;
+	processor.Apply(frame, cfg, tuning.data());
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.0f, 1e-6f);
+
+	frame = MakeExpressionFrame();
+	frame.expressions[kOursMouthSmileLeft] = 0.25f;
+	processor.Apply(frame, cfg, tuning.data());
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 0.50f, 1e-6f);
+}
+
+TEST(FaceSignalProcessor, ShapeTuningNegativeMinStaysAtRestThroughSmallMovement)
+{
+	facetracking::FaceSignalProcessor processor;
+	protocol::FaceTrackingConfig cfg = MakeConfig();
+	protocol::FaceTrackingFrameBody frame = MakeExpressionFrame();
+	auto tuning = MakeDefaultShapeTuning();
+	tuning[kOursMouthSmileLeft].min_percent = -200; // out = clamp01(-2 + 3*in)
+	tuning[kOursMouthSmileLeft].max_percent = 100;
+
+	frame.expressions[kOursMouthSmileLeft] = 0.50f; // below the 2/3 activation point
+	processor.Apply(frame, cfg, tuning.data());
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 0.0f, 1e-6f);
+
+	frame = MakeExpressionFrame();
+	frame.expressions[kOursMouthSmileLeft] = 1.0f; // full effort still reaches full
+	processor.Apply(frame, cfg, tuning.data());
+	EXPECT_NEAR(frame.expressions[kOursMouthSmileLeft], 1.0f, 1e-6f);
 }
 
 TEST(FaceSignalProcessor, ClampsAllExpressionOutputsBeforePublish)

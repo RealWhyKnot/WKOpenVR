@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace facetracking {
 namespace {
@@ -207,20 +208,17 @@ void ApplyShapeTuning(protocol::FaceTrackingFrameBody& frame, const protocol::Fa
 {
 	if (!shape_tuning) return;
 
+	const int limit = protocol::FACETRACKING_SHAPE_TUNING_LIMIT_PERCENT;
 	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-		const uint16_t percent =
-		    std::min<uint16_t>(shape_tuning[i].scale_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-		const uint16_t minPercent =
-		    std::min<uint16_t>(shape_tuning[i].min_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-		const uint16_t maxPercent =
-		    std::min<uint16_t>(shape_tuning[i].max_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-		const uint16_t lo = std::min(minPercent, maxPercent);
-		const uint16_t hi = std::max(minPercent, maxPercent);
-		const float scale = static_cast<float>(percent) / 100.0f;
+		int lo = std::clamp<int>(shape_tuning[i].min_percent, -limit, limit);
+		int hi = std::clamp<int>(shape_tuning[i].max_percent, -limit, limit);
+		if (lo > hi) std::swap(lo, hi);
+		// Affine input->output remap: lo = output at rest (input 0), hi = output at
+		// full effort (input 1). Final Clamp01 bounds it to the avatar's 0..1 range.
 		const float minValue = static_cast<float>(lo) / 100.0f;
 		const float maxValue = static_cast<float>(hi) / 100.0f;
-		const float tuned = std::clamp(ClampExpressionOutputSignal(frame.expressions[i] * scale), minValue, maxValue);
-		frame.expressions[i] = Clamp01(tuned);
+		const float in = ClampExpressionOutputSignal(frame.expressions[i]);
+		frame.expressions[i] = Clamp01(minValue + in * (maxValue - minValue));
 	}
 }
 

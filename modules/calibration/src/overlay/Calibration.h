@@ -605,6 +605,18 @@ struct CalibrationContext
 	// freeze the live view to investigate rather than have it self-correct
 	// out from under them. Default false (live updates).
 	bool calibrationPaused = false;
+
+	// "Freeze all tracking" time-freeze. When freezeAllTracking is on the driver
+	// holds every tracker and controller (and the HMD when freezeIncludeHmd is on)
+	// at its last pose until the user turns it off. Toggled from the Advanced tab
+	// or the Ctrl+Alt+F hotkey; the overlay resends the state to the driver at
+	// ~1 Hz while frozen (a heartbeat) so a dead overlay fails open to live
+	// tracking. freezeAllTracking is runtime-only (never persisted, reset to off
+	// each session); freezeIncludeHmd is a persisted preference (default off,
+	// because a frozen headset locks the rendered view to the head).
+	bool freezeAllTracking = false;
+	bool freezeIncludeHmd = false;
+
 	// Status-tab UI state: collapses the busier sliders into an "Advanced
 	// settings" section. Persisting this is intentional — a user who opened
 	// it once probably wants it open next session too.
@@ -646,6 +658,12 @@ struct CalibrationContext
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
+	// Confidence-weighted continuous fusion (ContinuousPrecisionFusion.h).
+	// Accumulated precision of the running calibration; higher = more resistant
+	// to far-from-origin re-solves. Runtime-only, never persisted. lastFusionGain
+	// is the most recent fusion gain, surfaced in the heartbeat for diagnostics.
+	double continuousConfidencePrecision = 0.0;
+	double lastFusionGain = 1.0;
 
 	// Persistence throttle for continuous-mode offset writes. The in-memory
 	// calibration is updated on every accepted candidate, but the registry copy
@@ -745,6 +763,10 @@ struct CalibrationContext
 
 		// Runtime UI state — pausing on an empty profile makes no sense.
 		calibrationPaused = false;
+		// Freeze is runtime-only; the driver's heartbeat timeout fails it open to
+		// live tracking, so it's the safe default when clearing. (freezeIncludeHmd
+		// is a persisted preference and is intentionally left alone.)
+		freezeAllTracking = false;
 		// Default this back ON when clearing — it's the safer setting and
 		// matches the construction-time default.
 		recalibrateOnMovement = true;
@@ -806,6 +828,8 @@ struct CalibrationContext
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 		continuousStartSnapshot = {};
 		lastAcceptedContinuousSnapshot = {};
+		continuousConfidencePrecision = 0.0;
+		lastFusionGain = 1.0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
 		continuousSaveDirty = false;
@@ -830,6 +854,8 @@ struct CalibrationContext
 		calibratedTranslation = Eigen::Vector3d::Zero();
 		calibratedRotation = Eigen::Vector3d::Zero();
 		lastAcceptedContinuousSnapshot = {};
+		continuousConfidencePrecision = 0.0;
+		lastFusionGain = 1.0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
 		continuousSaveDirty = false;

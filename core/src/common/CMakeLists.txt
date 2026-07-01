@@ -25,6 +25,8 @@ add_library(openvr_pair_common STATIC
 	CaptionsSpeechModels.h
 	DebugLogging.cpp
 	DebugLogging.h
+	DevTuning.cpp
+	DevTuning.h
 	DiagnosticsLog.cpp
 	DiagnosticsLog.h
 	FileLog.cpp

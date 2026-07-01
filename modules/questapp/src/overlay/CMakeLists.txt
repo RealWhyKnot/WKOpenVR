@@ -13,8 +13,6 @@ add_library(openvr_pair_feature_questapp_overlay STATIC
     QuestCompanionProtocol.h
     QuestAppInstaller.cpp
     QuestAppInstaller.h
-    QuestAppMicRecovery.cpp
-    QuestAppMicRecovery.h
     QuestAppPlugin.cpp
     QuestAppPlugin.h)
 

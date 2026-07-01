@@ -290,6 +290,13 @@ private:
 		Eigen::Quaterniond lastBlendWorldRot = Eigen::Quaterniond::Identity();
 		bool blendMotionInitialized = false;
 
+		// v40 "Freeze all tracking": the last fully-processed pose forwarded to
+		// SteamVR for this device. While the freeze toggle is active the pose hook
+		// replays this instead of the live pose so the device holds perfectly
+		// still. Captured every unfrozen forward so the freeze starts with no jump.
+		vr::DriverPose_t lastForwardedPose{};
+		bool lastForwardedValid = false;
+
 #if WKOPENVR_BUILD_IS_DEV
 		SmartSmoothingShadowState smartShadow;
 #endif
@@ -421,6 +428,20 @@ private:
 	// recovery can attribute the fault. Cleared only by a driver reload (fresh
 	// object). Mirrors the phantom pose-pipeline guard below.
 	std::atomic<bool> m_smoothingPoseFaulted{false};
+
+	// v40 "Freeze all tracking" time-freeze. Set by RequestSetFreezeAllTracking
+	// (IPC thread), read by the pose hook + phantom-synthesis path. m_freezeIncludeHmd
+	// extends the hold to device 0. m_freezeHeartbeatQpc is the QPC of the last
+	// frozen=true request; the pose hook treats freeze as inactive once that stamp
+	// ages past kFreezeHeartbeatTimeoutSec so a dead overlay can never leave SteamVR
+	// permanently frozen (the overlay resends at ~1 Hz while frozen). Default off,
+	// never persisted -- the driver always boots to live tracking.
+	std::atomic<bool> m_freezeAllTracking{false};
+	std::atomic<bool> m_freezeIncludeHmd{false};
+	std::atomic<int64_t> m_freezeHeartbeatQpc{0};
+	// True while freeze is active AND the heartbeat is fresh. Shared by the pose
+	// hook and the phantom synthetic-pose forwarder so both freeze together.
+	bool FreezeActive() const;
 
 	// Optional speed-adaptive low-pass for the synthesized (locked) HMD pose.
 	// Dedicated filter state so it is independent of any per-device smoothing.

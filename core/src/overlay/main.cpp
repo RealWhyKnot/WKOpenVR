@@ -6,6 +6,7 @@
 #include "ManifestRegistration.h"
 #include "Migration.h"
 #include "ModuleRegistry.h"
+#include "OverlayHotReload.h"
 #include "PerfStatsHub.h"
 #include "RuntimeHealthSummary.h"
 #include "SafeModeRecovery.h"
@@ -331,6 +332,11 @@ int main(int argc, char** argv)
 		return 0;
 	}
 
+#if WKOPENVR_BUILD_IS_DEV
+	// Remove any leftover WKOpenVR.old.exe from a previous dev hot-reload swap.
+	openvr_pair::overlay::CleanupStaleOverlayBackup();
+#endif
+
 	glfwSetErrorCallback(GlfwErrorCallback);
 	if (!glfwInit()) {
 		openvr_pair::common::DiagnosticLog("overlay", "glfw_init_failed");
@@ -502,6 +508,15 @@ int main(int argc, char** argv)
 	}
 
 	while (!glfwWindowShouldClose(window) && !vrOverlay->QuitRequested()) {
+#if WKOPENVR_BUILD_IS_DEV
+		// Dev hot-reload: if reload.ps1 -Overlay staged a fresh build next to us,
+		// swap it in, launch it, and exit this instance. Stays in VR (SteamVR and
+		// the driver are untouched).
+		if (openvr_pair::overlay::MaybeRelaunchStagedOverlay()) {
+			openvr_pair::common::DiagnosticLog("overlay", "exiting for dev hot-reload relaunch");
+			break;
+		}
+#endif
 		OverlayFrameTimings frameTimings;
 		const double frameStartSeconds = frameHitches.BeginFrame(frameTimings);
 		double stageStartSeconds = glfwGetTime();

@@ -53,6 +53,18 @@ float EyelidSync::SmoothToward(float current, float target, double dtSeconds)
 	return current + static_cast<float>(alpha) * (target - current);
 }
 
+float EyelidSync::ApplyCloseKnee(float openness, uint8_t strength)
+{
+	if (strength == 0 || !std::isfinite(openness)) return openness;
+	// Knee threshold: at max strength anything <= 50% open reads fully closed.
+	// Everything above the knee is rescaled back up to [0,1] so a fully-open eye
+	// (openness == 1) is unchanged.
+	const float s = std::clamp(static_cast<float>(strength) / 100.f, 0.f, 1.f);
+	const float t = s * 0.5f;
+	const float out = (openness - t) / (1.f - t);
+	return std::max(0.f, std::min(1.f, out));
+}
+
 LARGE_INTEGER EyelidSync::QpcFreq() const
 {
 	if (qpc_freq_.QuadPart == 0) QueryPerformanceFrequency(&qpc_freq_);

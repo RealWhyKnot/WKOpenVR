@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(common_helpers_tests
+	test_devtuning.cpp
+	test_host_hot_reload.cpp
 	test_powershell_command.cpp
 	test_win32_command_line.cpp)
 

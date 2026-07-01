@@ -154,8 +154,8 @@ TEST(WitnessRunawayGuardTest, NonConvergeNoTripWhenLittleApplied)
 TEST(WitnessRunawayGuardTest, WindowResetsAndJudgesIndependently)
 {
 	RunawayGuardState g;
-	EvaluateRunawayGuard(g, 0.0, 42.0, 0.0);                                // window A opens
-	EXPECT_EQ(EvaluateRunawayGuard(g, 2.0, 42.0, 61.0), GuardVerdict::Ok);  // window A: <5 cm, resets to B at t=61
+	EvaluateRunawayGuard(g, 0.0, 42.0, 0.0);                               // window A opens
+	EXPECT_EQ(EvaluateRunawayGuard(g, 2.0, 42.0, 61.0), GuardVerdict::Ok); // window A: <5 cm, resets to B at t=61
 	// Window B (from t=61): +8 cm applied, drift still high -> trips independently.
 	EXPECT_EQ(EvaluateRunawayGuard(g, 10.0, 42.0, 122.0), GuardVerdict::TripNonConverge);
 }

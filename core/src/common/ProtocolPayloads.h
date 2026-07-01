@@ -363,7 +363,14 @@ struct FaceTrackingConfig
 	uint8_t gaze_smoothing;
 	uint8_t openness_smoothing;
 	uint8_t eyelid_sync_mode;
-	uint8_t _reserved_face_config;
+
+	// v41: eye-close assist. When enabled, the driver applies a per-eye "close
+	// knee" to eye openness before eyelid sync so residual openness (eyes that
+	// won't fully shut on a stubborn avatar) reaches fully-closed. Strength is
+	// 0..100; 0 is a no-op. enable reuses the former _reserved_face_config byte and
+	// strength is one new byte -- FaceTrackingConfig stays under SetDeviceTransform.
+	uint8_t eye_close_assist_enabled;
+	uint8_t eye_close_assist_strength;
 
 	// OSC target. Driver forwards these to the host over the host control
 	// pipe; the host owns the UDP socket. Default 127.0.0.1:9000 (VRChat).
@@ -408,28 +415,33 @@ struct FaceModuleSelection
 };
 
 static const uint16_t FACETRACKING_SHAPE_TUNING_RESET_INDEX = 0xFFFFu;
-static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT = 100u;
-static const uint16_t FACETRACKING_SHAPE_TUNING_MAX_PERCENT = 200u;
-static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT = 0u;
-static const uint16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT = 200u;
+// v41: per-expression tuning is an affine input->output remap, clamped to 0..1:
+//   out = clamp01( min + in*(max - min) )
+// min = output at rest (input 0), max = output at full effort (input 1). Both are
+// signed percents in [-LIMIT, LIMIT]; min may go negative (raise the activation
+// threshold so the shape only leaves 0 after a larger movement) and max may exceed
+// 100 (reach full output before full input, then clamp). Defaults min=0, max=100 are
+// pass-through. The former scale_percent multiplier is gone -- the Min->Max slope is
+// the multiplier.
+static const int16_t FACETRACKING_SHAPE_TUNING_LIMIT_PERCENT = 200;
+static const int16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT = 0;
+static const int16_t FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT = 100;
 
 struct FaceShapeTuningParams
 {
-	uint16_t scale_percent; // 0..200; 100 = pass through
-	uint16_t min_percent;   // 0..200; requested lower post-scale limit, final output clamps to 0..1
-	uint16_t max_percent;   // 0..200; requested upper post-scale limit, final output clamps to 0..1
+	int16_t min_percent; // output at input 0, -200..200; default 0
+	int16_t max_percent; // output at input 1, -200..200; default 100
 };
 
 // POD payload for RequestSetFaceShapeTuning. index addresses one
 // FACETRACKING_EXPRESSION_COUNT slot. index == RESET_INDEX clears the driver's
-// cached table back to DEFAULT_PERCENT; overlays send that first before the
-// non-default entries for a newly active avatar.
+// cached table back to defaults; overlays send that first before the non-default
+// entries for a newly active avatar.
 struct FaceShapeTuning
 {
 	uint16_t index;
-	uint16_t scale_percent; // 0..200; 100 = pass through
-	uint16_t min_percent;   // 0..200; 0 = default lower bound
-	uint16_t max_percent;   // 0..200; 200 = default upper bound
+	int16_t min_percent; // output at input 0, -200..200; default 0
+	int16_t max_percent; // output at input 1, -200..200; default 100
 };
 
 // =========================================================================
@@ -748,6 +760,19 @@ struct SetHeadMountConfig
 	uint8_t lockedHeadsetRotationSmoothing; // 0..100, 0 = off (v36)
 };
 
+// POD payload for RequestSetFreezeAllTracking (v40). The overlay's "Freeze all
+// tracking" toggle sends this: frozen holds every device at its last forwarded
+// pose (a time-freeze); includeHmd extends the hold to device 0 (the HMD view).
+// The overlay resends it as a ~1 Hz heartbeat while frozen so the driver fails
+// open to live tracking if the overlay dies. Tiny, so the Request union does not
+// grow.
+struct FreezeConfig
+{
+	bool frozen;
+	bool includeHmd;
+	uint8_t _reserved[6]; // pad; must be 0
+};
+
 struct Request
 {
 	RequestType type;
@@ -806,6 +831,8 @@ struct Request
 		PhantomSolverConfig setPhantomSolverConfig;
 		// v37: snap-calibrate trigger. Tiny; static_assert pins the size.
 		PhantomSnapCalibrate snapCalibrate;
+		// v40: freeze-all-tracking toggle. Tiny; static_assert pins the size.
+		FreezeConfig freeze;
 		// v22: OSC router live send-port edit. Tiny (8 bytes); does not
 		// grow the union.
 		OscRouterConfig setOscRouterConfig;
@@ -842,6 +869,7 @@ static_assert(sizeof(PhantomVirtualEnabled) <= sizeof(SetDeviceTransform),
               "PhantomVirtualEnabled must not grow Request");
 static_assert(sizeof(PhantomSolverConfig) <= sizeof(SetDeviceTransform), "PhantomSolverConfig must not grow Request");
 static_assert(sizeof(PhantomSnapCalibrate) <= sizeof(SetDeviceTransform), "PhantomSnapCalibrate must not grow Request");
+static_assert(sizeof(FreezeConfig) <= sizeof(SetDeviceTransform), "FreezeConfig must not grow Request");
 
 struct Response
 {

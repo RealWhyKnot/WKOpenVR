@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // Runtime feature detection. The driver looks for marker files in its own
 // resources directory at Init() and only wires up the matching subsystems.
@@ -52,6 +53,12 @@ constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool in
 // Returns the bitwise OR of detected feature flags. Logs the path it scanned
 // and the result to the driver log so install issues are easy to diagnose.
 uint32_t DetectFeatureFlags();
+
+// Absolute path of the driver's own <root>\resources directory, resolved from
+// this DLL's on-disk location (robust to the deployed rename). Empty on failure.
+// Shared with the runtime flag scan so callers that need a sibling resource
+// (e.g. the dev tuning file) don't re-derive the path.
+std::wstring GetDriverResourcesDir();
 
 // Runtime probe for a single feature's enable flag. Used only for off-only
 // reconciliation of sidecar-owning modules; it does not apply safety gates or

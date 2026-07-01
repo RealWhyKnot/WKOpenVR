@@ -557,6 +557,11 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.continuous = true;
 	baseOptions.qualityReportInterval = EnvSize("WKOPENVR_REPLAY_QUALITY_INTERVAL", baseOptions.qualityReportInterval);
 	baseOptions.includeHoldoutQuality = EnvFlag("WKOPENVR_REPLAY_HOLDOUT", baseOptions.includeHoldoutQuality);
+	// Far-from-origin fix A/B: LOCK_REL exercises the CalibrateByRelPose branch the
+	// head-mount rig uses; PRECISION_WEIGHT toggles the geometry-weighted solve.
+	baseOptions.lockRelativePosition = EnvFlag("WKOPENVR_REPLAY_LOCK_REL", baseOptions.lockRelativePosition);
+	baseOptions.precisionWeightedRelPose =
+	    EnvFlag("WKOPENVR_REPLAY_PRECISION_WEIGHT", baseOptions.precisionWeightedRelPose);
 	const auto sampleWindows = ReplaySampleWindows();
 
 	std::size_t replayed = 0;
@@ -597,6 +602,13 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " peak_relpose_mad_mm=" << result.peakRelPoseMadMm
 			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
+			          << " lock_rel=" << (options.lockRelativePosition ? 1 : 0)
+			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0)
+			          << " peak_applied_mag_cm=" << result.peakAppliedMagCm
+			          << " applied_mag_wander_cm=" << result.appliedMagWanderCm
+			          << " peak_applied_step_cm=" << result.peakAppliedStepCm
+			          << " large_applied_steps=" << result.largeAppliedSteps
+			          << " total_applied_path_cm=" << result.totalAppliedPathCm
 			          << " solver_sample_rows=" << result.solverSamplesPushed
 			          << " solver_sample_ratio=" << result.solverSampleRatio
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";

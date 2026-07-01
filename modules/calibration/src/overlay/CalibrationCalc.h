@@ -240,6 +240,16 @@ public:
 		m_relativePosCalibrated = calibrated;
 	}
 
+	// Geometry-precision-weighted relative-pose solve. ON by default; the setter
+	// exists so the offline replay A/B can compare weighted vs uniform on a real
+	// recording. See CalibrateByRelPose.
+	void SetPrecisionWeightedRelPose(bool on) { m_usePrecisionWeightedRelPose = on; }
+
+	// Mean of (|ref.trans|^2 + |target.trans|^2) over the current sample window
+	// (m^2) -- the squared lever arm that scales the relpose solve's translation
+	// uncertainty. Feeds the confidence weighting of the calibration over time.
+	double MeanSquaredLeverArmM2() const;
+
 	void SeedEstimatedTransformation(const Eigen::AffineCompact3d& transform, bool annotate = true);
 
 	void PushSample(const Sample& sample);
@@ -338,6 +348,11 @@ private:
 	 * That is to say, it's given by transforming the target world pose by the inverse reference pose.
 	 */
 	Eigen::AffineCompact3d m_refToTargetPose = Eigen::AffineCompact3d::Identity();
+
+	// When true, CalibrateByRelPose weights each sample by geometric precision
+	// (1/lever-arm^2) instead of a uniform mean, so far-from-origin readings
+	// can't drag the calibration around. Default on.
+	bool m_usePrecisionWeightedRelPose = true;
 
 	std::deque<Sample> m_samples;
 

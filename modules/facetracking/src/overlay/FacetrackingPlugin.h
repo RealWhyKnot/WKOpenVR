@@ -78,7 +78,6 @@ public:
 	void RenameAvatarTuningKey(const std::string& key, const std::string& name);
 	void SetGlobalShapeTuning(uint32_t index, FaceShapeTuningValue value);
 	void SetAvatarShapeTuning(const std::string& avatarKey, uint32_t index, FaceShapeTuningValue value);
-	void SetAvatarShapeScale(const std::string& avatarKey, uint32_t index, int percent);
 	void ResetGlobalShapeTuning();
 	void ResetAvatarShapeTuning(const std::string& avatarKey);
 
@@ -109,7 +108,6 @@ private:
 	void DrawStatusBanner();
 	void HandleSyncResult(const facetracking::SyncResult& result);
 	bool UpdateAvatarMetadataFromState();
-	void SetCurrentAvatarShapeScale(uint32_t index, int percent);
 	void ResetCurrentAvatarShapeTuning();
 	void PushShapeTuningToDriver();
 	bool SendShapeTuningRequest(uint16_t index, FaceShapeTuningValue value);

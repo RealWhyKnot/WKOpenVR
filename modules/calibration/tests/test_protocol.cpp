@@ -23,8 +23,27 @@
 // ---------------------------------------------------------------------------
 TEST(ProtocolTest, VersionPinnedToCurrent)
 {
-	EXPECT_EQ(protocol::Version, 39u) << "Protocol version changed without updating the test pin. If this is "
+	EXPECT_EQ(protocol::Version, 41u) << "Protocol version changed without updating the test pin. If this is "
 	                                     "intentional: bump the literal here and document the wire change.";
+}
+
+// v40 "Freeze all tracking". FreezeConfig defaults to "not frozen"; a request
+// carrying it must round-trip its two bools through the Request union, and the
+// payload must stay small enough not to grow the union.
+TEST(ProtocolTest, FreezeConfigDefaultsAndRoundTrip)
+{
+	protocol::FreezeConfig def{};
+	EXPECT_FALSE(def.frozen);
+	EXPECT_FALSE(def.includeHmd);
+
+	EXPECT_LE(sizeof(protocol::FreezeConfig), sizeof(protocol::SetDeviceTransform));
+
+	protocol::Request req(protocol::RequestSetFreezeAllTracking);
+	req.freeze.frozen = true;
+	req.freeze.includeHmd = true;
+	EXPECT_EQ(req.type, protocol::RequestSetFreezeAllTracking);
+	EXPECT_TRUE(req.freeze.frozen);
+	EXPECT_TRUE(req.freeze.includeHmd);
 }
 
 // v23 added `updateQuash` to SetDeviceTransform. The wire-layout gate is the

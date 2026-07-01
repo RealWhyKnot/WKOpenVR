@@ -164,6 +164,12 @@ struct ReplayOptions
 	std::size_t maxContinuousSamples = 200; // 0 keeps every sample; live continuous mode uses a bounded window.
 	std::size_t qualityReportInterval = 50; // 0 disables periodic shadow-quality snapshots.
 	bool includeHoldoutQuality = false;
+	// A/B for the far-from-origin fix. lockRelativePosition exercises the
+	// CalibrateByRelPose branch the live head-mount rig uses (the failing path;
+	// otherwise replay never touches it). precisionWeightedRelPose toggles the
+	// geometry-weighted solve so a recording can be replayed weighted vs uniform.
+	bool lockRelativePosition = false;
+	bool precisionWeightedRelPose = true;
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
@@ -196,6 +202,17 @@ struct ReplayResult
 	double peakRelPoseMadMm = 0.0;
 	double medianRelPoseMadMm = 0.0;
 	double finalRelPoseMadMm = 0.0;
+	// Absolute-C (worldFromDriver translation) trajectory -- what actually flies
+	// off far from origin. appliedMagWanderCm = session max-min of the applied-C
+	// magnitude; the precision-weighted solve should shrink it and the steps.
+	double peakAppliedMagCm = 0.0;
+	double appliedMagWanderCm = 0.0;
+	// Per-tick applied-C jump -- what the user sees as a device "flying off". The
+	// freeze gate targets these sharp jumps (not the slow legitimate drift that
+	// sets the wander envelope), so peak/large-step should collapse gate-on.
+	double peakAppliedStepCm = 0.0;
+	int largeAppliedSteps = 0;       // applied jumps > 20 cm
+	double totalAppliedPathCm = 0.0; // sum of |applied-C step| -- total churn sent to the driver
 	int solverSamplesPushed = 0;
 	double solverSampleRatio = 1.0;
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();

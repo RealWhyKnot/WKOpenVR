@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #include "HostSupervisorBase.h"
 
+#include "BuildChannel.h"
 #include "DiagnosticsLog.h"
 #include "ModulePerf.h"
 #include "Win32CommandLine.h"
@@ -360,6 +361,15 @@ bool HostSupervisorBase::IsCleanSingletonExit(DWORD code)
 	return code == 3 || code == 4;
 }
 
+uint64_t HostSupervisorBase::QueryExeWriteTime() const
+{
+	std::wstring w = WidenUtf8(host_exe_path_);
+	if (w.empty()) return 0;
+	WIN32_FILE_ATTRIBUTE_DATA a{};
+	if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return 0;
+	return (static_cast<uint64_t>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+}
+
 bool HostSupervisorBase::Spawn()
 {
 	bool already_running = false;
@@ -444,6 +454,10 @@ bool HostSupervisorBase::Spawn()
 
 					Log("[host-supervisor] CreateProcessW OK: pid=%lu path='%s'", pi.dwProcessId,
 					    host_exe_path_.c_str());
+					// Baseline for the dev hot-reload watch: the exe bytes this
+					// process was launched from. A later on-disk change relative
+					// to this value triggers a kill+respawn (dev builds only).
+					watched_exe_write_ = QueryExeWriteTime();
 					spawned = true;
 				}
 			}
@@ -676,6 +690,30 @@ void HostSupervisorBase::MonitorLoop()
 				backoff_ms = std::min(backoff_ms * 2, kBackoffMaxMs);
 			}
 		}
+#if WKOPENVR_BUILD_IS_DEV
+		else if (wait == WAIT_TIMEOUT) {
+			// Dev-only hot-reload: if the host exe on disk changed since we
+			// launched it (a rebuild+redeploy while SteamVR keeps running),
+			// kill and respawn so the new binary takes over. The redeploy must
+			// rename the running exe aside before writing the new one (Windows
+			// won't overwrite a running image); the fresh spawn re-resolves the
+			// canonical path and the host reconnects its shmem rings and pipe.
+			uint64_t baseline = 0;
+			bool attached = false;
+			bool haveHandle = false;
+			{
+				std::lock_guard<std::mutex> lk(process_mutex_);
+				baseline = watched_exe_write_;
+				attached = attached_to_existing_;
+				haveHandle = process_handle_ != INVALID_HANDLE_VALUE;
+			}
+			if (ShouldHotReloadHost(attached, haveHandle, baseline, QueryExeWriteTime())) {
+				Log("[host-supervisor] host exe changed on disk (dev hot-reload); restarting");
+				Restart();
+				backoff_ms = kBackoffStartMs;
+			}
+		}
+#endif
 		// else WAIT_TIMEOUT: process still alive, loop again and let
 		// OnHostReady() retry any queued message.
 	}

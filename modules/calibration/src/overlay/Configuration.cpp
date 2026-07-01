@@ -686,6 +686,14 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.recalibrateOnMovement = true;
 	}
 
+	// "Include headset" preference for the freeze-all-tracking toggle. Additive
+	// default-off flag: a missing key loads as false, so no schema bump is needed
+	// (same rationale as the head_mount witness flags above). The active freeze
+	// state itself is runtime-only and never persisted.
+	if (obj["freeze_include_hmd"].is<bool>()) {
+		ctx.freezeIncludeHmd = obj["freeze_include_hmd"].get<bool>();
+	}
+
 	// AUTO/OFF for the base station drift detector. Default AUTO so users
 	// with Lighthouse setups get the universe-shift correction without
 	// having to know it exists. Persists across launches.
@@ -987,6 +995,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	WRITE_IF_CHANGED_DOUBLE("jitter_threshold", jitterThreshold);
 	WRITE_IF_CHANGED_DOUBLE("max_relative_error_threshold", maxRelativeErrorThreshold);
 	WRITE_IF_CHANGED_BOOL("recalibrate_on_movement", recalibrateOnMovement);
+	WRITE_IF_CHANGED_BOOL("freeze_include_hmd", freezeIncludeHmd);
 	WRITE_IF_CHANGED_BOOL("base_station_drift_correction", baseStationDriftCorrectionEnabled);
 	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed", oneShotCalibrationSpeed);
 	WRITE_IF_CHANGED_DOUBLE("continuous_calibration_speed", continuousCalibrationSpeed);

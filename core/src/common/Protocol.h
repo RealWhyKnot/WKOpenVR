@@ -301,7 +301,21 @@ namespace protocol {
 //
 // v39 (2026-06-30): phantom virtual tracker render-model selection. PhantomConfig
 // repurposes a pad byte as `render_model` (TrackerModel enum; 0 = Vive Tracker 3.0).
-const uint32_t Version = 39;
+//
+// v40 (2026-07-01): "Freeze all tracking" time-freeze. RequestSetFreezeAllTracking
+// carries a FreezeConfig {frozen, includeHmd}. When frozen the driver holds every
+// device at its last forwarded pose (HMD only when includeHmd); the overlay resends
+// the request as a ~1 Hz heartbeat so the driver fails open to live tracking if the
+// overlay stops refreshing. FreezeConfig is tiny, so the Request union does not grow.
+//
+// v41 (2026-07-01): face-tracking eye-close assist + tuning remap. FaceTrackingConfig
+// gains eye_close_assist_enabled/strength (reuses the former _reserved_face_config byte
+// plus one new byte) for a per-eye "close knee" that pulls residual eye openness to
+// fully-closed before eyelid sync. FaceShapeTuning / FaceShapeTuningParams drop
+// scale_percent and make min/max signed (int16, -200..200): per-expression tuning is
+// now an affine Min->Max output remap (out = clamp01(min + in*(max - min))) instead of
+// gain-then-clamp. Requires a paired overlay+driver install.
+const uint32_t Version = 41;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -429,6 +443,10 @@ enum RequestType
 	// \\.\pipe\WKOpenVR-Phantom; assigns body roles from the current static
 	// pose and replies ResponsePhantomSnap. Appended to preserve ordinals.
 	RequestSnapCalibrate,
+	// v40 (2026-07-01): "Freeze all tracking" time-freeze. Handled directly by
+	// the core provider (device-wide, not a module concern) like RequestHandshake.
+	// Payload is FreezeConfig. Appended to preserve prior request ordinals.
+	RequestSetFreezeAllTracking,
 };
 
 enum ResponseType

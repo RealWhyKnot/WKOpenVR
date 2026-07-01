@@ -29,6 +29,8 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_boundary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_controller_input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_calc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_precision_weighted_relpose.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_continuous_precision_fusion.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_anchor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_auto_speed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_protocol.cpp

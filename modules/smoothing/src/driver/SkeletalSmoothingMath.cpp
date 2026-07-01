@@ -53,12 +53,19 @@ int FingerIndexForBone(uint32_t bone)
 	return -1;
 }
 
-float SmoothnessToAlpha(uint8_t smoothness)
+float SmoothnessToAlpha(uint8_t smoothness, float maxStrength)
 {
+	if (maxStrength < 0.0f) maxStrength = 0.0f;
+	if (maxStrength > 1.0f) maxStrength = 1.0f;
 	float s = static_cast<float>(smoothness);
 	if (s < 0.0f) s = 0.0f;
 	if (s > 100.0f) s = 100.0f;
-	return 1.0f - (s / 100.0f) * 0.95f;
+	return 1.0f - (s / 100.0f) * maxStrength;
+}
+
+float SmoothnessToAlpha(uint8_t smoothness)
+{
+	return SmoothnessToAlpha(smoothness, kDefaultMaxSmoothStrength);
 }
 
 FingerFrameResult SmoothFingerFrame(FingerFrameState& state, const vr::VRBoneTransform_t* input, uint32_t count,

@@ -15,6 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(driver_safety_tests
+	test_freeze_hold_logic.cpp
 	test_module_registry.cpp
 	test_module_safety.cpp
 	test_safe_mode_recovery.cpp
@@ -22,7 +23,9 @@ add_executable(driver_safety_tests
 
 target_include_directories(driver_safety_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common
-	${CMAKE_SOURCE_DIR}/lib)
+	${CMAKE_SOURCE_DIR}/core/src/driver
+	${CMAKE_SOURCE_DIR}/lib
+	${CMAKE_SOURCE_DIR}/lib/openvr/headers)
 
 target_link_libraries(driver_safety_tests PRIVATE
 	GTest::gtest_main

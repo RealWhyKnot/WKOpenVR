@@ -1,6 +1,7 @@
 #include "MotionRecording.h"
 
-#include "AutoLockHysteresis.h" // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
+#include "AutoLockHysteresis.h"        // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
+#include "ContinuousPrecisionFusion.h" // spacecal::precision -- confidence-weighted fusion (A/B).
 
 #include <windows.h>
 #include <shlobj_core.h>
@@ -530,11 +531,24 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 
 	CalibrationCalc calc;
 	calc.enableStaticRecalibration = false;
-	calc.lockRelativePosition = false;
+	calc.lockRelativePosition = opts.lockRelativePosition;
+	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
 	// Relative-pose MAD tracking (the AUTO-lock translMad analog) -- the headline
 	// drift signal summarised as peak/median/final.
 	std::deque<Eigen::AffineCompact3d> relWindow;
 	std::vector<double> allMad;
+	// Applied-C trajectory (A/B). appliedC is the worldFromDriver translation the
+	// driver would show (cm); its session wander/step is the fly-off signal, which
+	// the precision-weighted solve should shrink.
+	Eigen::Vector3d appliedC = Eigen::Vector3d::Zero();
+	Eigen::Vector3d prevAppliedC = Eigen::Vector3d::Zero();
+	bool hasAppliedC = false;
+	double minAppliedMag = 0.0, maxAppliedMag = 0.0;
+	// Confidence-weighted fusion state (mirrors the live accept path when
+	// precisionWeightedRelPose is on): running fused calibration + accumulated
+	// precision, so the applied-C trajectory reflects the fusion, not raw solves.
+	Eigen::AffineCompact3d appliedTransform = Eigen::AffineCompact3d::Identity();
+	double accumPrecision = 0.0;
 
 	const bool boundedContinuous = opts.continuous && opts.maxContinuousSamples > 0;
 	const std::size_t continuousWindow = boundedContinuous ? opts.maxContinuousSamples : 0;
@@ -652,8 +666,37 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			bool lerp = false;
 			const bool ok = calc.ComputeIncremental(lerp, opts.threshold, opts.maxRelError, opts.ignoreOutliers);
 			tick.accepted = ok;
-			if (ok)
+			if (ok) {
 				++res.accepts;
+				// Applied-C trajectory (the worldFromDriver the driver would show).
+				Eigen::Vector3d candidateC;
+				if (opts.precisionWeightedRelPose) {
+					const double measPrec = spacecal::precision::MeasurementPrecision(calc.MeanSquaredLeverArmM2());
+					const double gain = spacecal::precision::FusionGain(accumPrecision, measPrec);
+					appliedTransform = spacecal::precision::Fuse(appliedTransform, calc.Transformation(), gain);
+					accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
+					candidateC = appliedTransform.translation() * 100.0;
+				}
+				else {
+					candidateC = calc.Transformation().translation() * 100.0;
+				}
+				appliedC = candidateC;
+				const double mag = appliedC.norm();
+				if (!hasAppliedC) {
+					minAppliedMag = maxAppliedMag = mag;
+					hasAppliedC = true;
+				}
+				else {
+					minAppliedMag = std::min(minAppliedMag, mag);
+					maxAppliedMag = std::max(maxAppliedMag, mag);
+					const double stepCm = (appliedC - prevAppliedC).norm();
+					res.peakAppliedStepCm = std::max(res.peakAppliedStepCm, stepCm);
+					res.totalAppliedPathCm += stepCm;
+					if (stepCm > 20.0) ++res.largeAppliedSteps;
+				}
+				res.peakAppliedMagCm = maxAppliedMag;
+				prevAppliedC = appliedC;
+			}
 			else
 				++res.rejects;
 			// CalibrationCalc doesn't expose its post-validate prior error
@@ -704,6 +747,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		std::sort(sorted.begin(), sorted.end());
 		res.medianRelPoseMadMm = sorted[sorted.size() / 2];
 	}
+	res.appliedMagWanderCm = hasAppliedC ? (maxAppliedMag - minAppliedMag) : 0.0;
 
 	res.rowsReplayed = (int)rec.rows.size();
 	const int observedRows = res.sampleRowsObserved > 0 ? res.sampleRowsObserved : res.rowsReplayed;

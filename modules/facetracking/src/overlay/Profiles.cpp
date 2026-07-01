@@ -43,7 +43,8 @@ std::string TrimAsciiCopy(std::string value)
 
 int ClampShapeTuningPercent(int value)
 {
-	return std::clamp(value, 0, static_cast<int>(protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT));
+	const int limit = protocol::FACETRACKING_SHAPE_TUNING_LIMIT_PERCENT;
+	return std::clamp(value, -limit, limit);
 }
 
 int ExpressionIndexForName(const std::string& name)
@@ -57,9 +58,13 @@ int ExpressionIndexForName(const std::string& name)
 FaceShapeTuningValue DecodeShapeTuningValue(const picojson::value& value)
 {
 	FaceShapeTuningValue tuning = DefaultFaceShapeTuningValue();
+	// Bare number: the output at full effort (max), min stays 0. This also migrates
+	// the legacy scale-only shorthand exactly: old out=clamp01(in*scale) equals new
+	// out=clamp01(in*max) with min=0.
 	if (value.is<double>()) {
-		tuning.scale_percent = ClampShapeTuningPercent(static_cast<int>(value.get<double>()));
-		return tuning;
+		tuning.min_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
+		tuning.max_percent = ClampShapeTuningPercent(static_cast<int>(value.get<double>()));
+		return ClampFaceShapeTuningValue(tuning);
 	}
 	if (!value.is<picojson::object>()) return tuning;
 
@@ -70,7 +75,19 @@ FaceShapeTuningValue DecodeShapeTuningValue(const picojson::value& value)
 		return ClampShapeTuningPercent(static_cast<int>(it->second.get<double>()));
 	};
 
-	tuning.scale_percent = readPercent("scale", tuning.scale_percent);
+	// Legacy {scale,min,max} (gain then hard clamp). Migrate to the affine model:
+	// old floor -> at-rest (min); old gain -> full-effort output (max), unless the
+	// user set an explicit ceiling (max != 200), which is honored as the new max.
+	// Not bit-exact for gain+ceiling combos -- documented.
+	if (obj.find("scale") != obj.end()) {
+		const int oldScale = readPercent("scale", 100);
+		const int oldMin = readPercent("min", 0);
+		const int oldMax = readPercent("max", 200);
+		tuning.min_percent = oldMin;
+		tuning.max_percent = (oldMax != 200) ? oldMax : oldScale;
+		return ClampFaceShapeTuningValue(tuning);
+	}
+
 	tuning.min_percent = readPercent("min", tuning.min_percent);
 	tuning.max_percent = readPercent("max", tuning.max_percent);
 	return ClampFaceShapeTuningValue(tuning);
@@ -127,13 +144,13 @@ picojson::object EncodeShapeTuningObject(const FaceShapeScaleArray& values)
 	for (uint32_t i = 0; i < protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
 		const FaceShapeTuningValue value = ClampFaceShapeTuningValue(values[i]);
 		if (IsDefaultFaceShapeTuningValue(value)) continue;
-		if (value.min_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT &&
-		    value.max_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT) {
-			shapeObj[facetracking::ExpressionName(i)] = picojson::value(static_cast<double>(value.scale_percent));
+		// Shorthand: when min is default (at-rest 0), store just max as a number.
+		// The decoder reads a bare number as {min:0, max:n}.
+		if (value.min_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT) {
+			shapeObj[facetracking::ExpressionName(i)] = picojson::value(static_cast<double>(value.max_percent));
 		}
 		else {
 			picojson::object shapeValue;
-			shapeValue["scale"] = picojson::value(static_cast<double>(value.scale_percent));
 			shapeValue["min"] = picojson::value(static_cast<double>(value.min_percent));
 			shapeValue["max"] = picojson::value(static_cast<double>(value.max_percent));
 			shapeObj[facetracking::ExpressionName(i)] = picojson::value(shapeValue);
@@ -198,6 +215,9 @@ FacetrackingProfile Decode(const picojson::value& v)
 	getBool("output_osc_enabled", p.output_osc_enabled);
 	getInt("gaze_smoothing", p.gaze_smoothing);
 	getInt("openness_smoothing", p.openness_smoothing);
+	getBool("eye_close_assist_enabled", p.eye_close_assist_enabled);
+	getInt("eye_close_assist_strength", p.eye_close_assist_strength);
+	p.eye_close_assist_strength = std::clamp(p.eye_close_assist_strength, 0, 100);
 	getBool("mouth_close_compensation_enabled", p.mouth_close_compensation_enabled);
 	getBool("smile_mouth_open_assist_enabled", p.smile_mouth_open_assist_enabled);
 	getInt("smile_mouth_open_strength", p.smile_mouth_open_strength);
@@ -253,6 +273,8 @@ std::string Encode(const FacetrackingProfile& p)
 	obj["output_osc_enabled"] = picojson::value(p.output_osc_enabled);
 	obj["gaze_smoothing"] = picojson::value((double)p.gaze_smoothing);
 	obj["openness_smoothing"] = picojson::value((double)p.openness_smoothing);
+	obj["eye_close_assist_enabled"] = picojson::value(p.eye_close_assist_enabled);
+	obj["eye_close_assist_strength"] = picojson::value((double)p.eye_close_assist_strength);
 	obj["mouth_close_compensation_enabled"] = picojson::value(p.mouth_close_compensation_enabled);
 	obj["smile_mouth_open_assist_enabled"] = picojson::value(p.smile_mouth_open_assist_enabled);
 	obj["smile_mouth_open_strength"] = picojson::value((double)p.smile_mouth_open_strength);
@@ -320,7 +342,6 @@ FaceShapeTuningValue DefaultFaceShapeTuningValue()
 
 FaceShapeTuningValue ClampFaceShapeTuningValue(FaceShapeTuningValue value)
 {
-	value.scale_percent = ClampShapeTuningPercent(value.scale_percent);
 	value.min_percent = ClampShapeTuningPercent(value.min_percent);
 	value.max_percent = ClampShapeTuningPercent(value.max_percent);
 	if (value.min_percent > value.max_percent) std::swap(value.min_percent, value.max_percent);
@@ -330,8 +351,7 @@ FaceShapeTuningValue ClampFaceShapeTuningValue(FaceShapeTuningValue value)
 bool IsDefaultFaceShapeTuningValue(const FaceShapeTuningValue& value)
 {
 	const FaceShapeTuningValue clamped = ClampFaceShapeTuningValue(value);
-	return clamped.scale_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT &&
-	       clamped.min_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT &&
+	return clamped.min_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT &&
 	       clamped.max_percent == protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
 }
 

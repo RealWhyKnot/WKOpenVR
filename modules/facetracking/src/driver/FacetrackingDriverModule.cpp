@@ -76,27 +76,17 @@ static bool AtomicWriteFile(const std::wstring& final_path, const std::string& c
 
 static protocol::FaceShapeTuningParams DefaultShapeTuning()
 {
-	return protocol::FaceShapeTuningParams{protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_PERCENT,
-	                                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT,
+	return protocol::FaceShapeTuningParams{protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT,
 	                                       protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT};
 }
 
 static protocol::FaceShapeTuningParams NormalizeShapeTuning(const protocol::FaceShapeTuning& tuning)
 {
-	protocol::FaceShapeTuningParams params{};
-	params.scale_percent = std::min<uint16_t>(tuning.scale_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-
-	if (tuning.min_percent == 0 && tuning.max_percent == 0) {
-		params.min_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MIN_PERCENT;
-		params.max_percent = protocol::FACETRACKING_SHAPE_TUNING_DEFAULT_MAX_PERCENT;
-	}
-	else {
-		params.min_percent = std::min<uint16_t>(tuning.min_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-		params.max_percent = std::min<uint16_t>(tuning.max_percent, protocol::FACETRACKING_SHAPE_TUNING_MAX_PERCENT);
-		if (params.min_percent > params.max_percent) std::swap(params.min_percent, params.max_percent);
-	}
-
-	return params;
+	const int limit = protocol::FACETRACKING_SHAPE_TUNING_LIMIT_PERCENT;
+	int lo = std::clamp<int>(tuning.min_percent, -limit, limit);
+	int hi = std::clamp<int>(tuning.max_percent, -limit, limit);
+	if (lo > hi) std::swap(lo, hi);
+	return protocol::FaceShapeTuningParams{static_cast<int16_t>(lo), static_cast<int16_t>(hi)};
 }
 
 static void AppendExpressionArrayJson(std::ostringstream& o, const FaceExpressionArray& values)
@@ -396,22 +386,18 @@ public:
 					return true;
 				}
 				if (tune.index >= protocol::FACETRACKING_EXPRESSION_COUNT) {
-					FT_LOG_DRV("[module] face shape tuning rejected: index=%u scale=%u min=%u max=%u",
-					           (unsigned)tune.index, (unsigned)tune.scale_percent, (unsigned)tune.min_percent,
-					           (unsigned)tune.max_percent);
+					FT_LOG_DRV("[module] face shape tuning rejected: index=%u min=%d max=%d", (unsigned)tune.index,
+					           (int)tune.min_percent, (int)tune.max_percent);
 					resp.type = protocol::ResponseInvalid;
 					return true;
 				}
 				const protocol::FaceShapeTuningParams params = NormalizeShapeTuning(tune);
 				const protocol::FaceShapeTuningParams old = shape_tuning_percent_[tune.index];
 				shape_tuning_percent_[tune.index] = params;
-				if (old.scale_percent != params.scale_percent || old.min_percent != params.min_percent ||
-				    old.max_percent != params.max_percent) {
-					FT_LOG_DRV("[module] face shape tuning update: index=%u scale=%u%%->%u%% min=%u%%->%u%% "
-					           "max=%u%%->%u%%",
-					           (unsigned)tune.index, (unsigned)old.scale_percent, (unsigned)params.scale_percent,
-					           (unsigned)old.min_percent, (unsigned)params.min_percent, (unsigned)old.max_percent,
-					           (unsigned)params.max_percent);
+				if (old.min_percent != params.min_percent || old.max_percent != params.max_percent) {
+					FT_LOG_DRV("[module] face shape tuning update: index=%u min=%d%%->%d%% max=%d%%->%d%%",
+					           (unsigned)tune.index, (int)old.min_percent, (int)params.min_percent,
+					           (int)old.max_percent, (int)params.max_percent);
 				}
 				resp.type = protocol::ResponseSuccess;
 				return true;
@@ -770,6 +756,16 @@ private:
 			// Vergence lock.
 			if (cfg.vergence_lock_enabled) {
 				vergence_.Apply(frame, cfg.vergence_lock_strength);
+			}
+
+			// Eye-close assist: pull residual openness toward fully-closed before
+			// eyelid sync so stubborn avatars reach a full blink. Per-eye so a real
+			// wink stays asymmetric and eyelid sync's wink detection still fires.
+			if (cfg.eye_close_assist_enabled && (frame.flags & 0x1u)) {
+				frame.eye_openness_l =
+				    facetracking::EyelidSync::ApplyCloseKnee(frame.eye_openness_l, cfg.eye_close_assist_strength);
+				frame.eye_openness_r =
+				    facetracking::EyelidSync::ApplyCloseKnee(frame.eye_openness_r, cfg.eye_close_assist_strength);
 			}
 
 			// Eyelid sync.
