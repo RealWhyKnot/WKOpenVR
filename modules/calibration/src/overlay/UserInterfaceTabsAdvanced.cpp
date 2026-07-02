@@ -516,6 +516,17 @@ void CCal_DrawSettings()
 						    SaveProfile(CalCtx);
 					    }
 				    });
+				    openvr_pair::overlay::ui::SettingRow(table, "Confidence-weighted calibration", [&] {
+					    if (ExperimentCheckbox(
+					            "confidence_weighted_calibration", "##head_mount_experimental_confidence_fusion",
+					            &CalCtx.headMount.experimentalConfidenceFusion,
+					            "Weight each continuous re-solve by how trustworthy its geometry is and fuse it into a "
+					            "running estimate so a far-from-origin reading can't drag a good calibration around. "
+					            "Off: each accepted solve overwrites the calibration outright (classic behaviour). "
+					            "Experimental. Default off.")) {
+						    SaveProfile(CalCtx);
+					    }
+				    });
 			    });
 			ImGui::EndGroupPanel();
 		}

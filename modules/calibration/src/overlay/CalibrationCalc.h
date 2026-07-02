@@ -351,8 +351,10 @@ private:
 
 	// When true, CalibrateByRelPose weights each sample by geometric precision
 	// (1/lever-arm^2) instead of a uniform mean, so far-from-origin readings
-	// can't drag the calibration around. Default on.
-	bool m_usePrecisionWeightedRelPose = true;
+	// can't drag the calibration around. Default OFF -- the base relpose solve is
+	// a plain uniform average (upstream behaviour); the live tick enables this
+	// only under the experimental confidence-fusion toggle.
+	bool m_usePrecisionWeightedRelPose = false;
 
 	std::deque<Sample> m_samples;
 

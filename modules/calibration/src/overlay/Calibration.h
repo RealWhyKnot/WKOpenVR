@@ -189,6 +189,12 @@ struct HeadMountConfig
 	// slew-limited step that closes sub-30 cm witness-vs-calibration drift.
 	bool experimentalWitnessAutoCalibrate = false;
 	bool experimentalWitnessCorrection = false;
+	// Experimental geometry-precision confidence fusion (default OFF). On: each
+	// continuous re-solve is weighted by its lever-arm precision and fused into a
+	// running estimate by accumulated confidence, so a far-from-origin reading
+	// cannot drag a good calibration around. Off: the classic behaviour -- each
+	// accepted candidate overwrites the calibration outright.
+	bool experimentalConfidenceFusion = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
 	// head-mounted tracker (0..100, 0 = off). Tames lighthouse position jitter.

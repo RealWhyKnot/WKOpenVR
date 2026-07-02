@@ -369,6 +369,8 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 		hm.experimentalWitnessAutoCalibrate = obj["experimental_witness_auto_calibrate"].get<bool>();
 	if (obj["experimental_witness_correction"].is<bool>())
 		hm.experimentalWitnessCorrection = obj["experimental_witness_correction"].get<bool>();
+	if (obj["experimental_confidence_fusion"].is<bool>())
+		hm.experimentalConfidenceFusion = obj["experimental_confidence_fusion"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
 	if (obj["locked_headset_smoothing"].is<double>()) {
 		double v = obj["locked_headset_smoothing"].get<double>();
@@ -446,6 +448,7 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool experimentalAutoCorrect = hm.experimentalAutoCorrectOffset;
 	bool experimentalWitnessAutoCal = hm.experimentalWitnessAutoCalibrate;
 	bool experimentalWitnessCorr = hm.experimentalWitnessCorrection;
+	bool experimentalConfidenceFusion = hm.experimentalConfidenceFusion;
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
@@ -454,6 +457,7 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	obj["experimental_auto_correct_offset"].set<bool>(experimentalAutoCorrect);
 	obj["experimental_witness_auto_calibrate"].set<bool>(experimentalWitnessAutoCal);
 	obj["experimental_witness_correction"].set<bool>(experimentalWitnessCorr);
+	obj["experimental_confidence_fusion"].set<bool>(experimentalConfidenceFusion);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
 	obj["locked_headset_smoothing"].set<double>(lockedSmoothing);

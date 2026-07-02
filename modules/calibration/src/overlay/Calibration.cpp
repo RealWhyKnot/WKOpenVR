@@ -2920,6 +2920,10 @@ void CalibrationTick(double time)
 		const bool blockStaleRelPose =
 		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
+		// Geometry-precision weighting is part of the experimental confidence
+		// fusion (opt-in). Base behaviour is the plain uniform relpose average,
+		// matching upstream; the toggle enables both the weighting and the fusion.
+		calibration.SetPrecisionWeightedRelPose(CalCtx.headMount.experimentalConfidenceFusion);
 		if (blockStaleRelPose) {
 			static double s_lastHeadMountRelPoseGuardLog = -1e9;
 			if ((time - s_lastHeadMountRelPoseGuardLog) >= 1.0) {
@@ -3339,11 +3343,13 @@ void CalibrationTick(double time)
 			Metrics::WriteLogAnnotation(firstBuf);
 		}
 
-		if (inContinuousState) {
-			// Confidence-weighted fusion: treat this candidate as a measurement of
-			// the constant calibration C, weighted by its geometry precision. A
-			// far-from-origin candidate (large lever arm -> low precision) barely
-			// moves a well-established calibration; a near-origin one refines it.
+		if (inContinuousState && ctx.headMount.experimentalConfidenceFusion) {
+			// Confidence-weighted fusion (experimental, opt-in): treat this candidate
+			// as a measurement of the constant calibration C, weighted by its
+			// geometry precision. A far-from-origin candidate (large lever arm ->
+			// low precision) barely moves a well-established calibration; a
+			// near-origin one refines it. Off (default) -> the else branch below
+			// overwrites the calibration with each accepted candidate (classic).
 			// See ContinuousPrecisionFusion.h.
 			const Eigen::AffineCompact3d currentC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
 			const double measPrec = spacecal::precision::MeasurementPrecision(calibration.MeanSquaredLeverArmM2());
