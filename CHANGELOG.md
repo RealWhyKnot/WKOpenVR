@@ -268,6 +268,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Keep eye-wide in sync with eyelids and clear stale host frames (1c9fea2)
 - **calibration:** Weight continuous solve by geometry to hold alignment far from origin (a72ac38)
 - **calibration:** Bound experimental witness correction so it cannot diverge (195ca7d)
+- **calibration:** Make geometry confidence weighting opt-in, default off (4d44b00)
 
 ---
 
