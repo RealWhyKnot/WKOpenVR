@@ -230,9 +230,12 @@ struct ReplayOptions
 	// A/B for the far-from-origin fix. lockRelativePosition exercises the
 	// CalibrateByRelPose branch the live head-mount rig uses (the failing path;
 	// otherwise replay never touches it). precisionWeightedRelPose toggles the
-	// geometry-weighted solve so a recording can be replayed weighted vs uniform.
+	// geometry-weighted solve so a recording can be replayed weighted vs uniform;
+	// it defaults off to match the live default (experimental fusion opt-in), so
+	// the harness baseline scenario replays the same path a defaults-off session
+	// runs.
 	bool lockRelativePosition = false;
-	bool precisionWeightedRelPose = true;
+	bool precisionWeightedRelPose = false;
 	// Warm-start seeding (see ReplaySeedMode). Explicit mode reads the two seed
 	// fields; Recorded mode ignores them and uses rec.seedProfile when valid.
 	ReplaySeedMode seedMode = ReplaySeedMode::None;
