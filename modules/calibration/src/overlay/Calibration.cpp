@@ -1258,6 +1258,7 @@ void StartContinuousCalibration(const char* reason)
 	// from its first candidate.
 	CalCtx.continuousConfidencePrecision = CalCtx.validProfile ? spacecal::precision::kSeedPriorPrecision : 0.0;
 	CalCtx.lastFusionGain = 1.0;
+	CalCtx.continuousFusionDisagreeStreak = 0;
 	AssignTargets();
 	if (CalCtx.headMount.mode != HeadMountMode::Off || !CalCtx.headMount.trackerSerial.empty()) {
 		if (wkopenvr::headmount::BindHeadMountToContinuousTarget(CalCtx)) {
@@ -1346,6 +1347,7 @@ void EndContinuousCalibration()
 	CalCtx.lastAcceptedContinuousSnapshot = {};
 	CalCtx.continuousConfidencePrecision = 0.0;
 	CalCtx.lastFusionGain = 1.0;
+	CalCtx.continuousFusionDisagreeStreak = 0;
 	// The selected snapshot above already persisted the final offset, so no
 	// throttled save is still pending.
 	CalCtx.continuousSaveDirty = false;
@@ -3118,13 +3120,30 @@ void CalibrationTick(double time)
 			// overwrites the calibration with each accepted candidate (classic).
 			// See ContinuousPrecisionFusion.h.
 			const Eigen::AffineCompact3d currentC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
+			const Eigen::AffineCompact3d candidateC = calibration.Transformation();
 			const double measPrec = spacecal::precision::MeasurementPrecision(calibration.MeanSquaredLeverArmM2());
-			const double gain = spacecal::precision::FusionGain(ctx.continuousConfidencePrecision, measPrec);
-			const Eigen::AffineCompact3d fusedC =
-			    spacecal::precision::Fuse(currentC, calibration.Transformation(), gain);
-			ctx.continuousConfidencePrecision =
-			    std::min(ctx.continuousConfidencePrecision + measPrec, spacecal::precision::kMaxConfidence);
-			ctx.lastFusionGain = gain;
+			const double disagreeM = (candidateC.translation() - currentC.translation()).norm();
+			Eigen::AffineCompact3d fusedC;
+			if (spacecal::precision::NoteSeedDisagreement(ctx.continuousFusionDisagreeStreak, disagreeM)) {
+				// Stale-seed breaker: the estimate is metres from what the solver
+				// keeps producing, so the seed (or the rig) is wrong. Adopt the
+				// candidate and rebuild confidence from its own precision.
+				fusedC = candidateC;
+				ctx.continuousConfidencePrecision = std::min(measPrec, spacecal::precision::kMaxConfidence);
+				ctx.lastFusionGain = 1.0;
+				char breakBuf[160];
+				snprintf(breakBuf, sizeof breakBuf,
+				         "fusion_stale_seed_break: disagree_m=%.3f trips=%d meas_precision=%.4f", disagreeM,
+				         spacecal::precision::kStaleSeedTripCount, measPrec);
+				Metrics::WriteLogAnnotation(breakBuf);
+			}
+			else {
+				const double gain = spacecal::precision::FusionGain(ctx.continuousConfidencePrecision, measPrec);
+				fusedC = spacecal::precision::Fuse(currentC, candidateC, gain);
+				ctx.continuousConfidencePrecision =
+				    std::min(ctx.continuousConfidencePrecision + measPrec, spacecal::precision::kMaxConfidence);
+				ctx.lastFusionGain = gain;
+			}
 			ctx.calibratedRotation = fusedC.rotation().eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
 			ctx.calibratedTranslation = fusedC.translation() * 100.0;
 		}

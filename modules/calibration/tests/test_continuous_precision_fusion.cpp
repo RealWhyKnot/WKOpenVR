@@ -88,3 +88,39 @@ TEST(ContinuousPrecisionFusionTest, BankedCalibrationSurvivesFarSession)
 	EXPECT_LT(drift, 0.20 * fullJump) << "far session dragged the banked calibration off by " << drift << " m of "
 	                                  << fullJump << " m";
 }
+
+TEST(ContinuousPrecisionFusionTest, StaleSeedBreakerTripsAfterConsecutiveDisagreements)
+{
+	int streak = 0;
+	for (int i = 0; i < pf::kStaleSeedTripCount - 1; ++i) {
+		EXPECT_FALSE(pf::NoteSeedDisagreement(streak, 2.5)) << "trip " << i << " fired early";
+	}
+	EXPECT_TRUE(pf::NoteSeedDisagreement(streak, 2.5));
+	EXPECT_EQ(streak, 0) << "streak must reset after a trip";
+}
+
+TEST(ContinuousPrecisionFusionTest, StaleSeedBreakerStreakResetsOnAgreement)
+{
+	int streak = 0;
+	EXPECT_FALSE(pf::NoteSeedDisagreement(streak, 3.0));
+	EXPECT_FALSE(pf::NoteSeedDisagreement(streak, 3.0));
+	// One in-band candidate (the far-from-origin noise profile: mostly sub-metre
+	// scatter with isolated large outliers) clears the streak.
+	EXPECT_FALSE(pf::NoteSeedDisagreement(streak, 0.4));
+	EXPECT_EQ(streak, 0);
+	EXPECT_FALSE(pf::NoteSeedDisagreement(streak, 3.0));
+	EXPECT_FALSE(pf::NoteSeedDisagreement(streak, 3.0));
+	EXPECT_TRUE(pf::NoteSeedDisagreement(streak, 3.0));
+}
+
+TEST(ContinuousPrecisionFusionTest, StaleSeedBreakerBoundaryAtDisagreeThreshold)
+{
+	int streak = 0;
+	for (int i = 0; i < 10 * pf::kStaleSeedTripCount; ++i) {
+		EXPECT_FALSE(pf::NoteSeedDisagreement(streak, pf::kStaleSeedDisagreeM - 0.01)) << "sub-threshold tripped";
+	}
+	for (int i = 0; i < pf::kStaleSeedTripCount - 1; ++i) {
+		EXPECT_FALSE(pf::NoteSeedDisagreement(streak, pf::kStaleSeedDisagreeM));
+	}
+	EXPECT_TRUE(pf::NoteSeedDisagreement(streak, pf::kStaleSeedDisagreeM));
+}

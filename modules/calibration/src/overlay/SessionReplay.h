@@ -361,11 +361,12 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
 
 	// Applied transform: what the driver would render. Solver accepts write it
-	// absolutely (or fuse into it); the witness correction nudges its
-	// translation -- the same single variable the live tick shares.
+	// absolutely (or fuse into it) -- the same single variable the live tick
+	// shares.
 	Eigen::AffineCompact3d applied = Eigen::AffineCompact3d::Identity();
 	bool hasApplied = false;
 	double accumPrecision = 0.0;
+	int disagreeStreak = 0;
 	Eigen::AffineCompact3d seedTransform = Eigen::AffineCompact3d::Identity();
 	{
 		bool seed = false;
@@ -495,9 +496,16 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 					++res.accepts;
 					if (opts.precisionWeightedRelPose) {
 						const double measPrec = spacecal::precision::MeasurementPrecision(calc.MeanSquaredLeverArmM2());
-						const double gain = spacecal::precision::FusionGain(accumPrecision, measPrec);
-						applied = spacecal::precision::Fuse(applied, calc.Transformation(), gain);
-						accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
+						const double disagreeM = (calc.Transformation().translation() - applied.translation()).norm();
+						if (spacecal::precision::NoteSeedDisagreement(disagreeStreak, disagreeM)) {
+							applied = calc.Transformation();
+							accumPrecision = std::min(measPrec, spacecal::precision::kMaxConfidence);
+						}
+						else {
+							const double gain = spacecal::precision::FusionGain(accumPrecision, measPrec);
+							applied = spacecal::precision::Fuse(applied, calc.Transformation(), gain);
+							accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
+						}
 					}
 					else {
 						applied = calc.Transformation();

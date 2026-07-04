@@ -610,6 +610,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	// precision, so the applied-C trajectory reflects the fusion, not raw solves.
 	Eigen::AffineCompact3d appliedTransform = Eigen::AffineCompact3d::Identity();
 	double accumPrecision = 0.0;
+	int disagreeStreak = 0;
 
 	// Warm start. Mirrors StartContinuousCalibration with a valid profile: the
 	// solver estimate is seeded (so the improvement gate compares against it)
@@ -788,11 +789,20 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 				Eigen::Vector3d candidateC;
 				if (opts.precisionWeightedRelPose) {
 					const double measPrec = spacecal::precision::MeasurementPrecision(calc.MeanSquaredLeverArmM2());
-					const double gain = spacecal::precision::FusionGain(accumPrecision, measPrec);
-					appliedTransform = spacecal::precision::Fuse(appliedTransform, calc.Transformation(), gain);
-					accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
+					const double disagreeM =
+					    (calc.Transformation().translation() - appliedTransform.translation()).norm();
+					if (spacecal::precision::NoteSeedDisagreement(disagreeStreak, disagreeM)) {
+						appliedTransform = calc.Transformation();
+						accumPrecision = std::min(measPrec, spacecal::precision::kMaxConfidence);
+						tick.fusionGain = 1.0;
+					}
+					else {
+						const double gain = spacecal::precision::FusionGain(accumPrecision, measPrec);
+						appliedTransform = spacecal::precision::Fuse(appliedTransform, calc.Transformation(), gain);
+						accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
+						tick.fusionGain = gain;
+					}
 					candidateC = appliedTransform.translation() * 100.0;
-					tick.fusionGain = gain;
 				}
 				else {
 					candidateC = calc.Transformation().translation() * 100.0;

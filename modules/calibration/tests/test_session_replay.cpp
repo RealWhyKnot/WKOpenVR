@@ -277,6 +277,26 @@ TEST(SessionReplayTest, MicroReanchorRemovesSubThresholdResidual)
 	EXPECT_LT(baseline.peakAppliedStepCm, 1.0);
 }
 
+// A cross-session stale seed metres from the session's truth must not survive
+// the fusion's seed prior: the stale-seed breaker adopts the solver's answer
+// after a few consecutive metre-scale disagreements.
+TEST(SessionReplayTest, StaleSeedEscapesInSessionReplay)
+{
+	SessionSpec spec;
+	spec.rows = 900;
+	const auto rec = MakeSessionRecording(spec); // truth: +20 cm X
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::Explicit;
+	opts.seedTransCm = Eigen::Vector3d(370.0, 0.0, 0.0); // 3.5 m wrong
+	opts.precisionWeightedRelPose = true;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	ASSERT_TRUE(res.seedApplied);
+	EXPECT_GT(res.accepts, 5);
+	EXPECT_NEAR(res.netAppliedDriftCm.x(), -350.0, 10.0) << "fusion stayed pinned to a metres-wrong seed";
+}
+
 // Env-driven session replay over retained/pinned recordings; the E3/E5
 // harness. Prints one [session-replay] line per recording.
 TEST(SessionReplayTest, ReplaySessionsWhenRequested)

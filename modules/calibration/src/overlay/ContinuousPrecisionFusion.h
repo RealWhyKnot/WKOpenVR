@@ -47,6 +47,35 @@ constexpr double kMaxConfidence = 2000.0;
 // override it. Used only when a valid profile seeds the continuous solve.
 constexpr double kSeedPriorPrecision = 300.0;
 
+// Stale-seed breaker. The seed prior defends a banked calibration against
+// far-from-origin noise, but a cross-session profile can be metres wrong when
+// the target universe re-anchors between sessions (field logs: stored profile
+// 2.5-4.7 m from the session's true calibration). With the prior in place the
+// fusion then crawls toward the truth for the whole session instead of
+// escaping. Far-from-origin solve noise is tens of cm and universe changes are
+// metres, so a full metre of disagreement on several consecutive accepted
+// candidates can only mean the current estimate (seed or a genuinely moved
+// rig) is wrong -- adopt the candidate outright and rebuild confidence from
+// its own precision.
+constexpr double kStaleSeedDisagreeM = 1.0;
+constexpr int kStaleSeedTripCount = 3;
+
+// Tracks consecutive candidate-vs-estimate disagreements >= kStaleSeedDisagreeM.
+// Returns true when the streak reaches kStaleSeedTripCount; the caller adopts
+// the candidate wholesale and the streak resets.
+inline bool NoteSeedDisagreement(int& streak, double distM)
+{
+	if (!(distM >= kStaleSeedDisagreeM)) {
+		streak = 0;
+		return false;
+	}
+	if (++streak < kStaleSeedTripCount) {
+		return false;
+	}
+	streak = 0;
+	return true;
+}
+
 // Precision (inverse variance, relative units) of a calibration measurement
 // taken with the given mean-squared lever arm (m^2). Lever arm =
 // |ref.trans|^2 + |target.trans|^2 averaged over the solve window.

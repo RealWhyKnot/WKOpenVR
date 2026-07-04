@@ -668,6 +668,9 @@ struct CalibrationContext
 	// is the most recent fusion gain, surfaced in the heartbeat for diagnostics.
 	double continuousConfidencePrecision = 0.0;
 	double lastFusionGain = 1.0;
+	// Consecutive accepted candidates disagreeing with the fused estimate by
+	// >= kStaleSeedDisagreeM (stale-seed breaker input).
+	int continuousFusionDisagreeStreak = 0;
 
 	// Persistence throttle for continuous-mode offset writes. The in-memory
 	// calibration is updated on every accepted candidate, but the registry copy
@@ -834,6 +837,7 @@ struct CalibrationContext
 		lastAcceptedContinuousSnapshot = {};
 		continuousConfidencePrecision = 0.0;
 		lastFusionGain = 1.0;
+		continuousFusionDisagreeStreak = 0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
 		continuousSaveDirty = false;
@@ -860,6 +864,7 @@ struct CalibrationContext
 		lastAcceptedContinuousSnapshot = {};
 		continuousConfidencePrecision = 0.0;
 		lastFusionGain = 1.0;
+		continuousFusionDisagreeStreak = 0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
 		continuousSaveDirty = false;

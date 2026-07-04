@@ -787,6 +787,35 @@ TEST(MotionRecordingReplayTest, SeededReplayFusionDefendsBadSeedFarFromOrigin)
 	    << "near-origin precision should pull the applied calibration off the bad seed";
 }
 
+// A cross-session stale seed metres from the session's true calibration (the
+// target universe re-anchored between sessions). The seed prior must not pin
+// the fusion to it: the stale-seed breaker adopts the solver's answer after a
+// few consecutive metre-scale disagreements, matching the overwrite path's
+// escape instead of crawling all session.
+TEST(MotionRecordingReplayTest, SeededReplayFusionEscapesMetersWrongSeed)
+{
+	Eigen::AffineCompact3d cTrue = Eigen::AffineCompact3d::Identity();
+	cTrue.translation() = Eigen::Vector3d(0.20, 0.0, 0.0);
+	const Eigen::Vector3d seedTransCm(370.0, 0.0, 0.0); // stored profile: 3.5 m wrong
+
+	replay::ReplayOptions options;
+	options.lockRelativePosition = true;
+	options.maxContinuousSamples = 25;
+	options.qualityReportInterval = 0;
+	options.seedMode = replay::ReplaySeedMode::Explicit;
+	options.seedTransCm = seedTransCm;
+	options.precisionWeightedRelPose = true;
+
+	const auto farRec = MakeRelPoseRecording(cTrue, /*originDistanceM=*/3.0, /*heightM=*/1.60, /*rowCount=*/300);
+	const auto fused = replay::RunReplay(farRec, options);
+	ASSERT_TRUE(fused.succeeded) << fused.error;
+	ASSERT_TRUE(fused.seedApplied);
+	EXPECT_GT(fused.accepts, 10);
+	// The escape is the full seed-to-truth move, not a crawl.
+	EXPECT_GT(fused.appliedMagWanderCm, 300.0) << "fusion stayed pinned to a metres-wrong seed";
+	EXPECT_NEAR(fused.netDriftVectorCm.x(), -350.0, 10.0);
+}
+
 TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 {
 	const char* enabled = std::getenv("WKOPENVR_REPLAY_RECORDINGS");
