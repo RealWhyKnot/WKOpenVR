@@ -83,6 +83,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **dynamicres:** Drive FPS toward native refresh with measured bottleneck detection (76c9650)
 - **calibration:** Surface witness-puck health and felt-jump rate in diagnostics (fcedd6a)
 - **calibration:** Witness continuous drift correction + offline drift oracle (8a7b9cc)
+- **recording:** Shared capture envelope with phantom retention and smoothing replay (8b97f90)
+- **calibration:** Make geometry-shift restarts opt-in and absorb small frame jumps (b4413b5)
+- **calibration:** Replay seeded sessions and decision layers from pinned recordings (801f53f)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -269,6 +272,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Weight continuous solve by geometry to hold alignment far from origin (a72ac38)
 - **calibration:** Bound experimental witness correction so it cannot diverge (195ca7d)
 - **calibration:** Make geometry confidence weighting opt-in, default off (4d44b00)
+- **hotreload:** Verify the overlay handover and roll back bad staged builds (3032e9f)
 
 ---
 
