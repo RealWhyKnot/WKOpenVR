@@ -85,9 +85,12 @@ function Resolve-DriversDir {
 	throw "Deployed 01wkopenvr driver not found. Run quick.ps1 once first, or pass -SteamVRDriversDir."
 }
 
-# Replace a file that may be running: rename the current one aside (allowed while
-# in use on Windows) then copy the new build into place. The old copy is deletable
-# once its process exits and is cleared on the next reload.
+# Replace a file that may be running: copy the new build to a temp name in the
+# destination directory first (the slow part), then rename the current one aside
+# (allowed while in use on Windows) and rename the temp into place. Renames are
+# atomic on the same volume, so watchers never see a half-written or missing
+# exe. The old copy is deletable once its process exits and is cleared on the
+# next reload.
 function Update-DeployedExe {
 	param(
 		[Parameter(Mandatory = $true)][string]$Dest,
@@ -95,13 +98,34 @@ function Update-DeployedExe {
 	)
 	if (-not (Test-Path -LiteralPath $Src)) { throw "Built artifact missing: $Src" }
 	$old = "$Dest.old"
+	$tmp = "$Dest.tmp"
 	if (Test-Path -LiteralPath $old) {
 		Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
 	}
+	Copy-Item -LiteralPath $Src -Destination $tmp -Force
 	if (Test-Path -LiteralPath $Dest) {
 		Move-Item -LiteralPath $Dest -Destination $old -Force
 	}
-	Copy-Item -LiteralPath $Src -Destination $Dest -Force
+	Move-Item -LiteralPath $tmp -Destination $Dest -Force
+}
+
+# Copy $Src into $Dir under $Name via a temp file + rename, so the watcher in
+# the running overlay only ever sees a complete staged exe appear. Throws a
+# clear elevation hint when the directory is not writable.
+function Copy-StagedExe {
+	param(
+		[Parameter(Mandatory = $true)][string]$Dir,
+		[Parameter(Mandatory = $true)][string]$Name,
+		[Parameter(Mandatory = $true)][string]$Src
+	)
+	$tmp = Join-Path $Dir "$Name.tmp"
+	try {
+		Copy-Item -LiteralPath $Src -Destination $tmp -Force -ErrorAction Stop
+	}
+	catch {
+		throw "Cannot write to $Dir ($($_.Exception.Message)). Run this from an elevated PowerShell."
+	}
+	Move-Item -LiteralPath $tmp -Destination (Join-Path $Dir $Name) -Force
 }
 
 switch ($What) {
@@ -115,16 +139,84 @@ switch ($What) {
 		Invoke-BuildTarget "OpenVRPairOverlay"
 		$src = Join-Path $PSScriptRoot "build\artifacts\Release\WKOpenVR.exe"
 		if (-not (Test-Path -LiteralPath $src)) { throw "Built overlay missing: $src" }
-		$canonical = Join-Path $InstallDir "WKOpenVR.exe"
 		$running = @(Get-Process -Name "WKOpenVR" -ErrorAction SilentlyContinue)
-		if ($running.Count -gt 0) {
-			$staged = Join-Path $InstallDir "WKOpenVR.new.exe"
-			Copy-Item -LiteralPath $src -Destination $staged -Force
-			Write-Host "Staged new overlay at $staged; the running instance swaps itself in (~1s). Stay in VR."
-		}
-		else {
+		if ($running.Count -eq 0) {
+			$canonical = Join-Path $InstallDir "WKOpenVR.exe"
 			Update-DeployedExe -Dest $canonical -Src $src
 			Write-Host "Overlay not running; copied new build to $canonical. Launch it when ready."
+		}
+		else {
+			# Stage next to the exe each instance is actually running from, not a
+			# fixed install dir -- a staged file the running overlay never sees
+			# would silently do nothing.
+			$dirs = @($running | ForEach-Object { $_.Path } | Where-Object { $_ } |
+					Split-Path -Parent | Sort-Object -Unique)
+			if ($dirs.Count -eq 0) { $dirs = @($InstallDir) }
+			foreach ($dir in $dirs) {
+				if ($dir -ne $InstallDir) {
+					Write-Host "Note: overlay is running from $dir; staging there."
+				}
+				Copy-StagedExe -Dir $dir -Name "WKOpenVR.new.exe" -Src $src
+				Write-Host "Staged new overlay in $dir; waiting for the running instance to swap itself in..."
+			}
+
+			# Watch the handover: staged file consumed -> old instance exits ->
+			# a new instance appears. Report each step so a stalled reload is
+			# visible instead of silently doing nothing.
+			$oldPids = @($running | ForEach-Object { $_.Id })
+			$deadline = (Get-Date).AddSeconds(20)
+			$consumed = $false
+			$oldGone = $false
+			$newUp = $false
+			while ((Get-Date) -lt $deadline) {
+				if (-not $consumed) {
+					$left = @($dirs | Where-Object { Test-Path -LiteralPath (Join-Path $_ "WKOpenVR.new.exe") })
+					if ($left.Count -eq 0) {
+						$consumed = $true
+						Write-Host "Swap picked up by the running overlay."
+					}
+				}
+				if ($consumed -and -not $oldGone) {
+					$stillOld = @(Get-Process -Name "WKOpenVR" -ErrorAction SilentlyContinue |
+							Where-Object { $oldPids -contains $_.Id })
+					if ($stillOld.Count -eq 0) {
+						$oldGone = $true
+						Write-Host "Previous overlay instance exited."
+					}
+				}
+				if ($oldGone -and -not $newUp) {
+					$newProcs = @(Get-Process -Name "WKOpenVR" -ErrorAction SilentlyContinue |
+							Where-Object { $oldPids -notcontains $_.Id })
+					if ($newProcs.Count -gt 0) {
+						$newUp = $true
+						Write-Host ("Overlay swap finished; WKOpenVR is running (pid {0})." -f $newProcs[0].Id)
+					}
+				}
+				if ($newUp) { break }
+				Start-Sleep -Milliseconds 250
+			}
+			if ($newUp) {
+				Write-Host "If the overlay shows a driver version error, the change touched the driver: run .\reload.ps1 Driver."
+			}
+			else {
+				# Remove any unconsumed staged exe so it cannot trigger a
+				# surprise swap much later.
+				foreach ($dir in $dirs) {
+					$staged = Join-Path $dir "WKOpenVR.new.exe"
+					if (Test-Path -LiteralPath $staged) {
+						Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+					}
+				}
+				if (-not $consumed) {
+					Write-Warning "The running overlay never picked up the staged build (staged file removed). Check that it is a dev-channel build running from the directory above."
+				}
+				elseif (-not $oldGone) {
+					Write-Warning "The overlay picked up the staged build but did not exit; check the diagnostics log."
+				}
+				else {
+					Write-Warning "The previous overlay exited but no new instance appeared; check the diagnostics log and launch WKOpenVR.exe manually if needed."
+				}
+			}
 		}
 	}
 

@@ -32,6 +32,17 @@ inline bool ShouldHotReloadHost(bool attachedToExisting, bool haveHandle, uint64
 	return diskWrite != baselineWrite;
 }
 
+// Pure companion for the crash-loop halt state: a supervisor halted by fast
+// exits has no live process handle, but a rebuilt exe on disk (differing from
+// the spawn-time baseline of the build that crash-looped) should clear the
+// halt so the fixed build can take over without a SteamVR restart.
+inline bool ShouldUnhaltForNewHostExe(bool attachedToExisting, uint64_t baselineWrite, uint64_t diskWrite)
+{
+	if (attachedToExisting) return false;
+	if (baselineWrite == 0 || diskWrite == 0) return false;
+	return diskWrite != baselineWrite;
+}
+
 // Shared base for the C++ supervisors that spawn and manage feature-host
 // sidecar processes -- currently the facetracking C# host and the captions
 // C++ host.

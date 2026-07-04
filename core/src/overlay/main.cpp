@@ -507,13 +507,18 @@ int main(int argc, char** argv)
 		pluginPerfIds.push_back(info ? std::optional(info->id) : std::nullopt);
 	}
 
+#if WKOPENVR_BUILD_IS_DEV
+	bool hotReloadRelaunchPending = false;
+#endif
 	while (!glfwWindowShouldClose(window) && !vrOverlay->QuitRequested()) {
 #if WKOPENVR_BUILD_IS_DEV
 		// Dev hot-reload: if reload.ps1 -Overlay staged a fresh build next to us,
-		// swap it in, launch it, and exit this instance. Stays in VR (SteamVR and
-		// the driver are untouched).
+		// swap it in and exit through the normal shutdown below; the last act of
+		// this process launches the new build (with rollback if it fails to
+		// start). Stays in VR (SteamVR and the driver are untouched).
 		if (openvr_pair::overlay::MaybeRelaunchStagedOverlay()) {
 			openvr_pair::common::DiagnosticLog("overlay", "exiting for dev hot-reload relaunch");
+			hotReloadRelaunchPending = true;
 			break;
 		}
 #endif
@@ -773,5 +778,13 @@ int main(int argc, char** argv)
 	ImGui::DestroyContext();
 	glfwDestroyWindow(window);
 	glfwTerminate();
+
+#if WKOPENVR_BUILD_IS_DEV
+	// Everything above released the VR session, IPC, and config files, so the
+	// swapped-in build starts clean and never overlaps this instance.
+	if (hotReloadRelaunchPending) {
+		openvr_pair::overlay::LaunchSwappedOverlayWithRecovery();
+	}
+#endif
 	return 0;
 }

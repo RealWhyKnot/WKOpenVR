@@ -541,6 +541,24 @@ void HostSupervisorBase::MonitorLoop()
 		}
 
 		if (is_halted) {
+#if WKOPENVR_BUILD_IS_DEV
+			// Dev-only: a crash-looped halt normally needs a SteamVR restart to
+			// clear, but if the exe on disk changed a fixed build was deployed;
+			// let it take over (Restart() resets the halt and fast-exit count).
+			uint64_t halted_baseline = 0;
+			bool halted_attached = false;
+			{
+				std::lock_guard<std::mutex> lk(process_mutex_);
+				halted_baseline = watched_exe_write_;
+				halted_attached = attached_to_existing_;
+			}
+			if (ShouldUnhaltForNewHostExe(halted_attached, halted_baseline, QueryExeWriteTime())) {
+				Log("[host-supervisor] host exe changed on disk while halted (dev hot-reload); restarting");
+				Restart();
+				backoff_ms = kBackoffStartMs;
+				continue;
+			}
+#endif
 			if (sleep_or_stop(1000)) break;
 			continue;
 		}

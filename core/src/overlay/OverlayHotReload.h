@@ -37,15 +37,42 @@ inline OverlayReloadPaths DeriveOverlayReloadPaths(const std::wstring& selfExePa
 	return p;
 }
 
+// Pure: whether a byte prefix looks like a Windows executable image (MZ
+// signature). A staged file that fails this is rejected before the swap --
+// launching a non-PE file can stall for minutes inside CreateProcessW while
+// the OS consults its compatibility/screening machinery, with no timeout
+// available to the caller.
+inline bool LooksLikePeImage(const unsigned char* bytes, size_t len)
+{
+	return len >= 2 && bytes[0] == 'M' && bytes[1] == 'Z';
+}
+
+// Pure: whether the post-swap relaunch must roll back to the previous build.
+// A healthy overlay outlives the grace wait; a failed launch or an early exit
+// means the swapped-in build is bad and the backup should be restored.
+inline bool RelaunchNeedsRollback(bool launchSucceeded, bool aliveAfterGrace)
+{
+	return !launchSucceeded || !aliveAfterGrace;
+}
+
 // Dev-only. Delete a leftover WKOpenVR.old.exe from a prior self-swap (now
 // unlocked because that process exited). No-op on release or when absent. Call
 // once at startup.
 void CleanupStaleOverlayBackup();
 
-// Dev-only. If a staged WKOpenVR.new.exe exists next to us, swap it in and launch
-// it, returning true to tell the caller to exit its main loop. Throttled
-// internally so it is cheap to call every frame. Always returns false on release
-// builds or when there is nothing staged.
+// Dev-only. If a staged WKOpenVR.new.exe exists next to us, swap it into the
+// canonical name (renaming this exe aside), returning true to tell the caller
+// to exit its main loop. The caller must run its normal shutdown and then call
+// LaunchSwappedOverlayWithRecovery() as its last act, so the new instance never
+// overlaps this one's VR session, IPC, or config writes. Throttled internally
+// so it is cheap to call every frame. Always returns false on release builds
+// or when there is nothing staged.
 bool MaybeRelaunchStagedOverlay();
+
+// Dev-only. Launch the swapped-in canonical exe and watch it briefly: if it
+// fails to start or exits within the grace window, restore the backup exe and
+// relaunch that instead, so a bad build never leaves the user with no overlay.
+// Call after MaybeRelaunchStagedOverlay() returned true and shutdown finished.
+void LaunchSwappedOverlayWithRecovery();
 
 } // namespace openvr_pair::overlay
