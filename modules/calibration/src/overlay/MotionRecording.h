@@ -68,6 +68,31 @@ struct RecordingMeta
 	int logicalProcessors = 0;
 };
 
+// One timestamped `# [ts] event ...` annotation line from the recording. The
+// live logger emits these for decision points (auto_lock_flip, candidate
+// accepts, heartbeats); keeping them lets offline analysis compare a replayed
+// decision stream against what the live session actually did.
+struct AnnotationEvent
+{
+	double time = 0.0;
+	std::string key; // event name token, e.g. "auto_lock_flip" or "[cal-heartbeat]"
+	std::string raw; // full annotation line for detail parsing
+};
+
+// The profile the live session seeded continuous calibration with, parsed from
+// the first StartContinuousCalibration_seed_profile annotation. Later restarts
+// re-seed from the then-current profile, so the first one is the stored
+// profile the session started from -- the input that matters when replaying
+// "how does a banked (good or bad) calibration behave from cold".
+struct SeedProfile
+{
+	bool present = false; // annotation seen at all
+	bool valid = false;   // false for the "skipped validProfile=0" form
+	double time = 0.0;
+	Eigen::Vector3d transCm = Eigen::Vector3d::Zero();
+	Eigen::Vector3d rotDeg = Eigen::Vector3d::Zero(); // same euler triple ProfileTransform consumes
+};
+
 // Result of loading a file. `rows` holds the per-tick raw poses in order;
 // `meta` is whatever header info the file embedded; `error` is non-empty on
 // any parsing failure (file missing, wrong version banner, missing required
@@ -80,6 +105,8 @@ struct LoadedRecording
 	std::string sourcePath; // path passed to LoadRecording, for display
 	std::string error;      // populated on failure; rows will be empty.
 	std::vector<double> relocalizationAnnotationTimes;
+	std::vector<AnnotationEvent> annotations;
+	SeedProfile seedProfile;
 	bool hasRelocDetectedColumn = false;
 	int relocDetectedRowCount = 0;
 	// True when the v4 raw-HMD + head-tracker columns are present, so offline
@@ -93,6 +120,21 @@ struct LoadedRecording
 // on success; any failure populates `error` with a human-readable reason.
 LoadedRecording LoadRecording(const std::string& path);
 
+// Profile euler-degrees + centimetres -> transform. Must stay equivalent to
+// the static ProfileTransform in Calibration.cpp (ZYX intrinsic order) so a
+// replayed seed lands exactly where StartContinuousCalibration would put it.
+inline Eigen::AffineCompact3d ReplayProfileTransform(const Eigen::Vector3d& eulerDeg, const Eigen::Vector3d& transCm)
+{
+	const Eigen::Vector3d euler = eulerDeg * EIGEN_PI / 180.0;
+	const Eigen::Quaterniond rotQuat = Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()) *
+	                                   Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()) *
+	                                   Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX());
+	Eigen::AffineCompact3d transform = Eigen::AffineCompact3d::Identity();
+	transform.linear() = rotQuat.toRotationMatrix();
+	transform.translation() = transCm * 0.01;
+	return transform;
+}
+
 // Per-row trace produced during a replay. Lets the UI plot the error/accept
 // trajectory and show histograms of rejection reasons. Kept compact — one
 // entry per replayed tick — so even a 60s recording at 60Hz is only ~3600
@@ -105,6 +147,16 @@ struct ReplayTickResult
 	double rawErrMm = 0.0;        // RMS error of the candidate computed this tick, mm (NaN if no candidate)
 	int consecutiveRejections = 0;
 	std::string rejectReason; // empty on accept
+	// Applied-C trajectory + session context, for run-vs-run trace diffing.
+	// appliedCCm is only meaningful when hasAppliedC (accepted ticks after a
+	// seed or first accept); fusionGain is 1.0 on the overwrite path.
+	Eigen::Vector3d appliedCCm = Eigen::Vector3d::Zero();
+	bool hasAppliedC = false;
+	double fusionGain = 0.0;
+	double accumPrecision = 0.0;
+	double relMadMm = 0.0;
+	bool hmdStationary = false; // finite-diff HMD speed below the AUTO-lock stationary gate
+	bool relocDetected = false;
 };
 
 struct ReplayQualitySnapshot
@@ -152,6 +204,17 @@ struct ReplayReasonCount
 	int count = 0;
 };
 
+// How RunReplay warm-starts the solver, mirroring StartContinuousCalibration's
+// profile seed. None = cold start (legacy behavior). Recorded = use the
+// recording's own seed annotation. Explicit = caller-provided profile, for
+// "what if the stored profile had been X" experiments.
+enum class ReplaySeedMode
+{
+	None,
+	Recorded,
+	Explicit,
+};
+
 // Replay parameters. Mirror the user-facing knobs in the live CalCtx so
 // the user can A/B compare "what would my recording look like with a tighter
 // recalibration threshold".
@@ -170,6 +233,11 @@ struct ReplayOptions
 	// geometry-weighted solve so a recording can be replayed weighted vs uniform.
 	bool lockRelativePosition = false;
 	bool precisionWeightedRelPose = true;
+	// Warm-start seeding (see ReplaySeedMode). Explicit mode reads the two seed
+	// fields; Recorded mode ignores them and uses rec.seedProfile when valid.
+	ReplaySeedMode seedMode = ReplaySeedMode::None;
+	Eigen::Vector3d seedTransCm = Eigen::Vector3d::Zero();
+	Eigen::Vector3d seedRotDeg = Eigen::Vector3d::Zero();
 };
 
 // Result summary. Aggregates whatever is useful at a glance — counts and the
@@ -215,6 +283,20 @@ struct ReplayResult
 	double totalAppliedPathCm = 0.0; // sum of |applied-C step| -- total churn sent to the driver
 	int solverSamplesPushed = 0;
 	double solverSampleRatio = 1.0;
+	// Warm-start actually applied this run (seedMode resolved against the
+	// recording; Recorded mode with no valid seed annotation degrades to cold).
+	bool seedApplied = false;
+	double seedMagCm = 0.0;
+	// Experience metrics: what a stationary user would feel. A "perceptible
+	// shift" is an applied-C step above kPerceptibleShiftMm landing while the
+	// (recorded, finite-diff) HMD speed is under the stationary gate -- the
+	// world visibly moving under a still head. netDriftVectorCm is the
+	// session's final minus first applied C: the directional-bias signal.
+	int perceptibleShiftCount = 0;
+	double perceptibleShiftMaxMm = 0.0;
+	double perceptibleShiftSumMm = 0.0;
+	Eigen::Vector3d netDriftVectorCm = Eigen::Vector3d::Zero();
+	Eigen::Vector3d finalAppliedCCm = Eigen::Vector3d::Zero();
 	Eigen::AffineCompact3d finalTransform = Eigen::AffineCompact3d::Identity();
 	bool finalTransformValid = false;
 	ReplayQualitySnapshot finalQuality;
@@ -242,6 +324,10 @@ struct LogFileEntry
 
 constexpr std::size_t kDevAutoRecordingMaxFiles = 5;
 constexpr uint64_t kDevAutoRecordingMaxBytes = 512ull * 1024ull * 1024ull;
+
+// Applied-C step size a stationary user notices as the world shifting. 5 mm
+// sits above tracking noise but well below the 20 cm "large step" bucket.
+constexpr double kPerceptibleShiftMm = 5.0;
 
 struct RecordingRetentionPolicy
 {

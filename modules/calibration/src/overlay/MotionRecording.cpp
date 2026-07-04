@@ -237,6 +237,57 @@ bool ParseAnnotationTimestamp(const std::string& line, const char* marker, doubl
 	return ReadDouble(ts, out);
 }
 
+// Parse any `# [ts] event ...` line into an AnnotationEvent. The key is the
+// first token after the timestamp with a trailing ':' stripped (matching the
+// live "event_name: k=v ..." idiom); bracketed tags like "[cal-heartbeat]"
+// keep their brackets.
+bool ParseAnnotationEvent(const std::string& line, AnnotationEvent& out)
+{
+	if (line.rfind("# [", 0) != 0) return false;
+	const std::size_t tsEnd = line.find(']', 3);
+	if (tsEnd == std::string::npos || tsEnd <= 3) return false;
+	if (!ReadDouble(line.substr(3, tsEnd - 3), out.time)) return false;
+	std::size_t keyStart = tsEnd + 1;
+	while (keyStart < line.size() && line[keyStart] == ' ')
+		++keyStart;
+	std::size_t keyEnd = line.find(' ', keyStart);
+	if (keyEnd == std::string::npos) keyEnd = line.size();
+	out.key = line.substr(keyStart, keyEnd - keyStart);
+	if (!out.key.empty() && out.key.back() == ':') out.key.pop_back();
+	out.raw = line;
+	return !out.key.empty();
+}
+
+// Extract the seeded profile from a StartContinuousCalibration_seed_profile
+// annotation. Two live forms:
+//   ... trans_cm=(x,y,z) mag_cm=m rot_deg=(z,y,x)
+//   ... skipped validProfile=0
+bool ParseSeedProfileAnnotation(const AnnotationEvent& event, SeedProfile& out)
+{
+	if (event.key != "StartContinuousCalibration_seed_profile") return false;
+	out.present = true;
+	out.time = event.time;
+	double t[3], r[3];
+	const std::size_t transPos = event.raw.find("trans_cm=(");
+	const std::size_t rotPos = event.raw.find("rot_deg=(");
+	if (transPos == std::string::npos || rotPos == std::string::npos) {
+		out.valid = false; // the "skipped validProfile=0" form
+		return true;
+	}
+	if (sscanf(event.raw.c_str() + transPos, "trans_cm=(%lf,%lf,%lf)", &t[0], &t[1], &t[2]) != 3 ||
+	    sscanf(event.raw.c_str() + rotPos, "rot_deg=(%lf,%lf,%lf)", &r[0], &r[1], &r[2]) != 3) {
+		out.valid = false;
+		return true;
+	}
+	out.transCm = Eigen::Vector3d(t[0], t[1], t[2]);
+	out.rotDeg = Eigen::Vector3d(r[0], r[1], r[2]);
+	out.valid = true;
+	return true;
+}
+
+// ReplayProfileTransform lives in MotionRecording.h so SessionReplay.h can
+// seed with the identical mapping.
+
 } // namespace
 
 LoadedRecording LoadRecording(const std::string& path)
@@ -261,6 +312,11 @@ LoadedRecording LoadRecording(const std::string& path)
 			double relocTime = 0.0;
 			if (ParseAnnotationTimestamp(line, "hmd_relocalization_detected", relocTime)) {
 				rec.relocalizationAnnotationTimes.push_back(relocTime);
+			}
+			AnnotationEvent event;
+			if (ParseAnnotationEvent(line, event)) {
+				if (!rec.seedProfile.present) ParseSeedProfileAnnotation(event, rec.seedProfile);
+				rec.annotations.push_back(std::move(event));
 			}
 			if (line.find("spacecal_log_v5") != std::string::npos) {
 				formatVersion = 5;
@@ -409,6 +465,11 @@ LoadedRecording LoadRecording(const std::string& path)
 			if (ParseAnnotationTimestamp(line, "hmd_relocalization_detected", relocTime)) {
 				rec.relocalizationAnnotationTimes.push_back(relocTime);
 			}
+			AnnotationEvent event;
+			if (ParseAnnotationEvent(line, event)) {
+				if (!rec.seedProfile.present) ParseSeedProfileAnnotation(event, rec.seedProfile);
+				rec.annotations.push_back(std::move(event));
+			}
 			continue;
 		}
 
@@ -550,6 +611,49 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	Eigen::AffineCompact3d appliedTransform = Eigen::AffineCompact3d::Identity();
 	double accumPrecision = 0.0;
 
+	// Warm start. Mirrors StartContinuousCalibration with a valid profile: the
+	// solver estimate is seeded (so the improvement gate compares against it)
+	// and the fusion gets the banked-profile prior. The applied-C trajectory
+	// starts at the seed, so wander/steps measure movement AWAY from the stored
+	// profile -- the signal that distinguishes "fusion defends a bad seed" from
+	// "overwrite escapes it".
+	{
+		bool seed = false;
+		Eigen::Vector3d seedTransCm, seedRotDeg;
+		if (opts.seedMode == ReplaySeedMode::Recorded && rec.seedProfile.valid) {
+			seedTransCm = rec.seedProfile.transCm;
+			seedRotDeg = rec.seedProfile.rotDeg;
+			seed = true;
+		}
+		else if (opts.seedMode == ReplaySeedMode::Explicit) {
+			seedTransCm = opts.seedTransCm;
+			seedRotDeg = opts.seedRotDeg;
+			seed = true;
+		}
+		if (seed) {
+			const Eigen::AffineCompact3d seedTransform = ReplayProfileTransform(seedRotDeg, seedTransCm);
+			calc.SeedEstimatedTransformation(seedTransform, /*annotate=*/false);
+			appliedTransform = seedTransform;
+			accumPrecision = spacecal::precision::kSeedPriorPrecision;
+			appliedC = seedTransform.translation() * 100.0;
+			prevAppliedC = appliedC;
+			minAppliedMag = maxAppliedMag = appliedC.norm();
+			hasAppliedC = true;
+			res.seedApplied = true;
+			res.seedMagCm = appliedC.norm();
+		}
+	}
+	// First applied C of the session (seed or first accept); netDriftVectorCm
+	// measures where the session ended relative to this.
+	Eigen::Vector3d firstAppliedC = appliedC;
+	bool haveFirstAppliedC = hasAppliedC;
+	// Finite-diff HMD speed for the experience metrics (vecVelocity is not
+	// recorded); mirrors the AutoLockSim speed source.
+	bool havePrevHmd = false;
+	double prevHmdTime = 0.0;
+	Eigen::Vector3d prevHmdTrans = Eigen::Vector3d::Zero();
+	double lastHmdSpeed = -1.0; // <0 = unknown; unknown never counts as stationary
+
 	const bool boundedContinuous = opts.continuous && opts.maxContinuousSamples > 0;
 	const std::size_t continuousWindow = boundedContinuous ? opts.maxContinuousSamples : 0;
 	const std::size_t continuousDrop = boundedContinuous ? std::max<std::size_t>(1, continuousWindow / 10) : 0;
@@ -616,6 +720,17 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 
 		ReplayTickResult tick;
 		tick.timestamp = row.timestamp;
+		tick.relocDetected = row.relocDetected;
+		if (row.hasHmdPose) {
+			if (havePrevHmd) {
+				const double dt = row.timestamp - prevHmdTime;
+				if (dt > 1e-6) lastHmdSpeed = (row.hmd.trans - prevHmdTrans).norm() / dt;
+			}
+			prevHmdTrans = row.hmd.trans;
+			prevHmdTime = row.timestamp;
+			havePrevHmd = true;
+		}
+		tick.hmdStationary = lastHmdSpeed >= 0.0 && spacecal::autolock::HmdIsStationary(lastHmdSpeed);
 
 		if (row.hasSampleDiagnostics && (!row.sampleObserved || !row.sampleAccepted || !s.valid)) {
 			tick.rejectReason = row.sampleObserved ? "sample_rejected" : "no_sample";
@@ -651,6 +766,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			allMad.push_back(madMm);
 			res.peakRelPoseMadMm = std::max(res.peakRelPoseMadMm, madMm);
 			res.finalRelPoseMadMm = madMm;
+			tick.relMadMm = madMm;
 		}
 
 		if (opts.continuous) {
@@ -676,9 +792,11 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 					appliedTransform = spacecal::precision::Fuse(appliedTransform, calc.Transformation(), gain);
 					accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
 					candidateC = appliedTransform.translation() * 100.0;
+					tick.fusionGain = gain;
 				}
 				else {
 					candidateC = calc.Transformation().translation() * 100.0;
+					tick.fusionGain = 1.0;
 				}
 				appliedC = candidateC;
 				const double mag = appliedC.norm();
@@ -693,9 +811,22 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 					res.peakAppliedStepCm = std::max(res.peakAppliedStepCm, stepCm);
 					res.totalAppliedPathCm += stepCm;
 					if (stepCm > 20.0) ++res.largeAppliedSteps;
+					const double stepMm = stepCm * 10.0;
+					if (tick.hmdStationary && stepMm > kPerceptibleShiftMm) {
+						++res.perceptibleShiftCount;
+						res.perceptibleShiftMaxMm = std::max(res.perceptibleShiftMaxMm, stepMm);
+						res.perceptibleShiftSumMm += stepMm;
+					}
+				}
+				if (!haveFirstAppliedC) {
+					firstAppliedC = appliedC;
+					haveFirstAppliedC = true;
 				}
 				res.peakAppliedMagCm = maxAppliedMag;
 				prevAppliedC = appliedC;
+				tick.appliedCCm = appliedC;
+				tick.hasAppliedC = true;
+				tick.accumPrecision = accumPrecision;
 			}
 			else
 				++res.rejects;
@@ -748,6 +879,10 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		res.medianRelPoseMadMm = sorted[sorted.size() / 2];
 	}
 	res.appliedMagWanderCm = hasAppliedC ? (maxAppliedMag - minAppliedMag) : 0.0;
+	if (haveFirstAppliedC) {
+		res.finalAppliedCCm = appliedC;
+		res.netDriftVectorCm = appliedC - firstAppliedC;
+	}
 
 	res.rowsReplayed = (int)rec.rows.size();
 	const int observedRows = res.sampleRowsObserved > 0 ? res.sampleRowsObserved : res.rowsReplayed;

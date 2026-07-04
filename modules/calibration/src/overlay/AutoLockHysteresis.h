@@ -25,6 +25,7 @@
 
 #include <Eigen/Geometry>
 #include <algorithm>
+#include <cstddef>
 #include <deque>
 #include <vector>
 
@@ -77,14 +78,12 @@ constexpr double kLeaveRotRad = 1.5 * EIGEN_PI / 180.0; // 1.5 deg
 // it here per-tick. A floor of 0 (no observations yet) returns the hard
 // floor unchanged so the gate doesn't relax before evidence exists.
 constexpr double kEnterAdaptiveScale = 2.0;
-inline double EnterThresholdFor(double madFloor)
-{
-	constexpr double kCeil = kLeaveTranslM - 0.001;
-	double v = kEnterAdaptiveScale * madFloor;
-	if (v < kEnterTranslM) v = kEnterTranslM;
-	if (v > kCeil) v = kCeil;
-	return v;
-}
+
+// Definitions follow HysteresisParams below; the historical single-value
+// signature delegates to the parameterized one.
+struct HysteresisParams;
+inline double EnterThresholdFor(double madFloor, const HysteresisParams& p);
+inline double EnterThresholdFor(double madFloor);
 
 // HMD linear-speed threshold (m/s) below which a queued AUTO-lock flip is
 // allowed to commit. Same order of magnitude as the existing TrackerLiveness
@@ -131,14 +130,62 @@ constexpr double kAutoLockUnlockMaxWaitSeconds = 5.0;
 constexpr double kPanicTranslM = 0.040;
 constexpr double kPanicRotRad = 5.0 * EIGEN_PI / 180.0;
 
+// Minimum hold after a flip before a lock counts as settled. Declared with
+// the other tunables; the rationale lives on IsSettled below.
+constexpr double kSettledMinHoldSec = 3.0;
+
+// Every constant that shapes the lock decision, as a value so offline
+// parameter sweeps can replay a recorded session under alternative tunings.
+// Defaults reproduce the constants above exactly; the historical single-value
+// entry points below delegate here, so there is one owner of each decision.
+// Live call sites keep passing nothing (defaults); only sweep harnesses
+// construct a non-default HysteresisParams.
+struct HysteresisParams
+{
+	double enterTranslM = kEnterTranslM;
+	double leaveTranslM = kLeaveTranslM;
+	double enterRotRad = kEnterRotRad;
+	double leaveRotRad = kLeaveRotRad;
+	double enterAdaptiveScale = kEnterAdaptiveScale;
+	double panicTranslM = kPanicTranslM;
+	double panicRotRad = kPanicRotRad;
+	double settledMinHoldSec = kSettledMinHoldSec;
+	double stationaryHmdMps = kStationaryHmdMps;
+	double unlockMaxWaitSec = kAutoLockUnlockMaxWaitSeconds;
+	// Detector-shape knobs consumed by session simulators; the pure
+	// predicates below don't read them.
+	std::size_t historyMax = kHistoryMax;
+	std::size_t samplesNeeded = kSamplesNeeded;
+	double madFloorWindowSec = 60.0; // mirrors kFloorWindowSec in Calibration.cpp
+};
+
+inline double EnterThresholdFor(double madFloor, const HysteresisParams& p)
+{
+	const double ceil = p.leaveTranslM - 0.001;
+	double v = p.enterAdaptiveScale * madFloor;
+	if (v < p.enterTranslM) v = p.enterTranslM;
+	if (v > ceil) v = ceil;
+	return v;
+}
+
+inline double EnterThresholdFor(double madFloor)
+{
+	return EnterThresholdFor(madFloor, HysteresisParams{});
+}
+
 // True when the robust deviation metrics indicate a clearly-broken rigid
 // relationship. Callers should consult both this and VerdictWithHysteresis:
 // VerdictWithHysteresis answers "what does the detector decide" (queued
 // through the stationary gate); IsPanicLevelDeviation answers "is the
 // queue still appropriate" (no -- commit unlock now).
+inline bool IsPanicLevelDeviation(double translStdDev, double rotMaxAngle, const HysteresisParams& p)
+{
+	return translStdDev >= p.panicTranslM || rotMaxAngle >= p.panicRotRad;
+}
+
 inline bool IsPanicLevelDeviation(double translStdDev, double rotMaxAngle)
 {
-	return translStdDev >= kPanicTranslM || rotMaxAngle >= kPanicRotRad;
+	return IsPanicLevelDeviation(translStdDev, rotMaxAngle, HysteresisParams{});
 }
 
 // Returns the verdict the detector should produce given the current
@@ -151,15 +198,21 @@ inline bool IsPanicLevelDeviation(double translStdDev, double rotMaxAngle)
 // of recent MAD readings as the floor input to EnterThresholdFor) pass the
 // adaptive value here so cross-tracking-system pairs whose natural noise
 // sits above 3 mm can still engage AUTO Lock.
+inline bool VerdictWithHysteresis(double translStdDev, double rotMaxAngle, bool prevLocked, double enterTranslM,
+                                  const HysteresisParams& p)
+{
+	if (prevLocked) {
+		const bool stillRigid = (translStdDev < p.leaveTranslM) && (rotMaxAngle < p.leaveRotRad);
+		return stillRigid;
+	}
+	const bool genuinelyRigid = (translStdDev < enterTranslM) && (rotMaxAngle < p.enterRotRad);
+	return genuinelyRigid;
+}
+
 inline bool VerdictWithHysteresis(double translStdDev, double rotMaxAngle, bool prevLocked,
                                   double enterTranslM = kEnterTranslM)
 {
-	if (prevLocked) {
-		const bool stillRigid = (translStdDev < kLeaveTranslM) && (rotMaxAngle < kLeaveRotRad);
-		return stillRigid;
-	}
-	const bool genuinelyRigid = (translStdDev < enterTranslM) && (rotMaxAngle < kEnterRotRad);
-	return genuinelyRigid;
+	return VerdictWithHysteresis(translStdDev, rotMaxAngle, prevLocked, enterTranslM, HysteresisParams{});
 }
 
 // Settled-state predicate. "Settled" means: currently locked, MAD inside
@@ -171,19 +224,29 @@ inline bool VerdictWithHysteresis(double translStdDev, double rotMaxAngle, bool 
 //
 // Used by the [cal-heartbeat] settled= field; a >70% rate in real sessions
 // is the success criterion for the 2026-05-25 settling fix.
-constexpr double kSettledMinHoldSec = 3.0;
-inline bool IsSettled(bool currentlyLocked, double translMad, double madFloor, double secsSinceLastFlip)
+inline bool IsSettled(bool currentlyLocked, double translMad, double madFloor, double secsSinceLastFlip,
+                      const HysteresisParams& p)
 {
 	if (!currentlyLocked) return false;
-	if (secsSinceLastFlip < kSettledMinHoldSec) return false;
-	return translMad < EnterThresholdFor(madFloor);
+	if (secsSinceLastFlip < p.settledMinHoldSec) return false;
+	return translMad < EnterThresholdFor(madFloor, p);
+}
+
+inline bool IsSettled(bool currentlyLocked, double translMad, double madFloor, double secsSinceLastFlip)
+{
+	return IsSettled(currentlyLocked, translMad, madFloor, secsSinceLastFlip, HysteresisParams{});
 }
 
 // Returns true when an HMD linear speed is low enough to commit a queued
 // flip without producing a visible mid-gesture jump.
+inline bool HmdIsStationary(double hmdSpeedMps, const HysteresisParams& p)
+{
+	return hmdSpeedMps < p.stationaryHmdMps;
+}
+
 inline bool HmdIsStationary(double hmdSpeedMps)
 {
-	return hmdSpeedMps < kStationaryHmdMps;
+	return HmdIsStationary(hmdSpeedMps, HysteresisParams{});
 }
 
 // Per-tick commit-gate decision for a pending AUTO Lock flip. Captures the
@@ -202,12 +265,13 @@ struct CommitGateDecision
 	const char* mode;
 };
 
-inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo, double hmdSpeedMps, double now, double pendingHeldSec)
+inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo, double hmdSpeedMps, double now, double pendingHeldSec,
+                                             const HysteresisParams& p)
 {
 	(void)now;
-	const bool stationary = HmdIsStationary(hmdSpeedMps);
+	const bool stationary = HmdIsStationary(hmdSpeedMps, p);
 	const bool isUnlock = (pendingFlipTo == false);
-	const bool unlockTimeoutFired = isUnlock && pendingHeldSec >= kAutoLockUnlockMaxWaitSeconds;
+	const bool unlockTimeoutFired = isUnlock && pendingHeldSec >= p.unlockMaxWaitSec;
 
 	if (!stationary && !unlockTimeoutFired) {
 		return {false, "held"};
@@ -215,6 +279,11 @@ inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo, double hmdSpeed
 	if (unlockTimeoutFired) return {true, "unlock_timeout"};
 	if (stationary) return {true, "stationary_gate"};
 	return {true, "unknown"};
+}
+
+inline CommitGateDecision EvaluateCommitGate(bool pendingFlipTo, double hmdSpeedMps, double now, double pendingHeldSec)
+{
+	return EvaluateCommitGate(pendingFlipTo, hmdSpeedMps, now, pendingHeldSec, HysteresisParams{});
 }
 
 // MAD-based robust translation deviation over a window of relative-pose

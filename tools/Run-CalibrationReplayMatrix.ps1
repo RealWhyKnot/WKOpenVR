@@ -22,8 +22,15 @@ param(
 	# Match the old matrix behavior: quality_interval=0 and holdout=0.
 	[switch]$FastLegacyMetrics,
 
-	# Include the legacy relative-pose proxy source as a diagnostic comparison.
-	[switch]$IncludeProxyComparison,
+	# Directory for per-tick trace CSVs (one per recording x window x scenario run).
+	[string]$TraceDir = "",
+
+	# Compare this run's metrics against the recording's stored golden baseline
+	# (tools\replay-baselines\<recording>.baseline.json); non-zero exit on drift.
+	[switch]$Baseline,
+
+	# Write/overwrite the recording's golden baseline from this run's metrics.
+	[switch]$UpdateBaseline,
 
 	# Run the current test binary without rebuilding first.
 	[switch]$SkipBuild,
@@ -94,46 +101,11 @@ function New-Scenario {
 }
 
 function Get-ScenarioCatalog {
+	# Catalog note: the June drift-guard toggles (quarantine, drift breaker,
+	# bounded solve, locked snap, reloc source) were removed from the test
+	# binary; their scenarios and env names are gone with them.
 	$Catalog = @{}
 	$Catalog["baseline"] = New-Scenario "baseline" @{}
-	$Catalog["quarantine"] = New-Scenario "quarantine" @{ WKOPENVR_REPLAY_QUARANTINE = "1" }
-	$Catalog["bounded_full"] = New-Scenario "bounded_full" @{
-		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
-	}
-	$Catalog["bounded_prior"] = New-Scenario "bounded_prior" @{
-		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR = "1"
-	}
-	$Catalog["quarantine_bounded"] = New-Scenario "quarantine_bounded" @{
-		WKOPENVR_REPLAY_QUARANTINE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
-	}
-	$Catalog["drift_breaker"] = New-Scenario "drift_breaker" @{ WKOPENVR_REPLAY_DRIFT_BREAKER = "1" }
-	$Catalog["quarantine_drift"] = New-Scenario "quarantine_drift" @{
-		WKOPENVR_REPLAY_QUARANTINE = "1"
-		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
-	}
-	$Catalog["bounded_drift"] = New-Scenario "bounded_drift" @{
-		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
-	}
-	$Catalog["quarantine_bounded_drift"] = New-Scenario "quarantine_bounded_drift" @{
-		WKOPENVR_REPLAY_QUARANTINE = "1"
-		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
-	}
-	$Catalog["locked_snap"] = New-Scenario "locked_snap" @{
-		WKOPENVR_REPLAY_LOCKED_SNAP = "1"
-		WKOPENVR_REPLAY_TRACKING_STYLE = "locked"
-	}
 	# Far-from-origin fix A/B: relpose-locked head-mount solve, uniform vs
 	# geometry-precision-weighted. Compare applied_mag_wander_cm across the pair.
 	$Catalog["relpose_uniform"] = New-Scenario "relpose_uniform" @{
@@ -144,18 +116,18 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_LOCK_REL         = "1"
 		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
 	}
-	$Catalog["all"] = New-Scenario "all" @{
-		WKOPENVR_REPLAY_QUARANTINE = "1"
-		WKOPENVR_REPLAY_DRIFT_BREAKER = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW = "1"
-		WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE = "1"
-		WKOPENVR_REPLAY_LOCKED_SNAP = "1"
-		WKOPENVR_REPLAY_TRACKING_STYLE = "locked"
+	# Warm-start A/B: replay from the recording's own stored-profile seed. The
+	# fused variant reproduces the confidence-fusion bad-seed behavior offline;
+	# compare net_drift_mag_cm and perceptible_shifts across the pair.
+	$Catalog["seed_recorded_uniform"] = New-Scenario "seed_recorded_uniform" @{
+		WKOPENVR_REPLAY_LOCK_REL         = "1"
+		WKOPENVR_REPLAY_PRECISION_WEIGHT = "0"
+		WKOPENVR_REPLAY_SEED_PROFILE     = "recorded"
 	}
-	$Catalog["quarantine_proxy"] = New-Scenario "quarantine_proxy" @{
-		WKOPENVR_REPLAY_QUARANTINE = "1"
-		WKOPENVR_REPLAY_RELOC_SOURCE = "proxy"
+	$Catalog["seed_recorded_fused"] = New-Scenario "seed_recorded_fused" @{
+		WKOPENVR_REPLAY_LOCK_REL         = "1"
+		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
+		WKOPENVR_REPLAY_SEED_PROFILE     = "recorded"
 	}
 	return $Catalog
 }
@@ -210,11 +182,20 @@ function Parse-ReplayLine {
 		Recording = $Values["Recording"]
 		ExitCode = $Values["ExitCode"]
 		Window = $Values["window"]
+		Accepts = $Values["accepts"]
 		FinalErrorMm = $Values["final_error_mm"]
 		MedianRelPoseMadMm = $Values["median_relpose_mad_mm"]
 		FinalRelPoseMadMm = $Values["final_relpose_mad_mm"]
 		LockRel = $Values["lock_rel"]
 		PrecisionWeight = $Values["precision_weight"]
+		Seed = $Values["seed"]
+		SeedApplied = $Values["seed_applied"]
+		SeedMagCm = $Values["seed_mag_cm"]
+		PerceptibleShifts = $Values["perceptible_shifts"]
+		PerceptibleMaxMm = $Values["perceptible_max_mm"]
+		PerceptibleSumMm = $Values["perceptible_sum_mm"]
+		NetDriftCm = $Values["net_drift_cm"]
+		NetDriftMagCm = $Values["net_drift_mag_cm"]
 		PeakAppliedMagCm = $Values["peak_applied_mag_cm"]
 		AppliedMagWanderCm = $Values["applied_mag_wander_cm"]
 		PeakAppliedStepCm = $Values["peak_applied_step_cm"]
@@ -263,19 +244,11 @@ $Catalog = Get-ScenarioCatalog
 if ($Scenario.Count -eq 0) {
 	$Scenario = @(
 		"baseline",
-		"quarantine",
-		"bounded_full",
-		"quarantine_bounded",
-		"drift_breaker",
-		"quarantine_drift",
-		"bounded_drift",
-		"quarantine_bounded_drift",
-		"locked_snap",
-		"all"
+		"relpose_uniform",
+		"relpose_weighted",
+		"seed_recorded_uniform",
+		"seed_recorded_fused"
 	)
-	if ($IncludeProxyComparison) {
-		$Scenario += "quarantine_proxy"
-	}
 }
 else {
 	$ExpandedScenario = @()
@@ -328,21 +301,23 @@ $script:ReplayEnvNames = @(
 	"WKOPENVR_REPLAY_SAMPLE_WINDOWS",
 	"WKOPENVR_REPLAY_QUALITY_INTERVAL",
 	"WKOPENVR_REPLAY_HOLDOUT",
-	"WKOPENVR_REPLAY_QUARANTINE",
-	"WKOPENVR_REPLAY_QUARANTINE_SEC",
-	"WKOPENVR_REPLAY_DRIFT_BREAKER",
-	"WKOPENVR_REPLAY_DRIFT_BREAKER_MULT",
-	"WKOPENVR_REPLAY_DRIFT_BREAKER_CAP_MM",
-	"WKOPENVR_REPLAY_BOUNDED_SOLVE",
-	"WKOPENVR_REPLAY_BOUNDED_SOLVE_PRIOR",
-	"WKOPENVR_REPLAY_BOUNDED_SOLVE_LAMBDA",
-	"WKOPENVR_REPLAY_BOUNDED_SOLVE_SLEW",
-	"WKOPENVR_REPLAY_BOUNDED_SOLVE_STEP_MM",
-	"WKOPENVR_REPLAY_BOUNDED_SOLVE_COMMONMODE",
-	"WKOPENVR_REPLAY_RELOC_PROXY_M",
-	"WKOPENVR_REPLAY_RELOC_SOURCE",
-	"WKOPENVR_REPLAY_LOCKED_SNAP",
-	"WKOPENVR_REPLAY_TRACKING_STYLE"
+	"WKOPENVR_REPLAY_LOCK_REL",
+	"WKOPENVR_REPLAY_PRECISION_WEIGHT",
+	"WKOPENVR_REPLAY_SEED_PROFILE",
+	"WKOPENVR_REPLAY_TRACE_CSV",
+	"WKOPENVR_REPLAY_CORRECTION",
+	"WKOPENVR_REPLAY_SLEW_MPS",
+	"WKOPENVR_REPLAY_DEADBAND_MM",
+	"WKOPENVR_REPLAY_AUTOLOCK_SIM",
+	"WKOPENVR_REPLAY_AUTOLOCK_ENTER_MM",
+	"WKOPENVR_REPLAY_AUTOLOCK_LEAVE_MM",
+	"WKOPENVR_REPLAY_AUTOLOCK_SCALE",
+	"WKOPENVR_REPLAY_AUTOLOCK_PANIC_MM",
+	"WKOPENVR_REPLAY_AUTOLOCK_SETTLED_HOLD_SEC",
+	"WKOPENVR_REPLAY_AUTOLOCK_STATIONARY_MPS",
+	"WKOPENVR_REPLAY_AUTOLOCK_UNLOCK_WAIT_SEC",
+	"WKOPENVR_REPLAY_AUTOLOCK_FLOOR_WINDOW_SEC",
+	"WKOPENVR_REPLAY_AUTOLOCK_WINDOW"
 )
 $script:OriginalEnv = @{}
 foreach ($Key in $script:ReplayEnvNames) {
@@ -369,6 +344,10 @@ try {
 	foreach ($Item in $Scenarios) {
 		Write-Host ("== Calibration replay: {0} ==" -f $Item.Name)
 		Set-ReplayEnvironment $BaseEnv $Item.Env
+		if (-not [string]::IsNullOrWhiteSpace($TraceDir)) {
+			# Per-scenario subdirectory so runs don't overwrite each other's traces.
+			Set-Item -Path "Env:\WKOPENVR_REPLAY_TRACE_CSV" -Value (Join-Path (Resolve-RepoPath $TraceDir "") $Item.Name)
+		}
 		$PreviousErrorActionPreference = $ErrorActionPreference
 		$ErrorActionPreference = "Continue"
 		try {
@@ -416,3 +395,76 @@ foreach ($Result in $Results) {
 
 Write-Host ""
 Write-Host "Wrote $OutputCsv"
+
+# Golden-baseline mode: per (scenario, window) metric snapshot for this
+# recording, with per-metric tolerances. -UpdateBaseline writes the snapshot;
+# -Baseline compares and exits non-zero on drift so CI/pre-flight runs fail
+# loudly instead of quietly shifting.
+if ($Baseline -or $UpdateBaseline) {
+	$BaselineDir = Resolve-RepoPath "" "tools\replay-baselines"
+	$RecName = [System.IO.Path]::GetFileNameWithoutExtension($Recording)
+	$BaselinePath = Join-Path $BaselineDir ($RecName + ".baseline.json")
+
+	$MetricNames = @("Accepts", "FinalErrorMm", "AppliedMagWanderCm", "TotalAppliedPathCm", "PeakAppliedStepCm",
+		"PerceptibleShifts", "NetDriftMagCm")
+	$Tolerances = @{
+		Accepts            = @{ Abs = 5.0; Rel = 0.05 }
+		FinalErrorMm       = @{ Abs = 0.5; Rel = 0.10 }
+		AppliedMagWanderCm = @{ Abs = 0.5; Rel = 0.10 }
+		TotalAppliedPathCm = @{ Abs = 2.0; Rel = 0.10 }
+		PeakAppliedStepCm  = @{ Abs = 0.2; Rel = 0.15 }
+		PerceptibleShifts  = @{ Abs = 2.0; Rel = 0.20 }
+		NetDriftMagCm      = @{ Abs = 1.0; Rel = 0.20 }
+	}
+
+	$Current = @{}
+	foreach ($Result in $Results) {
+		$Key = "{0}|w{1}" -f $Result.Scenario, $Result.Window
+		$Metrics = @{}
+		foreach ($Name in $MetricNames) {
+			$Raw = $Result.$Name
+			if ($null -ne $Raw -and "$Raw" -ne "") {
+				$Metrics[$Name] = [double]$Raw
+			}
+		}
+		$Current[$Key] = $Metrics
+	}
+
+	if ($UpdateBaseline) {
+		New-Item -ItemType Directory -Force -Path $BaselineDir | Out-Null
+		$Json = $Current | ConvertTo-Json -Depth 4
+		[System.IO.File]::WriteAllText($BaselinePath, $Json, (New-Object System.Text.UTF8Encoding($false)))
+		Write-Host "Baseline updated: $BaselinePath"
+	}
+	elseif ($Baseline) {
+		if (-not (Test-Path -LiteralPath $BaselinePath)) {
+			throw "No baseline for this recording; run with -UpdateBaseline first. Expected: $BaselinePath"
+		}
+		$Stored = Get-Content -LiteralPath $BaselinePath -Raw | ConvertFrom-Json
+		$Failures = @()
+		foreach ($Key in $Current.Keys) {
+			$StoredEntry = $Stored.$Key
+			if ($null -eq $StoredEntry) {
+				Write-Host ("baseline: no stored entry for {0} (new scenario?); skipping" -f $Key)
+				continue
+			}
+			foreach ($Name in $MetricNames) {
+				if (-not $Current[$Key].ContainsKey($Name)) { continue }
+				$StoredValue = $StoredEntry.$Name
+				if ($null -eq $StoredValue) { continue }
+				$Cur = [double]$Current[$Key][$Name]
+				$Base = [double]$StoredValue
+				$Tol = [math]::Max($Tolerances[$Name].Abs, $Tolerances[$Name].Rel * [math]::Abs($Base))
+				if ([math]::Abs($Cur - $Base) -gt $Tol) {
+					$Failures += ("{0} {1}: {2} vs baseline {3} (tol {4})" -f $Key, $Name, $Cur, $Base, $Tol)
+				}
+			}
+		}
+		if ($Failures.Count -gt 0) {
+			Write-Host "BASELINE DRIFT:"
+			foreach ($Failure in $Failures) { Write-Host ("  " + $Failure) }
+			exit 1
+		}
+		Write-Host "Baseline check passed: $BaselinePath"
+	}
+}

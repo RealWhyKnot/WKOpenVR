@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cctype>
@@ -113,6 +114,42 @@ std::vector<std::size_t> ReplaySampleWindows()
 		out.push_back(EnvSize("WKOPENVR_REPLAY_MAX_SAMPLES", defaults.maxContinuousSamples));
 	}
 	return out;
+}
+
+// WKOPENVR_REPLAY_SEED_PROFILE: "recorded" | "none" | explicit "x,y,z[;rz,ry,rx]"
+// (translation cm; ZYX euler degrees, same triple the live profile stores).
+// Malformed explicit values leave seeding off so a typo can't silently change
+// the baseline being measured.
+void ApplySeedEnv(replay::ReplayOptions& options, std::string& seedName)
+{
+	seedName = "none";
+	const char* raw = std::getenv("WKOPENVR_REPLAY_SEED_PROFILE");
+	if (!raw) return;
+	const std::string value = TrimAscii(raw);
+	std::string lower;
+	for (char c : value) {
+		lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+	}
+	if (lower.empty() || lower == "none") return;
+	if (lower == "recorded") {
+		options.seedMode = replay::ReplaySeedMode::Recorded;
+		seedName = "recorded";
+		return;
+	}
+	const auto parts = SplitReplayEnvList(value);
+	double t[3] = {0.0, 0.0, 0.0};
+	double r[3] = {0.0, 0.0, 0.0};
+	if (parts.empty() || std::sscanf(parts[0].c_str(), "%lf,%lf,%lf", &t[0], &t[1], &t[2]) != 3) {
+		std::cout << "[replay] ignoring malformed WKOPENVR_REPLAY_SEED_PROFILE='" << value << "'\n";
+		return;
+	}
+	if (parts.size() > 1) {
+		std::sscanf(parts[1].c_str(), "%lf,%lf,%lf", &r[0], &r[1], &r[2]);
+	}
+	options.seedMode = replay::ReplaySeedMode::Explicit;
+	options.seedTransCm = Eigen::Vector3d(t[0], t[1], t[2]);
+	options.seedRotDeg = Eigen::Vector3d(r[0], r[1], r[2]);
+	seedName = "explicit";
 }
 
 struct ReplayInput
@@ -313,6 +350,94 @@ void WriteLockedSnapV4Recording(const std::filesystem::path& path, int rowCount,
 		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << tgtX << ",1.60,0.0,1,0,0,0,Continuous," << hmdX
 		    << ",1.60,0.0,1,0,0,0,1,0.0,1.60,-0.1,1,0,0,0," << reloc << "\n";
 	}
+}
+
+// v5 recording with the annotation stream the live logger writes: a seed
+// profile at start, an auto-lock flip mid-file, and a second (mid-session)
+// re-seed that the parser must NOT prefer over the first.
+void WriteSeedAnnotatedV5Recording(const std::filesystem::path& path, bool seedValid)
+{
+	std::ofstream out(path);
+	ASSERT_TRUE(out) << path.string();
+	out << "# spacecal_log_v5\n";
+	if (seedValid) {
+		out << "# [0.50] StartContinuousCalibration_seed_profile: trans_cm=(23.74,266.35,282.30) mag_cm=388.85 "
+		       "rot_deg=(1.500,-0.250,0.125)\n";
+	}
+	else {
+		out << "# [0.50] StartContinuousCalibration_seed_profile: skipped validProfile=0\n";
+	}
+	out << "Timestamp,ref_tx,ref_ty,ref_tz,ref_qw,ref_qx,ref_qy,ref_qz,"
+	       "tgt_tx,tgt_ty,tgt_tz,tgt_qw,tgt_qx,tgt_qy,tgt_qz,tick_phase\n";
+	out.precision(17);
+	for (int i = 0; i < 8; ++i) {
+		const double t = static_cast<double>(i) / 60.0;
+		const double refX = 0.01 * static_cast<double>(i);
+		out << t << "," << refX << ",1.60,0.0,1,0,0,0," << (refX + 0.15) << ",1.60,0.0,1,0,0,0,Continuous\n";
+		if (i == 3) {
+			out << "# [0.06] auto_lock_flip: previous=0 now=1 hmdSpeed=0.003mps held_sec=0.00 "
+			       "committed_via=stationary_gate\n";
+		}
+	}
+	out << "# [0.20] StartContinuousCalibration_seed_profile: trans_cm=(99.00,0.00,0.00) mag_cm=99.00 "
+	       "rot_deg=(0.000,0.000,0.000)\n";
+}
+
+// Programmatic recording whose rows all agree on calibration `cTrue` through
+// the relpose identity trick (target = cTrue^-1 * ref => the per-sample
+// estimate R * I * T^-1 is exactly cTrue). `originDistanceM` + `heightM` set
+// the lever arm: 3 m at head height models the head-mount rig far from
+// origin. Note even 0 m at head height (y~1.6) carries a ~5 m^2 squared
+// lever, which already throttles the fusion gain -- a truly near-origin
+// stream needs a small height too.
+replay::LoadedRecording MakeRelPoseRecording(const Eigen::AffineCompact3d& cTrue, double originDistanceM,
+                                             double heightM, int rowCount)
+{
+	replay::LoadedRecording rec;
+	rec.formatVersion = 5;
+	rec.rows.reserve(rowCount);
+	for (int i = 0; i < rowCount; ++i) {
+		const double yaw = 0.03 * static_cast<double>(i % 40);
+		const Eigen::Vector3d trans(originDistanceM + 0.05 * std::sin(0.7 * i), heightM + 0.05 * std::cos(0.5 * i),
+		                            0.05 * std::sin(0.3 * i));
+		Eigen::AffineCompact3d ref(Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY())));
+		ref.pretranslate(trans);
+		const Eigen::AffineCompact3d target = cTrue.inverse() * ref;
+
+		replay::ReplayRow row;
+		row.timestamp = static_cast<double>(i) / 90.0;
+		row.ref.rot = ref.rotation();
+		row.ref.trans = ref.translation();
+		row.target.rot = target.rotation();
+		row.target.trans = target.translation();
+		row.sample = Sample(row.ref, row.target, row.timestamp);
+		// Stationary HMD so applied steps count as perceptible shifts.
+		row.hasHmdPose = true;
+		row.hmd.rot.setIdentity();
+		row.hmd.trans = Eigen::Vector3d(0.0, 1.60, 0.0);
+		rec.rows.push_back(std::move(row));
+	}
+	rec.hasLockedSnapColumns = true;
+	return rec;
+}
+
+void WriteReplayTraceCsv(const std::filesystem::path& path, const replay::ReplayResult& result)
+{
+	std::ofstream out(path);
+	if (!out) {
+		std::cout << "[replay-trace] open_failed path=" << path.string() << "\n";
+		return;
+	}
+	out << "timestamp,accepted,reject_reason,current_cal_err_mm,raw_err_mm,applied_cx_cm,applied_cy_cm,applied_cz_cm,"
+	       "applied_mag_cm,has_applied,fusion_gain,accum_precision,rel_mad_mm,hmd_stationary,reloc_detected\n";
+	out.precision(12);
+	for (const auto& t : result.trace) {
+		out << t.timestamp << ',' << (t.accepted ? 1 : 0) << ',' << t.rejectReason << ',' << t.currentCalErrMm << ','
+		    << t.rawErrMm << ',' << t.appliedCCm.x() << ',' << t.appliedCCm.y() << ',' << t.appliedCCm.z() << ','
+		    << t.appliedCCm.norm() << ',' << (t.hasAppliedC ? 1 : 0) << ',' << t.fusionGain << ',' << t.accumPrecision
+		    << ',' << t.relMadMm << ',' << (t.hmdStationary ? 1 : 0) << ',' << (t.relocDetected ? 1 : 0) << "\n";
+	}
+	std::cout << "[replay-trace] rows=" << result.trace.size() << " path=" << path.string() << "\n";
 }
 
 void WriteExperimentalFlagsV5Recording(const std::filesystem::path& path)
@@ -541,6 +666,128 @@ TEST(MotionRecordingReplayTest, LoadsV3SampleHealthAndReportsShadowQuality)
 	EXPECT_GE(result.finalQuality.holdoutP95Mm, 0.0);
 }
 
+TEST(MotionRecordingReplayTest, LoadsSeedProfileAnnotationAndEvents)
+{
+	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_seed_annotated.csv";
+	std::filesystem::remove(path);
+	WriteSeedAnnotatedV5Recording(path, /*seedValid=*/true);
+
+	const auto rec = replay::LoadRecording(path.string());
+	std::filesystem::remove(path);
+	ASSERT_TRUE(rec.error.empty()) << rec.error;
+
+	// First seed annotation wins; the mid-session re-seed (99,0,0) must not
+	// replace the session-start profile.
+	ASSERT_TRUE(rec.seedProfile.present);
+	ASSERT_TRUE(rec.seedProfile.valid);
+	EXPECT_NEAR(rec.seedProfile.time, 0.50, 1e-9);
+	EXPECT_NEAR(rec.seedProfile.transCm.x(), 23.74, 1e-6);
+	EXPECT_NEAR(rec.seedProfile.transCm.y(), 266.35, 1e-6);
+	EXPECT_NEAR(rec.seedProfile.transCm.z(), 282.30, 1e-6);
+	EXPECT_NEAR(rec.seedProfile.rotDeg.x(), 1.500, 1e-6);
+	EXPECT_NEAR(rec.seedProfile.rotDeg.y(), -0.250, 1e-6);
+	EXPECT_NEAR(rec.seedProfile.rotDeg.z(), 0.125, 1e-6);
+
+	int seedEvents = 0;
+	int flipEvents = 0;
+	for (const auto& event : rec.annotations) {
+		if (event.key == "StartContinuousCalibration_seed_profile") ++seedEvents;
+		if (event.key == "auto_lock_flip") ++flipEvents;
+	}
+	EXPECT_EQ(2, seedEvents);
+	EXPECT_EQ(1, flipEvents);
+
+	// Recorded-mode replay warm-starts from the parsed seed.
+	replay::ReplayOptions options;
+	options.seedMode = replay::ReplaySeedMode::Recorded;
+	const auto result = replay::RunReplay(rec, options);
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_TRUE(result.seedApplied);
+	EXPECT_NEAR(result.seedMagCm, 388.85, 0.05);
+}
+
+TEST(MotionRecordingReplayTest, SeedProfileSkippedFormDegradesToColdStart)
+{
+	const std::filesystem::path path = std::filesystem::temp_directory_path() / "wkopenvr_replay_seed_skipped.csv";
+	std::filesystem::remove(path);
+	WriteSeedAnnotatedV5Recording(path, /*seedValid=*/false);
+
+	const auto rec = replay::LoadRecording(path.string());
+	std::filesystem::remove(path);
+	ASSERT_TRUE(rec.error.empty()) << rec.error;
+	EXPECT_TRUE(rec.seedProfile.present);
+	EXPECT_FALSE(rec.seedProfile.valid);
+
+	replay::ReplayOptions options;
+	options.seedMode = replay::ReplaySeedMode::Recorded;
+	const auto result = replay::RunReplay(rec, options);
+	EXPECT_TRUE(result.succeeded) << result.error;
+	EXPECT_FALSE(result.seedApplied);
+}
+
+// Offline reproduction of the seeded-fusion behavior seen live: with the
+// confidence fusion on, a stored profile seed (kSeedPriorPrecision) dominates
+// far-from-origin candidates, so a BAD seed is defended instead of corrected
+// ("refusing to calibrate"); with fusion off the overwrite path escapes the
+// seed on the first accept. A genuinely near-origin stream carries enough
+// per-solve precision to correct the same bad seed through the fusion.
+TEST(MotionRecordingReplayTest, SeededReplayFusionDefendsBadSeedFarFromOrigin)
+{
+	Eigen::AffineCompact3d cTrue = Eigen::AffineCompact3d::Identity();
+	cTrue.translation() = Eigen::Vector3d(0.20, 0.0, 0.0); // truth: 20 cm
+	const Eigen::Vector3d seedTransCm(50.0, 0.0, 0.0);     // stored profile: 30 cm wrong
+
+	replay::ReplayOptions options;
+	options.lockRelativePosition = true;
+	options.maxContinuousSamples = 25;
+	options.qualityReportInterval = 0;
+	options.seedMode = replay::ReplaySeedMode::Explicit;
+	options.seedTransCm = seedTransCm;
+
+	const auto farRec = MakeRelPoseRecording(cTrue, /*originDistanceM=*/3.0, /*heightM=*/1.60, /*rowCount=*/300);
+
+	// Fusion ON, far from origin: candidates carry almost no geometric
+	// precision, so the applied calibration stays pinned to the bad seed.
+	options.precisionWeightedRelPose = true;
+	const auto farFused = replay::RunReplay(farRec, options);
+	ASSERT_TRUE(farFused.succeeded) << farFused.error;
+	ASSERT_TRUE(farFused.seedApplied);
+	EXPECT_GT(farFused.accepts, 10);
+	EXPECT_LT(farFused.appliedMagWanderCm, 5.0)
+	    << "fusion should defend the seed far from origin (the live bad-seed regression)";
+
+	// Fusion OFF, same recording: the overwrite path jumps to the solved truth
+	// (50 cm seed -> 20 cm truth = one 30 cm applied step). The HMD is
+	// stationary in this synthetic session, so that jump is a perceptible
+	// shift, and the net drift vector points from seed to truth.
+	options.precisionWeightedRelPose = false;
+	const auto farUniform = replay::RunReplay(farRec, options);
+	ASSERT_TRUE(farUniform.succeeded) << farUniform.error;
+	ASSERT_TRUE(farUniform.seedApplied);
+	EXPECT_GT(farUniform.accepts, 10);
+	EXPECT_GT(farUniform.appliedMagWanderCm, 25.0);
+	EXPECT_GT(farUniform.peakAppliedStepCm, 25.0);
+	EXPECT_GE(farUniform.largeAppliedSteps, 1);
+	EXPECT_GE(farUniform.perceptibleShiftCount, 1);
+	EXPECT_GT(farUniform.perceptibleShiftMaxMm, 250.0);
+	EXPECT_NEAR(farUniform.netDriftVectorCm.x(), -30.0, 2.0);
+	EXPECT_NEAR(farUniform.netDriftVectorCm.y(), 0.0, 2.0);
+	EXPECT_NEAR(farUniform.netDriftVectorCm.z(), 0.0, 2.0);
+
+	// Fusion ON, genuinely near origin (small height too): per-solve precision
+	// is high, so the same bad seed is corrected within the session. At head
+	// height the lever arm already throttles the gain -- that case behaves
+	// like `farFused`, which is exactly the live "refusing to calibrate"
+	// regression shape.
+	options.precisionWeightedRelPose = true;
+	const auto nearRec = MakeRelPoseRecording(cTrue, /*originDistanceM=*/0.0, /*heightM=*/0.10, /*rowCount=*/900);
+	const auto nearFused = replay::RunReplay(nearRec, options);
+	ASSERT_TRUE(nearFused.succeeded) << nearFused.error;
+	ASSERT_TRUE(nearFused.seedApplied);
+	EXPECT_GT(nearFused.appliedMagWanderCm, 25.0)
+	    << "near-origin precision should pull the applied calibration off the bad seed";
+}
+
 TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 {
 	const char* enabled = std::getenv("WKOPENVR_REPLAY_RECORDINGS");
@@ -562,6 +809,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.lockRelativePosition = EnvFlag("WKOPENVR_REPLAY_LOCK_REL", baseOptions.lockRelativePosition);
 	baseOptions.precisionWeightedRelPose =
 	    EnvFlag("WKOPENVR_REPLAY_PRECISION_WEIGHT", baseOptions.precisionWeightedRelPose);
+	std::string seedName;
+	ApplySeedEnv(baseOptions, seedName);
 	const auto sampleWindows = ReplaySampleWindows();
 
 	std::size_t replayed = 0;
@@ -603,16 +852,32 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
 			          << " lock_rel=" << (options.lockRelativePosition ? 1 : 0)
-			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0)
+			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0) << " seed=" << seedName
+			          << " seed_applied=" << (result.seedApplied ? 1 : 0) << " seed_mag_cm=" << result.seedMagCm
 			          << " peak_applied_mag_cm=" << result.peakAppliedMagCm
 			          << " applied_mag_wander_cm=" << result.appliedMagWanderCm
 			          << " peak_applied_step_cm=" << result.peakAppliedStepCm
 			          << " large_applied_steps=" << result.largeAppliedSteps
 			          << " total_applied_path_cm=" << result.totalAppliedPathCm
+			          << " perceptible_shifts=" << result.perceptibleShiftCount
+			          << " perceptible_max_mm=" << result.perceptibleShiftMaxMm
+			          << " perceptible_sum_mm=" << result.perceptibleShiftSumMm << " net_drift_cm=("
+			          << result.netDriftVectorCm.x() << "," << result.netDriftVectorCm.y() << ","
+			          << result.netDriftVectorCm.z() << ")"
+			          << " net_drift_mag_cm=" << result.netDriftVectorCm.norm()
 			          << " solver_sample_rows=" << result.solverSamplesPushed
 			          << " solver_sample_ratio=" << result.solverSampleRatio
 			          << " final_shadow_reason=" << result.finalQuality.shadowRejectReason << "\n";
 			PrintQualitySummary(input.name, sampleWindow, result);
+			if (const char* traceDir = std::getenv("WKOPENVR_REPLAY_TRACE_CSV")) {
+				const std::filesystem::path dir(TrimAscii(traceDir));
+				if (!dir.empty()) {
+					std::error_code ec;
+					std::filesystem::create_directories(dir, ec);
+					WriteReplayTraceCsv(dir / (input.name + ".w" + std::to_string(sampleWindow) + ".trace.csv"),
+					                    result);
+				}
+			}
 			++replayed;
 		}
 
