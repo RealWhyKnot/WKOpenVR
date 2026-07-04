@@ -527,6 +527,28 @@ void CCal_DrawSettings()
 						    SaveProfile(CalCtx);
 					    }
 				    });
+				    openvr_pair::overlay::ui::SettingRow(table, "Restart on geometry shift", [&] {
+					    if (ExperimentCheckbox(
+					            "geometry_shift_restart", "##head_mount_experimental_geometry_shift_restart",
+					            &CalCtx.headMount.experimentalGeometryShiftRestart,
+					            "Restart continuous calibration when a sustained error spike suggests the tracking "
+					            "geometry changed (a base station moved). Off: the event is still logged but the "
+					            "session keeps its calibration; restarts were shifting the play space every few "
+					            "minutes on ordinary tracking noise. Experimental. Default off.")) {
+						    SaveProfile(CalCtx);
+					    }
+				    });
+				    openvr_pair::overlay::ui::SettingRow(table, "Absorb small frame jumps", [&] {
+					    if (ExperimentCheckbox(
+					            "micro_reanchor", "##head_mount_experimental_micro_reanchor",
+					            &CalCtx.headMount.experimentalMicroReanchor,
+					            "When the headset's reported position jumps 2-30 cm but the head-mounted tracker "
+					            "confirms the head did not move, shift the calibration by the same amount so the "
+					            "world stays aligned instead of keeping the offset. Needs the head-mounted tracker. "
+					            "Experimental. Default off.")) {
+						    SaveProfile(CalCtx);
+					    }
+				    });
 			    });
 			ImGui::EndGroupPanel();
 		}

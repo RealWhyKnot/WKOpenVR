@@ -674,6 +674,10 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_FALSE(ctx.headMount.experimentalWitnessAutoCalibrate)
 	    << "v3 profile must default witness auto-calibrate to false";
 	EXPECT_FALSE(ctx.headMount.experimentalWitnessCorrection) << "v3 profile must default witness correction to false";
+	EXPECT_FALSE(ctx.headMount.experimentalGeometryShiftRestart)
+	    << "profile without the key must default geometry-shift restart to false";
+	EXPECT_FALSE(ctx.headMount.experimentalMicroReanchor)
+	    << "profile without the key must default micro re-anchor to false";
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback) << "v3 profile must default raw HMD fallback to true";
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
@@ -701,6 +705,8 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.experimentalAutoCorrectOffset = true;
 	src.headMount.experimentalWitnessAutoCalibrate = true;
 	src.headMount.experimentalWitnessCorrection = true;
+	src.headMount.experimentalGeometryShiftRestart = true;
+	src.headMount.experimentalMicroReanchor = true;
 	src.headMount.lockedHeadsetSmoothing = 65;
 	src.headMount.lockedHeadsetRotationSmoothing = 35;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
@@ -741,6 +747,8 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
 	EXPECT_TRUE(dst.headMount.experimentalWitnessAutoCalibrate);
 	EXPECT_TRUE(dst.headMount.experimentalWitnessCorrection);
+	EXPECT_TRUE(dst.headMount.experimentalGeometryShiftRestart);
+	EXPECT_TRUE(dst.headMount.experimentalMicroReanchor);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
 	EXPECT_EQ(dst.headMount.lockedHeadsetRotationSmoothing, 35);

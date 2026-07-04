@@ -371,6 +371,10 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 		hm.experimentalWitnessCorrection = obj["experimental_witness_correction"].get<bool>();
 	if (obj["experimental_confidence_fusion"].is<bool>())
 		hm.experimentalConfidenceFusion = obj["experimental_confidence_fusion"].get<bool>();
+	if (obj["experimental_geometry_shift_restart"].is<bool>())
+		hm.experimentalGeometryShiftRestart = obj["experimental_geometry_shift_restart"].get<bool>();
+	if (obj["experimental_micro_reanchor"].is<bool>())
+		hm.experimentalMicroReanchor = obj["experimental_micro_reanchor"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
 	if (obj["locked_headset_smoothing"].is<double>()) {
 		double v = obj["locked_headset_smoothing"].get<double>();
@@ -449,6 +453,8 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool experimentalWitnessAutoCal = hm.experimentalWitnessAutoCalibrate;
 	bool experimentalWitnessCorr = hm.experimentalWitnessCorrection;
 	bool experimentalConfidenceFusion = hm.experimentalConfidenceFusion;
+	bool experimentalGeometryShiftRestart = hm.experimentalGeometryShiftRestart;
+	bool experimentalMicroReanchor = hm.experimentalMicroReanchor;
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
@@ -458,6 +464,8 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	obj["experimental_witness_auto_calibrate"].set<bool>(experimentalWitnessAutoCal);
 	obj["experimental_witness_correction"].set<bool>(experimentalWitnessCorr);
 	obj["experimental_confidence_fusion"].set<bool>(experimentalConfidenceFusion);
+	obj["experimental_geometry_shift_restart"].set<bool>(experimentalGeometryShiftRestart);
+	obj["experimental_micro_reanchor"].set<bool>(experimentalMicroReanchor);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
 	obj["locked_headset_smoothing"].set<double>(lockedSmoothing);

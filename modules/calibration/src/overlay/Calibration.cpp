@@ -2275,37 +2275,49 @@ void CalibrationTick(double time)
 						// at its pre-reset value (reset happens further below).
 						const int sustainedAtFire =
 						    useCusumGeometryShift ? cusumSustainAtFire : g_geomShiftConsecutiveBadTicks;
+						// Restart is experimental (default OFF). Field logs showed
+						// the fire -> Clear -> ContinuousStandby -> restart chain
+						// tripping on ordinary inter-system error spikes 38-179x a
+						// session, and every restart's first accepted candidate
+						// snapping the world 4-5 cm. With the flag off the detector
+						// still logs fires (and keeps its cooldown so it doesn't
+						// refire every tick) but the session keeps its calibration
+						// -- the upstream base behaviour.
+						const bool restartOnFire = ctx.headMount.experimentalGeometryShiftRestart;
 						char fireBuf[800];
 						snprintf(fireBuf, sizeof fireBuf,
 						         "[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
 						         " ratio=%.2fx sustained=%d cusum_S_at_fire=%.3f mode=%s"
 						         " lockRelativePosition=%d lockMode=%d"
 						         " errTail_slope_mm_per_sample=%.3f errTail=[%s]"
-						         " cooldown_until=%.3f",
+						         " cooldown_until=%.3f restart=%d",
 						         current, median, ratio, sustainedAtFire, cusumValueAtFire,
 						         useCusumGeometryShift ? "cusum" : "legacy", (int)ctx.lockRelativePosition,
-						         (int)ctx.lockRelativePositionMode, slopeMmPerSample, tailStr.c_str(), cooldownStarts);
+						         (int)ctx.lockRelativePositionMode, slopeMmPerSample, tailStr.c_str(), cooldownStarts,
+						         (int)restartOnFire);
 						Metrics::WriteLogAnnotation(fireBuf);
 
-						CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
-						// A geometry-shift fire while a warm-restart grace was
-						// active means the snap landed on a profile that no
-						// longer matches reality (typically a base station got
-						// nudged while the user was away). Drop the grace so
-						// the normal continuous-cal recovery path takes over
-						// -- the fast path traded safety for speed, and the
-						// detector just learned the trade was wrong this time.
-						if (ctx.warmRestartGraceSamples > 0) {
-							char gbuf[160];
-							snprintf(gbuf, sizeof gbuf,
-							         "[warm-restart][grace-ended] reason=geometry_shift"
-							         " remaining=%d",
-							         ctx.warmRestartGraceSamples);
-							Metrics::WriteLogAnnotation(gbuf);
-							ctx.warmRestartGraceSamples = 0;
+						if (restartOnFire) {
+							CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
+							// A geometry-shift fire while a warm-restart grace was
+							// active means the snap landed on a profile that no
+							// longer matches reality (typically a base station got
+							// nudged while the user was away). Drop the grace so
+							// the normal continuous-cal recovery path takes over
+							// -- the fast path traded safety for speed, and the
+							// detector just learned the trade was wrong this time.
+							if (ctx.warmRestartGraceSamples > 0) {
+								char gbuf[160];
+								snprintf(gbuf, sizeof gbuf,
+								         "[warm-restart][grace-ended] reason=geometry_shift"
+								         " remaining=%d",
+								         ctx.warmRestartGraceSamples);
+								Metrics::WriteLogAnnotation(gbuf);
+								ctx.warmRestartGraceSamples = 0;
+							}
+							calibration.Clear();
+							ctx.state = CalibrationState::ContinuousStandby;
 						}
-						calibration.Clear();
-						ctx.state = CalibrationState::ContinuousStandby;
 						// Intentionally NOT clearing ctx.relativePosCalibrated here.
 						// Previously this path set it false, which wiped the
 						// relative-pose constraint that AUTO Lock would have used
@@ -3556,6 +3568,11 @@ void CalibrationTick(double time)
 		                  ctx.headMount.experimentalWitnessAutoCalibrate);
 		setExperimentFlag(spacecal::calibration_experiments::WitnessContinuousCorrection,
 		                  ctx.headMount.experimentalWitnessCorrection);
+		setExperimentFlag(spacecal::calibration_experiments::ConfidenceFusion,
+		                  ctx.headMount.experimentalConfidenceFusion);
+		setExperimentFlag(spacecal::calibration_experiments::GeometryShiftRestart,
+		                  ctx.headMount.experimentalGeometryShiftRestart);
+		setExperimentFlag(spacecal::calibration_experiments::MicroReanchor, ctx.headMount.experimentalMicroReanchor);
 		Metrics::SetTickExperimentalFlags(experimentalFlags);
 	}
 

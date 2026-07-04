@@ -195,6 +195,18 @@ struct HeadMountConfig
 	// cannot drag a good calibration around. Off: the classic behaviour -- each
 	// accepted candidate overwrites the calibration outright.
 	bool experimentalConfidenceFusion = false;
+	// Experimental geometry-shift restart (default OFF). On: a sustained
+	// error-spike fire clears the solver and restarts continuous calibration
+	// (the pre-2026-07 behaviour). Off: the detector still logs fires but the
+	// session keeps its calibration -- matching the upstream base, which has
+	// no geometry-shift restarts at all. Field logs showed the restart chain
+	// snapping the world 4-5 cm every few minutes on inter-system noise.
+	bool experimentalGeometryShiftRestart = false;
+	// Experimental micro re-anchor (default OFF). On: a witness-corroborated
+	// HMD frame jump below the 30 cm recovery gate (the head stayed still but
+	// the reported world shifted 5-30 cm) is absorbed into the applied
+	// calibration immediately instead of being left as a permanent offset.
+	bool experimentalMicroReanchor = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
 	// head-mounted tracker (0..100, 0 = off). Tames lighthouse position jitter.

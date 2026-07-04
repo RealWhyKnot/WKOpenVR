@@ -893,6 +893,27 @@ void TickHmdRelocalizationDetectorImpl(double now)
 	// headset uncorrected; count it so the heartbeat surfaces the rate.
 	if (fired && !magnitudeOK && recoveryEligible && startupOK && throttleOK && !postStallGrace) {
 		spacecal::witness_health::NoteSubthresholdReloc(s.witnessHealth);
+		// Experimental micro re-anchor (default OFF): when the witness confirms
+		// the head stayed put, the sub-threshold jump is a small frame shift --
+		// every lighthouse device must follow it to stay aligned with reality.
+		// Shift the applied calibration by the same world delta and snap the
+		// next profile apply (the jump already happened this tick; matching it
+		// immediately is what REMOVES the perceived world shift). Translation
+		// only: the rotational part of a small SLAM re-anchor cannot be
+		// separated from real head rotation with the data available here.
+		if (CalCtx.headMount.experimentalMicroReanchor &&
+		    spacecal::snap_suppression::IsJumpMicroReanchorable(effHeadMountMode, currentHmdDelta, headTrackerDelta)) {
+			const Eigen::Vector3d dposM = hmdPose.translation() - s.prevHmd.translation();
+			CalCtx.calibratedTranslation += dposM * 100.0;
+			g_snapNextProfileApply = true;
+			char mbuf[280];
+			snprintf(mbuf, sizeof mbuf,
+			         "micro_reanchor: hmd_delta_cm=%.2f tracker_delta_cm=%.2f"
+			         " delta_cm=(%.2f,%.2f,%.2f) new_mag_cm=%.2f",
+			         currentHmdDelta * 100.0, headTrackerDelta * 100.0, dposM.x() * 100.0, dposM.y() * 100.0,
+			         dposM.z() * 100.0, CalCtx.calibratedTranslation.norm());
+			Metrics::WriteLogAnnotation(mbuf);
+		}
 	}
 
 	// If `fired` is true (a relocalization log line was emitted) but a

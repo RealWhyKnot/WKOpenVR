@@ -15,6 +15,12 @@ enum ExperimentFlag : uint32_t
 	// slew-limited step that closes the witness-vs-calibration drift.
 	WitnessOffsetAutoCalibrate = 1u << 1,
 	WitnessContinuousCorrection = 1u << 2,
+	// Geometry-precision confidence fusion of continuous re-solves.
+	ConfidenceFusion = 1u << 3,
+	// Geometry-shift fires restart continuous calibration (legacy behaviour).
+	GeometryShiftRestart = 1u << 4,
+	// Witness-corroborated sub-30 cm frame jumps are absorbed immediately.
+	MicroReanchor = 1u << 5,
 };
 
 inline bool EnvFlagEnabled(const char* value)
