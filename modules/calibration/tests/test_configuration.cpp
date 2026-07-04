@@ -669,13 +669,8 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_FALSE(ctx.headMount.offsetWitnessAutoCaptured)
 	    << "profile without the key must default offsetWitnessAutoCaptured to false (manual offset)";
 	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
-	EXPECT_FALSE(ctx.headMount.experimentalAutoCorrectOffset)
-	    << "v3 profile must default experimental head-mount auto-correct to false";
-	EXPECT_FALSE(ctx.headMount.experimentalWitnessAutoCalibrate)
-	    << "v3 profile must default witness auto-calibrate to false";
-	EXPECT_FALSE(ctx.headMount.experimentalWitnessCorrection) << "v3 profile must default witness correction to false";
-	EXPECT_FALSE(ctx.headMount.experimentalGeometryShiftRestart)
-	    << "profile without the key must default geometry-shift restart to false";
+	EXPECT_FALSE(ctx.headMount.experimentalConfidenceFusion)
+	    << "profile without the key must default confidence fusion to false";
 	EXPECT_FALSE(ctx.headMount.experimentalMicroReanchor)
 	    << "profile without the key must default micro re-anchor to false";
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback) << "v3 profile must default raw HMD fallback to true";
@@ -702,10 +697,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.offsetCalibrated = true;
 	src.headMount.offsetWitnessAutoCaptured = true;
 	src.headMount.autoCorrectOffset = false;
-	src.headMount.experimentalAutoCorrectOffset = true;
-	src.headMount.experimentalWitnessAutoCalibrate = true;
-	src.headMount.experimentalWitnessCorrection = true;
-	src.headMount.experimentalGeometryShiftRestart = true;
+	src.headMount.experimentalConfidenceFusion = true;
 	src.headMount.experimentalMicroReanchor = true;
 	src.headMount.lockedHeadsetSmoothing = 65;
 	src.headMount.lockedHeadsetRotationSmoothing = 35;
@@ -744,10 +736,7 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.offsetCalibrated);
 	EXPECT_TRUE(dst.headMount.offsetWitnessAutoCaptured);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
-	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
-	EXPECT_TRUE(dst.headMount.experimentalWitnessAutoCalibrate);
-	EXPECT_TRUE(dst.headMount.experimentalWitnessCorrection);
-	EXPECT_TRUE(dst.headMount.experimentalGeometryShiftRestart);
+	EXPECT_TRUE(dst.headMount.experimentalConfidenceFusion);
 	EXPECT_TRUE(dst.headMount.experimentalMicroReanchor);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
@@ -818,7 +807,7 @@ TEST(ConfigurationTest, HeadMountAutoCorrectDisabledPersistsWhenOtherwiseDefault
 	EXPECT_FALSE(dst.headMount.offsetCalibrated);
 }
 
-TEST(ConfigurationTest, HeadMountExperimentalAutoCorrectDefaultsOffAndPersistsWhenEnabled)
+TEST(ConfigurationTest, HeadMountExperimentalFusionDefaultsOffAndPersistsWhenEnabled)
 {
 	CalibrationContext src;
 	src.referenceTrackingSystem = "lighthouse";
@@ -827,18 +816,18 @@ TEST(ConfigurationTest, HeadMountExperimentalAutoCorrectDefaultsOffAndPersistsWh
 
 	std::stringstream defaultOut;
 	WriteProfile(src, defaultOut);
-	EXPECT_EQ(defaultOut.str().find("experimental_auto_correct_offset"), std::string::npos);
+	EXPECT_EQ(defaultOut.str().find("experimental_confidence_fusion"), std::string::npos);
 
-	src.headMount.experimentalAutoCorrectOffset = true;
+	src.headMount.experimentalConfidenceFusion = true;
 	std::stringstream enabledOut;
 	WriteProfile(src, enabledOut);
 	const std::string json = enabledOut.str();
 	EXPECT_NE(json.find("\"head_mount\""), std::string::npos);
-	EXPECT_NE(json.find("\"experimental_auto_correct_offset\""), std::string::npos);
+	EXPECT_NE(json.find("\"experimental_confidence_fusion\""), std::string::npos);
 
 	CalibrationContext dst;
 	std::stringstream in(json);
 	ParseProfile(dst, in);
-	EXPECT_TRUE(dst.headMount.experimentalAutoCorrectOffset);
+	EXPECT_TRUE(dst.headMount.experimentalConfidenceFusion);
 	EXPECT_TRUE(dst.headMount.autoCorrectOffset);
 }

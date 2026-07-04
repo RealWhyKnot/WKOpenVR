@@ -483,39 +483,6 @@ void CCal_DrawSettings()
 			ImGui::BeginGroupPanel("Experimental", panel_size);
 			openvr_pair::overlay::ui::DrawSettingTable(
 			    "##advanced_experimental_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
-				    openvr_pair::overlay::ui::SettingRow(table, "Headset offset auto-correct", [&] {
-					    if (ExperimentCheckbox(
-					            "headset_offset_auto_correct", "##head_mount_experimental_auto_correct_offset",
-					            &CalCtx.headMount.experimentalAutoCorrectOffset,
-					            "Automatically adjust the calibrated offset between the headset and its head-mounted "
-					            "tracker when continuous calibration sees the same stable correction across multiple "
-					            "windows.\n\n"
-					            "Experimental. Leave off unless you are testing head-mounted tracker offset drift.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    openvr_pair::overlay::ui::SettingRow(table, "Witness auto-calibrate offset", [&] {
-					    if (ExperimentCheckbox(
-					            "witness_auto_calibrate", "##head_mount_experimental_witness_auto_calibrate",
-					            &CalCtx.headMount.experimentalWitnessAutoCalibrate,
-					            "Capture the headset<->head-tracker baseline offset automatically while continuous "
-					            "calibration is healthy, instead of running the manual offset wizard. Enables the "
-					            "witness drift diagnostics and the continuous correction below. "
-					            "Experimental. Default off.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    openvr_pair::overlay::ui::SettingRow(table, "Witness continuous correction", [&] {
-					    if (ExperimentCheckbox(
-					            "witness_continuous_correction", "##head_mount_experimental_witness_correction",
-					            &CalCtx.headMount.experimentalWitnessCorrection,
-					            "Between paired-motion solves, apply a slow, dead-banded correction that closes the "
-					            "sub-30 cm drift the head-mounted tracker sees between the headset and its calibrated "
-					            "position. Needs the baseline offset (auto-calibrate above or the offset wizard). "
-					            "Experimental. Default off.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
 				    openvr_pair::overlay::ui::SettingRow(table, "Confidence-weighted calibration", [&] {
 					    if (ExperimentCheckbox(
 					            "confidence_weighted_calibration", "##head_mount_experimental_confidence_fusion",
@@ -524,17 +491,6 @@ void CCal_DrawSettings()
 					            "running estimate so a far-from-origin reading can't drag a good calibration around. "
 					            "Off: each accepted solve overwrites the calibration outright (classic behaviour). "
 					            "Experimental. Default off.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    openvr_pair::overlay::ui::SettingRow(table, "Restart on geometry shift", [&] {
-					    if (ExperimentCheckbox(
-					            "geometry_shift_restart", "##head_mount_experimental_geometry_shift_restart",
-					            &CalCtx.headMount.experimentalGeometryShiftRestart,
-					            "Restart continuous calibration when a sustained error spike suggests the tracking "
-					            "geometry changed (a base station moved). Off: the event is still logged but the "
-					            "session keeps its calibration; restarts were shifting the play space every few "
-					            "minutes on ordinary tracking noise. Experimental. Default off.")) {
 						    SaveProfile(CalCtx);
 					    }
 				    });

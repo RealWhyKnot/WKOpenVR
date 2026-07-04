@@ -25,7 +25,6 @@
 #include "BoundaryRePush.h"        // TickBoundaryRePush -- safety boundary chaperone re-push.
 #include "ControllerInput.h"
 #include "HeadFromTrackerSolve.h"
-#include "ContinuousCorrection.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
 #include "HeadMountPoseSampling.h"
 #include "HeadMountShadowOffset.h"
@@ -34,7 +33,6 @@
 #include "RecoveryPolicy.h"
 #include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
-#include "WitnessCorrection.h"
 
 // Boundary capture session tick (defined in UserInterfaceTabsBoundary.cpp).
 // Called each CalibrationTick so capture runs independent of which tab is
@@ -435,25 +433,6 @@ static void TickHeadMountInvariantShadow(const CalibrationContext& ctx, double t
 		         localJumpDeg, hmdDeltaM * 100.0, trackerDeltaM * 100.0, mismatchM * 100.0, (int)softSnap,
 		         (int)hardSnap, hmdAgeMs, trackerAgeMs, (unsigned)ctx.headMountOffsetVersion);
 		Metrics::WriteLogAnnotation(buf);
-
-		// Continuous sub-30 cm witness correction (Stage 1, item 4). savedDeltaM
-		// is the live witness-vs-calibration drift; surface the slew-limited,
-		// dead-banded corrective step this loop would apply. Diagnostic only --
-		// applying it to the live transform is gated on a hardware pass that
-		// validates the magnitude/cadence against real drift before enabling, so
-		// the working continuous-cal solver is never fought blind. Only meaningful
-		// once the rigid head-from-tracker offset is calibrated.
-		if (ctx.headMount.offsetCalibrated &&
-		    (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby)) {
-			constexpr double kNominalTickDt = 1.0 / 3.5; // continuous-cal cadence
-			const double stepM =
-			    spacecal::cont_correction::CorrectionStepM(savedDeltaM, ctx.autoLockMadFloor, kNominalTickDt);
-			char ccbuf[256];
-			snprintf(ccbuf, sizeof ccbuf,
-			         "[cont-correction] drift_mm=%.2f mad_floor_mm=%.2f step_mm=%.3f would_apply=%d (diagnostic)",
-			         savedDeltaM * 1000.0, ctx.autoLockMadFloor * 1000.0, stepM * 1000.0, (int)(stepM > 0.0));
-			Metrics::WriteLogAnnotation(ccbuf);
-		}
 	}
 
 	g_headMountShadowOffset.previousInvariantHmd = hmdReference;
@@ -619,45 +598,13 @@ static void LogShadowOffsetBlockedThrottled(CalibrationContext& ctx, const char*
 	              " offset_version=%u relPosCal=%d needsFreshRelPose=%d"
 	              " profile_valid=%d profile_mag_cm=%.2f profile_fit_rms_mm=%.3f"
 	              " hmd_age_ms=%.1f tracker_age_ms=%.1f fallback_total=%llu"
-	              " toggle=%d target_matches=%d deviceID=%d hmd_stream=driver_shmem_raw",
+	              " target_matches=%d deviceID=%d hmd_stream=driver_shmem_raw",
 	              reason, HeadMountSampleSourceName(CurrentHeadMountSampleSource(ctx)),
 	              (unsigned)ctx.headMountOffsetVersion, (int)ctx.relativePosCalibrated,
 	              (int)ctx.headMountNeedsFreshRelativePose, (int)ctx.validProfile, ctx.calibratedTranslation.norm(),
 	              profileFitRmsMm, hmdAgeMs, trackerAgeMs, (unsigned long long)ctx.driverSynthFallbackTotal,
-	              (int)ctx.headMount.experimentalAutoCorrectOffset,
 	              (int)wkopenvr::headmount::HeadMountMatchesContinuousTarget(ctx), ctx.headMount.deviceID);
 	Metrics::WriteLogAnnotation(buf);
-}
-
-static void ApplyHeadMountShadowOffset(CalibrationContext& ctx, const Eigen::AffineCompact3d& candidate,
-                                       const spacecal::headmount::OffsetDelta& savedDelta, double residualMm,
-                                       double time)
-{
-	ctx.headMount.headFromTracker = candidate;
-	ctx.headMount.offsetCalibrated = true;
-	ctx.NoteHeadMountOffsetChanged();
-	SaveProfile(ctx);
-	if (ctx.state == CalibrationState::Continuous) {
-		g_snapNextProfileApply = true;
-	}
-	CCal_SendHeadMountConfig();
-
-	char buf[640];
-	std::snprintf(buf, sizeof buf,
-	              "shadow_offset_applied: head_mount_shadow_offset_applied=1"
-	              " source=%s offset_version=%u residual_mm=%.3f"
-	              " delta_trans_cm=%.2f delta_rot_deg=%.2f profile_mag_cm=%.2f"
-	              " snap_next_apply=%d toggle=%d fallback_total=%llu"
-	              " hmd_stream=driver_shmem_raw",
-	              HeadMountSampleSourceName(CurrentHeadMountSampleSource(ctx)), (unsigned)ctx.headMountOffsetVersion,
-	              residualMm, savedDelta.translationM * 100.0, savedDelta.rotationDeg, ctx.calibratedTranslation.norm(),
-	              (int)(ctx.state == CalibrationState::Continuous), (int)ctx.headMount.experimentalAutoCorrectOffset,
-	              (unsigned long long)ctx.driverSynthFallbackTotal);
-	Metrics::WriteLogAnnotation(buf);
-
-	ClearHeadMountContinuousSourceState(ctx, "shadow_offset_applied", time, CurrentHeadMountSampleSource(ctx),
-	                                    ctx.headMountSourceFingerprintValid, ctx.headMountLastSampleSource);
-	UpdateHeadMountSourceFingerprint(ctx, CurrentHeadMountSampleSource(ctx));
 }
 
 static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double time)
@@ -752,10 +699,10 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 		    "shadow_offset_suspect: reason=insufficient_motion source=%s"
 		    " offset_version=%u samples=%zu residual_mm=%.3f"
 		    " motion_coverage=(%.2f,%.2f,%.2f) profile_mag_cm=%.2f"
-		    " toggle=%d fallback_delta=%llu",
+		    " fallback_delta=%llu",
 		    HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion, readiness.samplesUsed,
 		    readiness.residualMm, readiness.axisRangeDeg[0], readiness.axisRangeDeg[1], readiness.axisRangeDeg[2],
-		    ctx.calibratedTranslation.norm(), (int)ctx.headMount.experimentalAutoCorrectOffset,
+		    ctx.calibratedTranslation.norm(),
 		    (unsigned long long)(ctx.driverSynthFallbackTotal - g_headMountShadowOffset.windowStartFallbackTotal));
 		Metrics::WriteLogAnnotation(sbuf);
 		LogShadowOffsetBlockedThrottled(ctx, "insufficient_motion", time, profileFitRmsMm, hmdAgeMs, trackerAgeMs);
@@ -771,11 +718,10 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 		    sbuf, sizeof sbuf,
 		    "shadow_offset_suspect: reason=%s source=%s offset_version=%u"
 		    " samples=%d residual_mm=%.3f motion_coverage=(%.2f,%.2f,%.2f)"
-		    " profile_mag_cm=%.2f toggle=%d fallback_delta=%llu",
+		    " profile_mag_cm=%.2f fallback_delta=%llu",
 		    result.failReason.c_str(), HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
 		    result.samplesUsed, result.residualMm, readiness.axisRangeDeg[0], readiness.axisRangeDeg[1],
 		    readiness.axisRangeDeg[2], ctx.calibratedTranslation.norm(),
-		    (int)ctx.headMount.experimentalAutoCorrectOffset,
 		    (unsigned long long)(ctx.driverSynthFallbackTotal - g_headMountShadowOffset.windowStartFallbackTotal));
 		Metrics::WriteLogAnnotation(sbuf);
 		ResetHeadMountShadowOffsetRuntime(/*clearStableWindows=*/false);
@@ -805,7 +751,9 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 	g_headMountShadowOffset.hasLastCandidate = true;
 
 	ShadowGateInput gateInput{};
-	gateInput.toggleEnabled = ctx.headMount.experimentalAutoCorrectOffset;
+	// Auto-apply retired: the estimator runs for diagnostics only, so the gate
+	// can report would_apply but never reaches readyToApply.
+	gateInput.toggleEnabled = false;
 	gateInput.windowSolved = true;
 	gateInput.posesFresh = hmdFresh && trackerFresh;
 	gateInput.targetMatches = targetMatches;
@@ -826,8 +774,8 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 	              " saved_delta_trans_cm=%.2f saved_delta_rot_deg=%.2f"
 	              " previous_delta_trans_cm=%.2f previous_delta_rot_deg=%.2f"
 	              " motion_coverage=(%.2f,%.2f,%.2f) profile_mag_cm=%.2f"
-	              " profile_fit_rms_mm=%.3f fallback_delta=%llu toggle=%d"
-	              " stable_windows=%d gate=%s ready=%d would_apply=%d"
+	              " profile_fit_rms_mm=%.3f fallback_delta=%llu"
+	              " stable_windows=%d gate=%s would_apply=%d"
 	              " hmd_stream=driver_shmem_raw",
 	              HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
 	              (int)ctx.relativePosCalibrated, (int)ctx.headMountNeedsFreshRelativePose, result.samplesUsed,
@@ -835,206 +783,37 @@ static void TickHeadMountShadowOffsetEstimator(CalibrationContext& ctx, double t
 	              hasPrevious ? previousDelta.translationM * 100.0 : -1.0,
 	              hasPrevious ? previousDelta.rotationDeg : -1.0, readiness.axisRangeDeg[0], readiness.axisRangeDeg[1],
 	              readiness.axisRangeDeg[2], ctx.calibratedTranslation.norm(), profileFitRmsMm,
-	              (unsigned long long)fallbackDelta, (int)ctx.headMount.experimentalAutoCorrectOffset,
-	              g_headMountShadowOffset.stableWindowCount, gate.reason, (int)gate.readyToApply, (int)gate.wouldApply);
+	              (unsigned long long)fallbackDelta, g_headMountShadowOffset.stableWindowCount, gate.reason,
+	              (int)gate.wouldApply);
 	Metrics::WriteLogAnnotation(wbuf);
 
-	if (!gate.readyToApply) {
-		if (gate.wouldApply) {
-			char vbuf[640];
-			std::snprintf(vbuf, sizeof vbuf,
-			              "shadow_offset_would_apply: source=%s offset_version=%u"
-			              " residual_mm=%.3f delta_trans_cm=%.2f delta_rot_deg=%.2f"
-			              " stable_windows=%d toggle=%d profile_mag_cm=%.2f",
-			              HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion, result.residualMm,
-			              savedDelta.translationM * 100.0, savedDelta.rotationDeg,
-			              g_headMountShadowOffset.stableWindowCount, (int)ctx.headMount.experimentalAutoCorrectOffset,
-			              ctx.calibratedTranslation.norm());
-			Metrics::WriteLogAnnotation(vbuf);
-		}
-		else {
-			char bbuf[640];
-			std::snprintf(bbuf, sizeof bbuf,
-			              "shadow_offset_apply_blocked: reason=%s source=%s"
-			              " offset_version=%u residual_mm=%.3f delta_trans_cm=%.2f"
-			              " delta_rot_deg=%.2f stable_windows=%d profile_mag_cm=%.2f"
-			              " fallback_delta=%llu toggle=%d",
-			              gate.reason, HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
-			              result.residualMm, savedDelta.translationM * 100.0, savedDelta.rotationDeg,
-			              g_headMountShadowOffset.stableWindowCount, ctx.calibratedTranslation.norm(),
-			              (unsigned long long)fallbackDelta, (int)ctx.headMount.experimentalAutoCorrectOffset);
-			Metrics::WriteLogAnnotation(bbuf);
-			if (!residualOk || !mismatchPlausible || !candidateStable) {
-				char sbuf[640];
-				std::snprintf(sbuf, sizeof sbuf,
-				              "shadow_offset_suspect: reason=%s source=%s"
-				              " offset_version=%u residual_mm=%.3f"
-				              " delta_trans_cm=%.2f delta_rot_deg=%.2f"
-				              " previous_delta_trans_cm=%.2f previous_delta_rot_deg=%.2f"
-				              " motion_coverage=(%.2f,%.2f,%.2f)",
-				              gate.reason, HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
-				              result.residualMm, savedDelta.translationM * 100.0, savedDelta.rotationDeg,
-				              hasPrevious ? previousDelta.translationM * 100.0 : -1.0,
-				              hasPrevious ? previousDelta.rotationDeg : -1.0, readiness.axisRangeDeg[0],
-				              readiness.axisRangeDeg[1], readiness.axisRangeDeg[2]);
-				Metrics::WriteLogAnnotation(sbuf);
-			}
-		}
-		ResetHeadMountShadowOffsetRuntime(/*clearStableWindows=*/false);
-		return;
+	if (gate.wouldApply) {
+		char vbuf[640];
+		std::snprintf(vbuf, sizeof vbuf,
+		              "shadow_offset_would_apply: source=%s offset_version=%u"
+		              " residual_mm=%.3f delta_trans_cm=%.2f delta_rot_deg=%.2f"
+		              " stable_windows=%d profile_mag_cm=%.2f",
+		              HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion, result.residualMm,
+		              savedDelta.translationM * 100.0, savedDelta.rotationDeg,
+		              g_headMountShadowOffset.stableWindowCount, ctx.calibratedTranslation.norm());
+		Metrics::WriteLogAnnotation(vbuf);
 	}
-
-	ApplyHeadMountShadowOffset(ctx, result.headFromTracker, savedDelta, result.residualMm, time);
-	ResetHeadMountShadowOffsetRuntime(/*clearStableWindows=*/true);
-}
-
-// Experimental witness-based continuous drift correction. Runs independently of
-// the mode-gated shadow estimator above so it works in Continuous with the witness
-// bound but head-mount mode Off (the common field setup). T1 auto-calibrates the
-// baseline HMD<->witness offset; T2 applies the slew-limited step that closes
-// sub-30 cm drift between paired-motion solves. Both default off, each gated by its
-// own experimental flag. Pure math + validation live in WitnessCorrection.h /
-// WitnessDriftReplay.h (offline-validated ~50-68% typical drift reduction).
-namespace {
-struct WitnessCorrectionRuntime
-{
-	spacecal::witness_correction::BaselineAccumulator accum;
-	double lastCorrectionTime = -1.0;
-	double lastLogTime = -1.0;
-	double appliedTotalCm = 0.0;
-	spacecal::witness_correction::RunawayGuardState guard;
-};
-WitnessCorrectionRuntime g_witnessCorrection;
-} // namespace
-
-static void TickWitnessContinuousCorrection(CalibrationContext& ctx, double time)
-{
-	const bool wantAutoCal = ctx.headMount.experimentalWitnessAutoCalibrate;
-	const bool wantCorrection = ctx.headMount.experimentalWitnessCorrection;
-	auto bail = [&]() {
-		g_witnessCorrection.accum.Reset();
-		spacecal::witness_correction::ResetRunawayGuard(g_witnessCorrection.guard);
-		g_witnessCorrection.appliedTotalCm = 0.0;
-	};
-
-	if (!wantAutoCal && !wantCorrection) return bail();
-	if (ctx.state != CalibrationState::Continuous && ctx.state != CalibrationState::ContinuousStandby) return bail();
-	if (!ctx.validProfile) return bail();
-
-	const int32_t dev = ctx.headMount.deviceID;
-	if (dev < 0 || dev >= (int32_t)vr::k_unMaxTrackedDeviceCount) return bail();
-	if (!spacecal::headmount::PoseIsRunningOk(ctx.devicePoses[dev]) ||
-	    !spacecal::headmount::PoseIsRunningOk(ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd]))
-		return bail();
-
-	// Never auto-calibrate or correct against an unhealthy calibration.
-	const double profileFitRmsMm = CurrentProfileFitRmsMm();
-	if (!(std::isfinite(profileFitRmsMm) && profileFitRmsMm <= spacecal::headmount::kShadowProfileHealthyRmsMm))
-		return bail();
-
-	const Eigen::Affine3d hmdRef = DriverPoseToAffine(ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd]);
-	const Eigen::Affine3d trackerTgt = DriverPoseToAffine(ctx.devicePoses[dev]);
-	const Eigen::Affine3d C = CalibrationTransformFromContext(ctx); // targetToReference
-	const Eigen::Affine3d localOffsetPose = hmdRef.inverse() * (C * trackerTgt);
-	const Eigen::Vector3d localOffset = localOffsetPose.translation();
-
-	// Settled gate for both T1 (baseline capture) and T2 (correction): the
-	// calibration must be settled so the baseline is never snapshotted mid-motion
-	// and the correction never fights the active solver (the field runaway was a
-	// not-settled tug-of-war). These auto-lock inputs are one CalibrationTick
-	// (~0.3 s) old -- this tick runs before CollectSample/UpdateAutoLockDetector --
-	// which is conservative (only delays enabling, never a false "settled").
-	const double secsSinceLastFlip = ctx.autoLockLastFlipTime > 0.0 ? (time - ctx.autoLockLastFlipTime) : 0.0;
-	const bool settled = spacecal::autolock::IsSettled(ctx.autoLockEffectivelyLocked, g_lastAutoLockTranslMad,
-	                                                   ctx.autoLockMadFloor, secsSinceLastFlip);
-
-	// T1: auto-calibrate the baseline HMD<->witness offset if none exists. Only
-	// accumulate while settled; drop a partial window if the calibration leaves the
-	// settled band so no mid-motion sample survives into the baseline.
-	if (!ctx.headMount.offsetCalibrated) {
-		if (!wantAutoCal) return;
-		if (!settled) {
-			g_witnessCorrection.accum.Reset();
-			return;
-		}
-		g_witnessCorrection.accum.Add(localOffset, time);
-		if (g_witnessCorrection.accum.Ready(time)) {
-			Eigen::AffineCompact3d savedLocalOffset;
-			savedLocalOffset.linear() = localOffsetPose.linear();
-			savedLocalOffset.translation() = g_witnessCorrection.accum.Mean();
-			ctx.headMount.headFromTracker = Eigen::AffineCompact3d(savedLocalOffset.inverse());
-			ctx.headMount.offsetCalibrated = true;
-			ctx.headMount.offsetWitnessAutoCaptured = true; // witness-captured => guard may auto-invalidate
-			ctx.NoteHeadMountOffsetChanged();
-			SaveProfile(ctx);
-			const Eigen::Vector3d bcm = g_witnessCorrection.accum.Mean() * 100.0;
-			char buf[224];
-			std::snprintf(
-			    buf, sizeof buf,
-			    "witness_auto_calibrate: committed baseline offset cm=(%.2f,%.2f,%.2f) samples=%d std_mm=%.2f", bcm.x(),
-			    bcm.y(), bcm.z(), g_witnessCorrection.accum.count, g_witnessCorrection.accum.StdM() * 1000.0);
-			Metrics::WriteLogAnnotation(buf);
-			g_witnessCorrection.accum.Reset();
-		}
-		return;
+	else if (!residualOk || !mismatchPlausible || !candidateStable) {
+		char sbuf[640];
+		std::snprintf(sbuf, sizeof sbuf,
+		              "shadow_offset_suspect: reason=%s source=%s"
+		              " offset_version=%u residual_mm=%.3f"
+		              " delta_trans_cm=%.2f delta_rot_deg=%.2f"
+		              " previous_delta_trans_cm=%.2f previous_delta_rot_deg=%.2f"
+		              " motion_coverage=(%.2f,%.2f,%.2f)",
+		              gate.reason, HeadMountSampleSourceName(source), (unsigned)ctx.headMountOffsetVersion,
+		              result.residualMm, savedDelta.translationM * 100.0, savedDelta.rotationDeg,
+		              hasPrevious ? previousDelta.translationM * 100.0 : -1.0,
+		              hasPrevious ? previousDelta.rotationDeg : -1.0, readiness.axisRangeDeg[0],
+		              readiness.axisRangeDeg[1], readiness.axisRangeDeg[2]);
+		Metrics::WriteLogAnnotation(sbuf);
 	}
-
-	// T2: apply the slew-limited correction between paired-motion solves. Only
-	// while settled, so it never fights the active solver (the field 56.8 cm
-	// runaway was a not-settled tug-of-war). The runaway guard below bounds any
-	// residual divergence and re-baselines a bad witness offset with no user action.
-	if (!wantCorrection) return;
-	if (!settled) return;
-	const Eigen::Vector3d baselineOffset = Eigen::Affine3d(ctx.headMount.headFromTracker.inverse()).translation();
-	const double dt = (g_witnessCorrection.lastCorrectionTime > 0.0 && time > g_witnessCorrection.lastCorrectionTime)
-	                      ? (time - g_witnessCorrection.lastCorrectionTime)
-	                      : (1.0 / 3.5);
-	g_witnessCorrection.lastCorrectionTime = time;
-	const Eigen::Vector3d deltaCm = spacecal::witness_correction::CorrectionDeltaCm(
-	    localOffset, baselineOffset, hmdRef.rotation(), ctx.autoLockMadFloor, dt);
-	if (deltaCm.squaredNorm() <= 0.0) return;
-
-	ctx.calibratedTranslation += deltaCm;
-	ScanAndApplyProfile(ctx, /*snap=*/false, "witness_correction");
-	g_witnessCorrection.appliedTotalCm += deltaCm.norm();
-
-	const double driftMm = (localOffset - baselineOffset).norm() * 1000.0;
-	const auto verdict = spacecal::witness_correction::EvaluateRunawayGuard(
-	    g_witnessCorrection.guard, g_witnessCorrection.appliedTotalCm, driftMm, time);
-	if (verdict != spacecal::witness_correction::GuardVerdict::Ok) {
-		// Runaway or non-convergence. Back off, and if the baseline was witness-
-		// captured, invalidate it so T1 re-captures a fresh one next settled window
-		// (self-heal, zero user action). A manual offset is the user's declared
-		// truth -- back off but preserve it.
-		const bool witnessCaptured = ctx.headMount.offsetWitnessAutoCaptured;
-		char buf[224];
-		std::snprintf(
-		    buf, sizeof buf, "witness_guard_tripped: reason=%s applied_total_cm=%.2f drift_mm=%.2f witness_captured=%d",
-		    verdict == spacecal::witness_correction::GuardVerdict::TripCumulative ? "cumulative" : "non_converge",
-		    g_witnessCorrection.appliedTotalCm, driftMm, witnessCaptured ? 1 : 0);
-		Metrics::WriteLogAnnotation(buf);
-		if (witnessCaptured) {
-			ctx.headMount.offsetCalibrated = false;
-			ctx.headMount.offsetWitnessAutoCaptured = false;
-			ctx.NoteHeadMountOffsetChanged();
-			SaveProfile(ctx);
-		}
-		g_witnessCorrection.accum.Reset();
-		spacecal::witness_correction::ResetRunawayGuard(g_witnessCorrection.guard);
-		g_witnessCorrection.appliedTotalCm = 0.0;
-		return;
-	}
-
-	if (time - g_witnessCorrection.lastLogTime >= 1.0) {
-		g_witnessCorrection.lastLogTime = time;
-		char buf[256];
-		std::snprintf(buf, sizeof buf,
-		              "witness_correction_applied: drift_mm=%.2f step_mm=%.3f mad_floor_mm=%.2f"
-		              " session_total_cm=%.2f cal_mag_cm=%.2f",
-		              driftMm, deltaCm.norm() * 10.0, ctx.autoLockMadFloor * 1000.0, g_witnessCorrection.appliedTotalCm,
-		              ctx.calibratedTranslation.norm());
-		Metrics::WriteLogAnnotation(buf);
-	}
+	ResetHeadMountShadowOffsetRuntime(/*clearStableWindows=*/false);
 }
 
 void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& refWorld,
@@ -2275,49 +2054,25 @@ void CalibrationTick(double time)
 						// at its pre-reset value (reset happens further below).
 						const int sustainedAtFire =
 						    useCusumGeometryShift ? cusumSustainAtFire : g_geomShiftConsecutiveBadTicks;
-						// Restart is experimental (default OFF). Field logs showed
-						// the fire -> Clear -> ContinuousStandby -> restart chain
-						// tripping on ordinary inter-system error spikes 38-179x a
-						// session, and every restart's first accepted candidate
-						// snapping the world 4-5 cm. With the flag off the detector
-						// still logs fires (and keeps its cooldown so it doesn't
-						// refire every tick) but the session keeps its calibration
-						// -- the upstream base behaviour.
-						const bool restartOnFire = ctx.headMount.experimentalGeometryShiftRestart;
+						// Diagnostic only. Field logs showed a fire -> Clear ->
+						// ContinuousStandby -> restart chain tripping on ordinary
+						// inter-system error spikes 38-179x a session, with every
+						// restart's first accepted candidate snapping the world
+						// 4-5 cm, so the fire never restarts anything: the detector
+						// logs (and keeps its cooldown so it doesn't refire every
+						// tick) while the session keeps its calibration.
 						char fireBuf[800];
 						snprintf(fireBuf, sizeof fireBuf,
 						         "[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
 						         " ratio=%.2fx sustained=%d cusum_S_at_fire=%.3f mode=%s"
 						         " lockRelativePosition=%d lockMode=%d"
 						         " errTail_slope_mm_per_sample=%.3f errTail=[%s]"
-						         " cooldown_until=%.3f restart=%d",
+						         " cooldown_until=%.3f",
 						         current, median, ratio, sustainedAtFire, cusumValueAtFire,
 						         useCusumGeometryShift ? "cusum" : "legacy", (int)ctx.lockRelativePosition,
-						         (int)ctx.lockRelativePositionMode, slopeMmPerSample, tailStr.c_str(), cooldownStarts,
-						         (int)restartOnFire);
+						         (int)ctx.lockRelativePositionMode, slopeMmPerSample, tailStr.c_str(), cooldownStarts);
 						Metrics::WriteLogAnnotation(fireBuf);
 
-						if (restartOnFire) {
-							CalCtx.Log("Tracking geometry shifted -- restarting calibration\n");
-							// A geometry-shift fire while a warm-restart grace was
-							// active means the snap landed on a profile that no
-							// longer matches reality (typically a base station got
-							// nudged while the user was away). Drop the grace so
-							// the normal continuous-cal recovery path takes over
-							// -- the fast path traded safety for speed, and the
-							// detector just learned the trade was wrong this time.
-							if (ctx.warmRestartGraceSamples > 0) {
-								char gbuf[160];
-								snprintf(gbuf, sizeof gbuf,
-								         "[warm-restart][grace-ended] reason=geometry_shift"
-								         " remaining=%d",
-								         ctx.warmRestartGraceSamples);
-								Metrics::WriteLogAnnotation(gbuf);
-								ctx.warmRestartGraceSamples = 0;
-							}
-							calibration.Clear();
-							ctx.state = CalibrationState::ContinuousStandby;
-						}
 						// Intentionally NOT clearing ctx.relativePosCalibrated here.
 						// Previously this path set it false, which wiped the
 						// relative-pose constraint that AUTO Lock would have used
@@ -2811,7 +2566,6 @@ void CalibrationTick(double time)
 
 	TickHeadMountSourceTransitionGuard(ctx, time);
 	TickHeadMountShadowOffsetEstimator(ctx, time);
-	TickWitnessContinuousCorrection(ctx, time);
 
 	if (!CollectSample(ctx)) {
 		return;
@@ -3562,16 +3316,8 @@ void CalibrationTick(double time)
 		auto setExperimentFlag = [&](spacecal::calibration_experiments::ExperimentFlag flag, bool enabled) {
 			if (enabled) experimentalFlags |= static_cast<uint32_t>(flag);
 		};
-		setExperimentFlag(spacecal::calibration_experiments::HeadsetOffsetAutoCorrect,
-		                  ctx.headMount.experimentalAutoCorrectOffset);
-		setExperimentFlag(spacecal::calibration_experiments::WitnessOffsetAutoCalibrate,
-		                  ctx.headMount.experimentalWitnessAutoCalibrate);
-		setExperimentFlag(spacecal::calibration_experiments::WitnessContinuousCorrection,
-		                  ctx.headMount.experimentalWitnessCorrection);
 		setExperimentFlag(spacecal::calibration_experiments::ConfidenceFusion,
 		                  ctx.headMount.experimentalConfidenceFusion);
-		setExperimentFlag(spacecal::calibration_experiments::GeometryShiftRestart,
-		                  ctx.headMount.experimentalGeometryShiftRestart);
 		setExperimentFlag(spacecal::calibration_experiments::MicroReanchor, ctx.headMount.experimentalMicroReanchor);
 		Metrics::SetTickExperimentalFlags(experimentalFlags);
 	}

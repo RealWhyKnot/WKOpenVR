@@ -177,31 +177,17 @@ struct HeadMountConfig
 	Eigen::AffineCompact3d headFromTracker = Eigen::AffineCompact3d::Identity();
 	bool hideTracker = true;
 	bool offsetCalibrated = false;
-	// True only when offsetCalibrated was auto-captured by the witness path (T1),
-	// not the manual offset wizard. Gates the runaway guard's auto-invalidate so a
-	// manually-set offset is never clobbered. Default false => treated as manual.
+	// True only when offsetCalibrated was auto-captured rather than set by the
+	// manual offset wizard. Kept for persisted-profile provenance; nothing
+	// auto-captures anymore, so new profiles only ever write false.
 	bool offsetWitnessAutoCaptured = false;
 	bool autoCorrectOffset = true;
-	bool experimentalAutoCorrectOffset = false;
-	// Experimental witness-based continuous drift correction (default OFF).
-	// AutoCalibrate: snapshot the HMD<->witness baseline offset without the manual
-	// modal, so the correction/diagnostic have a reference. Correction: apply the
-	// slew-limited step that closes sub-30 cm witness-vs-calibration drift.
-	bool experimentalWitnessAutoCalibrate = false;
-	bool experimentalWitnessCorrection = false;
 	// Experimental geometry-precision confidence fusion (default OFF). On: each
 	// continuous re-solve is weighted by its lever-arm precision and fused into a
 	// running estimate by accumulated confidence, so a far-from-origin reading
 	// cannot drag a good calibration around. Off: the classic behaviour -- each
 	// accepted candidate overwrites the calibration outright.
 	bool experimentalConfidenceFusion = false;
-	// Experimental geometry-shift restart (default OFF). On: a sustained
-	// error-spike fire clears the solver and restarts continuous calibration
-	// (the pre-2026-07 behaviour). Off: the detector still logs fires but the
-	// session keeps its calibration -- matching the upstream base, which has
-	// no geometry-shift restarts at all. Field logs showed the restart chain
-	// snapping the world 4-5 cm every few minutes on inter-system noise.
-	bool experimentalGeometryShiftRestart = false;
 	// Experimental micro re-anchor (default OFF). On: a witness-corroborated
 	// HMD frame jump below the 30 cm recovery gate (the head stayed still but
 	// the reported world shifted 5-30 cm) is absorbed into the applied

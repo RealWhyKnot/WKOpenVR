@@ -225,38 +225,6 @@ TEST(AutoLockSimTest, RequiresV4PoseColumns)
 	EXPECT_EQ(res.error, "autolock_sim_requires_v4");
 }
 
-// The closed loop the open-loop oracle cannot see: a witness baseline
-// captured before the puck physically shifts leaves the correction fighting
-// the solver's absolute writes -- drift never converges, the guard trips and
-// re-baselines instead of walking the calibration away without bound. This
-// is the offline shape of the live 56.8 cm divergence.
-TEST(SessionReplayTest, GuardTripsWhenCorrectionFightsSolver)
-{
-	SessionSpec spec;
-	spec.rows = 7200; // 80 s at 90 Hz: covers the 60 s non-converge window
-	spec.trackerShiftRow = 600;
-	spec.trackerShiftM = 0.05; // 50 mm poisoned-baseline drift
-	const auto rec = MakeSessionRecording(spec);
-
-	replay::SessionReplayOptions opts;
-	opts.seedMode = replay::ReplaySeedMode::None;
-	opts.witnessCorrection = true;
-	opts.requireSettledGate = false; // the pre-safety-fix shape
-	const auto res = replay::RunSessionReplay(rec, opts);
-	ASSERT_TRUE(res.succeeded) << res.error;
-	ASSERT_GE(res.baselineCaptures, 1);
-	EXPECT_GT(res.correctionTicks, 0);
-	EXPECT_GE(res.guardTripsCumulative + res.guardTripsNonConverge, 1)
-	    << "correction fighting the solver must trip the runaway guard";
-	// The tug-of-war is visible in the RMS (drift held ~50 mm until the trip)...
-	EXPECT_GT(res.witnessDriftRmsMm, 10.0);
-	// ...the trip re-baselines (self-heal), so the drift ends near zero
-	// instead of the loop walking the calibration away without bound...
-	EXPECT_LT(res.witnessDriftFinalMm, 5.0);
-	// ...and the guard bounds each correction stretch below the 20 cm cap.
-	EXPECT_LT(res.correctionAppliedTotalCm, 21.0);
-}
-
 // A corroborated universe flip (HMD jumps, witness still) takes the snap
 // fast-reanchor path -- never a destructive clear.
 TEST(SessionReplayTest, CorroboratedFlipIsSnapSuppressed)
@@ -322,9 +290,6 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	}
 
 	replay::SessionReplayOptions opts;
-	opts.witnessCorrection = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_WITNESS", true);
-	const char* gate = std::getenv("WKOPENVR_REPLAY_SESSION_SETTLED_GATE");
-	if (gate && std::string(gate) == "off") opts.requireSettledGate = false;
 	opts.relocRecoverThresholdM =
 	    EnvDoubleLocal("WKOPENVR_REPLAY_SESSION_RELOC_RECOVER_CM", opts.relocRecoverThresholdM * 100.0) / 100.0;
 	opts.microReanchor = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_MICRO_REANCHOR", false);
@@ -348,9 +313,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 			std::cout << "[session-replay] " << name << " skipped=" << res.error << "\n";
 			continue;
 		}
-		std::cout << "[session-replay] " << name << " witness=" << (opts.witnessCorrection ? 1 : 0)
-		          << " settled_gate=" << (opts.requireSettledGate ? "required" : "off")
-		          << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
+		std::cout << "[session-replay] " << name << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
 		          << " micro_reanchor=" << (opts.microReanchor ? 1 : 0)
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
 		          << " seed_applied=" << (res.seedApplied ? 1 : 0) << " rows=" << res.rowsProcessed
@@ -360,15 +323,9 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		          << " reanchors=" << res.recoveryReanchors << " destructive_clears=" << res.destructiveClears
 		          << " sub_threshold_relocs=" << res.subThresholdRelocs
 		          << " sub_threshold_residual_cm=" << res.subThresholdResidualCm
-		          << " micro_reanchors=" << res.microReanchors << " baseline_captures=" << res.baselineCaptures
-		          << " correction_ticks=" << res.correctionTicks
-		          << " correction_total_cm=" << res.correctionAppliedTotalCm
-		          << " guard_trips_cumulative=" << res.guardTripsCumulative
-		          << " guard_trips_nonconverge=" << res.guardTripsNonConverge
-		          << " witness_drift_rms_mm=" << res.witnessDriftRmsMm
-		          << " witness_drift_final_mm=" << res.witnessDriftFinalMm
-		          << " applied_path_cm=" << res.totalAppliedPathCm << " peak_step_cm=" << res.peakAppliedStepCm
-		          << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm() << "\n";
+		          << " micro_reanchors=" << res.microReanchors << " applied_path_cm=" << res.totalAppliedPathCm
+		          << " peak_step_cm=" << res.peakAppliedStepCm << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm()
+		          << "\n";
 		++replayed;
 	}
 	EXPECT_GT(replayed, 0);

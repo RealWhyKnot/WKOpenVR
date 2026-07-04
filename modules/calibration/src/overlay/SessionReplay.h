@@ -29,7 +29,6 @@
 #include "MotionRecording.h"
 #include "RecoveryPolicy.h"
 #include "SnapSuppression.h"
-#include "WitnessCorrection.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -289,12 +288,9 @@ inline AutoLockSimResult RunAutoLockSim(const LoadedRecording& rec, const autolo
 }
 
 // ---------------------------------------------------------------------------
-// Full session replay: solver + auto-lock + witness continuous correction +
-// relocalization recovery, sequenced per row in the live CalibrationTick
-// order (commit gate -> witness tick -> sample/solve -> reloc handling ->
-// detector update). Unlike WitnessDriftReplay's open-loop oracle, the
-// correction here feeds back into the same applied transform the solver
-// overwrites -- the closed loop where the live 56.8 cm runaway lived.
+// Full session replay: solver + auto-lock + relocalization recovery,
+// sequenced per row in the live CalibrationTick order (commit gate ->
+// sample/solve -> reloc handling -> detector update).
 
 struct SessionReplayOptions
 {
@@ -309,9 +305,6 @@ struct SessionReplayOptions
 	ReplaySeedMode seedMode = ReplaySeedMode::Recorded;
 	Eigen::Vector3d seedTransCm = Eigen::Vector3d::Zero();
 	Eigen::Vector3d seedRotDeg = Eigen::Vector3d::Zero();
-	// Witness continuous correction (T1 baseline + T2 slew steps + guard).
-	bool witnessCorrection = false;
-	bool requireSettledGate = true; // false = "what if T1/T2 were not settled-gated"
 	// Relocalization recovery. Jumps >= threshold take the recovery path;
 	// smaller ones are the live-uncorrected band. microReanchor absorbs
 	// witness-corroborated sub-threshold jumps into the applied calibration
@@ -339,14 +332,6 @@ struct SessionReplayResult
 	int subThresholdRelocs = 0;
 	double subThresholdResidualCm = 0.0; // uncorrected world offset left behind
 	int microReanchors = 0;
-	// Witness correction layer.
-	int baselineCaptures = 0;
-	int correctionTicks = 0;
-	double correctionAppliedTotalCm = 0.0;
-	int guardTripsCumulative = 0;
-	int guardTripsNonConverge = 0;
-	double witnessDriftRmsMm = 0.0;   // |localOffset - baseline| RMS while a baseline exists
-	double witnessDriftFinalMm = 0.0; // last measured drift
 	// Applied-transform trajectory (net movement of the world).
 	double totalAppliedPathCm = 0.0;
 	double peakAppliedStepCm = 0.0;
@@ -404,11 +389,6 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	Eigen::Vector3d prevAppliedCm = firstAppliedCm;
 
 	AutoLockSim sim(opts.autoLock);
-	witness_correction::BaselineAccumulator baselineAcc;
-	witness_correction::RunawayGuardState guard;
-	bool baselineValid = false;
-	Eigen::Vector3d baseline = Eigen::Vector3d::Zero();
-	std::vector<double> driftSamplesMm;
 
 	// Reloc events primarily from the detector annotations, which carry the
 	// live-measured jump vector; the per-row reloc_detected column
@@ -501,63 +481,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 		// 1. Commit-gate tick (live: before sample collection).
 		sim.TickCommitGate(effSpeed, now);
 
-		// 2. Witness continuous correction (live: before CollectSample).
-		if (opts.witnessCorrection && row.hasHmdPose && row.headTrackerValid && calc.isValid()) {
-			Eigen::AffineCompact3d hmdW;
-			hmdW.linear() = row.hmd.rot;
-			hmdW.translation() = row.hmd.trans;
-			Eigen::AffineCompact3d trkW;
-			trkW.linear() = row.headTracker.rot;
-			trkW.translation() = row.headTracker.trans;
-			const Eigen::Vector3d localOffset = (hmdW.inverse() * (applied * trkW)).translation();
-			const bool settledOk = !opts.requireSettledGate || sim.SettledNow(now);
-			if (!baselineValid) {
-				if (settledOk) {
-					baselineAcc.Add(localOffset, now);
-					if (baselineAcc.Ready(now)) {
-						baseline = baselineAcc.Mean();
-						baselineValid = true;
-						++res.baselineCaptures;
-					}
-				}
-				else {
-					baselineAcc.Reset();
-				}
-			}
-			else {
-				const double driftMm = (localOffset - baseline).norm() * 1000.0;
-				driftSamplesMm.push_back(driftMm);
-				res.witnessDriftFinalMm = driftMm;
-				if (settledOk) {
-					// Nominal tick dt; prevTime was already advanced to `now`
-					// by the speed block above.
-					const Eigen::Vector3d deltaCm = witness_correction::CorrectionDeltaCm(
-					    localOffset, baseline, row.hmd.rot, sim.madFloor, 1.0 / 90.0);
-					if (deltaCm.norm() > 1e-9) {
-						applied.translation() += deltaCm * 0.01;
-						res.correctionAppliedTotalCm += deltaCm.norm();
-						++res.correctionTicks;
-						stepApplied(applied.translation() * 100.0);
-					}
-					const auto verdict =
-					    witness_correction::EvaluateRunawayGuard(guard, res.correctionAppliedTotalCm, driftMm, now);
-					if (verdict != witness_correction::GuardVerdict::Ok) {
-						if (verdict == witness_correction::GuardVerdict::TripCumulative)
-							++res.guardTripsCumulative;
-						else
-							++res.guardTripsNonConverge;
-						// Re-baseline + back off, as the live guard does for a
-						// witness-captured offset.
-						baselineValid = false;
-						baselineAcc.Reset();
-						witness_correction::ResetRunawayGuard(guard);
-						res.correctionAppliedTotalCm = 0.0;
-					}
-				}
-			}
-		}
-
-		// 3. Sample intake + solve (accepted-sample rows only).
+		// 2. Sample intake + solve (accepted-sample rows only).
 		const bool sampleAccepted =
 		    !row.hasSampleDiagnostics || (row.sampleObserved && row.sampleAccepted && row.sample.valid);
 		if (sampleAccepted) {
@@ -666,12 +590,6 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	res.lockFlips = sim.flips;
 	res.panicUnlocks = sim.panics;
 	if (measuredTicks > 0) res.settledPct = 100.0 * settledTicks / measuredTicks;
-	if (!driftSamplesMm.empty()) {
-		double sumSq = 0.0;
-		for (double d : driftSamplesMm)
-			sumSq += d * d;
-		res.witnessDriftRmsMm = std::sqrt(sumSq / driftSamplesMm.size());
-	}
 	if (hasApplied) res.netAppliedDriftCm = prevAppliedCm - firstAppliedCm;
 	res.succeeded = true;
 	return res;

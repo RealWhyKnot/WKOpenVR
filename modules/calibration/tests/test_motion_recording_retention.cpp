@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "MotionRecording.h"
-#include "WitnessDriftReplay.h"
 #include "CalibrationExperimentFlags.h"
 #include "Win32Text.h"
 
@@ -451,7 +450,7 @@ void WriteExperimentalFlagsV5Recording(const std::filesystem::path& path)
 	       "head_tracker_valid,head_tracker_tx,head_tracker_ty,head_tracker_tz,"
 	       "head_tracker_qw,head_tracker_qx,head_tracker_qy,head_tracker_qz,reloc_detected,"
 	       "experimental_flags\n";
-	const uint32_t flags = spacecal::calibration_experiments::HeadsetOffsetAutoCorrect;
+	const uint32_t flags = spacecal::calibration_experiments::ConfidenceFusion;
 	out.precision(17);
 	for (int i = 0; i < 8; ++i) {
 		const double t = static_cast<double>(i) / 60.0;
@@ -552,7 +551,7 @@ TEST(MotionRecordingReplayTest, LoadsV5ExperimentalFlagsAndKeepsV4Compatible)
 	ASSERT_TRUE(v5.hasExperimentalFlagsColumn);
 	ASSERT_FALSE(v5.rows.empty());
 	EXPECT_TRUE(v5.rows.front().hasExperimentalFlags);
-	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::HeadsetOffsetAutoCorrect);
+	EXPECT_NE(0u, v5.rows.front().experimentalFlags & spacecal::calibration_experiments::ConfidenceFusion);
 
 	const std::filesystem::path v4Path = std::filesystem::temp_directory_path() / "wkopenvr_replay_v4_flags_compat.csv";
 	std::filesystem::remove(v4Path);
@@ -880,32 +879,6 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			}
 			++replayed;
 		}
-
-		// Witness-drift oracle: offset solve + continuous-correction model on the
-		// recorded raw HMD + witness poses (sample-window independent, so once per
-		// input). WKOPENVR_REPLAY_CORRECTION=0 measures the uncorrected baseline.
-		replay::WitnessDriftOptions driftOpts;
-		driftOpts.applyContinuousCorrection = EnvFlag("WKOPENVR_REPLAY_CORRECTION", true);
-		driftOpts.correctionSlewMps = EnvDouble("WKOPENVR_REPLAY_SLEW_MPS", driftOpts.correctionSlewMps);
-		driftOpts.correctionDeadbandM =
-		    EnvDouble("WKOPENVR_REPLAY_DEADBAND_MM", driftOpts.correctionDeadbandM * 1000.0) / 1000.0;
-		const auto drift = replay::ComputeWitnessDrift(recording, driftOpts);
-		std::cout << "[witness-drift] " << input.name << " correction=" << (driftOpts.applyContinuousCorrection ? 1 : 0)
-		          << " slew_mps=" << driftOpts.correctionSlewMps
-		          << " deadband_mm=" << (driftOpts.correctionDeadbandM * 1000.0)
-		          << " calibrated=" << (drift.calibrated ? 1 : 0) << " note=" << drift.note
-		          << " baseline_offset_mm=" << drift.baselineOffsetMm << " baseline_samples=" << drift.baselineSamples
-		          << " drift_samples=" << drift.driftSamples << " uncorrected_rms_mm=" << drift.uncorrectedRmsMm
-		          << " corrected_rms_mm=" << drift.correctedRmsMm << " reduction_pct=" << drift.reductionPct
-		          << " subcap_samples=" << drift.subCapSamples << " subcap_unc_rms_mm=" << drift.subCapUncorrectedRmsMm
-		          << " subcap_cor_rms_mm=" << drift.subCapCorrectedRmsMm
-		          << " subcap_reduction_pct=" << drift.subCapReductionPct
-		          << " uncorrected_p50_mm=" << drift.uncorrectedP50Mm << " corrected_p50_mm=" << drift.correctedP50Mm
-		          << " uncorrected_p95_mm=" << drift.uncorrectedP95Mm << " corrected_p95_mm=" << drift.correctedP95Mm
-		          << " uncorrected_peak_mm=" << drift.uncorrectedPeakMm
-		          << " corrected_peak_mm=" << drift.correctedPeakMm << " reloc_total=" << drift.relocTotal
-		          << " reloc_measured=" << drift.relocMeasured << " reloc_flip_like=" << drift.relocFlipLike
-		          << " reloc_mean_drift_mm=" << drift.relocMeanDriftMm << "\n";
 	}
 
 	EXPECT_GT(replayed, 0u) << "No retained recordings contained replayable rows; skipped " << skippedEmpty

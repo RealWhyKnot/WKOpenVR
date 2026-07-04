@@ -59,11 +59,11 @@
 //       to AUTO. The legacy key remains readable for migration only.
 //   6 - Adds tracking_style and head_mount.allow_raw_hmd_fallback. Legacy
 //       AUTO relative lock values migrate to explicit OFF.
-//   7 - Adds head_mount.experimental_auto_correct_offset as a default-off
-//       experimental opt-in for headset offset auto-correction. Later in the same
-//       dev cycle also adds the default-off head_mount.experimental_witness_auto_calibrate
-//       and head_mount.experimental_witness_correction opt-ins (missing keys load
-//       as false, so no version bump is needed for these additive flags).
+//   7 - Added default-off experimental opt-in keys under head_mount (missing
+//       keys load as false, so no version bump is needed for additive flags).
+//       The auto-correct-offset / witness-auto-calibrate / witness-correction /
+//       geometry-shift-restart keys from this cycle are retired: the loader
+//       ignores unknown keys, so profiles that still carry them load cleanly.
 //
 // When you change the schema:
 //   1. Bump kProfileSchemaVersion below.
@@ -363,16 +363,8 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 	if (obj["offset_witness_auto_captured"].is<bool>())
 		hm.offsetWitnessAutoCaptured = obj["offset_witness_auto_captured"].get<bool>();
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
-	if (obj["experimental_auto_correct_offset"].is<bool>())
-		hm.experimentalAutoCorrectOffset = obj["experimental_auto_correct_offset"].get<bool>();
-	if (obj["experimental_witness_auto_calibrate"].is<bool>())
-		hm.experimentalWitnessAutoCalibrate = obj["experimental_witness_auto_calibrate"].get<bool>();
-	if (obj["experimental_witness_correction"].is<bool>())
-		hm.experimentalWitnessCorrection = obj["experimental_witness_correction"].get<bool>();
 	if (obj["experimental_confidence_fusion"].is<bool>())
 		hm.experimentalConfidenceFusion = obj["experimental_confidence_fusion"].get<bool>();
-	if (obj["experimental_geometry_shift_restart"].is<bool>())
-		hm.experimentalGeometryShiftRestart = obj["experimental_geometry_shift_restart"].get<bool>();
 	if (obj["experimental_micro_reanchor"].is<bool>())
 		hm.experimentalMicroReanchor = obj["experimental_micro_reanchor"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
@@ -449,22 +441,14 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool offcal = hm.offsetCalibrated;
 	bool offWitnessAuto = hm.offsetWitnessAutoCaptured;
 	bool autoCorrect = hm.autoCorrectOffset;
-	bool experimentalAutoCorrect = hm.experimentalAutoCorrectOffset;
-	bool experimentalWitnessAutoCal = hm.experimentalWitnessAutoCalibrate;
-	bool experimentalWitnessCorr = hm.experimentalWitnessCorrection;
 	bool experimentalConfidenceFusion = hm.experimentalConfidenceFusion;
-	bool experimentalGeometryShiftRestart = hm.experimentalGeometryShiftRestart;
 	bool experimentalMicroReanchor = hm.experimentalMicroReanchor;
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["offset_witness_auto_captured"].set<bool>(offWitnessAuto);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
-	obj["experimental_auto_correct_offset"].set<bool>(experimentalAutoCorrect);
-	obj["experimental_witness_auto_calibrate"].set<bool>(experimentalWitnessAutoCal);
-	obj["experimental_witness_correction"].set<bool>(experimentalWitnessCorr);
 	obj["experimental_confidence_fusion"].set<bool>(experimentalConfidenceFusion);
-	obj["experimental_geometry_shift_restart"].set<bool>(experimentalGeometryShiftRestart);
 	obj["experimental_micro_reanchor"].set<bool>(experimentalMicroReanchor);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
@@ -1110,9 +1094,8 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
 	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
-	    ctx.headMount.experimentalAutoCorrectOffset || ctx.headMount.experimentalWitnessAutoCalibrate ||
-	    ctx.headMount.experimentalWitnessCorrection || ctx.headMount.lockedHeadsetSmoothing != 0 ||
-	    ctx.headMount.lockedHeadsetRotationSmoothing != 0 ||
+	    ctx.headMount.experimentalConfidenceFusion || ctx.headMount.experimentalMicroReanchor ||
+	    ctx.headMount.lockedHeadsetSmoothing != 0 || ctx.headMount.lockedHeadsetRotationSmoothing != 0 ||
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}

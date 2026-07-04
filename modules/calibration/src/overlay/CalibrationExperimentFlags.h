@@ -6,19 +6,14 @@
 
 namespace spacecal::calibration_experiments {
 
+// Bits 1<<0 (headset offset auto-correct), 1<<1 (witness auto-calibrate),
+// 1<<2 (witness continuous correction), and 1<<4 (geometry-shift restart) are
+// retired; do not reuse them -- the values are persisted in the
+// experimental_flags column of archived v5 recordings.
 enum ExperimentFlag : uint32_t
 {
-	HeadsetOffsetAutoCorrect = 1u << 0,
-	// Witness-based continuous drift correction (offline-validated on real
-	// recordings: ~50-89% typical sub-30 cm drift reduction). Auto-calibrate
-	// snapshots the HMD<->witness baseline offset; correction applies the
-	// slew-limited step that closes the witness-vs-calibration drift.
-	WitnessOffsetAutoCalibrate = 1u << 1,
-	WitnessContinuousCorrection = 1u << 2,
 	// Geometry-precision confidence fusion of continuous re-solves.
 	ConfidenceFusion = 1u << 3,
-	// Geometry-shift fires restart continuous calibration (legacy behaviour).
-	GeometryShiftRestart = 1u << 4,
 	// Witness-corroborated sub-30 cm frame jumps are absorbed immediately.
 	MicroReanchor = 1u << 5,
 };
