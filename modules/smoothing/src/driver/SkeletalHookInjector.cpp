@@ -12,10 +12,12 @@
 #include "Logging.h"
 #include "ModulePerf.h"
 #include "ServerTrackedDeviceProvider.h"
+#include "SmoothingRecorder.h"
 
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <mutex>
@@ -47,6 +49,11 @@ static std::atomic<uint32_t> g_skeletalOwners{0};
 // this hot input-thread detour (that path is exercised from the pose hook,
 // which owns the provider); a marker write is thread-safe and sufficient.
 static std::atomic<bool> g_skeletalFaulted{false};
+
+// Dev capture of smoothing inputs + params. Only touched inside the
+// g_handStateMutex-locked block of the smoothing detour (and from Shutdown,
+// which runs after the in-flight drain), so it needs no lock of its own.
+static skeletal::recording::SmoothingRecorder g_smoothingRecorder;
 
 static void SkeletalContainmentFault(const char* what)
 {
@@ -632,6 +639,10 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponentImpl(vr::IVRDriverIn
 			    p7.position.v[2]);
 			g_postEnableFramesLeft[handedness].store(kPostEnableFrames, std::memory_order_relaxed);
 			g_postEnableSnap[handedness].valid = false;
+			char transition[96] = {};
+			snprintf(transition, sizeof(transition), "enable_transition: hand=%s init=%d",
+			         handedness == 0 ? "left" : "right", (int)state.frame.initialized);
+			g_smoothingRecorder.Annotate(transition);
 		}
 
 		const auto frameResult = skeletal::math::SmoothFingerFrame(state.frame, pTransforms, unTransformCount, handBase,
@@ -644,6 +655,8 @@ static vr::EVRInputError DetourPublicUpdateSkeletonComponentImpl(vr::IVRDriverIn
 			state.windowMinQuatDot = frameResult.minQuatDot;
 			state.windowMinQuatDotBone = frameResult.minQuatDotBone;
 		}
+		g_smoothingRecorder.OnSmoothedFrame(handedness, (int)eMotionRange, pTransforms, unTransformCount,
+		                                    alphaPerFinger, (uint16_t)cfg.finger_mask, frameResult);
 
 		// Post-enable sample log: every kPostEnableLogStride frames after a
 		// false->true transition, log the worst per-bone position delta and
@@ -783,6 +796,7 @@ void Shutdown(uint32_t ownerFeatureMask)
 	fakeOld.QuadPart -= (LONGLONG)(kDeepStateLogIntervalSec * (double)g_qpcFreq.QuadPart) + 1;
 	g_lastDeepStateLogQpc.store(fakeOld.QuadPart);
 	MaybeLogDeepState("Shutdown");
+	g_smoothingRecorder.Close();
 	LOG("[skeletal] Shutdown: subsystem disarmed");
 
 	// Intentionally do NOT clear g_driver. ServerTrackedDeviceProvider

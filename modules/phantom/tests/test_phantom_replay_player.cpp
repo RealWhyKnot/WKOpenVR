@@ -68,6 +68,35 @@ TEST(PhantomReplayPlayer, ParsesV1Csv)
 	EXPECT_NEAR(parsed.samples[1].pos[1], 0.90, 1e-9);
 }
 
+// Annotation lines interleaved with data rows are comments and must not
+// change what parses out -- recordings carry budget/decision markers between
+// samples.
+TEST(PhantomReplayPlayer, AnnotationLinesBetweenRowsAreIgnored)
+{
+	const std::vector<std::string> plain = {
+	    "# phantom_replay_v1",
+	    "time_ms,device_id,serial,class,controller_role,body_role,dropout_enabled,pose_valid,connected,result,x,y,z,qw,"
+	    "qx,qy,qz,vx,vy,vz",
+	    "0,0,PHR-HMD,hmd,invalid,hmd,0,1,1,ok,0,1.70,0,1,0,0,0,0,0,0",
+	    "100,5,PHR-WAIST,tracker,opt_out,waist,1,1,1,ok,0,0.90,0,1,0,0,0,0,0,0",
+	};
+	std::vector<std::string> annotated = plain;
+	annotated.insert(annotated.begin() + 1, "# build_channel=dev");
+	annotated.insert(annotated.begin() + 2, "# [0.000] budget: max_hz_hmd=5 max_hz_dev=2");
+	annotated.insert(annotated.begin() + 5, "# [0.050] budget_counters: written=1 suppressed=12");
+
+	const ParsedReplay a = ParseReplay(plain);
+	const ParsedReplay b = ParseReplay(annotated);
+	ASSERT_TRUE(a.ok);
+	ASSERT_TRUE(b.ok);
+	ASSERT_EQ(a.samples.size(), b.samples.size());
+	for (size_t i = 0; i < a.samples.size(); ++i) {
+		EXPECT_EQ(a.samples[i].serial, b.samples[i].serial);
+		EXPECT_EQ(a.samples[i].time_ms, b.samples[i].time_ms);
+		EXPECT_EQ(a.samples[i].pos[1], b.samples[i].pos[1]);
+	}
+}
+
 // A clean six-point replay is fully recovered by the snap; passive recovers at
 // least the torso (feet need motion the static replay doesn't carry).
 TEST(PhantomReplayPlayer, ScoresCleanSixPoint)

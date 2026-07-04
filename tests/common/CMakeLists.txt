@@ -18,6 +18,7 @@ add_executable(common_helpers_tests
 	test_devtuning.cpp
 	test_host_hot_reload.cpp
 	test_powershell_command.cpp
+	test_recording_envelope.cpp
 	test_win32_command_line.cpp)
 
 target_include_directories(common_helpers_tests PRIVATE

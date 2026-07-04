@@ -33,6 +33,7 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_passive_role_inference.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_snap_calibrate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_role_arbiter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_replay_budget.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_replay_player.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_ui_logic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_metrics.cpp

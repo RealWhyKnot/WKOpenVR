@@ -10,6 +10,9 @@ add_library(openvr_pair_feature_smoothing_driver STATIC
 	SkeletalHookInjector.h
 	SkeletalSmoothingMath.cpp
 	SkeletalSmoothingMath.h
+	SmoothingRecorder.cpp
+	SmoothingRecorder.h
+	SmoothingRecordingSchema.h
 	SmoothingDriverModule.cpp)
 
 target_include_directories(openvr_pair_feature_smoothing_driver PRIVATE

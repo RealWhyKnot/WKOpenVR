@@ -948,6 +948,7 @@ bool PhantomModule::Init(DriverModuleContext& context)
 {
 	context_ = context;
 	g_active = this;
+	PhantomReplayRecorder::PruneOnInit();
 	body_prior_estimator_.Reset();
 	ApplyAnthropometricPriors(body_priors_);
 	virtual_trackers_.OnDriverInit();
