@@ -594,6 +594,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = opts.lockRelativePosition;
 	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
+	calc.SetGravityConstrainedRelPose(opts.gravityConstrainedRelPose);
 	// Relative-pose MAD tracking (the AUTO-lock translMad analog) -- the headline
 	// drift signal summarised as peak/median/final.
 	std::deque<Eigen::AffineCompact3d> relWindow;

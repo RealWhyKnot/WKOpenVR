@@ -6,6 +6,7 @@
 #include "RuntimeHealthSummary.h"
 #include "RotationMatrix3.h"           // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
 #include "ContinuousPrecisionFusion.h" // spacecal::precision::kLeverRegM2 -- geometry weight.
+#include "GravityAlignment.h"          // spacecal::gravity::ProjectRotationToYaw -- 4-DoF constraint.
 
 #include <algorithm>
 #include <cmath>
@@ -1541,10 +1542,13 @@ bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d& out) const
 			return 1.0 / (spacecal::precision::kLeverRegM2 + sample.ref.trans.squaredNorm() +
 			              sample.target.trans.squaredNorm());
 		});
-		return true;
 	}
-
-	out = PoseAverager::AverageFor(m_samples, estimateFor);
+	else {
+		out = PoseAverager::AverageFor(m_samples, estimateFor);
+	}
+	if (m_useGravityConstrainedRelPose) {
+		out = spacecal::gravity::ProjectRotationToYaw(out);
+	}
 	return true;
 }
 

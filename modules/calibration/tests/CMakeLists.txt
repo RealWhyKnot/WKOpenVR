@@ -56,6 +56,8 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_recovery_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reanchor_ramp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_witness_health.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_gravity_alignment.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_time_offset_xcorr.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_time_sync.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_driver_synth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_head_from_tracker_solve.cpp

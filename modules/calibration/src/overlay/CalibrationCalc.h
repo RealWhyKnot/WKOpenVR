@@ -240,10 +240,17 @@ public:
 		m_relativePosCalibrated = calibrated;
 	}
 
-	// Geometry-precision-weighted relative-pose solve. ON by default; the setter
-	// exists so the offline replay A/B can compare weighted vs uniform on a real
-	// recording. See CalibrateByRelPose.
+	// Geometry-precision-weighted relative-pose solve (opt-in; follows the
+	// experimental confidence-fusion flag live). The setter exists so the
+	// offline replay A/B can compare weighted vs uniform on a real recording.
+	// See CalibrateByRelPose.
 	void SetPrecisionWeightedRelPose(bool on) { m_usePrecisionWeightedRelPose = on; }
+
+	// Gravity-constrained relative-pose solve: project the solved calibration
+	// rotation to its yaw-about-gravity component (both universes are +Y-up,
+	// so roll/pitch in C is lever-arm noise). Replay-only A/B for now -- no
+	// live path sets this. See GravityAlignment.h.
+	void SetGravityConstrainedRelPose(bool on) { m_useGravityConstrainedRelPose = on; }
 
 	// Mean of (|ref.trans|^2 + |target.trans|^2) over the current sample window
 	// (m^2) -- the squared lever arm that scales the relpose solve's translation
@@ -355,6 +362,8 @@ private:
 	// a plain uniform average (upstream behaviour); the live tick enables this
 	// only under the experimental confidence-fusion toggle.
 	bool m_usePrecisionWeightedRelPose = false;
+	// Replay-only A/B knob; never set on the live path.
+	bool m_useGravityConstrainedRelPose = false;
 
 	std::deque<Sample> m_samples;
 

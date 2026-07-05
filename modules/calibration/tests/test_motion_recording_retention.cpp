@@ -837,6 +837,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.lockRelativePosition = EnvFlag("WKOPENVR_REPLAY_LOCK_REL", baseOptions.lockRelativePosition);
 	baseOptions.precisionWeightedRelPose =
 	    EnvFlag("WKOPENVR_REPLAY_PRECISION_WEIGHT", baseOptions.precisionWeightedRelPose);
+	baseOptions.gravityConstrainedRelPose =
+	    EnvFlag("WKOPENVR_REPLAY_GRAVITY_4DOF", baseOptions.gravityConstrainedRelPose);
 	std::string seedName;
 	ApplySeedEnv(baseOptions, seedName);
 	const auto sampleWindows = ReplaySampleWindows();

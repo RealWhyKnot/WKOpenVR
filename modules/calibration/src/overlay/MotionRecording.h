@@ -236,6 +236,9 @@ struct ReplayOptions
 	// runs.
 	bool lockRelativePosition = false;
 	bool precisionWeightedRelPose = false;
+	// Project the solved calibration rotation to yaw-about-gravity (see
+	// GravityAlignment.h). Replay-only A/B knob.
+	bool gravityConstrainedRelPose = false;
 	// Warm-start seeding (see ReplaySeedMode). Explicit mode reads the two seed
 	// fields; Recorded mode ignores them and uses rec.seedProfile when valid.
 	ReplaySeedMode seedMode = ReplaySeedMode::None;

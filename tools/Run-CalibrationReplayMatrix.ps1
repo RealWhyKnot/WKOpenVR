@@ -116,6 +116,15 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_LOCK_REL         = "1"
 		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
 	}
+	# Gravity-constrained 4-DoF: same weighted solve with the calibration
+	# rotation projected to yaw-about-gravity. Compare net_drift_cm and
+	# final_error_mm against relpose_weighted. Not run by default -- request
+	# explicitly via -Scenario.
+	$Catalog["relpose_weighted_gravity"] = New-Scenario "relpose_weighted_gravity" @{
+		WKOPENVR_REPLAY_LOCK_REL         = "1"
+		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
+		WKOPENVR_REPLAY_GRAVITY_4DOF     = "1"
+	}
 	# Warm-start A/B: replay from the recording's own stored-profile seed. The
 	# fused variant reproduces the confidence-fusion bad-seed behavior offline;
 	# compare net_drift_mag_cm and perceptible_shifts across the pair.
@@ -303,6 +312,7 @@ $script:ReplayEnvNames = @(
 	"WKOPENVR_REPLAY_HOLDOUT",
 	"WKOPENVR_REPLAY_LOCK_REL",
 	"WKOPENVR_REPLAY_PRECISION_WEIGHT",
+	"WKOPENVR_REPLAY_GRAVITY_4DOF",
 	"WKOPENVR_REPLAY_SEED_PROFILE",
 	"WKOPENVR_REPLAY_TRACE_CSV",
 	"WKOPENVR_REPLAY_AUTOLOCK_SIM",
