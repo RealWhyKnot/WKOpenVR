@@ -135,7 +135,8 @@ double PeakLagMs(const std::vector<double>& gridA, const std::vector<double>& gr
 	std::vector<double> corr(2 * kMaxLagMs + 1, 0.0);
 	for (int lag = -kMaxLagMs; lag <= kMaxLagMs; ++lag) {
 		const double c = CorrelationAtLag(gridA, gridB, lag);
-		corr[static_cast<size_t>(lag + kMaxLagMs)] = c;
+		const int idx = lag + kMaxLagMs;
+		corr[static_cast<size_t>(idx)] = c;
 		if (c > bestCorr) {
 			bestCorr = c;
 			bestLag = lag;
@@ -143,9 +144,11 @@ double PeakLagMs(const std::vector<double>& gridA, const std::vector<double>& gr
 	}
 	double refined = static_cast<double>(bestLag);
 	if (bestLag > -kMaxLagMs && bestLag < kMaxLagMs) {
-		const double c0 = corr[static_cast<size_t>(bestLag + kMaxLagMs - 1)];
-		const double c1 = corr[static_cast<size_t>(bestLag + kMaxLagMs)];
-		const double c2 = corr[static_cast<size_t>(bestLag + kMaxLagMs + 1)];
+		const int midIdx = bestLag + kMaxLagMs; // in (0, 2*kMaxLagMs) here
+		const size_t mid = static_cast<size_t>(midIdx);
+		const double c0 = corr[mid - 1];
+		const double c1 = corr[mid];
+		const double c2 = corr[mid + 1];
 		const double denom = c0 - 2.0 * c1 + c2;
 		if (std::abs(denom) > 1e-12) refined += 0.5 * (c0 - c2) / denom;
 	}
@@ -321,15 +324,17 @@ TEST(TimeOffsetXcorrTest, RecoversInjectedShiftOnSyntheticStreams)
 	};
 
 	std::vector<PoseSample> hmd;
-	for (double t = 0.0; t < 120.0; t += 1.0 / 90.0) {
+	for (int i = 0; i < 120 * 90; ++i) {
+		const double t = static_cast<double>(i) / 90.0;
 		PoseSample s = headPose(t);
 		s.tSec = t;
 		hmd.push_back(s);
 	}
 	std::vector<PoseSample> witness;
-	for (double t = 0.0; t < 120.0; t += 1.0 / 30.0) {
+	for (int i = 0; i < 120 * 30; ++i) {
 		// The witness reports the same physical motion kShiftSec late, seen
 		// through a fixed mount transform (different universe + mounting).
+		const double t = static_cast<double>(i) / 30.0;
 		PoseSample head = headPose(t - kShiftSec);
 		PoseSample s;
 		s.tSec = t;
