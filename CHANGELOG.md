@@ -135,6 +135,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **common:** Add reusable PowerShell command helpers (800787c)
 - **calibration:** Remove experimental drift-fighting toggles (0ba4d64)
 - **calibration:** Retire geometry-shift restart and witness-correction toggles (1440cbe)
+- style(calibration): satisfy tidy checks in the time-offset estimator (86bb359)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
