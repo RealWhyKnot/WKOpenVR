@@ -119,6 +119,26 @@ TEST(PhantomReplayPlayer, ScoresCleanSixPoint)
 	EXPECT_GE(score.passive_correct, 2u) << "passive should at least recover the torso";
 }
 
+// Trackers with no ground-truth role label (e.g. a hidden witness tracker
+// recorded for time-offset analysis) ride along in the capture but must not
+// count toward the accuracy denominator -- a bystander would otherwise make
+// a perfect snap score unreachable.
+TEST(PhantomReplayPlayer, UnlabelledBystanderExcludedFromTotals)
+{
+	std::vector<ReplaySample> samples;
+	for (int frame = 0; frame <= 12; ++frame) {
+		const double t = frame * 100.0;
+		samples.push_back(Hmd(t));
+		samples.push_back(Trk(t, 1, "PHR-WAIST", BodyRole::Waist, 0.53, 0.00));
+		samples.push_back(Trk(t, 2, "PHR-CHEST", BodyRole::Chest, 0.74, 0.00));
+		samples.push_back(Trk(t, 3, "LHR-WITNESS", BodyRole::None, 1.65, 0.05));
+	}
+
+	const ReplayScore score = ScoreReplay(samples);
+	EXPECT_EQ(score.total, 2u) << "only ground-truth-labelled trackers count";
+	EXPECT_EQ(score.trackers.size(), 3u) << "the bystander still appears in the per-tracker detail";
+}
+
 // Tuning hook: point WKOPENVR_PHANTOM_REPLAY_FILE at a real phantom_replay capture
 // to score it. Skipped when unset so CI stays hermetic.
 TEST(PhantomReplayPlayer, ScoresRealCaptureFromEnv)
