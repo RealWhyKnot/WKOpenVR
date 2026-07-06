@@ -116,29 +116,6 @@ TEST(SnapSuppression, Jump_detector_autopaired_no_snap)
 	EXPECT_FALSE(ss::IsJumpClassifiedAsSnap(HeadMountMode::AutoPaired, 0.50, 0.001));
 }
 
-// Micro re-anchor classification: witness-corroborated frame jumps in the
-// 2-30 cm band UNDER the recovery gate.
-TEST(SnapSuppression, Micro_reanchor_classifies_small_corroborated_jump)
-{
-	// 6 cm HMD jump, tracker still: the classic sub-threshold SLAM shift.
-	EXPECT_TRUE(ss::IsJumpMicroReanchorable(HeadMountMode::Corroborate, 0.06, 0.005));
-}
-
-TEST(SnapSuppression, Micro_reanchor_rejects_band_and_corroboration_violations)
-{
-	// At/above 30 cm the snap path owns the event.
-	EXPECT_FALSE(ss::IsJumpMicroReanchorable(HeadMountMode::Corroborate, 0.30, 0.005));
-	// Below the 2 cm floor: normal correction paths own it.
-	EXPECT_FALSE(ss::IsJumpMicroReanchorable(HeadMountMode::Corroborate, 0.015, 0.005));
-	// Tracker moved with the HMD: real head motion, not a frame jump.
-	EXPECT_FALSE(ss::IsJumpMicroReanchorable(HeadMountMode::Corroborate, 0.06, 0.05));
-	// Tracker invalid: cannot corroborate.
-	EXPECT_FALSE(ss::IsJumpMicroReanchorable(HeadMountMode::Corroborate, 0.06, -1.0));
-	// Mode below Corroborate: witness not trusted.
-	EXPECT_FALSE(ss::IsJumpMicroReanchorable(HeadMountMode::Off, 0.06, 0.005));
-	EXPECT_FALSE(ss::IsJumpMicroReanchorable(HeadMountMode::AutoPaired, 0.06, 0.005));
-}
-
 // Exact-boundary cases (thresholds are non-strict inequalities in the
 // required direction per the plan).
 TEST(SnapSuppression, Jump_detector_exactly_at_hmd_threshold)

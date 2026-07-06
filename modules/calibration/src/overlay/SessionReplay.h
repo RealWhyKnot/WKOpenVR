@@ -306,11 +306,8 @@ struct SessionReplayOptions
 	Eigen::Vector3d seedTransCm = Eigen::Vector3d::Zero();
 	Eigen::Vector3d seedRotDeg = Eigen::Vector3d::Zero();
 	// Relocalization recovery. Jumps >= threshold take the recovery path;
-	// smaller ones are the live-uncorrected band. microReanchor absorbs
-	// witness-corroborated sub-threshold jumps into the applied calibration
-	// immediately (the E3 prototype).
+	// smaller ones are the live-uncorrected band.
 	double relocRecoverThresholdM = 0.30; // kRelocAutoRecoverThresholdM
-	bool microReanchor = false;
 };
 
 struct SessionReplayResult
@@ -331,7 +328,6 @@ struct SessionReplayResult
 	int destructiveClears = 0;
 	int subThresholdRelocs = 0;
 	double subThresholdResidualCm = 0.0; // uncorrected world offset left behind
-	int microReanchors = 0;
 	// Applied-transform trajectory (net movement of the world).
 	double totalAppliedPathCm = 0.0;
 	double peakAppliedStepCm = 0.0;
@@ -565,16 +561,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 				const bool headStill = trackerDeltaM >= 0.0 && trackerDeltaM < snap_suppression::kSnapTrackerMaxDispM;
 				if (headStill) {
 					++res.subThresholdRelocs;
-					if (opts.microReanchor) {
-						// Absorb the frame shift into the applied calibration
-						// immediately, like the snap path does for big flips.
-						applied.translation() += relocDeltaVec;
-						++res.microReanchors;
-						stepApplied(applied.translation() * 100.0);
-					}
-					else {
-						res.subThresholdResidualCm += relocDeltaM * 100.0;
-					}
+					res.subThresholdResidualCm += relocDeltaM * 100.0;
 				}
 			}
 		}

@@ -729,8 +729,6 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
 	EXPECT_FALSE(ctx.headMount.experimentalConfidenceFusion)
 	    << "profile without the key must default confidence fusion to false";
-	EXPECT_FALSE(ctx.headMount.experimentalMicroReanchor)
-	    << "profile without the key must default micro re-anchor to false";
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback) << "v3 profile must default raw HMD fallback to true";
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
@@ -756,7 +754,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.offsetWitnessAutoCaptured = true;
 	src.headMount.autoCorrectOffset = false;
 	src.headMount.experimentalConfidenceFusion = true;
-	src.headMount.experimentalMicroReanchor = true;
 	src.headMount.lockedHeadsetSmoothing = 65;
 	src.headMount.lockedHeadsetRotationSmoothing = 35;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
@@ -795,7 +792,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.offsetWitnessAutoCaptured);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
 	EXPECT_TRUE(dst.headMount.experimentalConfidenceFusion);
-	EXPECT_TRUE(dst.headMount.experimentalMicroReanchor);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
 	EXPECT_EQ(dst.headMount.lockedHeadsetRotationSmoothing, 35);

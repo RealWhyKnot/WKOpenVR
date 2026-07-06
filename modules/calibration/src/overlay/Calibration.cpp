@@ -3337,7 +3337,6 @@ void CalibrationTick(double time)
 		};
 		setExperimentFlag(spacecal::calibration_experiments::ConfidenceFusion,
 		                  ctx.headMount.experimentalConfidenceFusion);
-		setExperimentFlag(spacecal::calibration_experiments::MicroReanchor, ctx.headMount.experimentalMicroReanchor);
 		Metrics::SetTickExperimentalFlags(experimentalFlags);
 	}
 

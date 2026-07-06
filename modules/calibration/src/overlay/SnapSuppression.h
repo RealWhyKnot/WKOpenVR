@@ -83,21 +83,6 @@ inline bool IsJumpClassifiedAsSnap(HeadMountMode mode, double hmdDeltaM, double 
 	return hmdDeltaM >= kSnapHmdJumpM && trackerDeltaM < kSnapTrackerMaxDispM;
 }
 
-// Sub-threshold micro re-anchor classification. Same corroboration shape as
-// IsJumpClassifiedAsSnap but for the band UNDER the recovery gate: the HMD's
-// world frame jumped 2-30 cm while the lighthouse witness confirms the head
-// stayed put -- a small SLAM re-localization that today translates the world
-// permanently (field sessions: 2-18 uncorrected ~5 cm shifts each). Callers
-// absorb the jump into the applied calibration. The 2 cm floor leaves
-// sub-noise motion to the normal correction paths.
-constexpr double kMicroReanchorMinM = 0.02;
-inline bool IsJumpMicroReanchorable(HeadMountMode mode, double hmdDeltaM, double trackerDeltaM)
-{
-	if (mode < HeadMountMode::Corroborate) return false;
-	if (trackerDeltaM < 0.0 || trackerDeltaM >= kSnapTrackerMaxDispM) return false;
-	return hmdDeltaM >= kMicroReanchorMinM && hmdDeltaM < kSnapHmdJumpM;
-}
-
 // Geometry-shift coherence source selection.
 //
 // When mode >= Corroborate and trackerDeltaM >= 0 (valid tracker reading),

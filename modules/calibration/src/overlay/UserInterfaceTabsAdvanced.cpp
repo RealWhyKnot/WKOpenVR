@@ -494,17 +494,6 @@ void CCal_DrawSettings()
 						    SaveProfile(CalCtx);
 					    }
 				    });
-				    openvr_pair::overlay::ui::SettingRow(table, "Absorb small frame jumps", [&] {
-					    if (ExperimentCheckbox(
-					            "micro_reanchor", "##head_mount_experimental_micro_reanchor",
-					            &CalCtx.headMount.experimentalMicroReanchor,
-					            "When the headset's reported position jumps 2-30 cm but the head-mounted tracker "
-					            "confirms the head did not move, shift the calibration by the same amount so the "
-					            "world stays aligned instead of keeping the offset. Needs the head-mounted tracker. "
-					            "Experimental. Default off.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
 			    });
 			ImGui::EndGroupPanel();
 		}

@@ -188,11 +188,6 @@ struct HeadMountConfig
 	// cannot drag a good calibration around. Off: the classic behaviour -- each
 	// accepted candidate overwrites the calibration outright.
 	bool experimentalConfidenceFusion = false;
-	// Experimental micro re-anchor (default OFF). On: a witness-corroborated
-	// HMD frame jump below the 30 cm recovery gate (the head stayed still but
-	// the reported world shifted 5-30 cm) is absorbed into the applied
-	// calibration immediately instead of being left as a permanent offset.
-	bool experimentalMicroReanchor = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
 	// head-mounted tracker (0..100, 0 = off). Tames lighthouse position jitter.

@@ -365,8 +365,6 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
 	if (obj["experimental_confidence_fusion"].is<bool>())
 		hm.experimentalConfidenceFusion = obj["experimental_confidence_fusion"].get<bool>();
-	if (obj["experimental_micro_reanchor"].is<bool>())
-		hm.experimentalMicroReanchor = obj["experimental_micro_reanchor"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
 	if (obj["locked_headset_smoothing"].is<double>()) {
 		double v = obj["locked_headset_smoothing"].get<double>();
@@ -442,14 +440,12 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool offWitnessAuto = hm.offsetWitnessAutoCaptured;
 	bool autoCorrect = hm.autoCorrectOffset;
 	bool experimentalConfidenceFusion = hm.experimentalConfidenceFusion;
-	bool experimentalMicroReanchor = hm.experimentalMicroReanchor;
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["offset_witness_auto_captured"].set<bool>(offWitnessAuto);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
 	obj["experimental_confidence_fusion"].set<bool>(experimentalConfidenceFusion);
-	obj["experimental_micro_reanchor"].set<bool>(experimentalMicroReanchor);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
 	obj["locked_headset_smoothing"].set<double>(lockedSmoothing);
@@ -1104,8 +1100,8 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
 	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
-	    ctx.headMount.experimentalConfidenceFusion || ctx.headMount.experimentalMicroReanchor ||
-	    ctx.headMount.lockedHeadsetSmoothing != 0 || ctx.headMount.lockedHeadsetRotationSmoothing != 0 ||
+	    ctx.headMount.experimentalConfidenceFusion || ctx.headMount.lockedHeadsetSmoothing != 0 ||
+	    ctx.headMount.lockedHeadsetRotationSmoothing != 0 ||
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}

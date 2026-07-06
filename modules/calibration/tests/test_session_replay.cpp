@@ -245,9 +245,9 @@ TEST(SessionReplayTest, CorroboratedFlipIsSnapSuppressed)
 	EXPECT_EQ(res.subThresholdRelocs, 0);
 }
 
-// A 6 cm frame jump under the 30 cm recovery gate: today it leaves a
-// residual world offset; the micro-reanchor option absorbs it immediately.
-TEST(SessionReplayTest, MicroReanchorRemovesSubThresholdResidual)
+// A 6 cm frame jump under the 30 cm recovery gate leaves a residual world
+// offset in the sub-threshold accounting.
+TEST(SessionReplayTest, SubThresholdJumpAccruesResidual)
 {
 	SessionSpec spec;
 	spec.rows = 600;
@@ -261,19 +261,6 @@ TEST(SessionReplayTest, MicroReanchorRemovesSubThresholdResidual)
 	ASSERT_TRUE(baseline.succeeded) << baseline.error;
 	EXPECT_EQ(baseline.subThresholdRelocs, 1);
 	EXPECT_NEAR(baseline.subThresholdResidualCm, 6.0, 0.5);
-	EXPECT_EQ(baseline.microReanchors, 0);
-
-	opts.microReanchor = true;
-	const auto fixed = replay::RunSessionReplay(rec, opts);
-	ASSERT_TRUE(fixed.succeeded) << fixed.error;
-	EXPECT_EQ(fixed.subThresholdRelocs, 1);
-	EXPECT_EQ(fixed.microReanchors, 1);
-	EXPECT_NEAR(fixed.subThresholdResidualCm, 0.0, 1e-9);
-	// The absorb lands as a ~6 cm applied step at the reloc row; the baseline
-	// run's applied trajectory stays flat. (This synthetic keeps the ref
-	// poses unshifted, so the solver later overwrites the absorb -- live, the
-	// ref IS the HMD and the post-jump solve agrees with the absorb.)
-	EXPECT_GT(fixed.peakAppliedStepCm, 5.0);
 	EXPECT_LT(baseline.peakAppliedStepCm, 1.0);
 }
 
@@ -312,7 +299,6 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	replay::SessionReplayOptions opts;
 	opts.relocRecoverThresholdM =
 	    EnvDoubleLocal("WKOPENVR_REPLAY_SESSION_RELOC_RECOVER_CM", opts.relocRecoverThresholdM * 100.0) / 100.0;
-	opts.microReanchor = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_MICRO_REANCHOR", false);
 	opts.precisionWeightedRelPose = EnvFlagLocal("WKOPENVR_REPLAY_PRECISION_WEIGHT", opts.precisionWeightedRelPose);
 
 	std::string paths = rawPaths;
@@ -334,7 +320,6 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 			continue;
 		}
 		std::cout << "[session-replay] " << name << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
-		          << " micro_reanchor=" << (opts.microReanchor ? 1 : 0)
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
 		          << " seed_applied=" << (res.seedApplied ? 1 : 0) << " rows=" << res.rowsProcessed
 		          << " accepts=" << res.accepts << " flips=" << res.lockFlips << " panics=" << res.panicUnlocks
@@ -343,9 +328,8 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		          << " reanchors=" << res.recoveryReanchors << " destructive_clears=" << res.destructiveClears
 		          << " sub_threshold_relocs=" << res.subThresholdRelocs
 		          << " sub_threshold_residual_cm=" << res.subThresholdResidualCm
-		          << " micro_reanchors=" << res.microReanchors << " applied_path_cm=" << res.totalAppliedPathCm
-		          << " peak_step_cm=" << res.peakAppliedStepCm << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm()
-		          << "\n";
+		          << " applied_path_cm=" << res.totalAppliedPathCm << " peak_step_cm=" << res.peakAppliedStepCm
+		          << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm() << "\n";
 		++replayed;
 	}
 	EXPECT_GT(replayed, 0);

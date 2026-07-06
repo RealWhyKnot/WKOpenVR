@@ -7,15 +7,15 @@
 namespace spacecal::calibration_experiments {
 
 // Bits 1<<0 (headset offset auto-correct), 1<<1 (witness auto-calibrate),
-// 1<<2 (witness continuous correction), and 1<<4 (geometry-shift restart) are
-// retired; do not reuse them -- the values are persisted in the
-// experimental_flags column of archived v5 recordings.
+// 1<<2 (witness continuous correction), 1<<4 (geometry-shift restart), and
+// 1<<5 (micro-reanchor of witness-corroborated sub-30 cm frame jumps; the
+// trigger never occurred in ~30 h of real captures) are retired; do not
+// reuse them -- the values are persisted in the experimental_flags column
+// of archived v5 recordings.
 enum ExperimentFlag : uint32_t
 {
 	// Geometry-precision confidence fusion of continuous re-solves.
 	ConfidenceFusion = 1u << 3,
-	// Witness-corroborated sub-30 cm frame jumps are absorbed immediately.
-	MicroReanchor = 1u << 5,
 };
 
 inline bool EnvFlagEnabled(const char* value)
