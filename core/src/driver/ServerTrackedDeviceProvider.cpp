@@ -1578,6 +1578,17 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 				LOG("[driver-synth] tracker snapshot skipped: hidden selected tracker has no enabled transform");
 			}
 		}
+#if OPENVR_PAIR_HAS_PHANTOM_DRIVER
+		// Hidden devices skip the phantom pipeline below, but the replay
+		// recorder still wants their real (pre-quash) pose: a hidden
+		// head-mount witness is the reference stream for offline time-offset
+		// analysis. Recording-only -- no dropout history, no bridging.
+		if (featureFlags & pairdriver::kFeaturePhantom) {
+			LARGE_INTEGER qpcQuash{};
+			QueryPerformanceCounter(&qpcQuash);
+			phantom::RecordQuashedPose(openVRID, qpcQuash.QuadPart, pose);
+		}
+#endif
 		openvr_pair::common::quash::ApplyQuashToPose(pose);
 		shmem.IncrementTelemetry(protocol::DriverPoseShmem::TELEMETRY_QUASH_APPLY);
 

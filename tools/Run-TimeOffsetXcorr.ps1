@@ -15,8 +15,11 @@ param(
 # lighthouse stack by cross-correlating the angular-speed profiles of the HMD
 # and the head-mounted tracker in a full-rate phantom_replay capture, then
 # reports the relative-pose MAD paired at lag zero vs at the recovered lag.
-# Full-rate capture: set WKOPENVR_PHANTOM_REPLAY_FULLRATE=1 for the SteamVR
-# session (and unhide the head tracker so its updates are recorded).
+# Full-rate capture: create the flag file
+#   %USERPROFILE%\AppData\LocalLow\WKOpenVR\phantom_replay_fullrate.enabled
+# before starting SteamVR (WKOPENVR_PHANTOM_REPLAY_FULLRATE=1 also works when
+# the environment actually reaches vrserver). Hidden devices are recorded with
+# their real pre-quash poses, so the head tracker may stay hidden.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot

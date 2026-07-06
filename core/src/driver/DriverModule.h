@@ -61,10 +61,13 @@ namespace phantom {
 std::unique_ptr<DriverModule> CreateDriverModule();
 
 // Hot-path entry points called from
-// ServerTrackedDeviceProvider::HandleDevicePoseUpdated. Both are safe no-ops
+// ServerTrackedDeviceProvider::HandleDevicePoseUpdated. All are safe no-ops
 // when the phantom module has not been initialised (feature disabled, or
-// CreateDriverModule never instantiated).
+// CreateDriverModule never instantiated). RecordQuashedPose is the
+// replay-recording-only entry for quashed (hidden) devices: it writes the
+// pre-quash pose without feeding dropout history or bridging state.
 void OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose);
+void RecordQuashedPose(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose);
 bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::DriverPose_t& pose);
 void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
                               std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);

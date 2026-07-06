@@ -2,6 +2,7 @@
 
 #include "DebugLogging.h"
 #include "Logging.h"
+#include "Win32Paths.h"
 
 #include <windows.h>
 
@@ -27,6 +28,24 @@ bool EnvFlagEnabled(const wchar_t* name)
 	const DWORD n = GetEnvironmentVariableW(name, buf, (DWORD)std::size(buf));
 	if (n == 0 || n >= std::size(buf)) return false;
 	return buf[0] == L'1' || buf[0] == L'y' || buf[0] == L'Y' || buf[0] == L't' || buf[0] == L'T';
+}
+
+// Full-rate capture can also be requested by a flag file in the WKOpenVR data
+// root (same mechanism as debug_logging.enabled). Environment variables are
+// unreliable here: vrserver inherits Steam's environment, not the shell that
+// configured the capture, so an env-only gate silently records throttled.
+constexpr wchar_t kFullRateFlagFileName[] = L"phantom_replay_fullrate.enabled";
+
+bool FullRateFlagFileExists()
+{
+	std::wstring path = openvr_pair::common::WkOpenVrRootPath(false);
+	if (path.empty()) return false;
+	if (path.back() != L'\\' && path.back() != L'/') {
+		path.push_back(L'\\');
+	}
+	path += kFullRateFlagFileName;
+	const DWORD attr = GetFileAttributesW(path.c_str());
+	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 const char* DeviceClassKey(vr::ETrackedDeviceClass c)
@@ -117,7 +136,16 @@ bool PhantomReplayRecorder::ShouldRecord()
 		else {
 			enabled_ = openvr_pair::common::IsDebugLoggingEnabled();
 		}
-		budget_.fullRate = EnvFlagEnabled(L"WKOPENVR_PHANTOM_REPLAY_FULLRATE");
+		const bool envFullRate = EnvFlagEnabled(L"WKOPENVR_PHANTOM_REPLAY_FULLRATE");
+		const bool flagFullRate = !envFullRate && FullRateFlagFileExists();
+		budget_.fullRate = envFullRate || flagFullRate;
+		full_rate_source_ = envFullRate ? "env" : (flagFullRate ? "flagfile" : "off");
+		// The flag file states an intent to capture; don't leave that capture
+		// hostage to the debug-logging toggle. The explicit no-record env var
+		// still wins.
+		if (flagFullRate && !EnvFlagEnabled(L"WKOPENVR_NO_PHANTOM_REPLAY_RECORD")) {
+			enabled_ = true;
+		}
 	}
 	return enabled_;
 }
@@ -146,10 +174,12 @@ bool PhantomReplayRecorder::OpenIfNeeded()
 	std::ostringstream budget;
 	budget << "budget: max_hz_hmd=" << budget_.maxHzHmd << " max_hz_dev=" << budget_.maxHzDevice
 	       << " keyframe_ms=" << budget_.keyframeIntervalMs << " pos_eps_m=" << budget_.posEpsilonM
-	       << " quat_dot_eps=" << budget_.quatDotEpsilon << " full_rate=" << (budget_.fullRate ? 1 : 0);
+	       << " quat_dot_eps=" << budget_.quatDotEpsilon << " full_rate=" << (budget_.fullRate ? 1 : 0)
+	       << " full_rate_src=" << full_rate_source_;
 	envelope_.WriteAnnotation(0.0, budget.str());
 
-	LOG("[phantom][replay] recording poses to %ls", envelope_.Path().c_str());
+	LOG("[phantom][replay] recording poses to %ls (full_rate=%d src=%s)", envelope_.Path().c_str(),
+	    budget_.fullRate ? 1 : 0, full_rate_source_);
 	return true;
 }
 

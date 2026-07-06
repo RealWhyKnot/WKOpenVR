@@ -311,6 +311,7 @@ public:
 	// Hot path -- called from ServerTrackedDeviceProvider via the
 	// phantom:: namespace free functions in PhantomHotPath.h.
 	void OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose);
+	void RecordQuashedPose(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose);
 	bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::DriverPose_t& pose);
 	void CollectSilentPoseUpdates(uint32_t triggeringOpenVRID, int64_t qpc_ns, int64_t qpc_freq,
 	                              std::vector<std::pair<uint32_t, vr::DriverPose_t>>& out);
@@ -1105,6 +1106,20 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 	}
 }
 
+void PhantomModule::RecordQuashedPose(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose)
+{
+	// Replay-recording only. A quashed (hidden) device must stay out of the
+	// dropout history and bridging ladder -- its published pose is offset far
+	// outside the play space -- but the pre-quash pose handed in here is real
+	// and is exactly what offline analysis (e.g. the time-offset estimator)
+	// needs from a hidden witness tracker.
+	if (openVRID >= slots_.size()) return;
+	DeviceSlot& s = slots_[openVRID];
+	ResolveSerialIfMissing(openVRID, s);
+	replay_recorder_.RecordPose(qpc_ns, qpc_freq_, openVRID, s.serial, s.device_class, s.controller_role, s.role,
+	                            s.opted_in, pose);
+}
+
 void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose)
 {
 	if (openVRID >= slots_.size()) return;
@@ -1344,6 +1359,11 @@ std::unique_ptr<DriverModule> CreateDriverModule()
 void OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose)
 {
 	if (auto* m = g_active) m->OnRealPoseObserved(openVRID, qpc_ns, pose);
+}
+
+void RecordQuashedPose(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose)
+{
+	if (auto* m = g_active) m->RecordQuashedPose(openVRID, qpc_ns, pose);
 }
 
 bool MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t qpc_freq, vr::DriverPose_t& pose)

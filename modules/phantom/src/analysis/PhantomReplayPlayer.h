@@ -296,9 +296,15 @@ inline ReplayScore ScoreReplay(const std::vector<ReplaySample>& samples, double 
 		t.snap_predicted = snap_pred[i];
 		t.snap_confidence = snap_c[i];
 		score.trackers.push_back(t);
-		++score.total;
-		if (t.ground_truth != BodyRole::None && t.passive_predicted == t.ground_truth) ++score.passive_correct;
-		if (t.ground_truth != BodyRole::None && t.snap_predicted == t.ground_truth) ++score.snap_correct;
+		// Only ground-truth-labelled trackers count toward the accuracy
+		// denominator. Captures can carry unlabelled bystanders (e.g. a
+		// hidden witness tracker recorded for time-offset analysis) that no
+		// detector should be penalised for.
+		if (t.ground_truth != BodyRole::None) {
+			++score.total;
+			if (t.passive_predicted == t.ground_truth) ++score.passive_correct;
+			if (t.snap_predicted == t.ground_truth) ++score.snap_correct;
+		}
 	}
 	score.duration_ms = any ? (last_ms - first_ms) : 0.0;
 	return score;

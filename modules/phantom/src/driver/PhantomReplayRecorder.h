@@ -31,6 +31,7 @@ private:
 	bool checked_enabled_ = false;
 	bool enabled_ = false;
 	bool open_attempted_ = false;
+	const char* full_rate_source_ = "off";
 	openvr_pair::common::recording::RecordingEnvelope envelope_;
 	ReplayBudgetConfig budget_;
 	std::unordered_map<uint32_t, DeviceRecordState> device_state_;
