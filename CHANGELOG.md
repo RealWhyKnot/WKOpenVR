@@ -86,6 +86,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **recording:** Shared capture envelope with phantom retention and smoothing replay (8b97f90)
 - **calibration:** Make geometry-shift restarts opt-in and absorb small frame jumps (b4413b5)
 - **calibration:** Replay seeded sessions and decision layers from pinned recordings (801f53f)
+- **phantom:** Flag-file full-rate replay capture and hidden-witness recording (1388e24)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -136,6 +137,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Remove experimental drift-fighting toggles (0ba4d64)
 - **calibration:** Retire geometry-shift restart and witness-correction toggles (1440cbe)
 - style(calibration): satisfy tidy checks in the time-offset estimator (86bb359)
+- **calibration:** Retire the micro-reanchor experiment (7ce1a9f)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -276,6 +278,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Make geometry confidence weighting opt-in, default off (4d44b00)
 - **hotreload:** Verify the overlay handover and roll back bad staged builds (3032e9f)
 - **calibration:** Break confidence fusion out of a stale cross-session seed (55f3a57)
+- **calibration:** Persist lock-relative mode and default continuous style to locked (153f53f)
 
 ---
 
