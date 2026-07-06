@@ -29,7 +29,8 @@ TEST(TrackingStyleTest, PresetMappingMatchesSupportedStyles)
 	ApplyTrackingStylePreset(ctx, TrackingStyle::Continuous);
 	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::Off);
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);
-	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON)
+	    << "Continuous defaults to the locked relative pose";
 	EXPECT_TRUE(TrackingStyleRunsContinuous(ctx.trackingStyle));
 
 	ApplyTrackingStylePreset(ctx, TrackingStyle::LockedWithRecovery);
@@ -64,16 +65,18 @@ TEST(TrackingStyleTest, LockRelativeModeHelpersUseExplicitOnOffOnly)
 TEST(TrackingStyleTest, PreservingPresetKeepsManualLockRelativeOverride)
 {
 	CalibrationContext ctx;
-	ctx.lockRelativePositionMode = CalibrationContext::LockMode::ON;
+	ctx.lockRelativePositionMode = CalibrationContext::LockMode::OFF;
 
 	ApplyTrackingStylePresetPreservingLockMode(ctx, TrackingStyle::Continuous);
 
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Continuous);
 	EXPECT_EQ(ctx.headMount.mode, HeadMountMode::Off);
-	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF)
+	    << "an explicit OFF survives the ON-defaulting Continuous preset";
 
 	ApplyTrackingStylePreset(ctx, TrackingStyle::Continuous);
-	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON)
+	    << "the plain preset overwrites with the style default";
 }
 
 TEST(TrackingStyleTest, HmdPoseEventRecoveryIsPlainContinuousOnly)

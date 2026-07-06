@@ -124,7 +124,10 @@ inline void ApplyTrackingStylePreset(CalibrationContext& ctx, TrackingStyle styl
 		case TrackingStyle::Continuous:
 			ctx.headMount.mode = HeadMountMode::Off;
 			ctx.headMount.allowRawHmdFallback = true;
-			ctx.lockRelativePositionMode = CalibrationContext::LockMode::OFF;
+			// Continuous defaults to the locked relative pose: once a rel-pose
+			// is banked, holding it tracks a co-moving pair far better than
+			// re-deriving the alignment from the sample buffer every tick.
+			ctx.lockRelativePositionMode = CalibrationContext::LockMode::ON;
 			break;
 		case TrackingStyle::LockedWithRecovery:
 			ctx.headMount.mode = HeadMountMode::DriverSynth;

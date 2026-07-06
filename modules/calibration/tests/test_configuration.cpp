@@ -127,6 +127,64 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_FALSE(dst.floorEnabled);
 }
 
+// ---------------------------------------------------------------------------
+// The lock mode is a user setting with per-style defaults, so it must be
+// written on every save and must survive the tracking-style preset that
+// ParseProfile applies at the end of a load. Regression: the preset used to
+// clobber the loaded value, silently reverting the user's choice on every
+// restart (and the skip-if-default save then erased the key entirely).
+// ---------------------------------------------------------------------------
+TEST(ConfigurationTest, RoundTripPreservesExplicitLockModeAgainstStylePresets)
+{
+	// Continuous defaults ON; an explicit OFF must survive the round-trip.
+	CalibrationContext contOff;
+	contOff.referenceTrackingSystem = "lighthouse";
+	contOff.targetTrackingSystem = "oculus";
+	contOff.validProfile = true;
+	ApplyTrackingStylePreset(contOff, TrackingStyle::Continuous);
+	contOff.lockRelativePositionMode = CalibrationContext::LockMode::OFF;
+
+	std::stringstream ioOff;
+	WriteProfile(contOff, ioOff);
+	EXPECT_NE(ioOff.str().find("lock_relative_position_mode"), std::string::npos)
+	    << "lock mode is always written; an absent key would fall back to the style default";
+
+	CalibrationContext dstOff;
+	ParseProfile(dstOff, ioOff);
+	EXPECT_EQ(dstOff.trackingStyle, TrackingStyle::Continuous);
+	EXPECT_EQ(dstOff.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
+
+	// Manual defaults OFF; an explicit ON must survive the round-trip.
+	CalibrationContext manOn;
+	manOn.referenceTrackingSystem = "lighthouse";
+	manOn.targetTrackingSystem = "oculus";
+	manOn.validProfile = true;
+	ApplyTrackingStylePreset(manOn, TrackingStyle::Manual);
+	manOn.lockRelativePositionMode = CalibrationContext::LockMode::ON;
+
+	std::stringstream ioOn;
+	WriteProfile(manOn, ioOn);
+	CalibrationContext dstOn;
+	ParseProfile(dstOn, ioOn);
+	EXPECT_EQ(dstOn.trackingStyle, TrackingStyle::Manual);
+	EXPECT_EQ(dstOn.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+}
+
+TEST(ConfigurationTest, ProfileWithoutLockKeyGetsContinuousStyleDefaultOn)
+{
+	// Profiles written while the save path skipped default-valued keys carry
+	// no lock key at all; those loads take the style-preset default, which
+	// for Continuous is ON.
+	std::string json = MakeMinimalProfile(/*schemaVersion=*/7, "\"tracking_style\":1");
+
+	CalibrationContext ctx;
+	std::stringstream io(json);
+	ParseProfile(ctx, io);
+
+	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Continuous);
+	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
+}
+
 // v40 freeze-all-tracking: the "Include headset" preference persists; the active
 // freeze state is runtime-only and must never be written to the profile (a
 // persisted freeze would look like totally broken tracking on next launch).

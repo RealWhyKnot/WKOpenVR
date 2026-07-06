@@ -782,15 +782,18 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	}
 	// Lock-mode remains loadable for old profiles, but AUTO is no longer an
 	// active user-facing behavior. New presets only write OFF or ON.
+	bool loadedLockMode = false;
 	if (obj["lock_relative_position_mode"].is<double>()) {
 		const int raw = (int)obj["lock_relative_position_mode"].get<double>();
 		if (raw >= 0 && raw <= 2) {
 			ctx.lockRelativePositionMode = ExplicitLockModeFromRaw(raw);
+			loadedLockMode = true;
 		}
 	}
 	else if (obj["lock_relative_position"].is<bool>()) {
 		ctx.lockRelativePositionMode = obj["lock_relative_position"].get<bool>() ? CalibrationContext::LockMode::ON
 		                                                                         : CalibrationContext::LockMode::OFF;
+		loadedLockMode = true;
 	}
 	if (obj["relative_transform"].is<picojson::object>()) {
 		auto relTransform = obj["relative_transform"].get<picojson::object>();
@@ -876,7 +879,14 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (!loadedTrackingStyle) {
 		ctx.trackingStyle = InferTrackingStyleFromConfig(ctx);
 	}
-	ApplyTrackingStylePreset(ctx, ctx.trackingStyle);
+	// A lock mode carried by the profile is the user's choice; the style
+	// preset only supplies the lock default when the profile has none.
+	if (loadedLockMode) {
+		ApplyTrackingStylePresetPreservingLockMode(ctx, ctx.trackingStyle);
+	}
+	else {
+		ApplyTrackingStylePreset(ctx, ctx.trackingStyle);
+	}
 
 	// Load-time wedge guard, completion. The relative-pose state and
 	// refToTargetPose are read further down in ParseProfile, so we can only
@@ -1039,15 +1049,15 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// relative_pos_calibrated is profile state (was the rel-pose calibrated?), not a
 	// user-tunable setting -- always emit so a load can tell the difference between
 	// "no rel-pose data" and "rel-pose data, freshly initialised". The lock mode
-	// is a setting; skip-if-default applies.
+	// is also always emitted: each tracking style carries its own lock default,
+	// so "key absent" is ambiguous and a load would fall back to the style
+	// preset instead of the user's choice.
 	profile["relative_pos_calibrated"].set<bool>(ctx.relativePosCalibrated);
 	const auto explicitLockMode = ctx.lockRelativePositionMode == CalibrationContext::LockMode::ON
 	                                  ? CalibrationContext::LockMode::ON
 	                                  : CalibrationContext::LockMode::OFF;
-	if (explicitLockMode != defaults.lockRelativePositionMode) {
-		double lockMode = (double)(int)explicitLockMode;
-		profile["lock_relative_position_mode"].set<double>(lockMode);
-	}
+	double lockModeValue = (double)(int)explicitLockMode;
+	profile["lock_relative_position_mode"].set<double>(lockModeValue);
 	profile["relative_transform"].set<picojson::object>(refToTarget);
 
 	// Multi-ecosystem extras. Always emit when non-empty; skip the key entirely
