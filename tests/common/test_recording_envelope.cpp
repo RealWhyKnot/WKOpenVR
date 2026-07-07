@@ -1,3 +1,4 @@
+#include "BuildChannel.h"
 #include "RecordingEnvelope.h"
 
 #include <gtest/gtest.h>
@@ -160,6 +161,10 @@ TEST(RecordingBannerTest, AnnotationFormat)
 	EXPECT_EQ("# [1.500] budget: rows=3\n", recording::FormatAnnotation(1.5, "budget: rows=3"));
 }
 
+// RecordingEnvelope::Open compiles to a stub outside dev-channel builds (no
+// auto-recordings in release binaries), so the write-path tests only exist on
+// the dev channel; release-channel builds pin the stub behavior instead.
+#if WKOPENVR_BUILD_IS_DEV
 TEST(RecordingEnvelopeTest, WriteReadRoundTrip)
 {
 	const fs::path dir = MakeTestDir("roundtrip");
@@ -194,6 +199,7 @@ TEST(RecordingEnvelopeTest, WriteReadRoundTrip)
 
 	fs::remove_all(dir);
 }
+#endif // WKOPENVR_BUILD_IS_DEV
 
 TEST(RecordingEnvelopeTest, PruneAtOpenSparesSubdirectories)
 {
@@ -227,6 +233,7 @@ TEST(RecordingEnvelopeTest, PruneAtOpenSparesSubdirectories)
 	fs::remove_all(dir);
 }
 
+#if WKOPENVR_BUILD_IS_DEV
 TEST(RecordingEnvelopeTest, ByteCapStopsRowsWithAnnotation)
 {
 	const fs::path dir = MakeTestDir("bytecap");
@@ -257,3 +264,23 @@ TEST(RecordingEnvelopeTest, ByteCapStopsRowsWithAnnotation)
 
 	fs::remove_all(dir);
 }
+#else
+TEST(RecordingEnvelopeTest, ReleaseChannelStubsOpen)
+{
+	const fs::path dir = MakeTestDir("releasestub");
+
+	recording::EnvelopeOptions options;
+	options.prefix = L"sample_rec";
+	options.extension = L"csv";
+	options.schemaBanner = "sample_rec_v1";
+	options.directoryOverride = dir.wstring();
+
+	recording::RecordingEnvelope envelope;
+	EXPECT_FALSE(envelope.Open(options));
+	EXPECT_FALSE(envelope.IsOpen());
+	EXPECT_FALSE(envelope.WriteRow("0,1.0"));
+	EXPECT_TRUE(fs::is_empty(dir)); // release builds must not create recording files
+
+	fs::remove_all(dir);
+}
+#endif // WKOPENVR_BUILD_IS_DEV

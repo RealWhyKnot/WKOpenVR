@@ -121,9 +121,16 @@ jobs:
           .\lint.ps1 -Check -ChangedOnly -ChangedBase $base
 
   build:
-    name: cmake + msbuild (windows)
+    name: cmake + msbuild (windows, ${{ matrix.channel }})
     runs-on: windows-2025-vs2026
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The release leg compiles with WKOPENVR_BUILD_IS_DEV=0 so channel-gated
+        # code paths (and their tests) break here instead of on the next tag's
+        # Release run.
+        channel: [dev, release]
 
     steps:
       - name: Checkout
@@ -133,6 +140,21 @@ jobs:
 
       - name: Checkout submodules (with retry)
         uses: ./.github/actions/checkout-submodules
+
+      - name: Stamp release build channel
+        if: matrix.channel == 'release'
+        # Mirrors release.yml's channel stamp; must exist before Configure so
+        # CMake keeps it instead of writing the dev default.
+        shell: pwsh
+        run: |
+          Set-Content -Path core/src/common/BuildChannel.h -Value @"
+          // Overwritten by release.yml with the shared binary's per-build stamp.
+          #pragma once
+
+          #define WKOPENVR_BUILD_STAMP "0.0.0.0-CI"
+          #define WKOPENVR_BUILD_CHANNEL "release"
+          #define WKOPENVR_BUILD_IS_DEV 0
+          "@
 
       - name: Validate workflow / script PowerShell syntax
         # Catches the class of latent PowerShell parser bug that took down recent
@@ -161,9 +183,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build
-          key: build-vs2026-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', 'core/src/**/*.cpp', 'core/src/**/*.h', 'modules/**/*.cpp', 'modules/**/*.h', 'modules/**/*.cs', '.gitmodules', 'version.txt') }}
+          key: build-vs2026-${{ runner.os }}-${{ matrix.channel }}-${{ hashFiles('**/CMakeLists.txt', 'core/src/**/*.cpp', 'core/src/**/*.h', 'modules/**/*.cpp', 'modules/**/*.h', 'modules/**/*.cs', '.gitmodules', 'version.txt') }}
           restore-keys: |
-            build-vs2026-${{ runner.os }}-
+            build-vs2026-${{ runner.os }}-${{ matrix.channel }}-
 
       - name: Cache NuGet packages
         uses: actions/cache@v6
@@ -177,7 +199,7 @@ jobs:
         # The minhook submodule declares cmake_minimum_required(2.8.12) which
         # CMake 4.x rejects. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 lets us configure
         # without forking. -Wno-dev silences developer-mode warnings from minhook.
-        run: cmake -G "Visual Studio 18 2026" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_CAPTIONS_VULKAN=OFF -Wno-dev
+        run: cmake -G "Visual Studio 18 2026" -A x64 -B build -S . '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' -DWKOPENVR_CAPTIONS_CUDA=OFF -DWKOPENVR_CAPTIONS_VULKAN=OFF -DWKOPENVR_RELEASE_BUILD=${{ matrix.channel == 'release' && 'ON' || 'OFF' }} -Wno-dev
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -194,6 +216,7 @@ jobs:
           }
 
       - name: Run captions host self-test
+        if: matrix.channel == 'dev'
         # Release builds gate captions off (disabled-in-release.flag), so this dev
         # build is the only place the captions host smoke-tests. The host links as
         # SUBSYSTEM:WINDOWS, so `& exe` would start it detached without waiting;
@@ -209,6 +232,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "Captions host self-test failed (exit $($p.ExitCode))" }
 
       - name: Stage artifacts
+        if: matrix.channel == 'dev'
         shell: pwsh
         run: |
           $stage = "stage"
@@ -225,6 +249,7 @@ jobs:
           }
 
       - name: Upload artifacts
+        if: matrix.channel == 'dev'
         uses: actions/upload-artifact@v7
         with:
           name: pairdriver-${{ github.sha }}
