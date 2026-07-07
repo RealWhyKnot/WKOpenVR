@@ -1,0 +1,16 @@
+{
+  "relocs": 15.0,
+  "snap_suppressed": 2.0,
+  "holds": 1.0,
+  "reanchors": 0.0,
+  "destructive_clears": 0.0,
+  "samples_evicted": 367.0,
+  "warm_restart_snaps": 1.0,
+  "sub_threshold_relocs": 0.0,
+  "rows": 45768.0,
+  "accepts": 2261.0,
+  "applied_path_cm": 1903.84,
+  "peak_step_cm": 368.854,
+  "net_drift_mag_cm": 348.233,
+  "sub_threshold_residual_cm": 0.0
+}

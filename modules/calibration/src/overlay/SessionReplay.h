@@ -29,6 +29,7 @@
 #include "MotionRecording.h"
 #include "RecoveryPolicy.h"
 #include "SnapSuppression.h"
+#include "WarmRestart.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -331,6 +332,7 @@ struct SessionReplayResult
 	int recoveryReanchors = 0;
 	int destructiveClears = 0;
 	int samplesEvicted = 0;
+	int warmRestartSnaps = 0;
 	int subThresholdRelocs = 0;
 	double subThresholdResidualCm = 0.0; // uncorrected world offset left behind
 	// Applied-transform trajectory (net movement of the world).
@@ -401,22 +403,60 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 		double time = 0.0;
 		bool hasDelta = false;
 		Eigen::Vector3d deltaM = Eigen::Vector3d::Zero();
+		// Live witness displacement from the snap_corroboration_inputs
+		// annotation, written at the runtime decision point. Row-cadence
+		// finite differences overstate the witness delta (rows are much
+		// coarser than detector ticks), which flips live-classified snaps
+		// into "witness moved" holds in replay -- so classification prefers
+		// the recorded value whenever the session logged one.
+		bool hasLiveTrackerDelta = false;
+		double liveTrackerDeltaM = -1.0;
+	};
+	// Warm-restart engages (put-headset-back-on). Replayed so the away-gap
+	// sample eviction behaves as it did live.
+	struct AwayEvent
+	{
+		double time = 0.0;
+		double awayForS = 0.0;
 	};
 	std::vector<RelocEvent> relocEvents;
+	std::vector<AwayEvent> awayEvents;
 	for (const auto& event : rec.annotations) {
-		if (event.key != "hmd_relocalization_detected") continue;
-		RelocEvent e;
-		e.time = event.time;
-		double dx = 0.0, dy = 0.0, dz = 0.0;
-		const std::size_t pos = event.raw.find("dx=");
-		if (pos != std::string::npos &&
-		    std::sscanf(event.raw.c_str() + pos, "dx=%lf dy=%lf dz=%lf", &dx, &dy, &dz) == 3) {
-			e.deltaM = Eigen::Vector3d(dx, dy, dz);
-			e.hasDelta = true;
+		if (event.key == "hmd_relocalization_detected") {
+			RelocEvent e;
+			e.time = event.time;
+			double dx = 0.0, dy = 0.0, dz = 0.0;
+			const std::size_t pos = event.raw.find("dx=");
+			if (pos != std::string::npos &&
+			    std::sscanf(event.raw.c_str() + pos, "dx=%lf dy=%lf dz=%lf", &dx, &dy, &dz) == 3) {
+				e.deltaM = Eigen::Vector3d(dx, dy, dz);
+				e.hasDelta = true;
+			}
+			relocEvents.push_back(e);
 		}
-		relocEvents.push_back(e);
+		else if (event.key == "snap_corroboration_inputs") {
+			// Logged within the same detector tick as its reloc event; attach
+			// to the most recent one.
+			double trackerDelta = -1.0;
+			const std::size_t pos = event.raw.find("headTrackerDelta=");
+			if (pos != std::string::npos &&
+			    std::sscanf(event.raw.c_str() + pos, "headTrackerDelta=%lf", &trackerDelta) == 1 &&
+			    !relocEvents.empty() && event.time - relocEvents.back().time < 0.25) {
+				relocEvents.back().hasLiveTrackerDelta = true;
+				relocEvents.back().liveTrackerDeltaM = trackerDelta;
+			}
+		}
+		else if (event.key == "[warm-restart][snap]") {
+			AwayEvent e;
+			e.time = event.time;
+			const std::size_t pos = event.raw.find("away_for_s=");
+			if (pos != std::string::npos && std::sscanf(event.raw.c_str() + pos, "away_for_s=%lf", &e.awayForS) == 1) {
+				awayEvents.push_back(e);
+			}
+		}
 	}
 	std::size_t nextReloc = 0;
+	std::size_t nextAway = 0;
 
 	const std::size_t window = opts.maxContinuousSamples > 0 ? opts.maxContinuousSamples : 200;
 	const std::size_t drop = std::max<std::size_t>(1, window / 10);
@@ -518,23 +558,41 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 			}
 		}
 
+		// 3.5 Warm-restart engages: mirror the runtime's away-gap eviction so
+		// pre-gap samples leave the window in replay exactly as they did live.
+		while (nextAway < awayEvents.size() && awayEvents[nextAway].time <= now) {
+			++res.warmRestartSnaps;
+			if (opts.evictSamplesOnFrameJump &&
+			    awayEvents[nextAway].awayForS >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds) {
+				res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
+			}
+			++nextAway;
+		}
+
 		// 4. Relocalization handling: annotation events (preferred, exact
 		// live-measured delta) plus any column-flagged row not covered by one.
 		bool relocThisRow = row.relocDetected;
 		Eigen::Vector3d relocDeltaVec = hmdDeltaVec;
 		double relocDeltaM = hmdDeltaM;
+		bool haveLiveTrackerDelta = false;
+		double liveTrackerDeltaM = -1.0;
 		while (nextReloc < relocEvents.size() && relocEvents[nextReloc].time <= now) {
 			relocThisRow = true;
 			if (relocEvents[nextReloc].hasDelta) {
 				relocDeltaVec = relocEvents[nextReloc].deltaM;
 				relocDeltaM = relocDeltaVec.norm();
 			}
+			if (relocEvents[nextReloc].hasLiveTrackerDelta) {
+				haveLiveTrackerDelta = true;
+				liveTrackerDeltaM = relocEvents[nextReloc].liveTrackerDeltaM;
+			}
 			++nextReloc;
 		}
 		if (relocThisRow && relocDeltaM >= 0.0) {
 			++res.relocsSeen;
+			const double gateTrackerDeltaM = haveLiveTrackerDelta ? liveTrackerDeltaM : trackerDeltaM;
 			const bool snap =
-			    snap_suppression::IsJumpClassifiedAsSnap(HeadMountMode::Corroborate, relocDeltaM, trackerDeltaM);
+			    snap_suppression::IsJumpClassifiedAsSnap(HeadMountMode::Corroborate, relocDeltaM, gateTrackerDeltaM);
 			if (snap) {
 				// Live: fast re-anchor, world holds; no residual introduced.
 				++res.snapSuppressed;
@@ -543,9 +601,9 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 				}
 			}
 			else if (relocDeltaM >= opts.relocRecoverThresholdM) {
-				const bool witnessValid = trackerDeltaM >= 0.0;
+				const bool witnessValid = gateTrackerDeltaM >= 0.0;
 				const bool witnessSaysHeadMoved =
-				    witnessValid && trackerDeltaM >= snap_suppression::kSnapTrackerMaxDispM;
+				    witnessValid && gateTrackerDeltaM >= snap_suppression::kSnapTrackerMaxDispM;
 				switch (spacecal::recovery::ChooseRelocRecoveryAction(witnessValid, witnessSaysHeadMoved,
 				                                                      res.seedApplied,
 				                                                      /*warmRestartFailed=*/false)) {

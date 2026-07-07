@@ -170,6 +170,42 @@ TEST(CalibrationCalcTest, EvictSamplesBeforeKeepsSeedWhenBufferEmpties)
 	EXPECT_LT((calc.Transformation().matrix() - profile.matrix()).norm(), 1e-12);
 }
 
+// The 2026-07-07 field regression class: a headset re-anchor moves the frame
+// the reference poses report in, so samples straddling the jump disagree
+// about the calibration. A window that mixes both frames solves to neither;
+// evicting the pre-jump half restores a clean fit to the current frame.
+TEST(CalibrationCalcTest, MixedFrameWindowPoisonsSolveUntilEvicted)
+{
+	const Eigen::AffineCompact3d before = MakeTransform(0.0, 0.0, 0.0, Eigen::Vector3d(0.20, 0.0, 0.0));
+	Eigen::AffineCompact3d after = before;
+	after.translation().x() += 2.0; // 2 m universe flip
+
+	CalibrationCalc calc;
+	for (auto& s : MakeSamplePairs(before, kSampleCount)) {
+		calc.PushSample(s);
+	}
+	const double jumpTime = 100.0;
+	for (auto& s : MakeSamplePairs(after, kSampleCount, /*seed=*/43)) {
+		s.timestamp += jumpTime;
+		calc.PushSample(s);
+	}
+
+	// Mixed window: no clean current-frame fit can come out of it -- either
+	// the quality gate rejects the solve outright (observed behavior) or any
+	// accepted result lands far from the current frame.
+	const bool mixedAccepted = calc.ComputeOneshot(false);
+	if (mixedAccepted) {
+		EXPECT_GT((calc.Transformation().translation() - after.translation()).norm(), 0.5)
+		    << "a window mixing two reference frames must not pass for a clean current-frame fit";
+	}
+
+	// Evicting the dead-frame half restores the clean fit.
+	EXPECT_EQ((size_t)kSampleCount, calc.EvictSamplesBefore(jumpTime));
+	ASSERT_TRUE(calc.ComputeOneshot(false));
+	EXPECT_LT((calc.Transformation().translation() - after.translation()).norm(), 5e-3);
+	EXPECT_LT(RotationErrorDegrees(calc.Transformation(), after), 0.5);
+}
+
 TEST(CalibrationCalcTest, EvictSamplesBeforeClearsStaleFrozenRotationBuffer)
 {
 	CalibrationCalc calc;

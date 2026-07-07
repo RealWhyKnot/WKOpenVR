@@ -264,6 +264,101 @@ TEST(SessionReplayTest, SubThresholdJumpAccruesResidual)
 	EXPECT_LT(baseline.peakAppliedStepCm, 1.0);
 }
 
+// A recorded snap_corroboration_inputs annotation carries the exact witness
+// delta the live gate saw; replay must classify with it and run the same
+// dead-frame sample eviction the runtime does. Guards the 2026-07-07 field
+// regression class end-to-end at the replay layer.
+TEST(SessionReplayTest, RecordedCorroborationDrivesSnapEviction)
+{
+	SessionSpec spec;
+	spec.rows = 600;
+	spec.relocRow = 300;
+	spec.relocJumpM = 2.0;
+	auto rec = MakeSessionRecording(spec);
+	const double tJump = 300.0 / 90.0;
+	rec.annotations.push_back({tJump, "hmd_relocalization_detected",
+	                           "# [3.333] hmd_relocalization_detected: dx=2.0000 dy=0.0000 dz=0.0000 dt=0.5"
+	                           " (hmdDelta=2.000 bodyMax=0.005 bsMax=0.0000 bsCount=3)"});
+	rec.annotations.push_back(
+	    {tJump + 0.001, "snap_corroboration_inputs",
+	     "# [3.334] snap_corroboration_inputs: hmMode=0 deviceID=2 poseIsValid=1 connected=1 result=200"
+	     " havePrevTracker=1 headTrackerDelta=0.0050 hmdDelta=2.000"});
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	EXPECT_EQ(res.relocsSeen, 1);
+	EXPECT_EQ(res.snapSuppressed, 1);
+	EXPECT_EQ(res.destructiveClears, 0);
+	EXPECT_GE(res.samplesEvicted, 150) << "pre-jump samples must leave the window at the snap";
+
+	// Eviction disabled reproduces the pre-fix behavior for A/B runs.
+	opts.evictSamplesOnFrameJump = false;
+	const auto legacy = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(legacy.succeeded) << legacy.error;
+	EXPECT_EQ(legacy.snapSuppressed, 1);
+	EXPECT_EQ(legacy.samplesEvicted, 0);
+}
+
+// When the live gate recorded a witness that DID move, replay must not
+// re-classify the jump as a snap from its own coarse row-cadence deltas
+// (the recording's tracker is stationary row-to-row here, which the old
+// recomputation would have read as a corroborated snap).
+TEST(SessionReplayTest, RecordedWitnessMotionOverridesRowDeltas)
+{
+	SessionSpec spec;
+	spec.rows = 600;
+	spec.relocRow = 300;
+	spec.relocJumpM = 2.0;
+	auto rec = MakeSessionRecording(spec);
+	const double tJump = 300.0 / 90.0;
+	rec.annotations.push_back({tJump, "hmd_relocalization_detected",
+	                           "# [3.333] hmd_relocalization_detected: dx=2.0000 dy=0.0000 dz=0.0000 dt=0.5"
+	                           " (hmdDelta=2.000 bodyMax=0.500 bsMax=0.0000 bsCount=3)"});
+	rec.annotations.push_back(
+	    {tJump + 0.001, "snap_corroboration_inputs",
+	     "# [3.334] snap_corroboration_inputs: hmMode=0 deviceID=2 poseIsValid=1 connected=1 result=200"
+	     " havePrevTracker=1 headTrackerDelta=0.5000 hmdDelta=2.000"});
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	EXPECT_EQ(res.snapSuppressed, 0) << "live witness delta says the head moved; not a snap";
+	EXPECT_EQ(res.recoveryHolds, 1);
+	EXPECT_EQ(res.samplesEvicted, 0);
+	EXPECT_EQ(res.destructiveClears, 0);
+}
+
+// Warm-restart engages recorded in the log drive the same away-gap eviction
+// rule the runtime applies: long gaps evict, short breaks keep their samples.
+TEST(SessionReplayTest, WarmRestartAwayGapEvictsThroughReplay)
+{
+	SessionSpec spec;
+	spec.rows = 500;
+	auto rec = MakeSessionRecording(spec);
+	rec.annotations.push_back(
+	    {300.0 / 90.0, "[warm-restart][snap]",
+	     "# [3.333] [warm-restart][snap] away_for_s=82.0 state=5 grace_samples=100"
+	     " profile_magnitude_cm=342.31 pos_delta_m=0.000 mad_at_snap_mm=4.120 path=proximity_and_time"});
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	const auto longAway = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(longAway.succeeded) << longAway.error;
+	EXPECT_EQ(longAway.warmRestartSnaps, 1);
+	EXPECT_GE(longAway.samplesEvicted, 150);
+
+	rec.annotations.back().raw =
+	    "# [3.333] [warm-restart][snap] away_for_s=19.5 state=5 grace_samples=100"
+	    " profile_magnitude_cm=342.31 pos_delta_m=0.000 mad_at_snap_mm=4.120 path=proximity_and_time";
+	const auto shortAway = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(shortAway.succeeded) << shortAway.error;
+	EXPECT_EQ(shortAway.warmRestartSnaps, 1);
+	EXPECT_EQ(shortAway.samplesEvicted, 0) << "sub-threshold breaks keep their samples";
+}
+
 // A cross-session stale seed metres from the session's truth must not survive
 // the fusion's seed prior: the stale-seed breaker adopts the solver's answer
 // after a few consecutive metre-scale disagreements.
@@ -323,9 +418,9 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		std::cout << "[session-replay] " << name << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
 		          << " evict=" << (opts.evictSamplesOnFrameJump ? 1 : 0) << " samples_evicted=" << res.samplesEvicted
-		          << " seed_applied=" << (res.seedApplied ? 1 : 0) << " rows=" << res.rowsProcessed
-		          << " accepts=" << res.accepts << " flips=" << res.lockFlips << " panics=" << res.panicUnlocks
-		          << " settled_pct=" << res.settledPct << " relocs=" << res.relocsSeen
+		          << " warm_restart_snaps=" << res.warmRestartSnaps << " seed_applied=" << (res.seedApplied ? 1 : 0)
+		          << " rows=" << res.rowsProcessed << " accepts=" << res.accepts << " flips=" << res.lockFlips
+		          << " panics=" << res.panicUnlocks << " settled_pct=" << res.settledPct << " relocs=" << res.relocsSeen
 		          << " snap_suppressed=" << res.snapSuppressed << " holds=" << res.recoveryHolds
 		          << " reanchors=" << res.recoveryReanchors << " destructive_clears=" << res.destructiveClears
 		          << " sub_threshold_relocs=" << res.subThresholdRelocs
