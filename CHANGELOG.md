@@ -279,6 +279,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **hotreload:** Verify the overlay handover and roll back bad staged builds (3032e9f)
 - **calibration:** Break confidence fusion out of a stale cross-session seed (55f3a57)
 - **calibration:** Persist lock-relative mode and default continuous style to locked (153f53f)
+- **calibration:** Evict dead-frame samples on frame-moving recoveries (f7d072a)
 
 ---
 
