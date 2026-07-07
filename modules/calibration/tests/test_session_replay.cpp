@@ -300,6 +300,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	opts.relocRecoverThresholdM =
 	    EnvDoubleLocal("WKOPENVR_REPLAY_SESSION_RELOC_RECOVER_CM", opts.relocRecoverThresholdM * 100.0) / 100.0;
 	opts.precisionWeightedRelPose = EnvFlagLocal("WKOPENVR_REPLAY_PRECISION_WEIGHT", opts.precisionWeightedRelPose);
+	opts.evictSamplesOnFrameJump = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_EVICT", opts.evictSamplesOnFrameJump);
 
 	std::string paths = rawPaths;
 	std::size_t start = 0;
@@ -321,6 +322,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		}
 		std::cout << "[session-replay] " << name << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
+		          << " evict=" << (opts.evictSamplesOnFrameJump ? 1 : 0) << " samples_evicted=" << res.samplesEvicted
 		          << " seed_applied=" << (res.seedApplied ? 1 : 0) << " rows=" << res.rowsProcessed
 		          << " accepts=" << res.accepts << " flips=" << res.lockFlips << " panics=" << res.panicUnlocks
 		          << " settled_pct=" << res.settledPct << " relocs=" << res.relocsSeen

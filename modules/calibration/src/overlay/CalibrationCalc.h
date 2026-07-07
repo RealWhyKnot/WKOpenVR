@@ -301,6 +301,16 @@ public:
 		if (!m_samples.empty()) m_samples.pop_front();
 	}
 
+	// Drop every sample collected before the cutoff (glfwGetTime seconds, the
+	// same clock PushSample stamps). For disturbances that move the reference
+	// frame itself -- a headset SLAM re-anchor, or a long off-head gap where
+	// one may have happened -- older samples describe a dead coordinate frame
+	// and poison every solve until they age out of the window. Keeps the seed,
+	// validity, and banked relpose: the saved-profile re-apply plus the
+	// warm-restart grace window carries tracking while the buffer refills.
+	// Returns the number of samples dropped.
+	size_t EvictSamplesBefore(double timestamp);
+
 	// Two-phase one-shot calibration support. The Calibration.cpp state machine
 	// runs Begin → Rotation → Translation; at the Rotation→Translation
 	// transition we move the rotation-phase samples into m_rotationFrozen so

@@ -984,7 +984,11 @@ void TickHmdRelocalizationDetectorImpl(double now)
 			// the warm-restart engage (see Calibration.cpp::ShouldEngage) but
 			// fired from the snap classification rather than the proximity
 			// sensor. Fresh snap episode -> reset the bounded-retry counter.
+			// The snap moved the HMD's world frame, so samples collected
+			// against the old frame are dead weight -- drop them instead of
+			// letting them poison the solve window while they age out.
 			CalCtx.warmRestartReanchorCount = 0;
+			EvictDeadFrameSamples(CalCtx, "slam_snap");
 			ArmReanchorToProfile(CalCtx);
 		}
 		// Not a corroborated snap. Choose hold / gentle re-anchor / (last
@@ -1017,6 +1021,11 @@ void TickHmdRelocalizationDetectorImpl(double now)
 				         hmdDelta, headTrackerDelta, (int)witnessValid);
 				Metrics::WriteLogAnnotation(rbuf);
 				CalCtx.warmRestartReanchorCount = 0; // fresh reloc episode
+				// The reloc detector already established an HMD frame jump with
+				// still body trackers, so pre-jump samples are dead weight here
+				// exactly as in the corroborated-snap path -- the witness being
+				// unavailable changes confidence, not the frame geometry.
+				EvictDeadFrameSamples(CalCtx, "reloc_reanchor");
 				ArmReanchorToProfile(CalCtx);
 			}
 			else { // DestructiveClear -- last resort: no saved profile to fall back to
@@ -1180,6 +1189,24 @@ bool UndoLastAutoRecovery()
 void DismissAutoRecoveryBanner()
 {
 	g_relocDetector.autoRecoverBannerDismissed = true;
+}
+
+size_t EvictDeadFrameSamples(CalibrationContext& ctx, const char* reason)
+{
+	// Samples are stamped with glfwGetTime at collection, so "before now" on
+	// the same clock is exactly the pre-disturbance set.
+	const double cutoff = glfwGetTime();
+	const size_t evicted = calibration.EvictSamplesBefore(cutoff);
+	size_t extrasEvicted = 0;
+	for (auto& extra : ctx.additionalCalibrations) {
+		if (extra.calc) extrasEvicted += extra.calc->EvictSamplesBefore(cutoff);
+	}
+	if (evicted > 0 || extrasEvicted > 0) {
+		char buf[160];
+		snprintf(buf, sizeof buf, "samples_evicted: n=%zu extras_n=%zu reason=%s", evicted, extrasEvicted, reason);
+		Metrics::WriteLogAnnotation(buf);
+	}
+	return evicted + extrasEvicted;
 }
 
 // Wedge recovery -- the canonical wipe routine. Used by both the Quest

@@ -29,6 +29,15 @@ constexpr double kMinAwaySeconds = 5.0;
 // long the user was away).
 constexpr double kMaxAwaySeconds = 4.0 * 3600.0;
 
+// Away gap long enough that an inside-out headset may have re-anchored its
+// world frame while off-head. Samples collected before such a gap describe
+// the pre-reanchor frame and poison the solve window until they age out
+// (field log 2026-07-07: an 82 s gap left an 83 s hole inside the 100-sample
+// window and cm-scale candidate churn for ~10 minutes), so the engage path
+// evicts them. Kept well above kMinAwaySeconds: brief breaks rarely re-anchor
+// and their samples are still coherent.
+constexpr double kSampleEvictionAwayGapSeconds = 30.0;
+
 // HMD position-jump threshold for the single-signal fast-path. When the
 // activity-level signal fails (Quest variants over Link with flaky
 // proximity, IMU stillness threshold not met on a wobbly desk, etc.), a

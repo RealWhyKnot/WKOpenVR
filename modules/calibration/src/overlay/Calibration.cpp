@@ -1509,6 +1509,13 @@ void CalibrationTick(double time)
 					// and pins the last-consumed err timestamp so pre-snap
 					// retargeting errors don't feed the post-snap mean.
 					ctx.warmRestartReanchorCount = 0; // fresh warm-restart episode
+					// A long off-head gap is long enough for an inside-out
+					// headset to re-anchor its world frame; samples from
+					// before the gap would then poison the solve window until
+					// they age out. Short breaks keep their samples.
+					if (awayFor >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds) {
+						EvictDeadFrameSamples(ctx, "away_gap");
+					}
 					ArmReanchorToProfile(ctx);
 					const double mag = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
 					                             ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +

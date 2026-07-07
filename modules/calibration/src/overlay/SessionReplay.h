@@ -308,6 +308,10 @@ struct SessionReplayOptions
 	// Relocalization recovery. Jumps >= threshold take the recovery path;
 	// smaller ones are the live-uncorrected band.
 	double relocRecoverThresholdM = 0.30; // kRelocAutoRecoverThresholdM
+	// Mirror the runtime's dead-frame sample eviction: a classified snap or
+	// reanchor drops samples collected before the jump (they describe the
+	// pre-reanchor frame). Off = pre-eviction runtime behavior, for A/B.
+	bool evictSamplesOnFrameJump = true;
 };
 
 struct SessionReplayResult
@@ -326,6 +330,7 @@ struct SessionReplayResult
 	int recoveryHolds = 0;
 	int recoveryReanchors = 0;
 	int destructiveClears = 0;
+	int samplesEvicted = 0;
 	int subThresholdRelocs = 0;
 	double subThresholdResidualCm = 0.0; // uncorrected world offset left behind
 	// Applied-transform trajectory (net movement of the world).
@@ -533,6 +538,9 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 			if (snap) {
 				// Live: fast re-anchor, world holds; no residual introduced.
 				++res.snapSuppressed;
+				if (opts.evictSamplesOnFrameJump) {
+					res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
+				}
 			}
 			else if (relocDeltaM >= opts.relocRecoverThresholdM) {
 				const bool witnessValid = trackerDeltaM >= 0.0;
@@ -546,6 +554,9 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 						break;
 					case spacecal::recovery::RecoveryAction::ReanchorToProfile:
 						++res.recoveryReanchors;
+						if (opts.evictSamplesOnFrameJump) {
+							res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
+						}
 						applied = seedTransform;
 						stepApplied(applied.translation() * 100.0);
 						break;

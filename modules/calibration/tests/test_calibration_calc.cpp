@@ -133,6 +133,60 @@ TEST(CalibrationCalcTest, RecoversCombinedOffset)
 	EXPECT_LT(RotationErrorDegrees(calc.Transformation(), expected), 1.0);
 }
 
+TEST(CalibrationCalcTest, EvictSamplesBeforeDropsOnlyOlderSamples)
+{
+	CalibrationCalc calc;
+	// MakeSamplePairs stamps sample i with timestamp i * 0.01.
+	for (auto& s : MakeSamplePairs(Eigen::AffineCompact3d::Identity(), kSampleCount)) {
+		calc.PushSample(s);
+	}
+	ASSERT_EQ((size_t)kSampleCount, calc.SampleCount());
+
+	EXPECT_EQ(40u, calc.EvictSamplesBefore(0.40));
+	EXPECT_EQ((size_t)kSampleCount - 40u, calc.SampleCount());
+
+	// Idempotent: nothing older than the cutoff remains.
+	EXPECT_EQ(0u, calc.EvictSamplesBefore(0.40));
+	EXPECT_EQ((size_t)kSampleCount - 40u, calc.SampleCount());
+}
+
+TEST(CalibrationCalcTest, EvictSamplesBeforeKeepsSeedWhenBufferEmpties)
+{
+	const Eigen::AffineCompact3d profile =
+	    MakeTransform(15.0 * EIGEN_PI / 180.0, 0.0, 0.0, Eigen::Vector3d(0.3, 1.2, -0.8));
+	CalibrationCalc calc;
+	calc.SeedEstimatedTransformation(profile, false);
+	for (auto& s : MakeSamplePairs(profile, kSampleCount)) {
+		calc.PushSample(s);
+	}
+
+	// Cutoff beyond every sample: the whole buffer is pre-disturbance.
+	EXPECT_EQ((size_t)kSampleCount, calc.EvictSamplesBefore(1.0));
+	EXPECT_EQ(0u, calc.SampleCount());
+
+	// The seed and validity survive so the re-applied profile keeps tracking
+	// alive while the buffer refills.
+	EXPECT_TRUE(calc.isValid());
+	EXPECT_LT((calc.Transformation().matrix() - profile.matrix()).norm(), 1e-12);
+}
+
+TEST(CalibrationCalcTest, EvictSamplesBeforeClearsStaleFrozenRotationBuffer)
+{
+	CalibrationCalc calc;
+	for (auto& s : MakeSamplePairs(Eigen::AffineCompact3d::Identity(), kSampleCount)) {
+		calc.PushSample(s);
+	}
+	calc.FreezeRotationPhaseSamples();
+	ASSERT_TRUE(calc.HasFrozenRotationSamples());
+
+	// Fresh post-disturbance samples ahead of the cutoff stay put.
+	calc.PushSample(MakePoseSample(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 0.0, 2.0));
+
+	EXPECT_EQ((size_t)kSampleCount, calc.EvictSamplesBefore(1.0));
+	EXPECT_FALSE(calc.HasFrozenRotationSamples());
+	EXPECT_EQ(1u, calc.SampleCount());
+}
+
 TEST(CalibrationCalcTest, SeedEstimatedTransformationStartsIncrementalFromProfile)
 {
 	const Eigen::Vector3d trans(-1.06882, 2.47276, 0.50086);

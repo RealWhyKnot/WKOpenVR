@@ -505,6 +505,22 @@ void CalibrationCalc::Clear()
 	m_shadowConsecutiveImprovingCandidates = 0;
 }
 
+size_t CalibrationCalc::EvictSamplesBefore(double timestamp)
+{
+	size_t evicted = 0;
+	while (!m_samples.empty() && m_samples.front().timestamp < timestamp) {
+		m_samples.pop_front();
+		++evicted;
+	}
+	// Frozen rotation-phase samples splice back into ComputeOneshot, so a
+	// stale frozen buffer poisons the solve the same way the live one does.
+	if (!m_rotationFrozen.empty() && m_rotationFrozen.front().timestamp < timestamp) {
+		evicted += m_rotationFrozen.size();
+		m_rotationFrozen.clear();
+	}
+	return evicted;
+}
+
 void CalibrationCalc::SeedEstimatedTransformation(const Eigen::AffineCompact3d& transform, bool annotate)
 {
 	if (!transform.matrix().allFinite()) {
