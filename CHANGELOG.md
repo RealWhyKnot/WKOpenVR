@@ -280,6 +280,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Break confidence fusion out of a stale cross-session seed (55f3a57)
 - **calibration:** Persist lock-relative mode and default continuous style to locked (153f53f)
 - **calibration:** Evict dead-frame samples on frame-moving recoveries (f7d072a)
+- **calibration:** Bound locked-relpose accepts and classify silent frame re-anchors (87cb6ff)
 
 ---
 
