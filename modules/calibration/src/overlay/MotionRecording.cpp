@@ -782,6 +782,11 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			}
 
 			bool lerp = false;
+			// Mirror the live tick: the step gate stands down until the first
+			// accepted candidate (a stale far seed must be correctable in one
+			// classified move, not held at the step cap) and under the fusion
+			// accept, which needs the full candidate stream.
+			calc.SetStepGateBypass(!hasAppliedC || opts.precisionWeightedRelPose);
 			const bool ok = calc.ComputeIncremental(lerp, opts.threshold, opts.maxRelError, opts.ignoreOutliers);
 			tick.accepted = ok;
 			if (ok) {

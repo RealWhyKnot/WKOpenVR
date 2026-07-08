@@ -29,8 +29,12 @@ constexpr double kContinuousSaveIntervalSec = 2.0;
 
 // Persist early when the offset jumps by more than this since the last persist,
 // so a real move (relocalization, large adjustment) reaches disk promptly rather
-// than waiting out the interval. 0.1 cm = 1 mm, well below tracker noise.
-constexpr double kContinuousSaveDeltaCm = 0.1;
+// than waiting out the interval. 1.0 cm sits above per-solve noise (the earlier
+// 1 mm value was below it, so ordinary solver drift bypassed the interval cap
+// on nearly every accepted candidate -- 16k registry writes in one session) and
+// matches the locked-accept step deadband: anything the solver is allowed to
+// apply below this lands on the interval cadence instead.
+constexpr double kContinuousSaveDeltaCm = 1.0;
 
 // Returns true when the continuous-mode offset should be persisted to the
 // registry this tick. `offsetDeltaCm` is the distance from the last persisted
@@ -42,6 +46,9 @@ constexpr bool ShouldPersistContinuous(double nowSec, double lastSaveSec, double
 {
 	if (isFirstCandidate) return true;
 	if (offsetDeltaCm > deltaCm) return true;
+	// Unconditional on elapsed time: rotation-only drift moves no translation
+	// but still changes the profile, and the save-side content hash already
+	// skips truly identical payloads.
 	if ((nowSec - lastSaveSec) >= intervalSec) return true;
 	return false;
 }

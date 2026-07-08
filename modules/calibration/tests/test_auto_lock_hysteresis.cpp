@@ -573,3 +573,26 @@ TEST(AutoLockCommitGateTest, UnlockTimeoutBeatsStationaryInTag)
 	EXPECT_TRUE(d.commit);
 	EXPECT_STREQ(d.mode, "unlock_timeout");
 }
+
+TEST(AutoLockDetectorScopeTest, ExplicitModeComputesMadOnly)
+{
+	const auto scope = al::ScopeFor(/*modeIsLegacyAuto=*/false, /*calibratedHeadMountTarget=*/false);
+	EXPECT_TRUE(scope.computeMad) << "warm-restart validation reads the MAD floor in every mode";
+	EXPECT_FALSE(scope.runDecisions) << "explicit ON/OFF never consumes the verdict";
+}
+
+TEST(AutoLockDetectorScopeTest, LegacyAutoRunsDecisions)
+{
+	const auto scope = al::ScopeFor(/*modeIsLegacyAuto=*/true, /*calibratedHeadMountTarget=*/false);
+	EXPECT_TRUE(scope.computeMad);
+	EXPECT_TRUE(scope.runDecisions);
+}
+
+TEST(AutoLockDetectorScopeTest, HeadMountForcedLockSkipsDecisions)
+{
+	// The calibrated head-mount target forces the lock before the decision
+	// machinery; the verdict path must stand down even in legacy AUTO.
+	const auto scope = al::ScopeFor(/*modeIsLegacyAuto=*/true, /*calibratedHeadMountTarget=*/true);
+	EXPECT_TRUE(scope.computeMad);
+	EXPECT_FALSE(scope.runDecisions);
+}

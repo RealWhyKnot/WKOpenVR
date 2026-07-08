@@ -776,6 +776,11 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (obj["relative_pos_calibrated"].is<bool>()) {
 		ctx.relativePosCalibrated = obj["relative_pos_calibrated"].get<bool>();
 	}
+	// Absent key -> stays at the construction default (on): profiles written
+	// before the weighting existed get the better solve without migration.
+	if (obj["precision_weighted_relpose"].is<bool>()) {
+		ctx.precisionWeightedRelPose = obj["precision_weighted_relpose"].get<bool>();
+	}
 	// Lock-mode remains loadable for old profiles, but AUTO is no longer an
 	// active user-facing behavior. New presets only write OFF or ON.
 	bool loadedLockMode = false;
@@ -1049,6 +1054,9 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// so "key absent" is ambiguous and a load would fall back to the style
 	// preset instead of the user's choice.
 	profile["relative_pos_calibrated"].set<bool>(ctx.relativePosCalibrated);
+	// Always emit so an explicit user OFF survives loads (absent means "on").
+	bool weightedRelPose = ctx.precisionWeightedRelPose;
+	profile["precision_weighted_relpose"].set<bool>(weightedRelPose);
 	const auto explicitLockMode = ctx.lockRelativePositionMode == CalibrationContext::LockMode::ON
 	                                  ? CalibrationContext::LockMode::ON
 	                                  : CalibrationContext::LockMode::OFF;

@@ -892,6 +892,18 @@ void CalibrationContext::UpdateAutoLockDetector(const Eigen::AffineCompact3d& re
 		autoLockMadFloorTs = floorEntry.first;
 	}
 
+	// Explicit ON/OFF lock modes pin lockRelativePosition and never consume
+	// the detector's verdict -- running the flip/panic machinery there is
+	// no-op churn that floods the log and resets the settled clock. The MAD
+	// metrics and floor above stay live for every mode (warm-restart
+	// validation reads them).
+	const DetectorScope detectorScope = ScopeFor(lockRelativePositionMode == LockMode::AUTO, calibratedHeadMountTarget);
+	if (!detectorScope.runDecisions && !calibratedHeadMountTarget) {
+		autoLockHasPendingFlip = false;
+		autoLockPendingFlipFirstSeen = 0.0;
+		return;
+	}
+
 	// Panic-unlock: at clearly-broken deviation, skip the pending-flip queue
 	// and drop the effective lock immediately so downstream cal output stops
 	// using the stale rigid attachment. ResolveLockMode runs inline because
@@ -1659,7 +1671,13 @@ void CalibrationTick(double time)
 			// last AUTO Lock flip when settled, zero otherwise; lets a
 			// reader scrub the timeline of stable lock windows.
 			const double secsSinceLastFlip = (ctx.autoLockLastFlipTime > 0.0) ? (time - ctx.autoLockLastFlipTime) : 0.0;
-			const bool settled = spacecal::autolock::IsSettled(ctx.autoLockEffectivelyLocked, g_lastAutoLockTranslMad,
+			// With an explicit lock mode the detector's effective-lock output is
+			// idle; the pinned lockRelativePosition is the truthful lock state
+			// for the settled metric.
+			const bool effectiveLock = ctx.lockRelativePositionMode == CalibrationContext::LockMode::AUTO
+			                               ? ctx.autoLockEffectivelyLocked
+			                               : ctx.lockRelativePosition;
+			const bool settled = spacecal::autolock::IsSettled(effectiveLock, g_lastAutoLockTranslMad,
 			                                                   ctx.autoLockMadFloor, secsSinceLastFlip);
 			const double madFloorMm = ctx.autoLockMadFloor * 1000.0;
 			const double enterMm = spacecal::autolock::EnterThresholdFor(ctx.autoLockMadFloor) * 1000.0;
@@ -2695,10 +2713,20 @@ void CalibrationTick(double time)
 		const bool blockStaleRelPose =
 		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
-		// Geometry-precision weighting is part of the experimental confidence
-		// fusion (opt-in). Base behaviour is the plain uniform relpose average,
-		// matching upstream; the toggle enables both the weighting and the fusion.
-		calibration.SetPrecisionWeightedRelPose(CalCtx.headMount.experimentalConfidenceFusion);
+		// Geometry-precision weighting of the relpose average is base behaviour
+		// (default on; Advanced toggle). The experimental confidence fusion
+		// implies it -- the Kalman accept needs the weighted measurement.
+		calibration.SetPrecisionWeightedRelPose(CalCtx.precisionWeightedRelPose ||
+		                                        CalCtx.headMount.experimentalConfidenceFusion);
+		// Large intentional moves (warm-restart re-acquire, session-first
+		// candidate) go through their own classification; everywhere else the
+		// locked accept keeps single steps bounded. The fusion accept is its
+		// own step absorber (gain-scaled blending + stale-seed breaker) and
+		// needs the full candidate stream, so the step gates stand down there
+		// -- the quality gates still apply.
+		calibration.SetStepGateBypass(CalCtx.warmRestartGraceSamples > 0 ||
+		                              !CalCtx.lastAcceptedContinuousSnapshot.captured ||
+		                              CalCtx.headMount.experimentalConfidenceFusion);
 		if (blockStaleRelPose) {
 			static double s_lastHeadMountRelPoseGuardLog = -1e9;
 			if ((time - s_lastHeadMountRelPoseGuardLog) >= 1.0) {
@@ -2967,7 +2995,16 @@ void CalibrationTick(double time)
 			// pending-flip queue + stationary-HMD commit gate. The previous
 			// raw-stddev + single-threshold path flapped on cross-system
 			// extras for the same reasons the primary did pre-d1a7e9e.
-			if (extra.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
+			// Decisions run only for the legacy AUTO lock mode (2), same as
+			// the primary detector: explicit ON/OFF pins the lock and never
+			// reads the verdict. No extra consumes the MAD floor, so the
+			// whole detector stands down outside AUTO.
+			const bool extraDetectorActive = spacecal::autolock::ScopeFor(extra.lockMode == 2, false).runDecisions;
+			if (!extraDetectorActive) {
+				extra.autoLockHasPendingFlip = false;
+				extra.autoLockPendingFlipFirstSeen = 0.0;
+			}
+			else if (extra.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
 				extra.autoLockEffectivelyLocked = false;
 				extra.autoLockHasPendingFlip = false;
 			}
@@ -3053,6 +3090,9 @@ void CalibrationTick(double time)
 
 			extra.calc->lockRelativePosition = extra.lockRelativePosition;
 			extra.calc->enableStaticRecalibration = CalCtx.enableStaticRecalibration;
+			extra.calc->SetStepGateBypass(CalCtx.warmRestartGraceSamples > 0 || !extra.valid);
+			extra.calc->SetPrecisionWeightedRelPose(CalCtx.precisionWeightedRelPose ||
+			                                        CalCtx.headMount.experimentalConfidenceFusion);
 
 			if (!CalCtx.calibrationPaused && extra.calc->SampleCount() >= CalCtx.SampleCount()) {
 				bool extraLerp = false;
@@ -3209,6 +3249,14 @@ void CalibrationTick(double time)
 		    (int)ctx.state, CalibrationStateName(ctx.state), calibration.LastComputeUsedRelPose() ? "relpose" : "full",
 		    ctx.calibratedTranslation.x(), ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(),
 		    ctx.calibratedTranslation.norm(), (int)ctx.relativePosCalibrated, (int)ctx.validProfile);
+
+		if (calibration.LastAcceptWasConsensusStep()) {
+			Metrics::LogAnnotationf(
+			    "relpose_locked_consensus_step: mag_cm=%.2f consensus=%d spread_cm=%.1f"
+			    " -- oversized move accepted after consecutive agreeing candidates (frame moved with no event)",
+			    ctx.calibratedTranslation.norm(), spacecal::relpose_lock::kOversizeConsensusCount,
+			    spacecal::relpose_lock::kOversizeConsensusSpreadCm);
+		}
 
 		CalCtx.Log("Finished calibration, profile saved\n");
 	}

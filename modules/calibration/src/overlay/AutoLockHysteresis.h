@@ -134,6 +134,26 @@ constexpr double kPanicRotRad = 5.0 * EIGEN_PI / 180.0;
 // the other tunables; the rationale lives on IsSettled below.
 constexpr double kSettledMinHoldSec = 3.0;
 
+// What the detector should run for a given lock mode. The MAD metrics and
+// rolling floor are always computed -- warm-restart validation reads the
+// floor regardless of mode. The verdict/pending/panic machinery only exists
+// to drive the legacy AUTO lock mode; with an explicit ON/OFF mode the lock
+// state is pinned and never reads the detector, so running the decisions
+// there produces flip churn in the logs (observed: 2,051 no-op flips in one
+// 5.3 h session) and constantly resets the settled clock.
+struct DetectorScope
+{
+	bool computeMad = true;
+	bool runDecisions = false;
+};
+
+constexpr DetectorScope ScopeFor(bool modeIsLegacyAuto, bool calibratedHeadMountTarget)
+{
+	// The calibrated head-mount forced lock owns the state before the
+	// decision machinery runs; scope only governs the verdict path.
+	return DetectorScope{true, modeIsLegacyAuto && !calibratedHeadMountTarget};
+}
+
 // Every constant that shapes the lock decision, as a value so offline
 // parameter sweeps can replay a recorded session under alternative tunings.
 // Defaults reproduce the constants above exactly; the historical single-value

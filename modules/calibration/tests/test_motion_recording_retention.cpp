@@ -763,7 +763,11 @@ TEST(MotionRecordingReplayTest, SeededReplayFusionDefendsBadSeedFarFromOrigin)
 	const auto farUniform = replay::RunReplay(farRec, options);
 	ASSERT_TRUE(farUniform.succeeded) << farUniform.error;
 	ASSERT_TRUE(farUniform.seedApplied);
-	EXPECT_GT(farUniform.accepts, 10);
+	// The locked-accept step deadband holds steady-state candidates on the
+	// overwrite path, so accepts are sparse now; the solver itself must stay
+	// alive across the session.
+	EXPECT_GE(farUniform.accepts, 1);
+	EXPECT_GT(farUniform.accepts + farUniform.rejects, 10);
 	EXPECT_GT(farUniform.appliedMagWanderCm, 25.0);
 	EXPECT_GT(farUniform.peakAppliedStepCm, 25.0);
 	EXPECT_GE(farUniform.largeAppliedSteps, 1);

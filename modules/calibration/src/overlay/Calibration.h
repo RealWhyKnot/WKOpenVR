@@ -647,6 +647,20 @@ struct CalibrationContext
 		// noise floor and slows the calibration down when conditions are bad.
 		AUTO = 3,
 	};
+	static const char* SpeedName(Speed s)
+	{
+		switch (s) {
+			case FAST:
+				return "fast";
+			case SLOW:
+				return "slow";
+			case VERY_SLOW:
+				return "very_slow";
+			case AUTO:
+				return "auto";
+		}
+		return "?";
+	}
 	// One-shot defaults to FAST. Continuous defaults to AUTO so long-running
 	// sessions can adapt buffer size to observed jitter without making one-shot
 	// calibration wait on a sticky speed resolver.
@@ -657,6 +671,11 @@ struct CalibrationContext
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
+	// Geometry-precision weighting of the locked relpose average
+	// (1/lever-arm^2, CalibrateByRelPose): far-from-origin samples can't drag
+	// the calibration. On by default; separate from the experimental Kalman
+	// fusion accept below, which additionally blends accepted candidates.
+	bool precisionWeightedRelPose = true;
 	// Confidence-weighted continuous fusion (ContinuousPrecisionFusion.h).
 	// Accumulated precision of the running calibration; higher = more resistant
 	// to far-from-origin re-solves. Runtime-only, never persisted. lastFusionGain
@@ -732,6 +751,8 @@ struct CalibrationContext
 		// Default AUTO. Failure mode is benign: with no base stations
 		// detected, the detector simply doesn't fire.
 		baseStationDriftCorrectionEnabled = true;
+
+		precisionWeightedRelPose = true;
 	}
 
 	struct Chaperone

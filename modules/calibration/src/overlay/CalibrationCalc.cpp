@@ -503,6 +503,8 @@ void CalibrationCalc::Clear()
 	m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 	m_shadowConsecutiveImprovingCandidates = 0;
+	m_lastAcceptWasConsensusStep = false;
+	m_lockedOversizeConsensus = {};
 }
 
 size_t CalibrationCalc::EvictSamplesBefore(double timestamp)
@@ -1676,13 +1678,42 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
 			Metrics::error_byRelPose.Push(relPoseError * 1000);
 
+			double lockedPriorError = INFINITY;
+			Eigen::Vector3d lockedPriorOffset;
+			if (m_isValid && ValidateCalibration(m_estimatedTransformation, &lockedPriorError, &lockedPriorOffset)) {
+				Metrics::posOffset_currentCal.Push(lockedPriorOffset * 1000);
+				Metrics::error_currentCal.Push(lockedPriorError * 1000);
+				m_lastPriorRetargetingErrorM = lockedPriorError;
+			}
+
+			spacecal::relpose_lock::LockedAcceptInputs gateIn;
+			gateIn.candidateErrorM = relPoseError;
+			gateIn.priorErrorM = lockedPriorError;
+			gateIn.havePrior = m_isValid;
+			gateIn.relPosCalibrated = m_relativePosCalibrated;
+			gateIn.notWorseRatio = threshold;
+			gateIn.maxErrorM = relPoseMaxError;
+			gateIn.stepCm =
+			    m_isValid ? (byRelPose.translation() - m_estimatedTransformation.translation()).norm() * 100.0 : 0.0;
+			gateIn.stepGateBypassed = m_stepGateBypass || !m_isValid;
+			const auto gate = spacecal::relpose_lock::EvaluateLockedAccept(gateIn, byRelPose.translation() * 100.0,
+			                                                               m_lockedOversizeConsensus);
+			if (gate.action == spacecal::relpose_lock::LockedAccept::HoldPrior) {
+				Metrics::lastRejectReason = gate.rejectTag;
+				return false;
+			}
+
+			Metrics::lastRejectReason.clear();
+			m_lastAcceptWasConsensusStep = gate.action == spacecal::relpose_lock::LockedAccept::AcceptConsensusStep;
 			m_isValid = true;
 			m_lastComputeUsedRelPose = true;
+			m_relativePosCalibrated = m_relativePosCalibrated || relPoseError < 0.005;
 			m_estimatedTransformation = byRelPose;
 			m_lastCandidateRetargetingErrorM = relPoseError;
 			return true;
 		}
 	}
+	m_lastAcceptWasConsensusStep = false;
 
 	double priorCalibrationError = INFINITY;
 	Eigen::Vector3d priorPosOffset;

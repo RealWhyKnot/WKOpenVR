@@ -185,6 +185,38 @@ TEST(ConfigurationTest, ProfileWithoutLockKeyGetsContinuousStyleDefaultOn)
 	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
 }
 
+TEST(ConfigurationTest, PrecisionWeightedRelPoseDefaultsOnWhenKeyAbsent)
+{
+	// Profiles written before the weighting setting existed carry no key;
+	// those loads take the default (on) without migration.
+	std::string json = MakeMinimalProfile(/*schemaVersion=*/7, "\"tracking_style\":1");
+
+	CalibrationContext ctx;
+	std::stringstream io(json);
+	ParseProfile(ctx, io);
+
+	EXPECT_TRUE(ctx.precisionWeightedRelPose);
+}
+
+TEST(ConfigurationTest, PrecisionWeightedRelPoseRoundTrips)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
+	ApplyTrackingStylePreset(src, TrackingStyle::Continuous);
+	src.precisionWeightedRelPose = false; // explicit off must survive
+
+	std::stringstream io;
+	WriteProfile(src, io);
+	EXPECT_NE(io.str().find("precision_weighted_relpose"), std::string::npos)
+	    << "always written: an absent key means the on-default";
+
+	CalibrationContext dst;
+	ParseProfile(dst, io);
+	EXPECT_FALSE(dst.precisionWeightedRelPose);
+}
+
 // v40 freeze-all-tracking: the "Include headset" preference persists; the active
 // freeze state is runtime-only and must never be written to the profile (a
 // persisted freeze would look like totally broken tracking on next launch).

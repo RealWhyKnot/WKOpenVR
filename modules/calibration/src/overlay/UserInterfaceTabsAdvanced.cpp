@@ -74,6 +74,20 @@ static bool ExperimentCheckbox(const char* optionName, const char* id, bool* val
 	return true;
 }
 
+// Persist a continuous-speed radio choice with a log annotation; the setting
+// changes the solve window (and so the whole session's log shape), which made
+// unannotated changes a blind spot when reading incident logs.
+static void SetContinuousSpeed(CalibrationContext::Speed value)
+{
+	if (CalCtx.continuousCalibrationSpeed != value) {
+		Metrics::LogAnnotationf("calibration_speed_changed: source=ui which=continuous prev=%s now=%s",
+		                        CalibrationContext::SpeedName(CalCtx.continuousCalibrationSpeed),
+		                        CalibrationContext::SpeedName(value));
+	}
+	CalCtx.continuousCalibrationSpeed = value;
+	SaveProfile(CalCtx);
+}
+
 // Render the watchdog / HMD-stall diagnostic counters wrapped in a group panel.
 // Lives in Advanced (not Basic) since these are bug-report breadcrumbs, not
 // something a casual user needs to see while running.
@@ -211,6 +225,14 @@ void CCal_DrawSettings()
 			    "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
 			    "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
 		}
+		if (ExperimentCheckbox("precision_weighted_relpose", "Weight samples by distance##precision_weighted_relpose",
+		                       &CalCtx.precisionWeightedRelPose,
+		                       "Weight each sample by how far the devices are from the playspace origin\n"
+		                       "(closer = more trustworthy) when the locked relative pose is averaged.\n"
+		                       "Keeps a far-from-origin playspace from slowly dragging the calibration.\n"
+		                       "Default on.  Turn off for the plain uniform average.")) {
+			SaveProfile(CalCtx);
+		}
 		ImGui::EndGroupPanel();
 		ImGui::Spacing();
 	}
@@ -246,8 +268,7 @@ void CCal_DrawSettings()
 
 				ImGui::Columns(4, nullptr, false);
 				if (ImGui::RadioButton(" Auto          ", speed == CalibrationContext::AUTO)) {
-					CalCtx.continuousCalibrationSpeed = CalibrationContext::AUTO;
-					SaveProfile(CalCtx);
+					SetContinuousSpeed(CalibrationContext::AUTO);
 				}
 				if (ImGui::IsItemHovered()) {
 					ImGui::SetTooltip("Pick the speed automatically from correction error and fresh-fit RMS.\n"
@@ -258,8 +279,7 @@ void CCal_DrawSettings()
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Fast          ", speed == CalibrationContext::FAST)) {
-					CalCtx.continuousCalibrationSpeed = CalibrationContext::FAST;
-					SaveProfile(CalCtx);
+					SetContinuousSpeed(CalibrationContext::FAST);
 				}
 				if (ImGui::IsItemHovered()) {
 					ImGui::SetTooltip("30-sample buffer. Fastest convergence, most sensitive to noise.\n"
@@ -267,8 +287,7 @@ void CCal_DrawSettings()
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Slow          ", speed == CalibrationContext::SLOW)) {
-					CalCtx.continuousCalibrationSpeed = CalibrationContext::SLOW;
-					SaveProfile(CalCtx);
+					SetContinuousSpeed(CalibrationContext::SLOW);
 				}
 				if (ImGui::IsItemHovered()) {
 					ImGui::SetTooltip("100-sample buffer. Smoother result at the cost of slower response.\n"
@@ -276,8 +295,7 @@ void CCal_DrawSettings()
 				}
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Very Slow     ", speed == CalibrationContext::VERY_SLOW)) {
-					CalCtx.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
-					SaveProfile(CalCtx);
+					SetContinuousSpeed(CalibrationContext::VERY_SLOW);
 				}
 				if (ImGui::IsItemHovered()) {
 					ImGui::SetTooltip("200-sample buffer. Maximum smoothing, slowest convergence.\n"
@@ -487,9 +505,9 @@ void CCal_DrawSettings()
 					    if (ExperimentCheckbox(
 					            "confidence_weighted_calibration", "##head_mount_experimental_confidence_fusion",
 					            &CalCtx.headMount.experimentalConfidenceFusion,
-					            "Weight each continuous re-solve by how trustworthy its geometry is and fuse it into a "
-					            "running estimate so a far-from-origin reading can't drag a good calibration around. "
-					            "Off: each accepted solve overwrites the calibration outright (classic behaviour). "
+					            "Fuse each accepted continuous re-solve into a running estimate weighted by its "
+					            "geometry confidence, instead of overwriting the calibration outright (classic "
+					            "behaviour). Sample-level distance weighting is its own setting under Diagnostics. "
 					            "Experimental. Default off.")) {
 						    SaveProfile(CalCtx);
 					    }

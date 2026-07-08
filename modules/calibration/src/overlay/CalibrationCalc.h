@@ -8,6 +8,8 @@
 #include <iostream>
 #include <limits>
 
+#include "RelPoseLockGate.h"
+
 struct Pose
 {
 	Eigen::Matrix3d rot;
@@ -246,6 +248,18 @@ public:
 	// See CalibrateByRelPose.
 	void SetPrecisionWeightedRelPose(bool on) { m_usePrecisionWeightedRelPose = on; }
 
+	// While set, the locked-relpose accept skips its step deadband/cap (the
+	// quality gates still apply). The live tick arms this during warm-restart
+	// grace and before the session's first accepted candidate, where a large
+	// intentional move is expected; replay mirrors the same windows.
+	void SetStepGateBypass(bool on) { m_stepGateBypass = on; }
+
+	// True when the most recent accepted locked-relpose candidate landed via
+	// the oversize consensus escape (the frame moved with no observable
+	// event). Callers annotate/classify that step instead of counting it as
+	// wander.
+	bool LastAcceptWasConsensusStep() const { return m_lastAcceptWasConsensusStep; }
+
 	// Gravity-constrained relative-pose solve: project the solved calibration
 	// rotation to its yaw-about-gravity component (both universes are +Y-up,
 	// so roll/pitch in C is lever-arm noise). Replay-only A/B for now -- no
@@ -368,12 +382,17 @@ private:
 
 	// When true, CalibrateByRelPose weights each sample by geometric precision
 	// (1/lever-arm^2) instead of a uniform mean, so far-from-origin readings
-	// can't drag the calibration around. Default OFF -- the base relpose solve is
-	// a plain uniform average (upstream behaviour); the live tick enables this
-	// only under the experimental confidence-fusion toggle.
+	// can't drag the calibration around. The live tick enables this whenever
+	// the profile's precision_weighted_relpose setting (default on) or the
+	// experimental confidence fusion is active.
 	bool m_usePrecisionWeightedRelPose = false;
 	// Replay-only A/B knob; never set on the live path.
 	bool m_useGravityConstrainedRelPose = false;
+
+	// Locked-relpose accept gating (see RelPoseLockGate.h).
+	bool m_stepGateBypass = false;
+	bool m_lastAcceptWasConsensusStep = false;
+	spacecal::relpose_lock::OversizeConsensusState m_lockedOversizeConsensus;
 
 	std::deque<Sample> m_samples;
 

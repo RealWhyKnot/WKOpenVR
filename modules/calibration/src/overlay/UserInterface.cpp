@@ -515,6 +515,11 @@ static void OneShot_DrawSettings()
 		for (size_t i = 0; i < sizeof(opts) / sizeof(opts[0]); ++i) {
 			if (i > 0) ImGui::SameLine();
 			if (ImGui::RadioButton(opts[i].label, speed == opts[i].value)) {
+				if (CalCtx.oneShotCalibrationSpeed != opts[i].value) {
+					Metrics::LogAnnotationf("calibration_speed_changed: source=ui which=oneshot prev=%s now=%s",
+					                        CalibrationContext::SpeedName(CalCtx.oneShotCalibrationSpeed),
+					                        CalibrationContext::SpeedName(opts[i].value));
+				}
 				CalCtx.oneShotCalibrationSpeed = opts[i].value;
 				SaveProfile(CalCtx);
 			}

@@ -302,7 +302,10 @@ struct SessionReplayOptions
 	double maxRelError = 0.005;
 	bool ignoreOutliers = true;
 	bool lockRelativePosition = true;
-	bool precisionWeightedRelPose = false;
+	// Weighted relpose average (live default on) vs the experimental Kalman
+	// fusion accept (live default off) -- decoupled exactly like the runtime.
+	bool precisionWeightedRelPose = true;
+	bool fusionAccept = false;
 	ReplaySeedMode seedMode = ReplaySeedMode::Recorded;
 	Eigen::Vector3d seedTransCm = Eigen::Vector3d::Zero();
 	Eigen::Vector3d seedRotDeg = Eigen::Vector3d::Zero();
@@ -313,6 +316,9 @@ struct SessionReplayOptions
 	// reanchor drops samples collected before the jump (they describe the
 	// pre-reanchor frame). Off = pre-eviction runtime behavior, for A/B.
 	bool evictSamplesOnFrameJump = true;
+	// Mirror the locked-relpose accept gates (quality band + step bounds,
+	// RelPoseLockGate.h). Off = pre-gate runtime behavior, for A/B.
+	bool lockedStepGate = true;
 };
 
 struct SessionReplayResult
@@ -338,6 +344,12 @@ struct SessionReplayResult
 	// Applied-transform trajectory (net movement of the world).
 	double totalAppliedPathCm = 0.0;
 	double peakAppliedStepCm = 0.0;
+	// The subset of the applied path that did NOT arrive through a classified
+	// event (session-first candidate, snap, reanchor, warm-restart re-acquire):
+	// solver wander the user experiences as the world sliding.
+	double unclassifiedPathCm = 0.0;
+	double maxUnclassifiedStepCm = 0.0;
+	double wanderPer10MinCm = 0.0;
 	Eigen::Vector3d netAppliedDriftCm = Eigen::Vector3d::Zero();
 	bool seedApplied = false;
 };
@@ -470,11 +482,19 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	double lastTrackerSpeed = -1.0;
 	int measuredTicks = 0, settledTicks = 0;
 
-	auto stepApplied = [&](const Eigen::Vector3d& newCm) {
+	// The first accepted candidate after a frame-moving event (session start,
+	// snap, reanchor, warm-restart wake) lands through the motion gate /
+	// reanchor absorption live -- its step is classified, not wander.
+	int classifiedAcceptBudget = 1;
+	auto stepApplied = [&](const Eigen::Vector3d& newCm, bool classified) {
 		if (hasApplied) {
 			const double stepCm = (newCm - prevAppliedCm).norm();
 			res.totalAppliedPathCm += stepCm;
 			res.peakAppliedStepCm = std::max(res.peakAppliedStepCm, stepCm);
+			if (!classified) {
+				res.unclassifiedPathCm += stepCm;
+				res.maxUnclassifiedStepCm = std::max(res.maxUnclassifiedStepCm, stepCm);
+			}
 		}
 		prevAppliedCm = newCm;
 		if (!hasApplied) {
@@ -533,9 +553,10 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 				calc.ShiftSample();
 			if (calc.SampleCount() >= window) {
 				bool lerp = false;
+				calc.SetStepGateBypass(!opts.lockedStepGate || classifiedAcceptBudget > 0 || opts.fusionAccept);
 				if (calc.ComputeIncremental(lerp, opts.threshold, opts.maxRelError, opts.ignoreOutliers)) {
 					++res.accepts;
-					if (opts.precisionWeightedRelPose) {
+					if (opts.fusionAccept) {
 						const double measPrec = spacecal::precision::MeasurementPrecision(calc.MeanSquaredLeverArmM2());
 						const double disagreeM = (calc.Transformation().translation() - applied.translation()).norm();
 						if (spacecal::precision::NoteSeedDisagreement(disagreeStreak, disagreeM)) {
@@ -551,7 +572,9 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 					else {
 						applied = calc.Transformation();
 					}
-					stepApplied(applied.translation() * 100.0);
+					const bool classifiedStep = classifiedAcceptBudget > 0 || calc.LastAcceptWasConsensusStep();
+					if (classifiedAcceptBudget > 0) --classifiedAcceptBudget;
+					stepApplied(applied.translation() * 100.0, classifiedStep);
 				}
 				for (std::size_t i = 0; i < drop; ++i)
 					calc.ShiftSample();
@@ -566,6 +589,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 			    awayEvents[nextAway].awayForS >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds) {
 				res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
 			}
+			classifiedAcceptBudget = 1;
 			++nextAway;
 		}
 
@@ -599,6 +623,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 				if (opts.evictSamplesOnFrameJump) {
 					res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
 				}
+				classifiedAcceptBudget = 1;
 			}
 			else if (relocDeltaM >= opts.relocRecoverThresholdM) {
 				const bool witnessValid = gateTrackerDeltaM >= 0.0;
@@ -616,7 +641,8 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 							res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
 						}
 						applied = seedTransform;
-						stepApplied(applied.translation() * 100.0);
+						stepApplied(applied.translation() * 100.0, /*classified=*/true);
+						classifiedAcceptBudget = 1;
 						break;
 					case spacecal::recovery::RecoveryAction::DestructiveClear:
 						++res.destructiveClears;
@@ -655,6 +681,10 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	res.panicUnlocks = sim.panics;
 	if (measuredTicks > 0) res.settledPct = 100.0 * settledTicks / measuredTicks;
 	if (hasApplied) res.netAppliedDriftCm = prevAppliedCm - firstAppliedCm;
+	const double sessionSec = rec.rows.back().timestamp - rec.rows.front().timestamp;
+	if (sessionSec > 1.0) {
+		res.wanderPer10MinCm = res.unclassifiedPathCm * 600.0 / sessionSec;
+	}
 	res.succeeded = true;
 	return res;
 }

@@ -91,6 +91,23 @@ TEST(ContinuousPersist, DriftSequenceThrottlesToCadence)
 	EXPECT_LT(persists, ticks / 4);
 }
 
+// Absolute-value pins for the deadband: sub-centimetre solver drift must ride
+// the interval cadence (the earlier 1 mm deadband sat below solve noise, so
+// nearly every accepted candidate bypassed the interval -- 16k registry writes
+// in one 5.3 h session), while a real centimetre-scale move reaches disk
+// immediately.
+TEST(ContinuousPersist, SubCentimeterDriftWaitsForInterval)
+{
+	EXPECT_FALSE(ShouldPersistContinuous(/*now=*/100.5, /*lastSave=*/100.0, /*deltaCm=*/0.9,
+	                                     /*isFirstCandidate=*/false));
+}
+
+TEST(ContinuousPersist, CentimeterMovePersistsEarly)
+{
+	EXPECT_TRUE(ShouldPersistContinuous(/*now=*/100.5, /*lastSave=*/100.0, /*deltaCm=*/1.1,
+	                                    /*isFirstCandidate=*/false));
+}
+
 // constexpr-evaluation pin: the decision folds at compile time, so a refactor
 // that accidentally makes it runtime-only (or flips the first-candidate force)
 // breaks the build rather than silently regressing the cadence.

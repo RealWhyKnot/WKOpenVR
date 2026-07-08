@@ -1253,6 +1253,12 @@ void ArmReanchorToProfile(CalibrationContext& ctx)
 	ctx.postSnapErrorSampleCount = 0;
 	ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
 	ctx.warmRestartSnapTime = Metrics::CurrentTime;
+	// The next accepted candidate is the first read of the post-disturbance
+	// frame: clear the accepted snapshot so it goes through the same
+	// first-candidate motion gate a session start gets. Without this, a
+	// re-anchored frame's first candidate lands as an unclassified raw step
+	// (2026-07-08 field case: 402 cm applied straight through).
+	ctx.lastAcceptedContinuousSnapshot = {};
 	// Ramp to the profile at constant velocity (imperceptible) instead of
 	// snapping; the driver latches the ramp until the target is reached.
 	g_reanchorNextProfileApply = true;

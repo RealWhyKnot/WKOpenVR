@@ -80,6 +80,11 @@ struct SessionSpec
 	double relocJumpM = 0.0;
 	int trackerShiftRow = -1;
 	double trackerShiftM = 0.0;
+	// Shift the session's true calibration mid-recording with NO reloc stamp
+	// and no HMD-pose jump: the reference frame re-anchored while nothing
+	// observable fired (the asleep-HMD re-anchor shape).
+	int calShiftRow = -1;
+	double calShiftM = 0.0;
 };
 
 replay::LoadedRecording MakeSessionRecording(const SessionSpec& spec)
@@ -98,7 +103,9 @@ replay::LoadedRecording MakeSessionRecording(const SessionSpec& spec)
 		                            0.05 * std::sin(0.3 * i));
 		Eigen::AffineCompact3d ref(Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY())));
 		ref.pretranslate(trans);
-		const Eigen::AffineCompact3d target = cTrue.inverse() * ref;
+		Eigen::AffineCompact3d cRow = cTrue;
+		if (spec.calShiftRow >= 0 && i >= spec.calShiftRow) cRow.translation().x() += spec.calShiftM;
+		const Eigen::AffineCompact3d target = cRow.inverse() * ref;
 
 		replay::ReplayRow row;
 		row.timestamp = static_cast<double>(i) / 90.0;
@@ -264,6 +271,69 @@ TEST(SessionReplayTest, SubThresholdJumpAccruesResidual)
 	EXPECT_LT(baseline.peakAppliedStepCm, 1.0);
 }
 
+// A metres-wrong seed corrected by the session's first accepted candidate is
+// a classified step (the live first-candidate motion gate): it must count in
+// the applied path but stay out of the wander/unclassified metrics.
+TEST(SessionReplayTest, WanderMetricExcludesClassifiedReanchorSteps)
+{
+	SessionSpec spec;
+	spec.rows = 600;
+	const auto rec = MakeSessionRecording(spec); // truth: +20 cm X
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::Explicit;
+	opts.seedTransCm = Eigen::Vector3d(120.0, 0.0, 0.0); // 1 m wrong
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	ASSERT_GT(res.accepts, 1);
+	EXPECT_GT(res.peakAppliedStepCm, 50.0) << "first candidate must correct the metre-wrong seed";
+	EXPECT_LT(res.maxUnclassifiedStepCm, 5.0) << "the correction step is classified, not wander";
+	EXPECT_LT(res.unclassifiedPathCm, res.totalAppliedPathCm - 50.0);
+}
+
+// A mid-session frame re-anchor with no reloc stamp and no HMD jump (the
+// asleep-HMD shape) surfaces as one giant unclassified applied step -- the
+// metric that gates this incident class. Gate off = the ungated accept
+// behavior this metric was built to expose.
+TEST(SessionReplayTest, UnclassifiedFrameJumpRaisesMaxStep)
+{
+	SessionSpec spec;
+	spec.rows = 900;
+	spec.calShiftRow = 300;
+	spec.calShiftM = 4.0;
+	const auto rec = MakeSessionRecording(spec);
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	opts.lockedStepGate = false;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	EXPECT_EQ(res.relocsSeen, 0);
+	EXPECT_GT(res.maxUnclassifiedStepCm, 300.0) << "the silent re-anchor lands as unclassified movement";
+	EXPECT_GT(res.wanderPer10MinCm, 0.0);
+}
+
+// With the locked-accept gate on, the same silent re-anchor is refused at
+// the step cap until consecutive candidates agree, then lands as ONE
+// classified consensus step: the world still reaches the moved frame, but
+// nothing counts as wander.
+TEST(SessionReplayTest, LockedGateClassifiesSilentFrameJump)
+{
+	SessionSpec spec;
+	spec.rows = 1200;
+	spec.calShiftRow = 300;
+	spec.calShiftM = 4.0;
+	const auto rec = MakeSessionRecording(spec);
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	EXPECT_LT(res.maxUnclassifiedStepCm, 15.0) << "the re-anchor must land classified, not as wander";
+	EXPECT_GT(res.peakAppliedStepCm, 300.0) << "the consensus step must still reach the moved frame";
+	EXPECT_NEAR(res.netAppliedDriftCm.norm(), 400.0, 40.0) << "replay must end in the re-anchored frame";
+}
+
 // A recorded snap_corroboration_inputs annotation carries the exact witness
 // delta the live gate saw; replay must classify with it and run the same
 // dead-frame sample eviction the runtime does. Guards the 2026-07-07 field
@@ -359,6 +429,32 @@ TEST(SessionReplayTest, WarmRestartAwayGapEvictsThroughReplay)
 	EXPECT_EQ(shortAway.samplesEvicted, 0) << "sub-threshold breaks keep their samples";
 }
 
+// The 2026-07-08 away-gap shape end-to-end: the frame re-anchors while the
+// headset sleeps (no reloc event), the warm-restart snap evicts the dead
+// window, and the first post-wake candidate lands as a CLASSIFIED step --
+// never as raw wander.
+TEST(SessionReplayTest, AwayGapReanchorClassifiesFirstPostWakeCandidate)
+{
+	SessionSpec spec;
+	spec.rows = 900;
+	spec.calShiftRow = 300;
+	spec.calShiftM = 4.0;
+	auto rec = MakeSessionRecording(spec);
+	rec.annotations.push_back(
+	    {300.0 / 90.0, "[warm-restart][snap]",
+	     "# [3.333] [warm-restart][snap] away_for_s=2383.2 state=5 grace_samples=100"
+	     " profile_magnitude_cm=257.59 pos_delta_m=0.000 mad_at_snap_mm=2.858 path=proximity_and_time"});
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	EXPECT_EQ(res.warmRestartSnaps, 1);
+	EXPECT_GE(res.samplesEvicted, 150) << "the pre-gap window describes a dead frame";
+	EXPECT_GT(res.peakAppliedStepCm, 300.0) << "the re-anchor must land in one step";
+	EXPECT_LT(res.maxUnclassifiedStepCm, 15.0) << "and that step must be classified, not wander";
+}
+
 // A cross-session stale seed metres from the session's truth must not survive
 // the fusion's seed prior: the stale-seed breaker adopts the solver's answer
 // after a few consecutive metre-scale disagreements.
@@ -371,11 +467,13 @@ TEST(SessionReplayTest, StaleSeedEscapesInSessionReplay)
 	replay::SessionReplayOptions opts;
 	opts.seedMode = replay::ReplaySeedMode::Explicit;
 	opts.seedTransCm = Eigen::Vector3d(370.0, 0.0, 0.0); // 3.5 m wrong
-	opts.precisionWeightedRelPose = true;
+	opts.fusionAccept = true;
 	const auto res = replay::RunSessionReplay(rec, opts);
 	ASSERT_TRUE(res.succeeded) << res.error;
 	ASSERT_TRUE(res.seedApplied);
-	EXPECT_GT(res.accepts, 5);
+	// The step deadband throttles steady-state accepts; the breaker needs
+	// kStaleSeedTripCount consecutive metre-scale disagreements to fire.
+	EXPECT_GE(res.accepts, spacecal::precision::kStaleSeedTripCount);
 	EXPECT_NEAR(res.netAppliedDriftCm.x(), -350.0, 10.0) << "fusion stayed pinned to a metres-wrong seed";
 }
 
@@ -395,7 +493,9 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	opts.relocRecoverThresholdM =
 	    EnvDoubleLocal("WKOPENVR_REPLAY_SESSION_RELOC_RECOVER_CM", opts.relocRecoverThresholdM * 100.0) / 100.0;
 	opts.precisionWeightedRelPose = EnvFlagLocal("WKOPENVR_REPLAY_PRECISION_WEIGHT", opts.precisionWeightedRelPose);
+	opts.fusionAccept = EnvFlagLocal("WKOPENVR_REPLAY_FUSION", opts.fusionAccept);
 	opts.evictSamplesOnFrameJump = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_EVICT", opts.evictSamplesOnFrameJump);
+	opts.lockedStepGate = EnvFlagLocal("WKOPENVR_REPLAY_LOCKED_GATE", opts.lockedStepGate);
 
 	std::string paths = rawPaths;
 	std::size_t start = 0;
@@ -417,6 +517,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		}
 		std::cout << "[session-replay] " << name << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
+		          << " fusion=" << (opts.fusionAccept ? 1 : 0) << " locked_gate=" << (opts.lockedStepGate ? 1 : 0)
 		          << " evict=" << (opts.evictSamplesOnFrameJump ? 1 : 0) << " samples_evicted=" << res.samplesEvicted
 		          << " warm_restart_snaps=" << res.warmRestartSnaps << " seed_applied=" << (res.seedApplied ? 1 : 0)
 		          << " rows=" << res.rowsProcessed << " accepts=" << res.accepts << " flips=" << res.lockFlips
@@ -426,6 +527,8 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		          << " sub_threshold_relocs=" << res.subThresholdRelocs
 		          << " sub_threshold_residual_cm=" << res.subThresholdResidualCm
 		          << " applied_path_cm=" << res.totalAppliedPathCm << " peak_step_cm=" << res.peakAppliedStepCm
+		          << " wander_per_10min_cm=" << res.wanderPer10MinCm
+		          << " max_unclassified_step_cm=" << res.maxUnclassifiedStepCm
 		          << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm() << "\n";
 		++replayed;
 	}
