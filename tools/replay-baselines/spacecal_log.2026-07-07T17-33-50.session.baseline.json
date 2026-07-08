@@ -8,9 +8,11 @@
   "warm_restart_snaps": 3.0,
   "sub_threshold_relocs": 2.0,
   "rows": 1430.0,
-  "accepts": 52.0,
-  "applied_path_cm": 427.471,
-  "peak_step_cm": 373.626,
-  "net_drift_mag_cm": 384.728,
-  "sub_threshold_residual_cm": 15.076
+  "accepts": 7.0,
+  "applied_path_cm": 38.015,
+  "peak_step_cm": 18.2477,
+  "net_drift_mag_cm": 24.0031,
+  "sub_threshold_residual_cm": 15.076,
+  "wander_per_10min_cm": 3.33815,
+  "max_unclassified_step_cm": 9.42185
 }

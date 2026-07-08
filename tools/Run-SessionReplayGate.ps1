@@ -71,7 +71,7 @@ if (-not $SummaryLine) { throw "No [session-replay] summary line in test output.
 Write-Host $SummaryLine
 
 $Metrics = @{}
-foreach ($m in [regex]::Matches($SummaryLine, '([A-Za-z_]+)=([-0-9.eE]+)')) {
+foreach ($m in [regex]::Matches($SummaryLine, '([A-Za-z_][A-Za-z_0-9]*)=([-0-9.eE]+)')) {
 	$Metrics[$m.Groups[1].Value] = [double]$m.Groups[2].Value
 }
 
@@ -79,7 +79,8 @@ foreach ($m in [regex]::Matches($SummaryLine, '([A-Za-z_]+)=([-0-9.eE]+)')) {
 # trajectory metrics get a small tolerance for solver evolution.
 $ExactKeys = @("relocs", "snap_suppressed", "holds", "reanchors", "destructive_clears",
 	"samples_evicted", "warm_restart_snaps", "sub_threshold_relocs", "rows")
-$TolerantKeys = @("accepts", "applied_path_cm", "peak_step_cm", "net_drift_mag_cm", "sub_threshold_residual_cm")
+$TolerantKeys = @("accepts", "applied_path_cm", "peak_step_cm", "net_drift_mag_cm", "sub_threshold_residual_cm",
+	"wander_per_10min_cm", "max_unclassified_step_cm")
 $TolerantFraction = 0.10
 
 foreach ($k in $ExactKeys + $TolerantKeys) {
