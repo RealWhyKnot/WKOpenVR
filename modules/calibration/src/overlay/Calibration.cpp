@@ -1532,7 +1532,8 @@ void CalibrationTick(double time)
 					// headset to have re-anchored its frame while off-head;
 					// that provenance decides the validation-failure action.
 					ArmReanchorToProfile(ctx,
-					                     /*frameMoved=*/awayFor >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds);
+					                     /*frameMoved=*/awayFor >=
+					                         spacecal::warm_restart::kSampleEvictionAwayGapSeconds);
 					const double mag = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
 					                             ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
 					                             ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());

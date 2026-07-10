@@ -94,7 +94,8 @@ inline Eigen::Vector3d DriftWindowMedianCm(const SmallStepDriftState& st)
 	Eigen::Vector3d median = Eigen::Vector3d::Zero();
 	std::array<double, kDriftWindowCandidates> axis{};
 	for (int a = 0; a < 3; ++a) {
-		for (int i = 0; i < st.count; ++i) axis[static_cast<size_t>(i)] = st.ringCm[static_cast<size_t>(i)][a];
+		for (int i = 0; i < st.count; ++i)
+			axis[static_cast<size_t>(i)] = st.ringCm[static_cast<size_t>(i)][a];
 		const int mid = st.count / 2;
 		std::nth_element(axis.begin(), axis.begin() + mid, axis.begin() + st.count);
 		median[a] = axis[static_cast<size_t>(mid)];

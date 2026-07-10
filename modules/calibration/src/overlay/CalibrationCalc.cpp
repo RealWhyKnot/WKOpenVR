@@ -1698,8 +1698,8 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			gateIn.stepCm =
 			    m_isValid ? (byRelPose.translation() - m_estimatedTransformation.translation()).norm() * 100.0 : 0.0;
 			gateIn.stepGateBypassed = m_stepGateBypass || !m_isValid;
-			gateIn.heldCm = m_isValid ? Eigen::Vector3d(m_estimatedTransformation.translation() * 100.0)
-			                          : Eigen::Vector3d::Zero();
+			gateIn.heldCm =
+			    m_isValid ? Eigen::Vector3d(m_estimatedTransformation.translation() * 100.0) : Eigen::Vector3d::Zero();
 			const auto gate = spacecal::relpose_lock::EvaluateLockedAccept(
 			    gateIn, byRelPose.translation() * 100.0, m_lockedOversizeConsensus, m_lockedDriftFollower);
 			if (gate.action == spacecal::relpose_lock::LockedAccept::HoldPrior) {

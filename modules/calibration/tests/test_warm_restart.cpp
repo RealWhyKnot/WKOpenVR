@@ -559,8 +559,7 @@ TEST(WarmRestartValidationTest, BiasBoundaryAtFailThreshold)
 	const wr::ValidationInputs atCap{0.004, 25, false, wr::kFailBiasTransM, wr::kValidationMinBiasSamples};
 	EXPECT_EQ(wr::EvaluateValidation(atCap), wr::ValidationOutcome::Inconclusive);
 
-	const wr::ValidationInputs justAbove{0.004, 25, false, wr::kFailBiasTransM + 0.0001,
-	                                     wr::kValidationMinBiasSamples};
+	const wr::ValidationInputs justAbove{0.004, 25, false, wr::kFailBiasTransM + 0.0001, wr::kValidationMinBiasSamples};
 	EXPECT_EQ(wr::EvaluateValidation(justAbove), wr::ValidationOutcome::Failed);
 }
 
