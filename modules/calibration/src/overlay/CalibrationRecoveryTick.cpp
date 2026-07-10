@@ -989,7 +989,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 			// letting them poison the solve window while they age out.
 			CalCtx.warmRestartReanchorCount = 0;
 			EvictDeadFrameSamples(CalCtx, "slam_snap");
-			ArmReanchorToProfile(CalCtx);
+			ArmReanchorToProfile(CalCtx, /*frameMoved=*/true);
 		}
 		// Not a corroborated snap. Choose hold / gentle re-anchor / (last
 		// resort) destructive clear instead of unconditionally clearing -- the
@@ -1026,7 +1026,7 @@ void TickHmdRelocalizationDetectorImpl(double now)
 				// exactly as in the corroborated-snap path -- the witness being
 				// unavailable changes confidence, not the frame geometry.
 				EvictDeadFrameSamples(CalCtx, "reloc_reanchor");
-				ArmReanchorToProfile(CalCtx);
+				ArmReanchorToProfile(CalCtx, /*frameMoved=*/true);
 			}
 			else { // DestructiveClear -- last resort: no saved profile to fall back to
 				char logbuf[384];
@@ -1240,12 +1240,13 @@ size_t EvictDeadFrameSamples(CalibrationContext& ctx, const char* reason)
 // per the 2026-05-04 "user notices nothing" directive). The metrics
 // annotation is the caller's responsibility -- this helper deliberately
 // doesn't write one so each caller's grep key can differ.
-void ArmReanchorToProfile(CalibrationContext& ctx)
+void ArmReanchorToProfile(CalibrationContext& ctx, bool frameMoved)
 {
 	// Re-apply the saved profile on the next ScanAndApplyProfile cycle and open
 	// the warm-restart validation grace window. The saved profile was correct
 	// before the disturbance, so re-applying it without clearing the solver lets
 	// the continuous-cal loop converge back rather than starting from zero.
+	ctx.warmRestartFrameMoved = frameMoved;
 	ctx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
 	ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
 	ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;

@@ -65,9 +65,19 @@ constexpr int kWarmRestartMaxReanchors = 2;
 // is present, hold the profile unless a destructive clear is truly the last
 // resort -- which requires no saved profile, so at warm restart (where a
 // profile always exists) this holds rather than clears.
-constexpr RecoveryAction ChooseWarmRestartFailureAction(bool witnessPresent, bool hasSavedProfile, int reanchorCount,
-                                                        int maxReanchors)
+//
+// frameReanchorWitnessed: the episode began with a witnessed world-frame move
+// (corroborated SLAM snap, reloc re-anchor, or a >= eviction-length away gap
+// on an inside-out headset). In that case the saved profile describes the OLD
+// frame -- re-applying it is the wrong side of the disagreement, and doing so
+// produced a re-anchor ping-pong at multi-metre amplitude in field logs
+// (2026-07-10: three re-apply/re-snap cycles per away gap at 3.5-7.3 m).
+// Hold the re-solved frame and let continuous calibration converge; the
+// saved profile stays on disk untouched for the next classified event.
+constexpr RecoveryAction ChooseWarmRestartFailureAction(bool frameReanchorWitnessed, bool witnessPresent,
+                                                        bool hasSavedProfile, int reanchorCount, int maxReanchors)
 {
+	if (frameReanchorWitnessed) return RecoveryAction::Hold;
 	if (witnessPresent && reanchorCount < maxReanchors) return RecoveryAction::ReanchorToProfile;
 	if (DestructiveClearAllowed(/*witnessInvalid=*/!witnessPresent, hasSavedProfile, /*warmRestartFailed=*/true))
 		return RecoveryAction::DestructiveClear;

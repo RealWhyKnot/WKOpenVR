@@ -70,35 +70,54 @@ TEST(RecoveryPolicy, Reloc_no_profile_but_wr_not_failed_holds)
 TEST(RecoveryPolicy, WarmRestart_witness_present_reanchors_until_cap)
 {
 	// Witness present + retries remaining -> re-anchor (the take-off/put-back-on fix).
-	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(/*witnessPresent=*/true, /*hasSavedProfile=*/true,
-	                                             /*reanchorCount=*/0, rp::kWarmRestartMaxReanchors),
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(/*frameReanchorWitnessed=*/false, /*witnessPresent=*/true,
+	                                             /*hasSavedProfile=*/true, /*reanchorCount=*/0,
+	                                             rp::kWarmRestartMaxReanchors),
 	          rp::RecoveryAction::ReanchorToProfile);
-	EXPECT_EQ(
-	    rp::ChooseWarmRestartFailureAction(true, true, rp::kWarmRestartMaxReanchors - 1, rp::kWarmRestartMaxReanchors),
-	    rp::RecoveryAction::ReanchorToProfile);
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(false, true, true, rp::kWarmRestartMaxReanchors - 1,
+	                                             rp::kWarmRestartMaxReanchors),
+	          rp::RecoveryAction::ReanchorToProfile);
 }
 
 TEST(RecoveryPolicy, WarmRestart_retries_exhausted_holds)
 {
 	// Cap reached: a profile still exists, so hold rather than destroy.
-	EXPECT_EQ(
-	    rp::ChooseWarmRestartFailureAction(true, true, rp::kWarmRestartMaxReanchors, rp::kWarmRestartMaxReanchors),
-	    rp::RecoveryAction::Hold);
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(false, true, true, rp::kWarmRestartMaxReanchors,
+	                                             rp::kWarmRestartMaxReanchors),
+	          rp::RecoveryAction::Hold);
 }
 
 TEST(RecoveryPolicy, WarmRestart_no_witness_with_profile_holds)
 {
 	// No witness but a saved profile exists -> hold (destructive needs no profile).
-	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(/*witnessPresent=*/false, /*hasSavedProfile=*/true,
-	                                             /*reanchorCount=*/0, rp::kWarmRestartMaxReanchors),
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(/*frameReanchorWitnessed=*/false, /*witnessPresent=*/false,
+	                                             /*hasSavedProfile=*/true, /*reanchorCount=*/0,
+	                                             rp::kWarmRestartMaxReanchors),
 	          rp::RecoveryAction::Hold);
 }
 
 TEST(RecoveryPolicy, WarmRestart_no_witness_no_profile_destroys)
 {
 	// No witness and no profile, warm-restart failed -> last resort destructive.
-	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(false, false, 0, rp::kWarmRestartMaxReanchors),
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(false, false, false, 0, rp::kWarmRestartMaxReanchors),
 	          rp::RecoveryAction::DestructiveClear);
+}
+
+TEST(RecoveryPolicy, WarmRestart_witnessed_frame_move_holds_resolved_frame)
+{
+	// The episode began with a witnessed world-frame move (corroborated SLAM
+	// snap, reloc re-anchor, or an eviction-length away gap). The saved
+	// profile describes the OLD frame; re-applying it re-opens the step-gate
+	// bypass and produced two teleports per validation-failure cycle in
+	// field logs. Hold wins regardless of witness presence or retry budget.
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(/*frameReanchorWitnessed=*/true, /*witnessPresent=*/true,
+	                                             /*hasSavedProfile=*/true, /*reanchorCount=*/0,
+	                                             rp::kWarmRestartMaxReanchors),
+	          rp::RecoveryAction::Hold);
+	// Even the destructive last-resort shape is overridden by provenance:
+	// the frame moved, so the solver's answer is the trustworthy side.
+	EXPECT_EQ(rp::ChooseWarmRestartFailureAction(true, false, false, 0, rp::kWarmRestartMaxReanchors),
+	          rp::RecoveryAction::Hold);
 }
 
 static_assert(rp::kWarmRestartMaxReanchors == 2,

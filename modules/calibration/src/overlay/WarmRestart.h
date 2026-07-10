@@ -84,7 +84,19 @@ constexpr int kColdStartGraceTicks = 100;
 //   - madFloor in (0, kValidatedSettledMadM] AND meanBias <=
 //     kAcceptBiasTransM AND postSnap samples >= 20: declare Settled,
 //     end grace early. Profile snap was correct.
-//   - At grace end with madFloor > kValidatedFailedMadM: also Failed.
+//   - At grace end with madFloor above the dispersion-fail threshold:
+//     also Failed -- UNLESS the bias evidence vouches for the applied
+//     calibration (enough samples, mean under the accept cap). Dispersion
+//     measures how quiet the samples are, not whether the calibration is
+//     right; a rig with a long lever arm to the playspace origin runs a
+//     dispersion floor of 50 mm+ around a calibration whose bias reads
+//     4-6 mm (field logs 2026-07-09/10). Bias is the correctness signal;
+//     when it is good, high dispersion alone must not trigger recovery.
+//   - The dispersion-fail threshold itself is baseline-relative:
+//     max(kValidatedFailedMadM, kFailedMadRegressionScale * madAtSnap).
+//     A rig whose pre-snap dispersion was already high can only Fail by
+//     getting materially worse than its own baseline; quiet rigs keep
+//     the absolute 20 mm behavior unchanged.
 //   - In between: Inconclusive, profile stays, no recovery.
 constexpr double kValidatedSettledMadM = 0.008; // 8 mm
 constexpr double kValidatedFailedMadM = 0.020;  // 20 mm
@@ -92,6 +104,7 @@ constexpr double kAcceptBiasTransM = 0.005;     // 5 mm; max bias for Settled
 constexpr double kFailBiasTransM = 0.015;       // 15 mm; bias above this -> Failed
 constexpr int kValidationMinSamples = 20;
 constexpr int kValidationMinBiasSamples = 8;
+constexpr double kFailedMadRegressionScale = 1.5;
 
 enum class ValidationOutcome
 {
@@ -177,6 +190,10 @@ struct ValidationInputs
 	// Distinct from samplesSinceSnap: error pushes only happen on validated
 	// solves, so the tick count can far outrun the bias evidence.
 	int biasSampleCount = 0;
+	// Dispersion floor captured at snap fire (ctx.warmRestartMadAtSnap).
+	// Baseline for the relative dispersion-fail threshold; zero (unknown)
+	// leaves the absolute kValidatedFailedMadM in charge.
+	double madAtSnapM = 0.0;
 };
 
 // Validation outcome from one tick's reading. Pure helper; caller
@@ -195,8 +212,23 @@ constexpr ValidationOutcome EvaluateValidation(const ValidationInputs& in)
 		return ValidationOutcome::Failed;
 	}
 	// Dispersion-Failed at grace end: post-snap samples never stabilized.
-	if (in.graceEndedThisTick && in.madFloorM > kValidatedFailedMadM) {
-		return ValidationOutcome::Failed;
+	// Two escapes keep this from misfiring on rigs whose dispersion is
+	// naturally high (long lever arm to the playspace origin):
+	//   - bias override: enough bias samples with a mean under the accept
+	//     cap means the applied calibration fits the live samples; noisy
+	//     dispersion around a correct answer is not a failure,
+	//   - baseline-relative threshold: Failed requires dispersion
+	//     materially worse than the pre-snap baseline, not merely above
+	//     the absolute floor tuned for quiet rigs.
+	if (in.graceEndedThisTick) {
+		const bool biasVouches =
+		    in.biasSampleCount >= kValidationMinBiasSamples && in.meanBiasTransM <= kAcceptBiasTransM;
+		const double failMadM = kValidatedFailedMadM > kFailedMadRegressionScale * in.madAtSnapM
+		                            ? kValidatedFailedMadM
+		                            : kFailedMadRegressionScale * in.madAtSnapM;
+		if (!biasVouches && in.madFloorM > failMadM) {
+			return ValidationOutcome::Failed;
+		}
 	}
 	// Settled: requires BOTH dispersion AND bias to be low. Pre-fix this
 	// only checked dispersion, so a snap that landed off-target but

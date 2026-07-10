@@ -18,7 +18,12 @@ struct CalibrationContext;
 // all three drive the output identically (the apply switches from snap to a
 // constant-velocity ramp in one place when that lands). Does NOT touch
 // warmRestartReanchorCount -- callers manage retry accounting.
-void ArmReanchorToProfile(CalibrationContext& ctx);
+//
+// `frameMoved` records whether this episode began with a witnessed world-frame
+// move (corroborated SLAM snap, reloc re-anchor, eviction-length away gap).
+// The validation-failure policy reads it to decide between re-applying the
+// profile and holding the re-solved frame.
+void ArmReanchorToProfile(CalibrationContext& ctx, bool frameMoved);
 
 // Drop every sample collected before this instant from the primary and all
 // additional calibration buffers. For disturbances that move the reference

@@ -1528,7 +1528,11 @@ void CalibrationTick(double time)
 					if (awayFor >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds) {
 						EvictDeadFrameSamples(ctx, "away_gap");
 					}
-					ArmReanchorToProfile(ctx);
+					// An eviction-length gap is long enough for an inside-out
+					// headset to have re-anchored its frame while off-head;
+					// that provenance decides the validation-failure action.
+					ArmReanchorToProfile(ctx,
+					                     /*frameMoved=*/awayFor >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds);
 					const double mag = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
 					                             ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
 					                             ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
@@ -2846,6 +2850,7 @@ void CalibrationTick(double time)
 				vin.graceEndedThisTick = graceEndedThisTick;
 				vin.meanBiasTransM = meanBiasTransM;
 				vin.biasSampleCount = CalCtx.postSnapErrorSampleCount;
+				vin.madAtSnapM = CalCtx.warmRestartMadAtSnap;
 				const auto outcome = spacecal::warm_restart::EvaluateValidation(vin);
 
 				// mad_floor_source labels whether the rolling-min floor
@@ -2902,28 +2907,30 @@ void CalibrationTick(double time)
 					// hit; the old code cleared unconditionally here.
 					const bool witnessPresent = wkopenvr::headmount::WitnessPresent(CalCtx);
 					const auto wrAction = spacecal::recovery::ChooseWarmRestartFailureAction(
-					    witnessPresent, CalCtx.validProfile, CalCtx.warmRestartReanchorCount,
-					    spacecal::recovery::kWarmRestartMaxReanchors);
+					    CalCtx.warmRestartFrameMoved, witnessPresent, CalCtx.validProfile,
+					    CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors);
 					if (wrAction == spacecal::recovery::RecoveryAction::ReanchorToProfile) {
 						CalCtx.warmRestartReanchorCount += 1;
 						char vbuf[256];
 						snprintf(vbuf, sizeof vbuf,
-						         "[warm-restart][witness-veto] reanchor=%d/%d -> profile re-applied,"
+						         "[warm-restart][witness-veto] reanchor=%d/%d frame_moved=%d -> profile re-applied,"
 						         " grace re-armed (no destructive clear)",
-						         CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors);
+						         CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors,
+						         (int)CalCtx.warmRestartFrameMoved);
 						Metrics::WriteLogAnnotation(vbuf);
-						ArmReanchorToProfile(CalCtx);
+						ArmReanchorToProfile(CalCtx, CalCtx.warmRestartFrameMoved);
 					}
 					else if (wrAction == spacecal::recovery::RecoveryAction::DestructiveClear) {
 						RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
 						                             "warm_restart_validation_failed");
 					}
-					else { // Hold -- preserve the profile rather than clear it
+					else { // Hold -- keep the current frame; the profile stays on disk
 						char hbuf[256];
 						snprintf(hbuf, sizeof hbuf,
 						         "[warm-restart][held] witnessPresent=%d reanchors=%d validProfile=%d"
-						         " -> profile preserved, no destructive clear",
-						         (int)witnessPresent, CalCtx.warmRestartReanchorCount, (int)CalCtx.validProfile);
+						         " frame_moved=%d -> current frame held, no profile re-apply, no destructive clear",
+						         (int)witnessPresent, CalCtx.warmRestartReanchorCount, (int)CalCtx.validProfile,
+						         (int)CalCtx.warmRestartFrameMoved);
 						Metrics::WriteLogAnnotation(hbuf);
 					}
 				}

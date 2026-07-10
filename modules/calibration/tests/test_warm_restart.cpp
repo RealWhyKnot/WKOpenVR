@@ -406,7 +406,8 @@ TEST(WarmRestartValidationTest, LargeNoiseLowBias_StaysInconclusiveUntilGraceEnd
 {
 	// High dispersion, low bias: the snap target looks right on average
 	// but the samples are noisy. Mid-grace this is Inconclusive (let the
-	// solver keep working); at grace end the MAD-Failed path fires.
+	// solver keep working); at grace end the MAD-Failed path fires only
+	// when there is no bias evidence to vouch for the calibration.
 	wr::ValidationInputs in{
 	    /*madFloorM=*/0.018,
 	    /*samplesSinceSnap=*/50,
@@ -420,9 +421,77 @@ TEST(WarmRestartValidationTest, LargeNoiseLowBias_StaysInconclusiveUntilGraceEnd
 	    << "0.018 m is below kValidatedFailedMadM (0.020 m); only MAD strictly "
 	       "greater fails, otherwise grace end is Inconclusive";
 
-	// Now push MAD past the failed threshold at grace end.
+	// Now push MAD past the failed threshold at grace end. Without bias
+	// samples in the mean, dispersion is the only signal -> Failed.
 	in.madFloorM = 0.025;
 	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed);
+}
+
+// --- Dispersion-fail escapes -------------------------------------------------
+//
+// A rig whose playspace sits metres from the tracking origin runs a candidate
+// dispersion floor of 50 mm and up around a perfectly aligned calibration
+// (field logs 2026-07-09/10: mad 78-88 mm with 4-6 mm bias, verdict Failed,
+// followed by a profile re-apply / re-snap teleport cycle). Dispersion
+// measures sample noise, not correctness; the escapes below keep it from
+// overruling good bias evidence or firing on a rig's natural noise level.
+
+TEST(WarmRestartValidationTest, MadFailedOverriddenByLowBias)
+{
+	// The live false-fail shape: dispersion 80 mm, bias 4 mm over a full
+	// sample mean. Bias vouches for the calibration -> Inconclusive, not
+	// Failed (profile stays, no recovery, no teleport).
+	const wr::ValidationInputs in{
+	    /*madFloorM=*/0.080,
+	    /*samplesSinceSnap=*/100,
+	    /*graceEndedThisTick=*/true,
+	    /*meanBiasTransM=*/0.004,
+	    /*biasSampleCount=*/wr::kValidationMinBiasSamples,
+	};
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive)
+	    << "Good bias evidence must veto a dispersion-only Failed";
+}
+
+TEST(WarmRestartValidationTest, MadFailedRequiresBiasSamplesToOverride)
+{
+	// Same dispersion but the low bias mean holds too few samples to be
+	// evidence -- the override must not fire on a hollow mean.
+	const wr::ValidationInputs in{0.080, 100, true, 0.004, wr::kValidationMinBiasSamples - 1};
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed);
+}
+
+TEST(WarmRestartValidationTest, MadFailedScalesWithSnapBaseline)
+{
+	// Pre-snap dispersion was already 60 mm: the fail threshold becomes
+	// max(20, 1.5 * 60) = 90 mm. A post-snap floor of 55 mm is BETTER than
+	// baseline -> not a failure.
+	wr::ValidationInputs in{
+	    /*madFloorM=*/0.055,
+	    /*samplesSinceSnap=*/100,
+	    /*graceEndedThisTick=*/true,
+	    /*meanBiasTransM=*/0.0,
+	    /*biasSampleCount=*/0,
+	};
+	in.madAtSnapM = 0.060;
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive)
+	    << "Dispersion at the rig's own baseline is not a regression";
+
+	// Materially worse than baseline still fails: 1.5 * 60 = 90 mm crossed.
+	in.madFloorM = 0.095;
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed);
+}
+
+TEST(WarmRestartValidationTest, QuietRigMadFailedUnchanged)
+{
+	// Quiet rig (pre-snap floor 5 mm): 1.5 * 5 = 7.5 mm loses to the
+	// absolute 20 mm floor, so behavior is identical to the fixed
+	// threshold -- 30 mm at grace end fails exactly as before.
+	wr::ValidationInputs in{0.030, 100, true, 0.0, 0};
+	in.madAtSnapM = 0.005;
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed);
+
+	in.madFloorM = wr::kValidatedFailedMadM; // exactly at the absolute floor
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive);
 }
 
 TEST(WarmRestartValidationTest, RotationBiasPropagatesViaLeverArm)
@@ -548,3 +617,6 @@ static_assert(wr::kFailBiasTransM > wr::kAcceptBiasTransM,
 static_assert(wr::kValidationMinBiasSamples == 8, "kValidationMinBiasSamples changed -- must stay comfortably "
                                                   "reachable within the 100-tick grace window at the live "
                                                   "error-push rate, or Bias-Failed can never fire");
+static_assert(wr::kFailedMadRegressionScale == 1.5, "kFailedMadRegressionScale changed -- review the "
+                                                    "baseline-relative dispersion-fail rationale in "
+                                                    "MadFailedScalesWithSnapBaseline");

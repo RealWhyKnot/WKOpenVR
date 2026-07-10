@@ -553,6 +553,14 @@ struct CalibrationContext
 	// fresh warm-restart engage/snap, on Settled, and on Clear().
 	int warmRestartReanchorCount = 0;
 
+	// True when the current warm-restart episode began with a witnessed
+	// world-frame move (corroborated SLAM snap, reloc re-anchor, or an
+	// away gap long enough for an inside-out headset to re-anchor). A
+	// validation failure then holds the re-solved frame instead of
+	// re-applying the saved profile, which describes the old frame
+	// (RecoveryPolicy.h::ChooseWarmRestartFailureAction).
+	bool warmRestartFrameMoved = false;
+
 	// Snap wall-time and source-of-floor tracking. `warmRestartSnapTime`
 	// is `Metrics::CurrentTime` at snap fire; `autoLockMadFloorTs` is the
 	// timestamp of the sample that produced the current floor value.
@@ -833,6 +841,7 @@ struct CalibrationContext
 		postSnapErrorSampleCount = 0;
 		warmRestartLastConsumedErrTs = 0.0;
 		warmRestartReanchorCount = 0;
+		warmRestartFrameMoved = false;
 		warmRestartSnapTime = 0.0;
 		autoLockMadFloorTs = 0.0;
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
