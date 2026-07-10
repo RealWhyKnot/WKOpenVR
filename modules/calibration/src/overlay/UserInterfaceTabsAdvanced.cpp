@@ -20,6 +20,10 @@ void DrawVectorElement(const std::string id, const char* text, double* value, in
 // conflicts with the <openvr.h> this translation unit already includes.
 void SendFreezeAllTracking();
 
+// Forward decl (defined in CalibrationRecoveryTick.cpp); declared locally for
+// the same header-conflict reason as SendFreezeAllTracking above.
+void ResetCustomCheckState(CalibrationContext& ctx);
+
 static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max,
                             int flags = ImGuiSliderFlags_AlwaysClamp)
 {
@@ -501,17 +505,32 @@ void CCal_DrawSettings()
 			ImGui::BeginGroupPanel("Experimental", panel_size);
 			openvr_pair::overlay::ui::DrawSettingTable(
 			    "##advanced_experimental_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
+				    openvr_pair::overlay::ui::SettingRow(table, "Enhanced tracking stability", [&] {
+					    if (ExperimentCheckbox(
+					            "enhanced_tracking_checks", "##experimental_enhanced_tracking_checks",
+					            &CalCtx.enhancedTrackingChecks,
+					            "Extra safeguards for continuous calibration: distance-aware sample weighting, "
+					            "automatic recovery after headset relocations and breaks, and stricter validation "
+					            "when a saved profile is restored. Off runs the classic calibration pipeline "
+					            "(matches the original OpenVR-SpaceCalibrator) -- try that first if tracking ever "
+					            "misbehaves. Takes effect immediately. Default off.")) {
+						    SaveProfile(CalCtx);
+						    ResetCustomCheckState(CalCtx);
+					    }
+				    });
+				    ImGui::BeginDisabled(!CalCtx.enhancedTrackingChecks);
 				    openvr_pair::overlay::ui::SettingRow(table, "Confidence-weighted calibration", [&] {
 					    if (ExperimentCheckbox(
 					            "confidence_weighted_calibration", "##head_mount_experimental_confidence_fusion",
 					            &CalCtx.headMount.experimentalConfidenceFusion,
 					            "Fuse each accepted continuous re-solve into a running estimate weighted by its "
 					            "geometry confidence, instead of overwriting the calibration outright (classic "
-					            "behaviour). Sample-level distance weighting is its own setting under Diagnostics. "
-					            "Experimental. Default off.")) {
+					            "behaviour). Needs Enhanced tracking stability. Sample-level distance weighting is "
+					            "its own setting under Diagnostics. Experimental. Default off.")) {
 						    SaveProfile(CalCtx);
 					    }
 				    });
+				    ImGui::EndDisabled();
 			    });
 			ImGui::EndGroupPanel();
 		}

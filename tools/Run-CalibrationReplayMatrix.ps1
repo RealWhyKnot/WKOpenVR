@@ -43,7 +43,16 @@ param(
 	# variables, so the wall time collapses to the slowest single replay.
 	# Results, output CSV, and baseline handling are identical to the
 	# sequential path.
-	[switch]$Parallel
+	[switch]$Parallel,
+
+	# Fast pre-flight gate: replay only the first -QuickRows rows of the
+	# recording. Metrics differ from a full replay, so -Baseline /
+	# -UpdateBaseline read/write <recording>.quick.baseline.json instead of
+	# the full goldens. Implies -Parallel.
+	[switch]$Quick,
+
+	# Row cap used by -Quick.
+	[int]$QuickRows = 8000
 )
 
 $ErrorActionPreference = "Stop"
@@ -144,6 +153,19 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_LOCK_REL         = "1"
 		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
 		WKOPENVR_REPLAY_SEED_PROFILE     = "recorded"
+	}
+	# Classic upstream pipeline: locked relpose solve with the enhanced-tracking
+	# master switch off (no accept gates, uniform weighting). The behaviour a
+	# live session gets with the Enhanced tracking stability toggle off.
+	$Catalog["upstream_parity"] = New-Scenario "upstream_parity" @{
+		WKOPENVR_REPLAY_LOCK_REL      = "1"
+		WKOPENVR_REPLAY_CUSTOM_CHECKS = "0"
+	}
+	# Enhanced-tracking new math: covariance-weighted locked relpose solve.
+	# Compare applied_mag_wander_cm / final_error_mm against relpose_weighted.
+	$Catalog["v2_math"] = New-Scenario "v2_math" @{
+		WKOPENVR_REPLAY_LOCK_REL = "1"
+		WKOPENVR_REPLAY_V2_MATH  = "1"
 	}
 	return $Catalog
 }
@@ -263,7 +285,9 @@ if ($Scenario.Count -eq 0) {
 		"relpose_uniform",
 		"relpose_weighted",
 		"seed_recorded_uniform",
-		"seed_recorded_fused"
+		"seed_recorded_fused",
+		"upstream_parity",
+		"v2_math"
 	)
 }
 else {
@@ -320,6 +344,9 @@ $script:ReplayEnvNames = @(
 	"WKOPENVR_REPLAY_LOCK_REL",
 	"WKOPENVR_REPLAY_PRECISION_WEIGHT",
 	"WKOPENVR_REPLAY_GRAVITY_4DOF",
+	"WKOPENVR_REPLAY_CUSTOM_CHECKS",
+	"WKOPENVR_REPLAY_V2_MATH",
+	"WKOPENVR_REPLAY_MAX_ROWS",
 	"WKOPENVR_REPLAY_SEED_PROFILE",
 	"WKOPENVR_REPLAY_TRACE_CSV",
 	"WKOPENVR_REPLAY_AUTOLOCK_SIM",
@@ -347,6 +374,10 @@ $BaseEnv = @{
 	WKOPENVR_REPLAY_SAMPLE_WINDOWS = (($SampleWindow | ForEach-Object { [string]$_ }) -join ";")
 	WKOPENVR_REPLAY_QUALITY_INTERVAL = [string]$QualityInterval
 	WKOPENVR_REPLAY_HOLDOUT = $(if ($NoHoldout) { "0" } else { "1" })
+}
+if ($Quick) {
+	$BaseEnv["WKOPENVR_REPLAY_MAX_ROWS"] = [string]$QuickRows
+	$Parallel = $true
 }
 
 Write-Host "Recording: $Recording"
@@ -455,7 +486,9 @@ Write-Host "Wrote $OutputCsv"
 if ($Baseline -or $UpdateBaseline) {
 	$BaselineDir = Resolve-RepoPath "" "tools\replay-baselines"
 	$RecName = [System.IO.Path]::GetFileNameWithoutExtension($Recording)
-	$BaselinePath = Join-Path $BaselineDir ($RecName + ".baseline.json")
+	$BaselineSuffix = ".baseline.json"
+	if ($Quick) { $BaselineSuffix = ".quick.baseline.json" }
+	$BaselinePath = Join-Path $BaselineDir ($RecName + $BaselineSuffix)
 
 	$MetricNames = @("Accepts", "FinalErrorMm", "AppliedMagWanderCm", "TotalAppliedPathCm", "PeakAppliedStepCm",
 		"PerceptibleShifts", "NetDriftMagCm")

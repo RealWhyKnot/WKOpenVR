@@ -239,6 +239,16 @@ struct ReplayOptions
 	// Project the solved calibration rotation to yaw-about-gravity (see
 	// GravityAlignment.h). Replay-only A/B knob.
 	bool gravityConstrainedRelPose = false;
+	// Mirror the enhanced-tracking master switch at the solver level: off
+	// applies every validated locked candidate ungated (the classic upstream
+	// behaviour). Weighting stays a separate knob above so existing A/B
+	// scenarios keep their meaning; the live tick forces it off with the
+	// switch.
+	bool customChecks = true;
+	// The switch's new math: covariance-weighted solve (and, on the session
+	// path, observability gating + sequential validation). Overrides the
+	// scalar weighting knob when set.
+	bool v2Math = false;
 	// Warm-start seeding (see ReplaySeedMode). Explicit mode reads the two seed
 	// fields; Recorded mode ignores them and uses rec.seedProfile when valid.
 	ReplaySeedMode seedMode = ReplaySeedMode::None;

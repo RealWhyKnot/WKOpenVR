@@ -30,6 +30,10 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_controller_input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_calc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_relpose_lock_gate.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_lever_arm_covariance.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_custom_checks_gate.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_observability_gate.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_sprt_validation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_precision_weighted_relpose.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_continuous_precision_fusion.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_anchor.cpp

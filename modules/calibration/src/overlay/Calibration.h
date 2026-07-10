@@ -15,6 +15,7 @@
 #include "HeadMountDriverSynthConfig.h"
 #include "CalibrationAutoSpeed.h"
 #include "WarmRestart.h" // ValidationOutcome enum
+#include "SprtValidation.h"
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -325,6 +326,26 @@ struct CalibrationContext
 	// updates each tick and would converge through the shift anyway.
 	bool baseStationDriftCorrectionEnabled = true;
 
+	// Master experimental switch for every tracking check this fork adds on
+	// top of the original OpenVR-SpaceCalibrator pipeline: the recovery layer
+	// (relocalization detector, snap suppression, warm restart, base-station
+	// drift correction), the locked-accept/liveness gates, geometry-precision
+	// sample weighting, and the covariance-weighted solve with observability
+	// gating and sequential profile validation. OFF (default) runs the
+	// classic upstream pipeline -- the fallback when tracking misbehaves. The
+	// load-time profile-magnitude clamp stays active either way (it guards
+	// on-disk corruption, not runtime tracking). Persisted; always written so
+	// an explicit choice survives reload.
+	bool enhancedTrackingChecks = false;
+	bool CustomChecksActive() const { return enhancedTrackingChecks; }
+
+	// Lever-arm noise model for the covariance-weighted solve and the
+	// sequential profile validation (LeverArmCovariance.h; defaults measured
+	// from retained recordings). Persisted knobs for rigs whose trackers
+	// jitter differently; only read while the enhanced-tracking switch is on.
+	double leverArmSigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;
+	double leverArmSigmaJitterM = spacecal::levercov::kDefaultSigmaJitterM;
+
 	// Relocalization-detector runtime state. Armed by the HMD reloc detector;
 	// relocDetectedThisTick is recorded per tick (spacecal_log reloc_detected
 	// column). Not persisted; reset in Clear().
@@ -571,6 +592,11 @@ struct CalibrationContext
 	double warmRestartSnapTime = 0.0;
 	double autoLockMadFloorTs = 0.0;
 
+	// Sequential-validation accumulator for the current warm-restart episode
+	// (SprtValidation.h). Runtime-only; reset at every ArmReanchorToProfile,
+	// on Clear(), and when the enhanced-tracking switch flips.
+	spacecal::sprt::SprtState warmRestartSprt;
+
 	// Multi-ecosystem extras: each entry aligns an additional non-HMD tracking
 	// system to the HMD's tracking system. Empty for the typical 1-or-2-system
 	// case. The wizard appends entries here as it walks the user through each
@@ -761,6 +787,10 @@ struct CalibrationContext
 		baseStationDriftCorrectionEnabled = true;
 
 		precisionWeightedRelPose = true;
+
+		enhancedTrackingChecks = false;
+		leverArmSigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;
+		leverArmSigmaJitterM = spacecal::levercov::kDefaultSigmaJitterM;
 	}
 
 	struct Chaperone
@@ -844,6 +874,7 @@ struct CalibrationContext
 		warmRestartFrameMoved = false;
 		warmRestartSnapTime = 0.0;
 		autoLockMadFloorTs = 0.0;
+		warmRestartSprt = {};
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
 		// user preference that spans profiles.
 		// No calibration was performed — relative pose is NOT calibrated. The

@@ -16,6 +16,11 @@ enum ExperimentFlag : uint32_t
 {
 	// Geometry-precision confidence fusion of continuous re-solves.
 	ConfidenceFusion = 1u << 3,
+	// Master switch for the non-upstream tracking safeguards (recovery layer,
+	// warm-restart validation, lock gates) plus the covariance-weighted
+	// solve, observability gate, and sequential profile validation. Off means
+	// the pipeline matches the original OpenVR-SpaceCalibrator behavior.
+	EnhancedTrackingChecks = 1u << 6,
 };
 
 inline bool EnvFlagEnabled(const char* value)

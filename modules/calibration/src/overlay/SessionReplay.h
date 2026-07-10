@@ -319,6 +319,16 @@ struct SessionReplayOptions
 	// Mirror the locked-relpose accept gates (quality band + step bounds,
 	// RelPoseLockGate.h). Off = pre-gate runtime behavior, for A/B.
 	bool lockedStepGate = true;
+	// Mirror the enhanced-tracking master switch. Off = classic upstream
+	// pipeline: no warm-restart/reloc/snap emulation, no evictions, uniform
+	// weighting, no fusion, locked candidates applied ungated. Defaults on so
+	// the session gate keeps exercising (and pinning) the recovery layer;
+	// the live default is off.
+	bool customChecks = true;
+	// The switch's new math: covariance-weighted solve (plus observability
+	// gating + sequential validation as they land). Overrides the scalar
+	// weighting knob when set; inert without customChecks.
+	bool v2Math = false;
 };
 
 struct SessionReplayResult
@@ -364,7 +374,7 @@ struct SessionReplayResult
 	bool seedApplied = false;
 };
 
-inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const SessionReplayOptions& opts)
+inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const SessionReplayOptions& optsIn)
 {
 	SessionReplayResult res;
 	if (!rec.error.empty()) {
@@ -380,10 +390,25 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 		return res;
 	}
 
+	// The master switch implies the classic settings for every dependent
+	// knob, exactly like the live tick.
+	SessionReplayOptions opts = optsIn;
+	if (!opts.customChecks) {
+		opts.precisionWeightedRelPose = false;
+		opts.fusionAccept = false;
+		opts.evictSamplesOnFrameJump = false;
+		opts.lockedStepGate = false;
+	}
+
 	CalibrationCalc calc;
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = opts.lockRelativePosition;
 	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
+	calc.SetLockedAcceptGate(opts.customChecks);
+	calc.SetV2Math(opts.customChecks && opts.v2Math);
+	if (opts.customChecks && opts.v2Math) {
+		calc.SetRelPoseWeightMode(CalibrationCalc::RelPoseWeightMode::Covariance);
+	}
 
 	// Applied transform: what the driver would render. Solver accepts write it
 	// absolutely (or fuse into it) -- the same single variable the live tick
@@ -608,7 +633,9 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 
 		// 3.5 Warm-restart engages: mirror the runtime's away-gap eviction so
 		// pre-gap samples leave the window in replay exactly as they did live.
-		while (nextAway < awayEvents.size() && awayEvents[nextAway].time <= now) {
+		// With the master switch off the runtime never engages, so the events
+		// are left unconsumed and the counters stay zero.
+		while (opts.customChecks && nextAway < awayEvents.size() && awayEvents[nextAway].time <= now) {
 			++res.warmRestartSnaps;
 			if (opts.evictSamplesOnFrameJump &&
 			    awayEvents[nextAway].awayForS >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds) {
@@ -620,12 +647,14 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 
 		// 4. Relocalization handling: annotation events (preferred, exact
 		// live-measured delta) plus any column-flagged row not covered by one.
-		bool relocThisRow = row.relocDetected;
+		// The whole layer stands down with the master switch, like the live
+		// detector gate.
+		bool relocThisRow = opts.customChecks && row.relocDetected;
 		Eigen::Vector3d relocDeltaVec = hmdDeltaVec;
 		double relocDeltaM = hmdDeltaM;
 		bool haveLiveTrackerDelta = false;
 		double liveTrackerDeltaM = -1.0;
-		while (nextReloc < relocEvents.size() && relocEvents[nextReloc].time <= now) {
+		while (opts.customChecks && nextReloc < relocEvents.size() && relocEvents[nextReloc].time <= now) {
 			relocThisRow = true;
 			if (relocEvents[nextReloc].hasDelta) {
 				relocDeltaVec = relocEvents[nextReloc].deltaM;

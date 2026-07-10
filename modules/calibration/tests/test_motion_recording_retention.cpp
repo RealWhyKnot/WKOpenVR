@@ -843,20 +843,29 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	    EnvFlag("WKOPENVR_REPLAY_PRECISION_WEIGHT", baseOptions.precisionWeightedRelPose);
 	baseOptions.gravityConstrainedRelPose =
 	    EnvFlag("WKOPENVR_REPLAY_GRAVITY_4DOF", baseOptions.gravityConstrainedRelPose);
+	baseOptions.customChecks = EnvFlag("WKOPENVR_REPLAY_CUSTOM_CHECKS", baseOptions.customChecks);
+	baseOptions.v2Math = EnvFlag("WKOPENVR_REPLAY_V2_MATH", baseOptions.v2Math);
 	std::string seedName;
 	ApplySeedEnv(baseOptions, seedName);
 	const auto sampleWindows = ReplaySampleWindows();
+	// Quick-gate row cap: replay only the first N rows of each recording.
+	// Metrics differ from a full replay, so capped runs gate against their
+	// own quick baselines (Run-CalibrationReplayMatrix.ps1 -Quick).
+	const std::size_t maxRows = EnvSize("WKOPENVR_REPLAY_MAX_ROWS", 0);
 
 	std::size_t replayed = 0;
 	std::size_t skippedEmpty = 0;
 	for (const auto& input : inputs) {
 		SCOPED_TRACE(input.name);
-		const auto recording = replay::LoadRecording(input.path);
+		auto recording = replay::LoadRecording(input.path);
 		ASSERT_TRUE(recording.error.empty()) << recording.error;
 		if (recording.rows.empty()) {
 			++skippedEmpty;
 			std::cout << "[replay] " << input.name << " skipped=no_replayable_rows\n";
 			continue;
+		}
+		if (maxRows > 0 && recording.rows.size() > maxRows) {
+			recording.rows.resize(maxRows);
 		}
 
 		for (std::size_t sampleWindow : sampleWindows) {
@@ -886,7 +895,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
 			          << " lock_rel=" << (options.lockRelativePosition ? 1 : 0)
-			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0) << " seed=" << seedName
+			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0)
+			          << " custom_checks=" << (options.customChecks ? 1 : 0) << " seed=" << seedName
 			          << " seed_applied=" << (result.seedApplied ? 1 : 0) << " seed_mag_cm=" << result.seedMagCm
 			          << " peak_applied_mag_cm=" << result.peakAppliedMagCm
 			          << " applied_mag_wander_cm=" << result.appliedMagWanderCm

@@ -38,6 +38,15 @@ size_t EvictDeadFrameSamples(CalibrationContext& ctx, const char* reason);
 // Read by the [cal-heartbeat] emitter; updated inside TickHmdRelocalizationDetector.
 const spacecal::witness_health::WitnessHealth& LastWitnessHealth();
 
+// Drop every piece of rolling state behind the enhanced-tracking master
+// switch: warm-restart grace + validation accumulators, the pending profile
+// re-apply ramp, relocalization-detector caches, tracker-liveness baselines,
+// the base-station pose cache, geometry-shift accumulators, the locked-accept
+// gate windows, and the fusion confidence. Called when the switch flips at
+// runtime (UI toggle, profile load) so no armed check fires after opt-out and
+// no stale window influences the first checks after re-enable.
+void ResetCustomCheckState(CalibrationContext& ctx);
+
 extern spacecal::liveness::TrackerLivenessState g_refLiveness;
 extern spacecal::liveness::TrackerLivenessState g_tgtLiveness;
 extern bool g_refWasOffline;

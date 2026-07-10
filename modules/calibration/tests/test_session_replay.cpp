@@ -252,6 +252,36 @@ TEST(SessionReplayTest, CorroboratedFlipIsSnapSuppressed)
 	EXPECT_EQ(res.subThresholdRelocs, 0);
 }
 
+// With the enhanced-tracking master switch off, the recovery layer stands
+// down entirely: the same corroborated flip that snap-suppresses above and a
+// recorded warm-restart engage must both leave every recovery counter at
+// zero -- the classic upstream pipeline just solves through them.
+TEST(SessionReplayTest, MasterSwitchOffRunsUpstreamParity)
+{
+	SessionSpec spec;
+	spec.rows = 600;
+	spec.relocRow = 300;
+	spec.relocJumpM = 0.50;
+	auto rec = MakeSessionRecording(spec);
+	rec.annotations.push_back(
+	    {rec.rows[200].timestamp, "[warm-restart][snap]", "# [2.2] [warm-restart][snap] away_for_s=45.0 state=6"});
+
+	replay::SessionReplayOptions opts;
+	opts.seedMode = replay::ReplaySeedMode::None;
+	opts.customChecks = false;
+	const auto res = replay::RunSessionReplay(rec, opts);
+	ASSERT_TRUE(res.succeeded) << res.error;
+	EXPECT_GT(res.accepts, 0);
+	EXPECT_EQ(res.relocsSeen, 0);
+	EXPECT_EQ(res.snapSuppressed, 0);
+	EXPECT_EQ(res.recoveryHolds, 0);
+	EXPECT_EQ(res.recoveryReanchors, 0);
+	EXPECT_EQ(res.destructiveClears, 0);
+	EXPECT_EQ(res.samplesEvicted, 0);
+	EXPECT_EQ(res.warmRestartSnaps, 0);
+	EXPECT_EQ(res.subThresholdRelocs, 0);
+}
+
 // A 6 cm frame jump under the 30 cm recovery gate leaves a residual world
 // offset in the sub-threshold accounting.
 TEST(SessionReplayTest, SubThresholdJumpAccruesResidual)
@@ -497,6 +527,11 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	opts.evictSamplesOnFrameJump = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_EVICT", opts.evictSamplesOnFrameJump);
 	opts.lockedStepGate = EnvFlagLocal("WKOPENVR_REPLAY_LOCKED_GATE", opts.lockedStepGate);
 	opts.lockRelativePosition = EnvFlagLocal("WKOPENVR_REPLAY_LOCK_REL", opts.lockRelativePosition);
+	opts.customChecks = EnvFlagLocal("WKOPENVR_REPLAY_CUSTOM_CHECKS", opts.customChecks);
+	opts.v2Math = EnvFlagLocal("WKOPENVR_REPLAY_V2_MATH", opts.v2Math);
+	// Quick-gate row cap (Run-SessionReplayGate.ps1 -Quick): replay only the
+	// first N rows; capped runs gate against their own quick baselines.
+	const int maxRows = static_cast<int>(EnvDoubleLocal("WKOPENVR_REPLAY_MAX_ROWS", 0.0));
 
 	std::string paths = rawPaths;
 	std::size_t start = 0;
@@ -508,8 +543,11 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		start = end + 1;
 		if (path.empty()) continue;
 
-		const auto rec = replay::LoadRecording(path);
+		auto rec = replay::LoadRecording(path);
 		ASSERT_TRUE(rec.error.empty()) << rec.error;
+		if (maxRows > 0 && rec.rows.size() > static_cast<std::size_t>(maxRows)) {
+			rec.rows.resize(static_cast<std::size_t>(maxRows));
+		}
 		const auto res = replay::RunSessionReplay(rec, opts);
 		const std::string name = std::filesystem::path(path).filename().string();
 		if (!res.succeeded) {
@@ -520,6 +558,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
 		          << " fusion=" << (opts.fusionAccept ? 1 : 0) << " locked_gate=" << (opts.lockedStepGate ? 1 : 0)
 		          << " lock_rel=" << (opts.lockRelativePosition ? 1 : 0)
+		          << " custom_checks=" << (opts.customChecks ? 1 : 0)
 		          << " evict=" << (opts.evictSamplesOnFrameJump ? 1 : 0) << " samples_evicted=" << res.samplesEvicted
 		          << " warm_restart_snaps=" << res.warmRestartSnaps << " seed_applied=" << (res.seedApplied ? 1 : 0)
 		          << " rows=" << res.rowsProcessed << " accepts=" << res.accepts << " flips=" << res.lockFlips

@@ -1250,6 +1250,7 @@ void ArmReanchorToProfile(CalibrationContext& ctx, bool frameMoved)
 	ctx.warmRestartGraceSamples = spacecal::warm_restart::kGraceSamples;
 	ctx.warmRestartMadAtSnap = ctx.autoLockMadFloor;
 	ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
+	ctx.warmRestartSprt = {};
 	ctx.postSnapErrorSumMm = 0.0;
 	ctx.postSnapErrorSampleCount = 0;
 	ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
@@ -1263,6 +1264,58 @@ void ArmReanchorToProfile(CalibrationContext& ctx, bool frameMoved)
 	// Ramp to the profile at constant velocity (imperceptible) instead of
 	// snapping; the driver latches the ramp until the target is reached.
 	g_reanchorNextProfileApply = true;
+}
+
+void ResetCustomCheckState(CalibrationContext& ctx)
+{
+	// Warm restart: disarm grace and the validation accumulators; pin the
+	// last-consumed error timestamp so a later re-enable doesn't ingest a
+	// backlog of pre-toggle samples into the post-snap bias mean.
+	ctx.warmRestartGraceSamples = 0;
+	ctx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
+	ctx.warmRestartReanchorCount = 0;
+	ctx.postSnapErrorSumMm = 0.0;
+	ctx.postSnapErrorSampleCount = 0;
+	ctx.warmRestartLastConsumedErrTs = Metrics::error_currentCal.lastTs();
+	ctx.warmRestartSnapTime = 0.0;
+	ctx.warmRestartMadAtSnap = 0.0;
+	ctx.warmRestartFrameMoved = false;
+	ctx.warmRestartSprt = {};
+	// A queued profile re-apply ramp must not fire after opt-out.
+	g_reanchorNextProfileApply = false;
+
+	// Relocalization detector: drop the pose baselines so a re-enable diffs
+	// against fresh poses, not the poses from before the toggle. The undo
+	// snapshot survives -- an already-offered Undo stays usable.
+	g_relocDetector.havePrevHmd = false;
+	g_relocDetector.prevBodyTrans.clear();
+	g_relocDetector.havePrevHeadTracker = false;
+	g_relocDetector.prevHmdToBaseDist.clear();
+	g_relocDetector.witnessHealth = {};
+
+	// Tracker liveness: re-baseline both anchors.
+	spacecal::liveness::Reset(g_refLiveness);
+	spacecal::liveness::Reset(g_tgtLiveness);
+	g_refWasOffline = false;
+	g_tgtWasOffline = false;
+
+	// Base-station drift correction: a flip back on must not diff against
+	// stale cached poses.
+	baseStationCache.clear();
+
+	ResetGeometryShiftDetectorState();
+
+	// Locked-accept gate windows (consensus streak + drift-follower ring).
+	calibration.ResetCustomGateState();
+	for (auto& extra : ctx.additionalCalibrations) {
+		if (extra.calc) extra.calc->ResetCustomGateState();
+	}
+
+	// Fusion confidence restarts from zero; the next accepted candidate
+	// re-seeds it from its own measurement precision.
+	ctx.continuousConfidencePrecision = 0.0;
+	ctx.lastFusionGain = 1.0;
+	ctx.continuousFusionDisagreeStreak = 0;
 }
 
 void RecoverFromWedgedCalibration(const char* userFacingMessage, const char* recoverReason)

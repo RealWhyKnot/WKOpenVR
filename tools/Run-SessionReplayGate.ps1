@@ -12,8 +12,23 @@ param(
 	# Write/overwrite the recording's session baseline from this run.
 	[switch]$UpdateBaseline,
 
+	# Replay scenario: "" (default, full recovery layer), "upstream_parity"
+	# (enhanced-tracking master switch off -- classic pipeline), or "v2_math"
+	# (master switch + covariance/observability/sequential-validation solve).
+	# Non-default scenarios gate against
+	# tools\replay-baselines\<recording>.<scenario>.session.baseline.json.
+	[string]$Scenario = "",
+
 	# Run the current test binary without rebuilding first.
-	[switch]$SkipBuild
+	[switch]$SkipBuild,
+
+	# Fast pre-flight gate: replay only the first -QuickRows rows. Metrics
+	# differ from a full replay, so -Baseline / -UpdateBaseline read/write
+	# quick-suffixed baselines (<recording>[.<scenario>].quick.session.baseline.json).
+	[switch]$Quick,
+
+	# Row cap used by -Quick.
+	[int]$QuickRows = 8000
 )
 
 # Replays a recorded session through the full session-replay layer (solver +
@@ -57,6 +72,19 @@ if (-not (Test-Path $TestExe)) { throw "missing $TestExe; run without -SkipBuild
 
 $env:WKOPENVR_REPLAY_SESSION = "1"
 $env:WKOPENVR_REPLAY_PATHS = $RecordingPath
+if ($Quick) {
+	$env:WKOPENVR_REPLAY_MAX_ROWS = [string]$QuickRows
+}
+if ($Scenario -eq "upstream_parity") {
+	$env:WKOPENVR_REPLAY_CUSTOM_CHECKS = "0"
+}
+elseif ($Scenario -eq "v2_math") {
+	$env:WKOPENVR_REPLAY_CUSTOM_CHECKS = "1"
+	$env:WKOPENVR_REPLAY_V2_MATH = "1"
+}
+elseif (-not [string]::IsNullOrWhiteSpace($Scenario)) {
+	throw "Unknown -Scenario '$Scenario' (expected '', 'upstream_parity', or 'v2_math')."
+}
 try {
 	$OutputLines = & $TestExe --gtest_filter=SessionReplayTest.ReplaySessionsWhenRequested 2>&1 | ForEach-Object { "$_" }
 	if ($LASTEXITCODE -ne 0) { throw "spacecal_tests session replay failed (exit $LASTEXITCODE)" }
@@ -64,6 +92,9 @@ try {
 finally {
 	Remove-Item Env:WKOPENVR_REPLAY_SESSION -ErrorAction SilentlyContinue
 	Remove-Item Env:WKOPENVR_REPLAY_PATHS -ErrorAction SilentlyContinue
+	Remove-Item Env:WKOPENVR_REPLAY_CUSTOM_CHECKS -ErrorAction SilentlyContinue
+	Remove-Item Env:WKOPENVR_REPLAY_V2_MATH -ErrorAction SilentlyContinue
+	Remove-Item Env:WKOPENVR_REPLAY_MAX_ROWS -ErrorAction SilentlyContinue
 }
 
 $SummaryLine = $OutputLines | Where-Object { $_ -match '^\[session-replay\] ' } | Select-Object -First 1
@@ -89,7 +120,14 @@ foreach ($k in $ExactKeys + $TolerantKeys) {
 }
 
 $RecordingName = [System.IO.Path]::GetFileNameWithoutExtension($RecordingPath)
-$BaselinePath = Join-Path $RepoRoot "tools\replay-baselines\$RecordingName.session.baseline.json"
+$BaselineStem = $RecordingName
+if (-not [string]::IsNullOrWhiteSpace($Scenario)) {
+	$BaselineStem = "$RecordingName.$Scenario"
+}
+if ($Quick) {
+	$BaselineStem = "$BaselineStem.quick"
+}
+$BaselinePath = Join-Path $RepoRoot "tools\replay-baselines\$BaselineStem.session.baseline.json"
 
 if ($UpdateBaseline) {
 	$Payload = [ordered]@{}

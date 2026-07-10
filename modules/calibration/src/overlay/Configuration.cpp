@@ -781,6 +781,19 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (obj["precision_weighted_relpose"].is<bool>()) {
 		ctx.precisionWeightedRelPose = obj["precision_weighted_relpose"].get<bool>();
 	}
+	// Absent key -> stays at the construction default (off = classic
+	// upstream pipeline).
+	if (obj["enhanced_tracking_checks"].is<bool>()) {
+		ctx.enhancedTrackingChecks = obj["enhanced_tracking_checks"].get<bool>();
+	}
+	// Lever-arm noise knobs (LeverArmCovariance.h); clamped so a hand-edited
+	// zero or runaway value cannot degenerate the weights.
+	if (obj["lever_arm_sigma_theta_rad"].is<double>()) {
+		ctx.leverArmSigmaThetaRad = spacecal::levercov::ClampSigmaTheta(obj["lever_arm_sigma_theta_rad"].get<double>());
+	}
+	if (obj["lever_arm_sigma_jitter_m"].is<double>()) {
+		ctx.leverArmSigmaJitterM = spacecal::levercov::ClampSigmaJitter(obj["lever_arm_sigma_jitter_m"].get<double>());
+	}
 	// Lock-mode remains loadable for old profiles, but AUTO is no longer an
 	// active user-facing behavior. New presets only write OFF or ON.
 	bool loadedLockMode = false;
@@ -1006,6 +1019,8 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	WRITE_IF_CHANGED_BOOL("base_station_drift_correction", baseStationDriftCorrectionEnabled);
 	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed", oneShotCalibrationSpeed);
 	WRITE_IF_CHANGED_DOUBLE("continuous_calibration_speed", continuousCalibrationSpeed);
+	WRITE_IF_CHANGED_DOUBLE("lever_arm_sigma_theta_rad", leverArmSigmaThetaRad);
+	WRITE_IF_CHANGED_DOUBLE("lever_arm_sigma_jitter_m", leverArmSigmaJitterM);
 
 	// finger_smoothing_* and tracker_smoothness moved out of SC profiles
 	// on 2026-05-11 (Protocol v12 migration). The Smoothing overlay owns
@@ -1057,6 +1072,8 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// Always emit so an explicit user OFF survives loads (absent means "on").
 	bool weightedRelPose = ctx.precisionWeightedRelPose;
 	profile["precision_weighted_relpose"].set<bool>(weightedRelPose);
+	// Always emit so an explicit choice survives loads (absent means "off").
+	profile["enhanced_tracking_checks"].set<bool>(ctx.enhancedTrackingChecks);
 	const auto explicitLockMode = ctx.lockRelativePositionMode == CalibrationContext::LockMode::ON
 	                                  ? CalibrationContext::LockMode::ON
 	                                  : CalibrationContext::LockMode::OFF;
