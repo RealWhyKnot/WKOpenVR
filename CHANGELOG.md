@@ -87,6 +87,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Make geometry-shift restarts opt-in and absorb small frame jumps (b4413b5)
 - **calibration:** Replay seeded sessions and decision layers from pinned recordings (801f53f)
 - **phantom:** Flag-file full-rate replay capture and hidden-witness recording (1388e24)
+- **facetracking:** Continuous auto-calibration with bounded gain and rest anchoring (27a89f8)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
