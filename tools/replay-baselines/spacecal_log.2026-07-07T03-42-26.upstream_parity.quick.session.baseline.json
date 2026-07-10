@@ -1,0 +1,22 @@
+{
+  "relocs": 0.0,
+  "snap_suppressed": 0.0,
+  "holds": 0.0,
+  "reanchors": 0.0,
+  "destructive_clears": 0.0,
+  "samples_evicted": 0.0,
+  "warm_restart_snaps": 0.0,
+  "sub_threshold_relocs": 0.0,
+  "rows": 8000.0,
+  "accepts": 391.0,
+  "applied_path_cm": 555.066,
+  "peak_step_cm": 351.129,
+  "net_drift_mag_cm": 351.255,
+  "sub_threshold_residual_cm": 0.0,
+  "wander_per_10min_cm": 12.7842,
+  "max_unclassified_step_cm": 1.99265,
+  "rot_wander_per_10min_deg": 6.56612,
+  "max_unclassified_rot_step_deg": 0.954626,
+  "drift_steps": 0.0,
+  "drift_path_cm": 0.0
+}

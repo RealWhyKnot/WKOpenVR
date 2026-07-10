@@ -43,5 +43,23 @@
     "AppliedMagWanderCm": 2.06209,
     "PerceptibleShifts": 7.0,
     "NetDriftMagCm": 2.58753
+  },
+  "upstream_parity|w200": {
+    "Accepts": 1120.0,
+    "TotalAppliedPathCm": 176.612,
+    "PeakAppliedStepCm": 0.798968,
+    "FinalErrorMm": 3.09984,
+    "AppliedMagWanderCm": 2.76017,
+    "PerceptibleShifts": 49.0,
+    "NetDriftMagCm": 3.08958
+  },
+  "v2_math|w200": {
+    "Accepts": 11.0,
+    "TotalAppliedPathCm": 20.7718,
+    "PeakAppliedStepCm": 3.97056,
+    "FinalErrorMm": 2.31815,
+    "AppliedMagWanderCm": 2.57596,
+    "PerceptibleShifts": 10.0,
+    "NetDriftMagCm": 3.02167
   }
 }
