@@ -1,152 +1,168 @@
 #pragma once
 
 #include "Protocol.h"
+#include "facetracking/CalibrationShapeTable.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <string>
 
 namespace facetracking {
 
-// Per-shape continuous calibration state.
+// Per-shape continuous calibration state, second generation.
 //
-// Maintains a P-square percentile estimator (P02 / P98) plus an EMA min/max
-// envelope with asymmetric decay: the envelope grows quickly (alpha_up=0.02)
-// so new peaks are captured within seconds, but it shrinks only very slowly
-// (alpha_down=0.0005) so a momentary wide opening does not immediately deflate
-// the max and produce runaway normalized values.  The P02/P98 values give the
-// stable long-run bounds used for normalization; the EMA envelope acts as a
-// fast-tracking guard so outliers from sensor noise don't corrupt the
-// percentile estimators.
+// The model is a bounded, rest-anchored envelope normalizer:
 //
-// Three outlier gates reject bad samples before they reach the estimators:
-//   1. Frame-age gate  -- drop if the sample's QPC timestamp is > 33 ms stale.
-//   2. Velocity gate   -- reject if |raw - ema_value| > 4 * sqrt(ema_var).
-//                         4-sigma gives a false-rejection rate < 0.007% on a
-//                         Gaussian signal, which is negligible at 120 Hz.
-//   3. Hold-time gate  -- a new EMA max only commits after the input has
-//                         stayed above the prior max for >= 6 consecutive
-//                         samples spanning >= 80 ms.  Prevents a single-frame
-//                         blink spike from immediately widening the calibrated
-//                         range.
+//   r    = inverted ? 1 - raw : raw          (openness rests high -> invert)
+//   span = max(hi - rest, kMinSpan)
+//   gain = min(1 / span, cap)                (cap from calib_table::kGainCap)
+//   x    = max(0, r - rest - deadband)       (deadband = 3 * sigma)
+//   norm = clamp01(x * gain)
+//   out  = lerp(clamp01(r), norm, conf)      (identity until evidence earned)
 //
-// Cold-start: raw passthrough until a shape accumulates >= 200 samples
-// (roughly 1.7 s at 120 Hz).
+// Three properties make this safe where a plain observed-range stretch is
+// not:
+//   1. Gain is CAPPED per shape -- a shape the user barely moves keeps a
+//      near-1 gain instead of having its noise stretched to full output.
+//   2. Output is anchored at a learned rest baseline with a noise-scaled
+//      deadband above it, so an idle face produces exactly zero.
+//   3. Output blends continuously from identity toward the learned mapping
+//      as per-shape confidence accumulates -- there is no warm-up snap.
+//
+// Learning per shape:
+//   - `hi` (max envelope) grows at kAlphaUp once a value has stayed above it
+//     for >= kHoldCountMin frames spanning >= kHoldTimeMs, and shrinks at
+//     kAlphaDown otherwise (asymmetric so blinks don't deflate the max).
+//   - `rest`/`var` update only when the value is slow-moving and inside the
+//     rest window; lower-face shapes additionally require the whole face to
+//     be still so speech can't drag the mouth baseline upward.
+//   - An isolated single-frame discontinuity is rejected outright (spike
+//     gate against the previous raw sample -- the previous raw is always
+//     recorded, so a genuine sustained step is only skipped for one frame
+//     and can never be locked out).
+//
+// Left/right mirror pairs share one ShapeCalib (calib_table::kPairCanonical),
+// learned from the more active side and applied to each side's own raw, so
+// the two sides cannot learn diverging ranges but winks pass through.
 struct ShapeCalib
 {
-	// P-square 5-marker state for P02 and P98.
-	// Standard Jain-Chlamtac markers: q[0..4], n[0..4] (integer counts),
-	// dn[0..4] (desired increments).
-	float q[5];
-	float n[5];
-	float dn[5]; // desired marker positions
-	float p02;   // current P02 estimate
-	float p98;   // current P98 estimate
+	// Learned state (persisted).
+	float rest; // idle baseline in the calibration domain
+	float var;  // rest-noise variance (EMA)
+	float hi;   // max envelope
+	float conf; // 0..1 identity->calibrated blend weight
 
-	// EMA min / max envelope.
-	float ema_min;
-	float ema_max;
+	// Cached derivatives (recomputed, not persisted).
+	float sigma; // sqrt(var); refreshed only when var updates
+	float gain;  // min(1/span, cap); refreshed on ingest
 
-	// EMA value + variance for the velocity gate.
-	// ema_var is the rolling variance E[(x - mu)^2] maintained as an EMA;
-	// sqrt(ema_var) is the expected instantaneous std-dev for this shape.
-	float ema_value;
-	float ema_var;
-
-	// Hold-time gate state for the max side.
-	uint32_t hold_count;     // consecutive frames above current ema_max
+	// Transient gate state.
+	float prev_raw; // last raw sample in the calibration domain
+	bool prev_valid;
+	uint32_t hold_count;     // consecutive frames above hi
 	uint64_t hold_first_qpc; // QPC tick of the first frame in this hold run
 
-	// Warmup counter.
-	uint32_t samples;
-	bool warm; // true once samples >= 200
-
-	// Initialised to passthrough defaults.
 	ShapeCalib();
+	void RefreshCaches(float cap);
 };
 
-// Top-level per-instance calibration engine.
-// One instance lives inside FacetrackingDriverModule; it is only ever accessed
-// from the worker thread (IngestFrame) or from the HandleRequest path (Reset,
-// Save, Load) -- both paths hold the module's config mutex before calling here,
-// so no additional locking is needed inside.
+// Top-level per-module calibration engine. Thread-safe: all public methods
+// take an internal mutex (the worker thread ingests/normalizes while the
+// request thread can reset/save/load concurrently). Inert -- exact identity,
+// no learning -- until Load() has been called with the active module uuid.
 class CalibrationEngine
 {
 public:
-	// Called at Init() with the active module uuid so persistence uses the
-	// right filename.
+	// Aggregate health snapshot for telemetry/UI. Confidence figures cover
+	// the calibratable canonical slots only.
+	struct Telemetry
+	{
+		bool loaded = false;
+		float avg_conf = 0.f;
+		float min_conf = 0.f;
+		int capped_shapes = 0;       // canonical slots whose gain sits at its cap
+		uint32_t idle_frames = 0;    // period: slot-frames classified idle
+		uint32_t idle_false_act = 0; // period: idle slot-frames with output > 0.1
+		float open_lr_div_avg = 0.f; // period: mean |outL - outR| eye openness
+	};
+
+	// Bind persistence to the active module and enable the engine. Loads any
+	// schema-2 state on disk (confidence capped at 0.5 so a headset refit
+	// between sessions re-learns quickly); discards and deletes stale-schema
+	// files.
 	void Load(const std::string& module_uuid);
 
-	// Persist learned state to disk.  Called on clean Shutdown() and on every
-	// FaceCalibSave command.
+	// Persist learned state to disk. No-op until Load() has run.
 	void Save();
 
-	// Ingest one raw frame.  Updates per-shape state for all shapes that pass
-	// the outlier gates.  Hot path -- no allocations, no logging.
+	// Learn from one raw frame (call BEFORE Normalize with the same frame).
+	// Hot path -- no allocations, no logging.
 	void IngestFrame(const protocol::FaceTrackingFrameBody& in);
 
-	// Apply learned normalization to a mutable frame in-place.  Every shape
-	// (and both eye openness + pupil dilation values) is mapped through the
-	// P02/P98 estimators and clamped to [0,1].  Warm-up passthrough applies
-	// per shape: shapes not yet warm are left untouched.  Hot path.
-	void Normalize(protocol::FaceTrackingFrameBody& inout) const;
+	// Apply the learned mapping in-place. Slots with a 1.0 gain cap and
+	// expressions excluded by the user are left untouched. Hot path.
+	void Normalize(protocol::FaceTrackingFrameBody& inout);
 
 	// Execute a calibration command from the overlay.
-	//   FaceCalibResetAll  -- zero all shape state and delete the persisted file.
-	//   FaceCalibResetEye  -- zero only eye openness + pupil dilation shapes.
-	//   FaceCalibResetExpr -- zero only the 63 expression shapes.
 	//   FaceCalibSave      -- flush to disk immediately.
+	//   FaceCalibResetAll  -- zero all learned state and delete the file.
+	//   FaceCalibResetEye  -- zero eye openness + pupil state.
+	//   FaceCalibResetExpr -- zero the 63 expression slots.
 	void Reset(protocol::FaceCalibrationOp op);
 
-	// Query warmup status.  Returns the number of shapes that have reached the
-	// warm threshold (>= 200 samples).  Exposed so the overlay can render the
-	// readiness dot grid.
-	int WarmShapeCount() const;
-	int TotalShapeCount() const;
+	// Per-expression user opt-out (from the tuning table's exclude flag).
+	// Excluded shapes keep learning but are never modified on output.
+	void SetUserExcluded(uint32_t expression_index, bool excluded);
+	void ClearUserExclusions();
 
-	// Per-shape warmth query for the telemetry sidecar.  idx must be in
-	// [0, kTotalShapes).  Returns false for out-of-range indices.
-	bool IsShapeWarm(int idx) const;
+	Telemetry Snapshot() const;
+	void ResetPeriodCounters();
 
-	// Compact diagnostic of the learned normalization windows for the signals
-	// most likely to look wrong (eye openness, pupil, jaw, smile). Shows the
-	// [p02..p98] range each is mapping to [0,1] so a mis-learned range that
-	// exaggerates or flattens a shape is visible in the log. Not hot-path.
+	// Compact diagnostic of the learned mappings for the signals most likely
+	// to look wrong on the avatar. Not hot-path.
 	std::string DebugSummary() const;
 
 private:
-	// Layout:
-	//   [0..62]  expressions[0..62]
-	//   [63]     eye_openness_l
-	//   [64]     eye_openness_r
-	//   [65]     pupil_dilation_l
-	//   [66]     pupil_dilation_r
-	static constexpr int kTotalShapes = protocol::FACETRACKING_EXPRESSION_COUNT + 4;
-	static constexpr int kIdxOpenL = protocol::FACETRACKING_EXPRESSION_COUNT;
-	static constexpr int kIdxOpenR = kIdxOpenL + 1;
-	static constexpr int kIdxPupilL = kIdxOpenL + 2;
-	static constexpr int kIdxPupilR = kIdxOpenL + 3;
+	static constexpr int kTotalShapes = calib_table::kTotalShapes;
 
 	ShapeCalib shapes_[kTotalShapes];
+	std::array<bool, protocol::FACETRACKING_EXPRESSION_COUNT> user_excluded_{};
+	bool loaded_ = false;
 	std::string module_uuid_;
+
+	// Face-still detector: consecutive expression frames where the jaw and
+	// mouth-close signals both moved less than the still threshold.
+	uint32_t still_streak_ = 0;
+
+	// Period telemetry accumulators (reset by ResetPeriodCounters).
+	uint32_t idle_frames_ = 0;
+	uint32_t idle_false_act_ = 0;
+	float open_lr_div_sum_ = 0.f;
+	uint32_t open_lr_div_count_ = 0;
+
+	mutable std::mutex mutex_;
 
 	// QPC frequency cached at first use.
 	mutable LARGE_INTEGER qpc_freq_{0};
-
 	LARGE_INTEGER QpcFreq() const;
 
-	// Update one ShapeCalib with a new raw value and the current QPC time.
-	void UpdateShape(ShapeCalib& s, float raw, uint64_t now_qpc) const;
+	// Update one canonical slot with a new raw value (calibration domain).
+	// rest_frozen suppresses the rest/var update (lower face during speech).
+	void UpdateShape(ShapeCalib& s, float raw, uint64_t now_qpc, float cap, bool rest_frozen) const;
 
-	// Normalize one float through one shape's P02/P98 window.
-	static float NormalizeOne(const ShapeCalib& s, float raw);
+	// Normalize one value through one slot's learned mapping; also feeds the
+	// idle telemetry counters.
+	float NormalizeOne(const ShapeCalib& s, float raw_domain);
 
-	// Persistence helpers.
+	Telemetry SnapshotLocked() const;
+
+	// Persistence helpers (callers hold mutex_).
 	std::wstring CalibFilePath() const;
 	void SaveLocked() const;
 	void LoadLocked(const std::string& uuid);

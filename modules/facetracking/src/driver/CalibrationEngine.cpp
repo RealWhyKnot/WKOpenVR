@@ -1,13 +1,12 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #include "CalibrationEngine.h"
 #include "Logging.h"
+#include "Win32Paths.h"
 
 #include "picojson.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <shlobj.h>
-#include <objbase.h>
 
 #include <algorithm>
 #include <cmath>
@@ -15,9 +14,88 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
-#include <vector>
+#include <string>
 
 namespace facetracking {
+
+namespace {
+
+using calib_table::kGainCap;
+using calib_table::kInverted;
+using calib_table::kLowerFace;
+using calib_table::kPairCanonical;
+
+// Envelope speeds. The max envelope grows in ~50 accepted frames (~0.4 s)
+// once the hold gate opens, and contracts ~40x slower -- and ONLY from
+// active samples. Idle samples must not shrink the envelope: decaying `hi`
+// toward the rest level during a quiet minute would collapse the learned
+// span, pin the gain at its cap, and over-amplify the first real expression
+// afterwards.
+constexpr float kAlphaUp = 0.02f;
+constexpr float kAlphaDown = 0.0005f;
+
+// Rest baseline adaptation. Slow (~10 s time constant at 120 Hz) so held
+// expressions cannot drag the floor up before the activity gates release.
+constexpr float kRestAlpha = 0.0008f;
+
+// Output deadband above rest, in learned noise sigmas. Inside the deadband
+// the calibrated output is exactly zero -- this is what keeps idle-face
+// noise from becoming a visible expression.
+constexpr float kDeadbandSigmas = 3.f;
+
+// The rest window also accepts samples this far above the baseline even when
+// sigma is tiny, so a baseline that idles above the initial window (e.g. a
+// jaw signal resting at 0.08) can still be reached.
+constexpr float kRestWindowMin = 0.1f;
+
+// Never treat a learned span smaller than this as a real range.
+constexpr float kMinSpan = 0.05f;
+
+// Rest-noise variance bounds: sigma in [0.005, 0.1] keeps the deadband
+// meaningful (never zero, never eating a third of the range).
+constexpr float kVarMin = 2.5e-5f;
+constexpr float kVarMax = 0.01f;
+
+// Identity->calibrated blend ramp: full confidence after ~15 s at 120 Hz.
+// Persisted confidence is capped on load so a headset refit re-learns.
+constexpr float kConfPerSample = 1.f / 1800.f;
+constexpr float kConfLoadCap = 0.5f;
+
+// Hold gate: a value must stay above the current envelope for this many
+// frames spanning this much time before the envelope starts growing, so a
+// single-frame spike never widens the range.
+constexpr uint32_t kHoldCountMin = 6;
+constexpr float kHoldTimeMs = 80.f;
+
+// Frame-age gate: learn only from fresh samples.
+constexpr float kFrameAgeMaxMs = 33.f;
+
+// Spike gate: reject an isolated single-frame discontinuity. The previous
+// raw sample is recorded whether or not the sample is accepted, so a genuine
+// sustained step is only skipped for one frame and can never be locked out.
+constexpr float kSpikeGate = 0.75f;
+
+// A slot is "slow-moving" (eligible for rest learning) when its frame-to-
+// frame step is below this.
+constexpr float kSlowDelta = 0.05f;
+
+// Face-still detector: jaw + mouth-close both stepping less than this for
+// this many consecutive expression frames.
+constexpr float kStillDelta = 0.02f;
+constexpr uint32_t kStillFrames = 30;
+
+// Idle output above this counts as a false activation in telemetry.
+constexpr float kIdleActThreshold = 0.1f;
+
+constexpr int kIdxJawOpen = 26;
+constexpr int kIdxMouthClose = 40;
+
+inline float Clamp01(float v)
+{
+	return std::max(0.f, std::min(1.f, v));
+}
+
+} // namespace
 
 // -----------------------------------------------------------------------
 // ShapeCalib
@@ -25,136 +103,30 @@ namespace facetracking {
 
 ShapeCalib::ShapeCalib()
 {
-	// P-square 5-marker initialisation for P02.
-	// Desired markers sit at {0, p/2, p, (1+p)/2, 1} = {0, 0.01, 0.02, 0.51, 1}
-	// for p=0.02 (Jain & Chlamtac 1985).  Seed q[] across [0,1] so the first
-	// 200 samples (warm-up) reach a reasonable estimate before normalization kicks in.
-	const float q_init[] = {0.f, 0.005f, 0.02f, 0.5f, 1.f};
-	for (int i = 0; i < 5; ++i) {
-		q[i] = q_init[i];
-		n[i] = (float)(i + 1);
-	}
-	dn[0] = 0.f;
-	dn[1] = 0.01f;
-	dn[2] = 0.02f;
-	dn[3] = 0.51f;
-	dn[4] = 1.f;
-
-	p02 = 0.f;
-	p98 = 1.f;
-	ema_min = 0.f;
-	ema_max = 1.f;
-	ema_value = 0.5f;
-	ema_var = 0.04f; // seed variance so the velocity gate is not zero-width
+	rest = 0.f;
+	var = 4e-4f; // sigma seed 0.02
+	hi = 1.f;    // identity gain until real peaks are observed
+	conf = 0.f;
+	sigma = 0.02f;
+	gain = 1.f;
+	prev_raw = 0.f;
+	prev_valid = false;
 	hold_count = 0;
 	hold_first_qpc = 0;
-	samples = 0;
-	warm = false;
 }
 
-// -----------------------------------------------------------------------
-// P-square update helpers
-// -----------------------------------------------------------------------
-namespace {
-
-// Parabolic interpolation formula for a P-square inner marker update.
-// Jain & Chlamtac 1985.  h1 = n[i+1]-n[i], h2 = n[i]-n[i-1], d in {+1,-1}.
-inline float PsqUpdate(const float* q, const float* n, int i, float d)
+void ShapeCalib::RefreshCaches(float cap)
 {
-	float h1 = n[i + 1] - n[i];
-	float h2 = n[i] - n[i - 1];
-	return q[i] + d / (h1 + h2) * ((h2 / h1) * (q[i + 1] - q[i]) + (h1 / h2) * (q[i] - q[i - 1]));
+	var = std::max(kVarMin, std::min(kVarMax, var));
+	sigma = std::sqrt(var);
+	if (rest > hi) rest = hi;
+	const float span = std::max(hi - rest, kMinSpan);
+	gain = std::min(1.f / span, cap);
 }
-
-// Linear fallback for the P-square inner update when parabolic overshoots.
-inline float PsqLinear(const float* q, const float* n, int i, float d)
-{
-	int j = (d > 0) ? i + 1 : i - 1;
-	return q[i] + d * (q[j] - q[i]) / (n[j] - n[i]);
-}
-
-// Update one set of P-square markers for quantile `p`.
-// `q` / `n` carry the 5 markers; `dn` is the desired-increment array.
-// Returns the updated quantile estimate (marker q[2]).
-// We track only one quantile per call; the caller runs this twice (P02, P98).
-float PsqStep(float* q, float* n, const float* dn, float xn, float /*p*/)
-{
-	// Step 1: find the cell the new observation falls into.
-	int k = 0;
-	if (xn < q[0]) {
-		q[0] = xn;
-		k = 0;
-	}
-	else if (xn < q[1]) {
-		k = 0;
-	}
-	else if (xn < q[2]) {
-		k = 1;
-	}
-	else if (xn < q[3]) {
-		k = 2;
-	}
-	else if (xn <= q[4]) {
-		k = 3;
-	}
-	else {
-		q[4] = xn;
-		k = 3;
-	}
-
-	// Step 2: increment counts.
-	for (int i = k + 1; i < 5; ++i)
-		n[i] += 1.f;
-
-	// Step 3: adjust inner markers (1..3) if needed.
-	for (int i = 1; i <= 3; ++i) {
-		float di = dn[i] - n[i];
-		if ((di >= 1.f && n[i + 1] - n[i] > 1.f) || (di <= -1.f && n[i - 1] - n[i] < -1.f)) {
-			float d = (di > 0.f) ? 1.f : -1.f;
-			float q_new = PsqUpdate(q, n, i, d);
-			if (q_new > q[i - 1] && q_new < q[i + 1]) {
-				q[i] = q_new;
-			}
-			else {
-				q[i] = PsqLinear(q, n, i, d);
-			}
-			n[i] += d;
-		}
-	}
-	return q[2];
-}
-
-// Separate 5-marker state for P98 (reuses same q/n arrays through different
-// dn targets stored separately in a static local).  We keep P02 and P98 in
-// separate arrays on the ShapeCalib struct to keep things simple and avoid
-// a nested struct.  The P98 state is stored interleaved by index offset.
-// NOTE: implementation uses two independent ShapeCalib member arrays named
-// q_98/n_98/dn_98 -- we add them below (simple approach, readable).
-
-} // namespace
 
 // -----------------------------------------------------------------------
-// CalibrationEngine
+// CalibrationEngine -- learning
 // -----------------------------------------------------------------------
-
-static constexpr float kAlphaUp = 0.02f;
-static constexpr float kAlphaDown = 0.0005f;
-// alpha_down is ~40x slower than alpha_up.  A shape that opens to a new wide
-// peak will expand the envelope in ~50 frames (~0.4 s); an envelope that needs
-// to contract (e.g. after a hardware module swap) takes ~2000 frames (~17 s).
-// This asymmetry prevents transient blinks or spikes from deflating the max
-// immediately, which would cause the normalized output to spike above 1.
-
-static constexpr float kVelocityGateSigmas = 4.f;
-// 4-sigma gate: a signal 4 std-devs from its EMA is exceedingly rare (~6 in
-// 100 000 samples) for a well-behaved sensor.  At 120 Hz this fires once in
-// ~14 minutes purely by chance, which is negligible.
-
-static constexpr uint32_t kWarmThreshold = 200;
-static constexpr uint32_t kHoldCountMin = 6;
-static constexpr float kHoldTimeMs = 80.f;
-static constexpr float kFrameAgeMaxMs = 33.f;
-static constexpr float kNormEps = 1e-6f;
 
 LARGE_INTEGER CalibrationEngine::QpcFreq() const
 {
@@ -164,81 +136,84 @@ LARGE_INTEGER CalibrationEngine::QpcFreq() const
 	return qpc_freq_;
 }
 
-void CalibrationEngine::UpdateShape(ShapeCalib& s, float raw, uint64_t now_qpc) const
+void CalibrationEngine::UpdateShape(ShapeCalib& s, float raw, uint64_t now_qpc, float cap, bool rest_frozen) const
 {
-	const float alpha_ema_var = 0.05f; // variance EMA decay -- slower than value EMA
-	                                   // so the gate doesn't collapse on flat regions.
+	if (s.prev_valid && std::abs(raw - s.prev_raw) > kSpikeGate) {
+		s.prev_raw = raw;
+		return;
+	}
+	const float step = s.prev_valid ? std::abs(raw - s.prev_raw) : 1.f;
+	s.prev_raw = raw;
+	s.prev_valid = true;
 
-	// Velocity gate.
-	float dev = raw - s.ema_value;
-	float gate = kVelocityGateSigmas * std::sqrt(s.ema_var + kNormEps);
-	if (std::abs(dev) > gate) return;
+	const float rest_window = s.rest + std::max(kDeadbandSigmas * s.sigma, kRestWindowMin);
 
-	// EMA value update.
-	s.ema_value += kAlphaUp * dev;
-	float dev2 = (raw - s.ema_value) * (raw - s.ema_value);
-	s.ema_var = (1.f - alpha_ema_var) * s.ema_var + alpha_ema_var * dev2;
-
-	// Hold-time gate for new EMA max.
-	if (raw > s.ema_max) {
-		if (s.hold_count == 0) {
-			s.hold_first_qpc = now_qpc;
-		}
+	// Max envelope: hold-gated growth, active-only contraction.
+	if (raw > s.hi) {
+		if (s.hold_count == 0) s.hold_first_qpc = now_qpc;
 		s.hold_count++;
-
-		// Commit the new max only when hold duration + count thresholds are met.
-		const float elapsed_ms = (now_qpc > s.hold_first_qpc)
-		                             ? (float)(now_qpc - s.hold_first_qpc) * 1000.f / (float)QpcFreq().QuadPart
-		                             : 0.f;
-
-		if (s.hold_count >= kHoldCountMin && elapsed_ms >= kHoldTimeMs) {
-			s.ema_max = raw; // commit the new peak
-			s.hold_count = 0;
-			s.hold_first_qpc = 0;
+		const float held_ms = (now_qpc > s.hold_first_qpc)
+		                          ? (float)(now_qpc - s.hold_first_qpc) * 1000.f / (float)QpcFreq().QuadPart
+		                          : 0.f;
+		if (s.hold_count >= kHoldCountMin && held_ms >= kHoldTimeMs) {
+			s.hi += kAlphaUp * (raw - s.hi);
 		}
 	}
 	else {
-		// Below current ema_max -- reset hold streak.
 		s.hold_count = 0;
 		s.hold_first_qpc = 0;
-
-		// Shrink the envelope slowly.
-		if (raw < s.ema_min) {
-			s.ema_min = (1.f - kAlphaUp) * s.ema_min + kAlphaUp * raw;
+		if (raw > rest_window) {
+			s.hi += kAlphaDown * (raw - s.hi);
 		}
-		else {
-			s.ema_min = (1.f - kAlphaDown) * s.ema_min + kAlphaDown * raw;
-		}
-		s.ema_max = (1.f - kAlphaDown) * s.ema_max + kAlphaDown * raw;
 	}
 
-	// P-square update for P02.
-	s.p02 = PsqStep(s.q, s.n, s.dn, raw, 0.02f);
-
-	// P98 is tracked as the committed EMA max.  The EMA max grows fast
-	// (alpha_up) on new peaks but only commits after the hold-time gate,
-	// so it's a good high-percentile estimate without a second P-square set.
-	s.p98 = s.ema_max;
-
-	s.samples++;
-	if (!s.warm && s.samples >= kWarmThreshold) {
-		s.warm = true;
+	// Rest baseline + noise variance: only slow samples inside the window.
+	if (!rest_frozen && step < kSlowDelta && raw < rest_window) {
+		s.rest += kRestAlpha * (raw - s.rest);
+		const float d = raw - s.rest;
+		s.var += kRestAlpha * (d * d - s.var);
+		s.var = std::max(kVarMin, std::min(kVarMax, s.var));
+		s.sigma = std::sqrt(s.var);
 	}
+	if (s.rest > s.hi) s.rest = s.hi;
+
+	s.conf = std::min(1.f, s.conf + kConfPerSample);
+
+	const float span = std::max(s.hi - s.rest, kMinSpan);
+	s.gain = std::min(1.f / span, cap);
 }
 
-float CalibrationEngine::NormalizeOne(const ShapeCalib& s, float raw)
+namespace {
+
+// Slot value in the calibration domain (openness inverted to closedness).
+inline float SlotDomainValue(const protocol::FaceTrackingFrameBody& f, int idx)
 {
-	float lo = s.p02;
-	float hi = s.p98;
-	float range = hi - lo;
-	if (range < kNormEps) return raw; // degenerate: no range learned yet
-	float norm = (raw - lo) / range;
-	return std::max(0.f, std::min(1.f, norm));
+	switch (idx) {
+		case calib_table::kIdxOpenL:
+			return 1.f - f.eye_openness_l;
+		case calib_table::kIdxOpenR:
+			return 1.f - f.eye_openness_r;
+		case calib_table::kIdxPupilL:
+			return f.pupil_dilation_l;
+		case calib_table::kIdxPupilR:
+			return f.pupil_dilation_r;
+		default:
+			return f.expressions[idx];
+	}
 }
+
+inline bool SlotFamilyValid(uint32_t flags, int idx)
+{
+	return (idx >= calib_table::kIdxOpenL) ? (flags & 1u) != 0 : (flags & 2u) != 0;
+}
+
+} // namespace
 
 void CalibrationEngine::IngestFrame(const protocol::FaceTrackingFrameBody& in)
 {
-	// Frame-age gate: reject if the sample is more than 33 ms old.
+	std::lock_guard<std::mutex> lk(mutex_);
+	if (!loaded_) return;
+
 	LARGE_INTEGER nowQpc{};
 	QueryPerformanceCounter(&nowQpc);
 	const float age_ms = (nowQpc.QuadPart > (int64_t)in.qpc_sample_time)
@@ -248,80 +223,85 @@ void CalibrationEngine::IngestFrame(const protocol::FaceTrackingFrameBody& in)
 
 	const uint64_t now_qpc = (uint64_t)nowQpc.QuadPart;
 
-	if (in.flags & 1u) {
-		// Eye fields valid.
-		UpdateShape(shapes_[kIdxOpenL], in.eye_openness_l, now_qpc);
-		UpdateShape(shapes_[kIdxOpenR], in.eye_openness_r, now_qpc);
-		UpdateShape(shapes_[kIdxPupilL], in.pupil_dilation_l, now_qpc);
-		UpdateShape(shapes_[kIdxPupilR], in.pupil_dilation_r, now_qpc);
-	}
+	// Face-still detector feeds the lower-face rest gate. Uses the jaw and
+	// mouth-close slots' previous samples before this frame updates them.
 	if (in.flags & 2u) {
-		// Expression fields valid.
-		for (int i = 0; i < (int)protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-			UpdateShape(shapes_[i], in.expressions[i], now_qpc);
-		}
+		const ShapeCalib& jaw = shapes_[kIdxJawOpen];
+		const ShapeCalib& mc = shapes_[kIdxMouthClose];
+		const bool both_prev = jaw.prev_valid && mc.prev_valid;
+		const bool still = both_prev && std::abs(in.expressions[kIdxJawOpen] - jaw.prev_raw) < kStillDelta &&
+		                   std::abs(in.expressions[kIdxMouthClose] - mc.prev_raw) < kStillDelta;
+		still_streak_ = still ? still_streak_ + 1 : 0;
+	}
+	const bool face_still = still_streak_ >= kStillFrames;
+
+	for (int i = 0; i < kTotalShapes; ++i) {
+		if (kPairCanonical[i] != i) continue; // mirrors feed their canonical
+		if (kGainCap[i] <= 1.f) continue;     // excluded tier never learns
+		if (!SlotFamilyValid(in.flags, i)) continue;
+
+		float v = SlotDomainValue(in, i);
+		const int other = calib_table::PairOther(i);
+		if (other != i) v = std::max(v, SlotDomainValue(in, other));
+
+		const bool rest_frozen = kLowerFace[i] && !face_still;
+		UpdateShape(shapes_[i], v, now_qpc, kGainCap[i], rest_frozen);
 	}
 }
 
-void CalibrationEngine::Normalize(protocol::FaceTrackingFrameBody& inout) const
+// -----------------------------------------------------------------------
+// CalibrationEngine -- application
+// -----------------------------------------------------------------------
+
+float CalibrationEngine::NormalizeOne(const ShapeCalib& s, float raw_domain)
 {
+	const float rc = Clamp01(raw_domain);
+	const float x = rc - s.rest - kDeadbandSigmas * s.sigma;
+	const float norm = (x > 0.f) ? Clamp01(x * s.gain) : 0.f;
+	const float out = rc + s.conf * (norm - rc);
+	if (x <= 0.f) {
+		++idle_frames_;
+		if (out > kIdleActThreshold) ++idle_false_act_;
+	}
+	return out;
+}
+
+void CalibrationEngine::Normalize(protocol::FaceTrackingFrameBody& inout)
+{
+	std::lock_guard<std::mutex> lk(mutex_);
+	if (!loaded_) return;
+
 	if (inout.flags & 1u) {
-		if (shapes_[kIdxOpenL].warm) inout.eye_openness_l = NormalizeOne(shapes_[kIdxOpenL], inout.eye_openness_l);
-		if (shapes_[kIdxOpenR].warm) inout.eye_openness_r = NormalizeOne(shapes_[kIdxOpenR], inout.eye_openness_r);
-		if (shapes_[kIdxPupilL].warm)
-			inout.pupil_dilation_l = NormalizeOne(shapes_[kIdxPupilL], inout.pupil_dilation_l);
-		if (shapes_[kIdxPupilR].warm)
-			inout.pupil_dilation_r = NormalizeOne(shapes_[kIdxPupilR], inout.pupil_dilation_r);
+		const ShapeCalib& open = shapes_[calib_table::kIdxOpenL]; // shared pair state
+		const float outL = NormalizeOne(open, 1.f - inout.eye_openness_l);
+		const float outR = NormalizeOne(open, 1.f - inout.eye_openness_r);
+		inout.eye_openness_l = 1.f - outL;
+		inout.eye_openness_r = 1.f - outR;
+		open_lr_div_sum_ += std::abs(outL - outR);
+		++open_lr_div_count_;
+		// Pupil slots are excluded by tier -- untouched.
 	}
 	if (inout.flags & 2u) {
 		for (int i = 0; i < (int)protocol::FACETRACKING_EXPRESSION_COUNT; ++i) {
-			if (shapes_[i].warm) inout.expressions[i] = NormalizeOne(shapes_[i], inout.expressions[i]);
+			if (kGainCap[i] <= 1.f) continue;
+			if (user_excluded_[i]) continue;
+			inout.expressions[i] = NormalizeOne(shapes_[kPairCanonical[i]], inout.expressions[i]);
 		}
 	}
 }
 
-int CalibrationEngine::WarmShapeCount() const
-{
-	int count = 0;
-	for (const auto& s : shapes_)
-		if (s.warm) ++count;
-	return count;
-}
-
-int CalibrationEngine::TotalShapeCount() const
-{
-	return kTotalShapes;
-}
-
-bool CalibrationEngine::IsShapeWarm(int idx) const
-{
-	if (idx < 0 || idx >= kTotalShapes) return false;
-	return shapes_[idx].warm;
-}
-
-std::string CalibrationEngine::DebugSummary() const
-{
-	const ShapeCalib& oL = shapes_[kIdxOpenL];
-	const ShapeCalib& oR = shapes_[kIdxOpenR];
-	const ShapeCalib& pL = shapes_[kIdxPupilL];
-	const ShapeCalib& jaw = shapes_[26];   // JawOpen
-	const ShapeCalib& smile = shapes_[45]; // MouthSmileLeft
-	char buf[320];
-	std::snprintf(buf, sizeof buf,
-	              "warm=%d/%d openL[%.2f..%.2f w%d] openR[%.2f..%.2f w%d] pupilL[%.2f..%.2f w%d] "
-	              "jaw[%.2f..%.2f w%d] smileL[%.2f..%.2f w%d]",
-	              WarmShapeCount(), TotalShapeCount(), oL.p02, oL.p98, (int)oL.warm, oR.p02, oR.p98, (int)oR.warm,
-	              pL.p02, pL.p98, (int)pL.warm, jaw.p02, jaw.p98, (int)jaw.warm, smile.p02, smile.p98, (int)smile.warm);
-	return std::string(buf);
-}
+// -----------------------------------------------------------------------
+// CalibrationEngine -- control
+// -----------------------------------------------------------------------
 
 void CalibrationEngine::Reset(protocol::FaceCalibrationOp op)
 {
+	std::lock_guard<std::mutex> lk(mutex_);
 	switch (op) {
 		case protocol::FaceCalibResetAll:
 			for (auto& s : shapes_)
 				s = ShapeCalib{};
-			// Delete persisted file so cold-start seed gets reloaded next time.
+			still_streak_ = 0;
 			{
 				std::wstring path = CalibFilePath();
 				if (!path.empty()) DeleteFileW(path.c_str());
@@ -329,23 +309,100 @@ void CalibrationEngine::Reset(protocol::FaceCalibrationOp op)
 			FT_LOG_DRV("[calib] reset all shapes", 0);
 			break;
 		case protocol::FaceCalibResetEye:
-			shapes_[kIdxOpenL] = ShapeCalib{};
-			shapes_[kIdxOpenR] = ShapeCalib{};
-			shapes_[kIdxPupilL] = ShapeCalib{};
-			shapes_[kIdxPupilR] = ShapeCalib{};
+			shapes_[calib_table::kIdxOpenL] = ShapeCalib{};
+			shapes_[calib_table::kIdxOpenR] = ShapeCalib{};
+			shapes_[calib_table::kIdxPupilL] = ShapeCalib{};
+			shapes_[calib_table::kIdxPupilR] = ShapeCalib{};
 			FT_LOG_DRV("[calib] reset eye shapes", 0);
 			break;
 		case protocol::FaceCalibResetExpr:
 			for (int i = 0; i < (int)protocol::FACETRACKING_EXPRESSION_COUNT; ++i)
 				shapes_[i] = ShapeCalib{};
+			still_streak_ = 0;
 			FT_LOG_DRV("[calib] reset expression shapes", 0);
 			break;
 		case protocol::FaceCalibSave:
 			SaveLocked();
 			break;
 		default:
+			// Begin/End: always-learning while enabled; nothing to do.
 			break;
 	}
+}
+
+void CalibrationEngine::SetUserExcluded(uint32_t expression_index, bool excluded)
+{
+	std::lock_guard<std::mutex> lk(mutex_);
+	if (expression_index < protocol::FACETRACKING_EXPRESSION_COUNT) {
+		user_excluded_[expression_index] = excluded;
+	}
+}
+
+void CalibrationEngine::ClearUserExclusions()
+{
+	std::lock_guard<std::mutex> lk(mutex_);
+	user_excluded_.fill(false);
+}
+
+CalibrationEngine::Telemetry CalibrationEngine::SnapshotLocked() const
+{
+	Telemetry t;
+	t.loaded = loaded_;
+	float sum = 0.f;
+	float mn = 1.f;
+	int n = 0;
+	for (int i = 0; i < kTotalShapes; ++i) {
+		if (kPairCanonical[i] != i || kGainCap[i] <= 1.f) continue;
+		const ShapeCalib& s = shapes_[i];
+		sum += s.conf;
+		mn = std::min(mn, s.conf);
+		if (std::max(s.hi - s.rest, kMinSpan) < 1.f / kGainCap[i]) ++t.capped_shapes;
+		++n;
+	}
+	t.avg_conf = (n > 0) ? sum / (float)n : 0.f;
+	t.min_conf = (n > 0) ? mn : 0.f;
+	t.idle_frames = idle_frames_;
+	t.idle_false_act = idle_false_act_;
+	t.open_lr_div_avg = (open_lr_div_count_ > 0) ? open_lr_div_sum_ / (float)open_lr_div_count_ : 0.f;
+	return t;
+}
+
+CalibrationEngine::Telemetry CalibrationEngine::Snapshot() const
+{
+	std::lock_guard<std::mutex> lk(mutex_);
+	return SnapshotLocked();
+}
+
+void CalibrationEngine::ResetPeriodCounters()
+{
+	std::lock_guard<std::mutex> lk(mutex_);
+	idle_frames_ = 0;
+	idle_false_act_ = 0;
+	open_lr_div_sum_ = 0.f;
+	open_lr_div_count_ = 0;
+}
+
+std::string CalibrationEngine::DebugSummary() const
+{
+	std::lock_guard<std::mutex> lk(mutex_);
+	const Telemetry t = SnapshotLocked();
+	auto shape = [&](int i) {
+		return &shapes_[kPairCanonical[i]];
+	};
+	const ShapeCalib* open = shape(calib_table::kIdxOpenL);
+	const ShapeCalib* jaw = shape(kIdxJawOpen);
+	const ShapeCalib* smile = shape(45); // MouthSmileLeft
+	const ShapeCalib* brow = shape(14);  // BrowInnerUpLeft
+	char buf[512];
+	std::snprintf(buf, sizeof buf,
+	              "loaded=%d conf avg=%.2f min=%.2f capped=%d idle_act=%u/%u lr_div=%.3f | "
+	              "open[r=%.2f hi=%.2f g=%.1f c=%.2f] jaw[r=%.2f hi=%.2f g=%.1f c=%.2f] "
+	              "smileL[r=%.2f hi=%.2f g=%.1f c=%.2f] browIL[r=%.2f hi=%.2f g=%.1f c=%.2f]",
+	              (int)t.loaded, t.avg_conf, t.min_conf, t.capped_shapes, t.idle_false_act, t.idle_frames,
+	              t.open_lr_div_avg, open->rest, open->hi, open->gain, open->conf, jaw->rest, jaw->hi, jaw->gain,
+	              jaw->conf, smile->rest, smile->hi, smile->gain, smile->conf, brow->rest, brow->hi, brow->gain,
+	              brow->conf);
+	return std::string(buf);
 }
 
 // -----------------------------------------------------------------------
@@ -356,19 +413,7 @@ namespace {
 
 std::wstring ProfilesDir()
 {
-	PWSTR rawPtr = nullptr;
-	if (S_OK != SHGetKnownFolderPath(FOLDERID_LocalAppDataLow, 0, nullptr, &rawPtr)) {
-		if (rawPtr) CoTaskMemFree(rawPtr);
-		return {};
-	}
-	std::wstring root(rawPtr);
-	CoTaskMemFree(rawPtr);
-
-	std::wstring dir = root + L"\\WKOpenVR";
-	CreateDirectoryW(dir.c_str(), nullptr);
-	dir += L"\\profiles";
-	CreateDirectoryW(dir.c_str(), nullptr);
-	return dir;
+	return openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
 }
 
 std::wstring Utf8ToWide(const std::string& s)
@@ -380,6 +425,9 @@ std::wstring Utf8ToWide(const std::string& s)
 	return out;
 }
 
+constexpr int kSchemaVersion = 2;
+constexpr int kPairLayoutVersion = 1;
+
 } // namespace
 
 std::wstring CalibrationEngine::CalibFilePath() const
@@ -387,7 +435,6 @@ std::wstring CalibrationEngine::CalibFilePath() const
 	if (module_uuid_.empty()) return {};
 	std::wstring dir = ProfilesDir();
 	if (dir.empty()) return {};
-	// Filename: facetracking_calib_<module_uuid>.json
 	return dir + L"\\facetracking_calib_" + Utf8ToWide(module_uuid_) + L".json";
 }
 
@@ -397,34 +444,23 @@ void CalibrationEngine::SaveLocked() const
 	if (path.empty()) return;
 	std::wstring tmp = path + L".tmp";
 
-	// Build JSON.
-	// Each shape is serialised as an object with all learned parameters.
-	// Schema version 1.
 	picojson::object root;
-	root["schema"] = picojson::value(1.0);
+	root["schema"] = picojson::value((double)kSchemaVersion);
+	root["pair_layout_version"] = picojson::value((double)kPairLayoutVersion);
 	root["module_uuid"] = picojson::value(module_uuid_);
 
 	picojson::array arr;
 	arr.reserve(kTotalShapes);
 	for (int i = 0; i < kTotalShapes; ++i) {
-		const ShapeCalib& s = shapes_[i];
 		picojson::object obj;
-		obj["p02"] = picojson::value((double)s.p02);
-		obj["p98"] = picojson::value((double)s.p98);
-		obj["ema_min"] = picojson::value((double)s.ema_min);
-		obj["ema_max"] = picojson::value((double)s.ema_max);
-		obj["ema_value"] = picojson::value((double)s.ema_value);
-		obj["ema_var"] = picojson::value((double)s.ema_var);
-		obj["samples"] = picojson::value((double)s.samples);
-		obj["warm"] = picojson::value(s.warm);
-		// P-square marker state (q[5], n[5], dn[5]).
-		picojson::array pq, pn;
-		for (int k = 0; k < 5; ++k) {
-			pq.push_back(picojson::value((double)s.q[k]));
-			pn.push_back(picojson::value((double)s.n[k]));
+		// Only canonical calibratable slots carry learned state.
+		if (kPairCanonical[i] == i && kGainCap[i] > 1.f) {
+			const ShapeCalib& s = shapes_[i];
+			obj["rest"] = picojson::value((double)s.rest);
+			obj["var"] = picojson::value((double)s.var);
+			obj["hi"] = picojson::value((double)s.hi);
+			obj["conf"] = picojson::value((double)s.conf);
 		}
-		obj["q"] = picojson::value(pq);
-		obj["n"] = picojson::value(pn);
 		arr.push_back(picojson::value(obj));
 	}
 	root["shapes"] = picojson::value(arr);
@@ -455,6 +491,10 @@ void CalibrationEngine::SaveLocked() const
 void CalibrationEngine::LoadLocked(const std::string& uuid)
 {
 	module_uuid_ = uuid;
+	for (auto& s : shapes_)
+		s = ShapeCalib{};
+	still_streak_ = 0;
+
 	std::wstring path = CalibFilePath();
 	if (path.empty()) return;
 
@@ -463,70 +503,65 @@ void CalibrationEngine::LoadLocked(const std::string& uuid)
 
 	std::stringstream ss;
 	ss << in.rdbuf();
+	in.close();
 	picojson::value v;
 	std::string err = picojson::parse(v, ss.str());
-	if (!err.empty()) {
-		FT_LOG_DRV("[calib] load: parse error: %s", err.c_str());
+	if (!err.empty() || !v.is<picojson::object>()) {
+		FT_LOG_DRV("[calib] load: parse error, discarding file: %s", err.c_str());
+		DeleteFileW(path.c_str());
 		return;
 	}
-	if (!v.is<picojson::object>()) return;
 	const auto& root = v.get<picojson::object>();
+
+	auto getInt = [&](const char* k) -> int {
+		auto it = root.find(k);
+		return (it != root.end() && it->second.is<double>()) ? (int)it->second.get<double>() : -1;
+	};
+	if (getInt("schema") != kSchemaVersion || getInt("pair_layout_version") != kPairLayoutVersion) {
+		FT_LOG_DRV("[calib] load: stale schema (%d), discarding file", getInt("schema"));
+		DeleteFileW(path.c_str());
+		return;
+	}
 
 	auto shapeIt = root.find("shapes");
 	if (shapeIt == root.end() || !shapeIt->second.is<picojson::array>()) return;
 	const auto& arr = shapeIt->second.get<picojson::array>();
 
-	int count = (int)std::min(arr.size(), (size_t)kTotalShapes);
+	int loaded = 0;
+	const int count = (int)std::min(arr.size(), (size_t)kTotalShapes);
 	for (int i = 0; i < count; ++i) {
+		if (kPairCanonical[i] != i || kGainCap[i] <= 1.f) continue;
 		if (!arr[i].is<picojson::object>()) continue;
 		const auto& obj = arr[i].get<picojson::object>();
-		ShapeCalib& s = shapes_[i];
-
 		auto getF = [&](const char* k, float& out) {
 			auto it = obj.find(k);
 			if (it != obj.end() && it->second.is<double>()) out = (float)it->second.get<double>();
 		};
-		auto getU32 = [&](const char* k, uint32_t& out) {
-			auto it = obj.find(k);
-			if (it != obj.end() && it->second.is<double>()) out = (uint32_t)it->second.get<double>();
-		};
-		auto getBool = [&](const char* k, bool& out) {
-			auto it = obj.find(k);
-			if (it != obj.end() && it->second.is<bool>()) out = it->second.get<bool>();
-		};
-
-		getF("p02", s.p02);
-		getF("p98", s.p98);
-		getF("ema_min", s.ema_min);
-		getF("ema_max", s.ema_max);
-		getF("ema_value", s.ema_value);
-		getF("ema_var", s.ema_var);
-		getU32("samples", s.samples);
-		getBool("warm", s.warm);
-
-		auto qIt = obj.find("q");
-		if (qIt != obj.end() && qIt->second.is<picojson::array>()) {
-			const auto& qa = qIt->second.get<picojson::array>();
-			for (int k = 0; k < 5 && k < (int)qa.size(); ++k)
-				if (qa[k].is<double>()) s.q[k] = (float)qa[k].get<double>();
-		}
-		auto nIt = obj.find("n");
-		if (nIt != obj.end() && nIt->second.is<picojson::array>()) {
-			const auto& na = nIt->second.get<picojson::array>();
-			for (int k = 0; k < 5 && k < (int)na.size(); ++k)
-				if (na[k].is<double>()) s.n[k] = (float)na[k].get<double>();
-		}
+		ShapeCalib& s = shapes_[i];
+		getF("rest", s.rest);
+		getF("var", s.var);
+		getF("hi", s.hi);
+		getF("conf", s.conf);
+		s.rest = Clamp01(s.rest);
+		s.hi = Clamp01(s.hi);
+		s.conf = std::min(Clamp01(s.conf), kConfLoadCap);
+		s.RefreshCaches(kGainCap[i]);
+		++loaded;
 	}
-	FT_LOG_DRV("[calib] loaded %d shapes from disk for module '%s'", count, uuid.c_str());
+	FT_LOG_DRV("[calib] loaded %d canonical shapes from disk", loaded);
 }
 
 void CalibrationEngine::Load(const std::string& module_uuid)
 {
+	std::lock_guard<std::mutex> lk(mutex_);
 	LoadLocked(module_uuid);
+	loaded_ = true;
 }
 
 void CalibrationEngine::Save()
 {
+	std::lock_guard<std::mutex> lk(mutex_);
+	if (!loaded_) return;
 	SaveLocked();
 }
 

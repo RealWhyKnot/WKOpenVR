@@ -1,4 +1,5 @@
 #define _CRT_SECURE_NO_DEPRECATE
+#include "CalibrationEngine.h"
 #include "EyelidSync.h"
 #include "FaceFrameReader.h"
 #include "FaceOscPublisher.h"
@@ -105,7 +106,8 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
                                       const std::string& active_module_uuid, bool vergence_enabled, float focus_m,
                                       float ipd_m, bool shape_values_valid, uint64_t shape_values_frame,
                                       const FaceExpressionArray& pre_tuning_expressions,
-                                      const FaceExpressionArray& post_tuning_expressions)
+                                      const FaceExpressionArray& post_tuning_expressions, bool calib_enabled,
+                                      const CalibrationEngine::Telemetry& calib)
 {
 	// Timestamp.
 	SYSTEMTIME st{};
@@ -138,6 +140,16 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
 	o << "    \"enabled\": " << (vergence_enabled ? "true" : "false") << ",\n";
 	o << "    \"focus_distance_m\": " << focus_m << ",\n";
 	o << "    \"ipd_m\": " << ipd_m << "\n";
+	o << "  },\n";
+	o << "  \"calibration\": {\n";
+	o << "    \"enabled\": " << (calib_enabled ? "true" : "false") << ",\n";
+	o << "    \"loaded\": " << (calib.loaded ? "true" : "false") << ",\n";
+	o << "    \"avg_conf\": " << calib.avg_conf << ",\n";
+	o << "    \"min_conf\": " << calib.min_conf << ",\n";
+	o << "    \"capped_shapes\": " << calib.capped_shapes << ",\n";
+	o << "    \"idle_frames\": " << calib.idle_frames << ",\n";
+	o << "    \"idle_false_act\": " << calib.idle_false_act << ",\n";
+	o << "    \"open_lr_div_avg\": " << calib.open_lr_div_avg << "\n";
 	o << "  },\n";
 	o << "  \"shape_values\": {\n";
 	o << "    \"valid\": " << (shape_values_valid ? "true" : "false") << ",\n";
@@ -306,6 +318,7 @@ public:
 		if (supervisor_) supervisor_->Stop();
 		supervisor_.reset();
 
+		calib_.Save();
 		reader_.Close();
 		device_.reset();
 
@@ -352,13 +365,16 @@ public:
 				else {
 					FT_LOG_DRV("[module] config update could not reach host supervisor: supervisor unavailable", 0);
 				}
+				// Rebind calibration persistence when the active module changes
+				// (learned ranges are per hardware module).
+				if (new_uuid != old_uuid) OnActiveModuleChanged(new_uuid);
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
 			case protocol::RequestSetFaceCalibrationCommand: {
 				const protocol::FaceCalibrationOp op = (protocol::FaceCalibrationOp)req.setFaceCalibrationCommand.op;
-				std::lock_guard<std::mutex> lk(config_mutex_);
-				FT_LOG_DRV("[module] calibration command ignored: op=%s(%u)", FaceCalibrationOpName(op), (unsigned)op);
+				FT_LOG_DRV("[module] calibration command: op=%s(%u)", FaceCalibrationOpName(op), (unsigned)op);
+				calib_.Reset(op); // Begin/End are no-ops inside the engine
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
@@ -373,6 +389,7 @@ public:
 					FT_LOG_DRV("[module] active module request could not reach host supervisor: supervisor unavailable",
 					           0);
 				}
+				OnActiveModuleChanged(uuid);
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
@@ -381,6 +398,7 @@ public:
 				std::lock_guard<std::mutex> lk(config_mutex_);
 				if (tune.index == protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX) {
 					shape_tuning_percent_.fill(DefaultShapeTuning());
+					calib_.ClearUserExclusions();
 					FT_LOG_DRV("[module] face shape tuning reset", 0);
 					resp.type = protocol::ResponseSuccess;
 					return true;
@@ -394,6 +412,8 @@ public:
 				const protocol::FaceShapeTuningParams params = NormalizeShapeTuning(tune);
 				const protocol::FaceShapeTuningParams old = shape_tuning_percent_[tune.index];
 				shape_tuning_percent_[tune.index] = params;
+				calib_.SetUserExcluded(tune.index,
+				                       (tune.flags & protocol::FACETRACKING_SHAPE_TUNING_FLAG_CALIB_EXCLUDE) != 0);
 				if (old.min_percent != params.min_percent || old.max_percent != params.max_percent) {
 					FT_LOG_DRV("[module] face shape tuning update: index=%u min=%d%%->%d%% max=%d%%->%d%%",
 					           (unsigned)tune.index, (int)old.min_percent, (int)params.min_percent,
@@ -430,6 +450,19 @@ private:
 	VergenceLock vergence_;
 	EyelidSync eyelid_;
 	FaceSignalProcessor signal_processor_;
+	CalibrationEngine calib_;
+	std::string calib_uuid_; // module uuid the engine is currently bound to
+	std::chrono::steady_clock::time_point last_calib_autosave_{};
+
+	// Rebind calibration persistence when the active hardware module changes.
+	// Safe from the request thread: the engine has its own internal lock.
+	void OnActiveModuleChanged(const std::string& uuid)
+	{
+		if (uuid.empty() || uuid == calib_uuid_) return;
+		calib_.Save();
+		calib_.Load(uuid);
+		calib_uuid_ = uuid;
+	}
 
 	// Config cache -- written by HandleRequest, read by WorkerLoop.
 	protocol::FaceTrackingConfig config_{};
@@ -753,6 +786,16 @@ private:
 			diag_pre_browInnerL_ = frame.expressions[14];
 			diag_pre_eyeWideL_ = frame.expressions[8];
 
+			// Continuous calibration runs FIRST so every downstream transform
+			// (vergence, eye-close assist, eyelid sync, corrections, manual
+			// tuning) operates on normalized signals. The diag_pre_* captures
+			// above deliberately stay pre-calibration: they show true module
+			// output, and calibration is now the first of our corrections.
+			if (cfg.master_enabled && cfg.continuous_calib_mode == 1) {
+				calib_.IngestFrame(frame);
+				calib_.Normalize(frame);
+			}
+
 			// Vergence lock.
 			if (cfg.vergence_lock_enabled) {
 				vergence_.Apply(frame, cfg.vergence_lock_strength);
@@ -941,6 +984,14 @@ private:
 					    (unsigned)osc_filter_.AllowedCount(),
 					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
 
+					// Learned-mapping health while calibration is active: watch
+					// idle_act (false activations at rest -- must stay ~0) and
+					// capped (shapes whose gain sits at its ceiling).
+					if (cfg.master_enabled && cfg.continuous_calib_mode == 1) {
+						FT_LOG_DRV("[facetracking][calib] %s", calib_.DebugSummary().c_str());
+						calib_.ResetPeriodCounters();
+					}
+
 					ResetDebugPeriodCounters();
 					last_diag_log_ = diag_now;
 				}
@@ -971,10 +1022,25 @@ private:
 		const float focus_m = verg_enabled ? vergence_.LastFocusDistanceM() : 0.f;
 		const float ipd_m = verg_enabled ? vergence_.LastIpdM() : 0.f;
 
-		std::string json = BuildTelemetryJson(pid, frames_processed_, frames_read_, osc_messages_sent_,
-		                                      osc_messages_dropped_, cfg.active_module_uuid, verg_enabled, focus_m,
-		                                      ipd_m, latest_shape_values_valid_, latest_shape_values_frame_,
-		                                      latest_pre_tuning_expressions_, latest_post_tuning_expressions_);
+		const bool calib_enabled = cfg.master_enabled != 0 && cfg.continuous_calib_mode == 1;
+		const CalibrationEngine::Telemetry calib_t = calib_.Snapshot();
+
+		// Persist learned calibration periodically so a crash loses at most
+		// a minute of range learning.
+		if (calib_enabled) {
+			if (last_calib_autosave_ == std::chrono::steady_clock::time_point{}) {
+				last_calib_autosave_ = now;
+			}
+			else if (now - last_calib_autosave_ >= std::chrono::seconds(60)) {
+				calib_.Save();
+				last_calib_autosave_ = now;
+			}
+		}
+
+		std::string json = BuildTelemetryJson(
+		    pid, frames_processed_, frames_read_, osc_messages_sent_, osc_messages_dropped_, cfg.active_module_uuid,
+		    verg_enabled, focus_m, ipd_m, latest_shape_values_valid_, latest_shape_values_frame_,
+		    latest_pre_tuning_expressions_, latest_post_tuning_expressions_, calib_enabled, calib_t);
 
 		if (!AtomicWriteFile(telemetry_path_, json)) {
 			if (!telemetry_write_failed_) {

@@ -41,6 +41,16 @@ struct DriverTelemetrySnapshot
 	uint64_t shape_values_frame = 0;
 	std::array<float, protocol::FACETRACKING_EXPRESSION_COUNT> pre_tuning_expressions{};
 	std::array<float, protocol::FACETRACKING_EXPRESSION_COUNT> post_tuning_expressions{};
+
+	// Continuous auto-calibration readout.
+	bool calib_enabled = false;
+	bool calib_loaded = false;
+	float calib_avg_conf = 0.f;
+	float calib_min_conf = 0.f;
+	int calib_capped_shapes = 0;
+	uint64_t calib_idle_frames = 0;
+	uint64_t calib_idle_false_act = 0;
+	float calib_open_lr_div_avg = 0.f;
 };
 
 class DriverTelemetryPoller

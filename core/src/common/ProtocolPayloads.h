@@ -344,8 +344,11 @@ struct FaceTrackingConfig
 	uint8_t eyelid_sync_preserve_winks;
 	uint8_t vergence_lock_enabled;
 
-	// Retained for profile/wire compatibility. Normal runtime treats this
-	// field as off/no-op and overlays should send 0.
+	// v42: continuous auto-calibration. 0 = off (identity), 1 = on: the driver
+	// learns a per-shape rest baseline + max envelope and remaps raw values
+	// through a gain-capped, deadbanded, confidence-blended normalizer before
+	// any other transform. (The v15 percentile range-stretch this byte
+	// originally controlled is gone; the byte keeps its slot.)
 	uint8_t continuous_calib_mode;
 
 	// Output sink toggles. The host process sends OSC to VRChat when
@@ -396,8 +399,11 @@ enum FaceCalibrationOp : uint8_t
 	FaceCalibResetExpr = 5,
 };
 
-// POD payload for RequestSetFaceCalibrationCommand. Retained for compatibility;
-// normal runtime accepts these commands without applying calibration state.
+// POD payload for RequestSetFaceCalibrationCommand. v42: the driver-side
+// calibration engine owns the persistent learned state; Save flushes it to
+// disk, the Reset ops clear it (ResetAll also deletes the persisted file).
+// Begin/End are accepted as no-ops -- calibration is always-learning while
+// enabled, there is no explicit capture window.
 struct FaceCalibrationCommand
 {
 	uint8_t op; // see FaceCalibrationOp
@@ -433,15 +439,22 @@ struct FaceShapeTuningParams
 	int16_t max_percent; // output at input 1, -200..200; default 100
 };
 
+// v42: per-shape flag bits carried alongside the tuning values.
+// bit 0: exclude this shape from continuous auto-calibration (the driver
+// leaves the raw value untouched for that shape while calibration runs).
+static const uint8_t FACETRACKING_SHAPE_TUNING_FLAG_CALIB_EXCLUDE = 0x01;
+
 // POD payload for RequestSetFaceShapeTuning. index addresses one
 // FACETRACKING_EXPRESSION_COUNT slot. index == RESET_INDEX clears the driver's
-// cached table back to defaults; overlays send that first before the non-default
-// entries for a newly active avatar.
+// cached table back to defaults (tuning values AND flags); overlays send that
+// first before the non-default entries for a newly active avatar.
 struct FaceShapeTuning
 {
 	uint16_t index;
 	int16_t min_percent; // output at input 0, -200..200; default 0
 	int16_t max_percent; // output at input 1, -200..200; default 100
+	uint8_t flags;       // v42: FACETRACKING_SHAPE_TUNING_FLAG_* bits; pre-v42 senders leave 0
+	uint8_t _reserved;   // pad; must be 0
 };
 
 // =========================================================================

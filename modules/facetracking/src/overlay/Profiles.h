@@ -53,9 +53,14 @@ struct FacetrackingProfile
 	bool vergence_lock_enabled = false;
 	int vergence_lock_strength = 60; // 0..100
 
-	// Legacy profile/wire field retained for compatibility. Normal runtime
-	// keeps continuous calibration disabled.
-	int continuous_calib_mode = 0;
+	// Continuous auto-calibration: the driver learns each shape's rest
+	// baseline and range during normal play and remaps toward full 0..1
+	// output under a per-shape gain cap. Off by default.
+	bool continuous_calib_enabled = false;
+
+	// Expression indices the user opted out of auto-calibration (applies
+	// whichever avatar is active; sent to the driver with the tuning table).
+	std::vector<int> calib_excluded_shapes;
 
 	// Drives output_osc_enabled in FaceTrackingConfig: gates the driver's per-frame
 	// OSC publish calls before they reach the router. To disable FT OSC output

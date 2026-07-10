@@ -86,10 +86,11 @@ picojson::value ReadProfileJson(const std::filesystem::path& path)
 
 } // namespace
 
-TEST(FacetrackingProfiles, DefaultContinuousCalibrationModeIsOff)
+TEST(FacetrackingProfiles, DefaultContinuousCalibrationIsOff)
 {
 	FacetrackingProfile p;
-	EXPECT_EQ(p.continuous_calib_mode, 0);
+	EXPECT_FALSE(p.continuous_calib_enabled);
+	EXPECT_TRUE(p.calib_excluded_shapes.empty());
 }
 
 TEST(FacetrackingProfiles, EyeCloseAssistDefaultsOffAndRoundTrips)
@@ -115,7 +116,7 @@ TEST(FacetrackingProfiles, EyeCloseAssistDefaultsOffAndRoundTrips)
 	std::filesystem::remove_all(temp, ec);
 }
 
-TEST(FacetrackingProfiles, LegacyContinuousCalibrationModeLoadsOffAndIsPersisted)
+TEST(FacetrackingProfiles, LegacyContinuousCalibrationModeKeyIsIgnored)
 {
 	auto temp = MakeProfileTempDir();
 	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
@@ -124,27 +125,42 @@ TEST(FacetrackingProfiles, LegacyContinuousCalibrationModeLoadsOffAndIsPersisted
 
 	FacetrackingProfileStore store;
 	ASSERT_TRUE(store.Load());
-	EXPECT_EQ(store.current.continuous_calib_mode, 0);
-
-	picojson::value saved = ReadProfileJson(path);
-	EXPECT_EQ(openvr_pair::common::json::IntAt(saved, "continuous_calib_mode", -1), 0);
+	// The retired mode key does not switch the v42 toggle on.
+	EXPECT_FALSE(store.current.continuous_calib_enabled);
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
 }
 
-TEST(FacetrackingProfiles, SaveAlwaysEmitsContinuousCalibrationOff)
+TEST(FacetrackingProfiles, ContinuousCalibrationRoundTrips)
+{
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+
+	FacetrackingProfileStore store;
+	store.current.continuous_calib_enabled = true;
+	store.current.calib_excluded_shapes = {14, 45};
+	ASSERT_TRUE(store.Save());
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	EXPECT_TRUE(loaded.current.continuous_calib_enabled);
+	EXPECT_EQ(loaded.current.calib_excluded_shapes, (std::vector<int>{14, 45}));
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
+TEST(FacetrackingProfiles, CalibExcludedShapesDropInvalidIndices)
 {
 	auto temp = MakeProfileTempDir();
 	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
 	const auto path = ProfilePathUnder(temp);
+	WriteText(path, "{\n  \"calib_excluded_shapes\": [5, -1, 63, 200, 40]\n}\n");
 
 	FacetrackingProfileStore store;
-	store.current.continuous_calib_mode = 2;
-	ASSERT_TRUE(store.Save());
-
-	picojson::value saved = ReadProfileJson(path);
-	EXPECT_EQ(openvr_pair::common::json::IntAt(saved, "continuous_calib_mode", -1), 0);
+	ASSERT_TRUE(store.Load());
+	EXPECT_EQ(store.current.calib_excluded_shapes, (std::vector<int>{5, 40}));
 
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);

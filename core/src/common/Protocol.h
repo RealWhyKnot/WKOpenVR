@@ -315,7 +315,18 @@ namespace protocol {
 // scale_percent and make min/max signed (int16, -200..200): per-expression tuning is
 // now an affine Min->Max output remap (out = clamp01(min + in*(max - min))) instead of
 // gain-then-clamp. Requires a paired overlay+driver install.
-const uint32_t Version = 41;
+//
+// v42 (2026-07-10): face-tracking continuous calibration, second generation.
+// FaceTrackingConfig.continuous_calib_mode is live again (0 = off, 1 = on): the
+// driver runs a bounded, rest-anchored envelope normalizer (per-shape learned
+// rest baseline + max envelope, gain capped per shape, deadband above rest,
+// confidence-blended from identity) instead of the retired percentile
+// range-stretch. FaceShapeTuning gains a `flags` byte (bit 0 = exclude the
+// shape from auto-calibration). RequestSetFaceCalibrationCommand is handled
+// again: Save/ResetAll/ResetEye/ResetExpr act on the driver-side learned
+// state; Begin/End are accepted as no-ops. Requires a paired overlay+driver
+// install.
+const uint32_t Version = 42;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

@@ -81,6 +81,8 @@ void DrawAdvancedTab(FacetrackingPlugin& plugin)
 	}
 
 	if (ImGui::Button("Restart host process")) {
+		// Flush learned calibration state before the module goes away.
+		plugin.SendCalibrationCommand(protocol::FaceCalibSave);
 		protocol::Request req(protocol::RequestFaceHostRestart);
 		if (plugin.ipc_.IsConnected()) {
 			try {
