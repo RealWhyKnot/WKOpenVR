@@ -88,6 +88,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Replay seeded sessions and decision layers from pinned recordings (801f53f)
 - **phantom:** Flag-file full-rate replay capture and hidden-witness recording (1388e24)
 - **facetracking:** Continuous auto-calibration with bounded gain and rest anchoring (27a89f8)
+- **calibration:** Enhanced-tracking switch with classic-pipeline fallback (427c167)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -140,6 +141,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - style(calibration): satisfy tidy checks in the time-offset estimator (86bb359)
 - **calibration:** Retire the micro-reanchor experiment (7ce1a9f)
 - style(calibration): clang-format the drift-follower and warm-restart changes (b34de8f)
+- **calibration:** Fixed-size math paths for the covariance solve (abd2ff1)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
