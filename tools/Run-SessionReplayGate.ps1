@@ -80,7 +80,8 @@ foreach ($m in [regex]::Matches($SummaryLine, '([A-Za-z_][A-Za-z_0-9]*)=([-0-9.e
 $ExactKeys = @("relocs", "snap_suppressed", "holds", "reanchors", "destructive_clears",
 	"samples_evicted", "warm_restart_snaps", "sub_threshold_relocs", "rows")
 $TolerantKeys = @("accepts", "applied_path_cm", "peak_step_cm", "net_drift_mag_cm", "sub_threshold_residual_cm",
-	"wander_per_10min_cm", "max_unclassified_step_cm")
+	"wander_per_10min_cm", "max_unclassified_step_cm",
+	"rot_wander_per_10min_deg", "max_unclassified_rot_step_deg", "drift_steps", "drift_path_cm")
 $TolerantFraction = 0.10
 
 foreach ($k in $ExactKeys + $TolerantKeys) {

@@ -350,6 +350,16 @@ struct SessionReplayResult
 	double unclassifiedPathCm = 0.0;
 	double maxUnclassifiedStepCm = 0.0;
 	double wanderPer10MinCm = 0.0;
+	// Rotation churn of the applied transform (geodesic angle per step).
+	// Unclassified rotation is what the user feels as the world leaning;
+	// the translation wander metric is blind to it.
+	double unclassifiedRotPathDeg = 0.0;
+	double maxUnclassifiedRotStepDeg = 0.0;
+	double rotWanderPer10MinDeg = 0.0;
+	// In-band drift-follower accepts: classified and bounded, but tracked
+	// separately so a follower firing too often is visible in the gate.
+	int driftSteps = 0;
+	double driftPathCm = 0.0;
 	Eigen::Vector3d netAppliedDriftCm = Eigen::Vector3d::Zero();
 	bool seedApplied = false;
 };
@@ -403,6 +413,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	}
 	Eigen::Vector3d firstAppliedCm = applied.translation() * 100.0;
 	Eigen::Vector3d prevAppliedCm = firstAppliedCm;
+	Eigen::Matrix3d prevAppliedRot = applied.linear();
 
 	AutoLockSim sim(opts.autoLock);
 
@@ -486,17 +497,23 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	// snap, reanchor, warm-restart wake) lands through the motion gate /
 	// reanchor absorption live -- its step is classified, not wander.
 	int classifiedAcceptBudget = 1;
-	auto stepApplied = [&](const Eigen::Vector3d& newCm, bool classified) {
+	auto stepApplied = [&](const Eigen::AffineCompact3d& newApplied, bool classified) {
+		const Eigen::Vector3d newCm = newApplied.translation() * 100.0;
 		if (hasApplied) {
 			const double stepCm = (newCm - prevAppliedCm).norm();
 			res.totalAppliedPathCm += stepCm;
 			res.peakAppliedStepCm = std::max(res.peakAppliedStepCm, stepCm);
+			const double rotStepDeg =
+			    Eigen::AngleAxisd(prevAppliedRot.transpose() * newApplied.linear()).angle() * (180.0 / EIGEN_PI);
 			if (!classified) {
 				res.unclassifiedPathCm += stepCm;
 				res.maxUnclassifiedStepCm = std::max(res.maxUnclassifiedStepCm, stepCm);
+				res.unclassifiedRotPathDeg += rotStepDeg;
+				res.maxUnclassifiedRotStepDeg = std::max(res.maxUnclassifiedRotStepDeg, rotStepDeg);
 			}
 		}
 		prevAppliedCm = newCm;
+		prevAppliedRot = newApplied.linear();
 		if (!hasApplied) {
 			firstAppliedCm = newCm;
 			hasApplied = true;
@@ -572,9 +589,17 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 					else {
 						applied = calc.Transformation();
 					}
-					const bool classifiedStep = classifiedAcceptBudget > 0 || calc.LastAcceptWasConsensusStep();
+					const bool driftStep = calc.LastAcceptWasDriftStep();
+					const bool classifiedStep =
+					    classifiedAcceptBudget > 0 || calc.LastAcceptWasConsensusStep() || driftStep;
 					if (classifiedAcceptBudget > 0) --classifiedAcceptBudget;
-					stepApplied(applied.translation() * 100.0, classifiedStep);
+					const bool hadApplied = hasApplied;
+					const Eigen::Vector3d beforeCm = prevAppliedCm;
+					stepApplied(applied, classifiedStep);
+					if (driftStep) {
+						++res.driftSteps;
+						if (hadApplied) res.driftPathCm += (applied.translation() * 100.0 - beforeCm).norm();
+					}
 				}
 				for (std::size_t i = 0; i < drop; ++i)
 					calc.ShiftSample();
@@ -641,7 +666,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 							res.samplesEvicted += (int)calc.EvictSamplesBefore(now);
 						}
 						applied = seedTransform;
-						stepApplied(applied.translation() * 100.0, /*classified=*/true);
+						stepApplied(applied, /*classified=*/true);
 						classifiedAcceptBudget = 1;
 						break;
 					case spacecal::recovery::RecoveryAction::DestructiveClear:
@@ -684,6 +709,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	const double sessionSec = rec.rows.back().timestamp - rec.rows.front().timestamp;
 	if (sessionSec > 1.0) {
 		res.wanderPer10MinCm = res.unclassifiedPathCm * 600.0 / sessionSec;
+		res.rotWanderPer10MinDeg = res.unclassifiedRotPathDeg * 600.0 / sessionSec;
 	}
 	res.succeeded = true;
 	return res;

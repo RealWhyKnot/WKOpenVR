@@ -496,6 +496,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	opts.fusionAccept = EnvFlagLocal("WKOPENVR_REPLAY_FUSION", opts.fusionAccept);
 	opts.evictSamplesOnFrameJump = EnvFlagLocal("WKOPENVR_REPLAY_SESSION_EVICT", opts.evictSamplesOnFrameJump);
 	opts.lockedStepGate = EnvFlagLocal("WKOPENVR_REPLAY_LOCKED_GATE", opts.lockedStepGate);
+	opts.lockRelativePosition = EnvFlagLocal("WKOPENVR_REPLAY_LOCK_REL", opts.lockRelativePosition);
 
 	std::string paths = rawPaths;
 	std::size_t start = 0;
@@ -518,6 +519,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		std::cout << "[session-replay] " << name << " reloc_recover_cm=" << opts.relocRecoverThresholdM * 100.0
 		          << " precision_weight=" << (opts.precisionWeightedRelPose ? 1 : 0)
 		          << " fusion=" << (opts.fusionAccept ? 1 : 0) << " locked_gate=" << (opts.lockedStepGate ? 1 : 0)
+		          << " lock_rel=" << (opts.lockRelativePosition ? 1 : 0)
 		          << " evict=" << (opts.evictSamplesOnFrameJump ? 1 : 0) << " samples_evicted=" << res.samplesEvicted
 		          << " warm_restart_snaps=" << res.warmRestartSnaps << " seed_applied=" << (res.seedApplied ? 1 : 0)
 		          << " rows=" << res.rowsProcessed << " accepts=" << res.accepts << " flips=" << res.lockFlips
@@ -529,6 +531,9 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		          << " applied_path_cm=" << res.totalAppliedPathCm << " peak_step_cm=" << res.peakAppliedStepCm
 		          << " wander_per_10min_cm=" << res.wanderPer10MinCm
 		          << " max_unclassified_step_cm=" << res.maxUnclassifiedStepCm
+		          << " rot_wander_per_10min_deg=" << res.rotWanderPer10MinDeg
+		          << " max_unclassified_rot_step_deg=" << res.maxUnclassifiedRotStepDeg
+		          << " drift_steps=" << res.driftSteps << " drift_path_cm=" << res.driftPathCm
 		          << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm() << "\n";
 		++replayed;
 	}
