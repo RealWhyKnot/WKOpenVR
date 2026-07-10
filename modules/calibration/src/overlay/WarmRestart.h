@@ -73,9 +73,14 @@ constexpr int kColdStartGraceTicks = 100;
 //     (a 2 deg rotation error on a 30 cm tracker arm is ~10 mm).
 //
 // Decision rule:
-//   - meanBias > kFailBiasTransM AND postSnap samples >= 20:
-//     declare Failed, trigger RecoverFromWedgedCalibration. The snap
-//     landed on a profile that no longer matches reality.
+//   - meanBias > kFailBiasTransM AND solver ticks since snap >= 20 AND
+//     bias samples >= kValidationMinBiasSamples: declare Failed, trigger
+//     RecoverFromWedgedCalibration. The snap landed on a profile that no
+//     longer matches reality. The bias-sample floor exists because
+//     error_currentCal pushes only on validated solves -- 20 ticks can
+//     elapse with a single bias sample in the mean, and one reading is
+//     not evidence (field log 2026-07-10: post_snap_samples=1 at 98 mm
+//     declared a snap failed and set off a re-anchor ping-pong).
 //   - madFloor in (0, kValidatedSettledMadM] AND meanBias <=
 //     kAcceptBiasTransM AND postSnap samples >= 20: declare Settled,
 //     end grace early. Profile snap was correct.
@@ -86,6 +91,7 @@ constexpr double kValidatedFailedMadM = 0.020;  // 20 mm
 constexpr double kAcceptBiasTransM = 0.005;     // 5 mm; max bias for Settled
 constexpr double kFailBiasTransM = 0.015;       // 15 mm; bias above this -> Failed
 constexpr int kValidationMinSamples = 20;
+constexpr int kValidationMinBiasSamples = 8;
 
 enum class ValidationOutcome
 {
@@ -167,6 +173,10 @@ struct ValidationInputs
 	int samplesSinceSnap;
 	bool graceEndedThisTick;
 	double meanBiasTransM = 0.0;
+	// Count of post-snap error_currentCal samples inside meanBiasTransM.
+	// Distinct from samplesSinceSnap: error pushes only happen on validated
+	// solves, so the tick count can far outrun the bias evidence.
+	int biasSampleCount = 0;
 };
 
 // Validation outcome from one tick's reading. Pure helper; caller
@@ -177,8 +187,11 @@ constexpr ValidationOutcome EvaluateValidation(const ValidationInputs& in)
 	// Bias-Failed: the applied calibration is producing too much
 	// retargeting error for the snap target to be trusted. This is the
 	// path that catches the "stable but wrong" case the previous
-	// dispersion-only validator missed.
-	if (in.samplesSinceSnap >= kValidationMinSamples && in.meanBiasTransM > kFailBiasTransM) {
+	// dispersion-only validator missed. Requires a minimum number of
+	// bias samples in the mean, not just elapsed ticks -- a mean over
+	// one or two readings is noise, not a verdict.
+	if (in.samplesSinceSnap >= kValidationMinSamples && in.biasSampleCount >= kValidationMinBiasSamples &&
+	    in.meanBiasTransM > kFailBiasTransM) {
 		return ValidationOutcome::Failed;
 	}
 	// Dispersion-Failed at grace end: post-snap samples never stabilized.

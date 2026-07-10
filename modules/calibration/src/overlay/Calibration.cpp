@@ -2840,8 +2840,12 @@ void CalibrationTick(double time)
 				        ? (CalCtx.postSnapErrorSumMm / static_cast<double>(CalCtx.postSnapErrorSampleCount)) / 1000.0
 				        : 0.0;
 
-				const spacecal::warm_restart::ValidationInputs vin{madFloor, samplesSinceSnap, graceEndedThisTick,
-				                                                   meanBiasTransM};
+				spacecal::warm_restart::ValidationInputs vin;
+				vin.madFloorM = madFloor;
+				vin.samplesSinceSnap = samplesSinceSnap;
+				vin.graceEndedThisTick = graceEndedThisTick;
+				vin.meanBiasTransM = meanBiasTransM;
+				vin.biasSampleCount = CalCtx.postSnapErrorSampleCount;
 				const auto outcome = spacecal::warm_restart::EvaluateValidation(vin);
 
 				// mad_floor_source labels whether the rolling-min floor

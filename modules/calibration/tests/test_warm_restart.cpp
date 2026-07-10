@@ -395,6 +395,7 @@ TEST(WarmRestartValidationTest, StaleProfileLowNoise_ReturnsFailed)
 	    /*samplesSinceSnap=*/25,
 	    /*graceEndedThisTick=*/false,
 	    /*meanBiasTransM=*/0.025,
+	    /*biasSampleCount=*/wr::kValidationMinBiasSamples,
 	};
 	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed)
 	    << "Stable post-snap dispersion does not imply a correct snap; "
@@ -486,20 +487,53 @@ TEST(WarmRestartValidationTest, BiasBoundaryAtFailThreshold)
 {
 	// > is the Failed gate: exactly at the fail threshold is still
 	// Inconclusive (other paths may decide). Just above fails.
-	const wr::ValidationInputs atCap{0.004, 25, false, wr::kFailBiasTransM};
+	const wr::ValidationInputs atCap{0.004, 25, false, wr::kFailBiasTransM, wr::kValidationMinBiasSamples};
 	EXPECT_EQ(wr::EvaluateValidation(atCap), wr::ValidationOutcome::Inconclusive);
 
-	const wr::ValidationInputs justAbove{0.004, 25, false, wr::kFailBiasTransM + 0.0001};
+	const wr::ValidationInputs justAbove{0.004, 25, false, wr::kFailBiasTransM + 0.0001,
+	                                     wr::kValidationMinBiasSamples};
 	EXPECT_EQ(wr::EvaluateValidation(justAbove), wr::ValidationOutcome::Failed);
 }
 
 TEST(WarmRestartValidationTest, BiasGateRequiresMinSamples)
 {
-	// Bias-Failed needs enough post-snap samples to be confident the
-	// mean is real. With only 10 samples in, a high bias reading is
-	// ignored (Inconclusive); the solver may yet converge.
-	const wr::ValidationInputs in{0.004, 10, false, wr::kFailBiasTransM + 0.005};
+	// Bias-Failed needs enough post-snap ticks to be confident the mean
+	// is real. With only 10 ticks in, a high bias reading is ignored
+	// (Inconclusive) even with plenty of bias samples; the solver may
+	// yet converge.
+	const wr::ValidationInputs in{0.004, 10, false, wr::kFailBiasTransM + 0.005, wr::kValidationMinBiasSamples};
 	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive);
+}
+
+// --- Bias-sample-count guard -------------------------------------------------
+//
+// samplesSinceSnap counts solver ticks; the bias mean counts validated-solve
+// error pushes, which arrive far less often. A live session declared a snap
+// Failed from a 98 mm bias "mean" containing exactly one reading (20 ticks
+// elapsed, post_snap_samples=1), which set off a re-anchor ping-pong at
+// multi-metre amplitude. The verdict must wait for real bias evidence.
+
+TEST(WarmRestartValidationTest, BiasFailedRequiresBiasSamples)
+{
+	// The live shape: enough ticks, huge bias, but a single-sample mean.
+	const wr::ValidationInputs in{0.004, 20, false, 0.098, 1};
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Inconclusive)
+	    << "One bias reading is not evidence; the verdict must wait";
+}
+
+TEST(WarmRestartValidationTest, BiasFailedFiresWithSufficientBiasSamples)
+{
+	const wr::ValidationInputs in{0.004, 20, false, 0.098, wr::kValidationMinBiasSamples};
+	EXPECT_EQ(wr::EvaluateValidation(in), wr::ValidationOutcome::Failed);
+}
+
+TEST(WarmRestartValidationTest, BiasSampleCountBoundary)
+{
+	const wr::ValidationInputs oneShort{0.004, 25, false, 0.030, wr::kValidationMinBiasSamples - 1};
+	EXPECT_EQ(wr::EvaluateValidation(oneShort), wr::ValidationOutcome::Inconclusive);
+
+	const wr::ValidationInputs atFloor{0.004, 25, false, 0.030, wr::kValidationMinBiasSamples};
+	EXPECT_EQ(wr::EvaluateValidation(atFloor), wr::ValidationOutcome::Failed);
 }
 
 // --- Pin the bias-threshold constants --------------------------------------
@@ -511,3 +545,6 @@ static_assert(wr::kFailBiasTransM == 0.015, "kFailBiasTransM changed -- review t
 static_assert(wr::kFailBiasTransM > wr::kAcceptBiasTransM,
               "Fail bias must exceed accept bias or the validator has no Inconclusive "
               "band on the bias axis");
+static_assert(wr::kValidationMinBiasSamples == 8, "kValidationMinBiasSamples changed -- must stay comfortably "
+                                                  "reachable within the 100-tick grace window at the live "
+                                                  "error-push rate, or Bias-Failed can never fire");
