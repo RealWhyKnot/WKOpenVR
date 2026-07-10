@@ -138,6 +138,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Retire geometry-shift restart and witness-correction toggles (1440cbe)
 - style(calibration): satisfy tidy checks in the time-offset estimator (86bb359)
 - **calibration:** Retire the micro-reanchor experiment (7ce1a9f)
+- style(calibration): clang-format the drift-follower and warm-restart changes (b34de8f)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -281,6 +282,9 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Persist lock-relative mode and default continuous style to locked (153f53f)
 - **calibration:** Evict dead-frame samples on frame-moving recoveries (f7d072a)
 - **calibration:** Bound locked-relpose accepts and classify silent frame re-anchors (87cb6ff)
+- **calibration:** Gate in-band locked-relpose steps on a candidate-median drift follower (bc58f5f)
+- **calibration:** Stop warm-restart validation fighting witnessed frame moves (ef4974b)
+- **calibration:** Require real bias evidence for warm-restart bias-failed (5124f27)
 
 ---
 
