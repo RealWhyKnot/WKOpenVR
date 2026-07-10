@@ -504,7 +504,9 @@ void CalibrationCalc::Clear()
 	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 	m_shadowConsecutiveImprovingCandidates = 0;
 	m_lastAcceptWasConsensusStep = false;
+	m_lastAcceptWasDriftStep = false;
 	m_lockedOversizeConsensus = {};
+	m_lockedDriftFollower = {};
 }
 
 size_t CalibrationCalc::EvictSamplesBefore(double timestamp)
@@ -1696,8 +1698,10 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			gateIn.stepCm =
 			    m_isValid ? (byRelPose.translation() - m_estimatedTransformation.translation()).norm() * 100.0 : 0.0;
 			gateIn.stepGateBypassed = m_stepGateBypass || !m_isValid;
-			const auto gate = spacecal::relpose_lock::EvaluateLockedAccept(gateIn, byRelPose.translation() * 100.0,
-			                                                               m_lockedOversizeConsensus);
+			gateIn.heldCm = m_isValid ? Eigen::Vector3d(m_estimatedTransformation.translation() * 100.0)
+			                          : Eigen::Vector3d::Zero();
+			const auto gate = spacecal::relpose_lock::EvaluateLockedAccept(
+			    gateIn, byRelPose.translation() * 100.0, m_lockedOversizeConsensus, m_lockedDriftFollower);
 			if (gate.action == spacecal::relpose_lock::LockedAccept::HoldPrior) {
 				Metrics::lastRejectReason = gate.rejectTag;
 				return false;
@@ -1705,6 +1709,7 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 
 			Metrics::lastRejectReason.clear();
 			m_lastAcceptWasConsensusStep = gate.action == spacecal::relpose_lock::LockedAccept::AcceptConsensusStep;
+			m_lastAcceptWasDriftStep = gate.action == spacecal::relpose_lock::LockedAccept::AcceptDriftStep;
 			m_isValid = true;
 			m_lastComputeUsedRelPose = true;
 			m_relativePosCalibrated = m_relativePosCalibrated || relPoseError < 0.005;
@@ -1714,6 +1719,7 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 		}
 	}
 	m_lastAcceptWasConsensusStep = false;
+	m_lastAcceptWasDriftStep = false;
 
 	double priorCalibrationError = INFINITY;
 	Eigen::Vector3d priorPosOffset;

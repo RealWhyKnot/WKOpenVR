@@ -259,8 +259,20 @@ TEST(CalibrationCalcTest, LockedRelPoseTracksSlowDriftAboveDeadband)
 		calc.PushSample(s);
 	}
 
-	bool lerp = false;
-	ASSERT_TRUE(calc.ComputeIncremental(lerp, 1.5, 0.005, false));
+	// One in-band candidate is not evidence of drift -- the follower waits
+	// for a full window of candidates agreeing that the cluster median has
+	// departed the held calibration, then lands the move as one classified
+	// drift step (a scattered stream never fires; see RelPoseLockGate tests).
+	bool accepted = false;
+	int solves = 0;
+	for (; solves < spacecal::relpose_lock::kDriftWindowCandidates + 5 && !accepted; ++solves) {
+		bool lerp = false;
+		accepted = calc.ComputeIncremental(lerp, 1.5, 0.005, false);
+	}
+	ASSERT_TRUE(accepted);
+	EXPECT_EQ(solves, spacecal::relpose_lock::kDriftWindowCandidates)
+	    << "the drift step must land exactly when the candidate window fills";
+	EXPECT_TRUE(calc.LastAcceptWasDriftStep());
 	EXPECT_FALSE(calc.LastAcceptWasConsensusStep());
 	EXPECT_LT((calc.Transformation().translation() - drifted.translation()).norm(), 5e-3);
 }

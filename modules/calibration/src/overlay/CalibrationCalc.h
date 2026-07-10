@@ -260,6 +260,12 @@ public:
 	// wander.
 	bool LastAcceptWasConsensusStep() const { return m_lastAcceptWasConsensusStep; }
 
+	// True when the most recent accepted locked-relpose candidate landed via
+	// the in-band drift follower (the candidate-cluster median departed the
+	// held calibration). Bounded (<= kStepMaxCm) and deliberate; callers
+	// annotate/classify it like the consensus step.
+	bool LastAcceptWasDriftStep() const { return m_lastAcceptWasDriftStep; }
+
 	// Gravity-constrained relative-pose solve: project the solved calibration
 	// rotation to its yaw-about-gravity component (both universes are +Y-up,
 	// so roll/pitch in C is lever-arm noise). Replay-only A/B for now -- no
@@ -392,7 +398,9 @@ private:
 	// Locked-relpose accept gating (see RelPoseLockGate.h).
 	bool m_stepGateBypass = false;
 	bool m_lastAcceptWasConsensusStep = false;
+	bool m_lastAcceptWasDriftStep = false;
 	spacecal::relpose_lock::OversizeConsensusState m_lockedOversizeConsensus;
+	spacecal::relpose_lock::SmallStepDriftState m_lockedDriftFollower;
 
 	std::deque<Sample> m_samples;
 

@@ -3269,6 +3269,14 @@ void CalibrationTick(double time)
 			    spacecal::relpose_lock::kOversizeConsensusSpreadCm);
 		}
 
+		if (calibration.LastAcceptWasDriftStep()) {
+			Metrics::LogAnnotationf(
+			    "relpose_locked_drift_step: mag_cm=%.2f window=%d min_step_cm=%.1f"
+			    " -- in-band move accepted; the candidate-cluster median departed the held calibration",
+			    ctx.calibratedTranslation.norm(), spacecal::relpose_lock::kDriftWindowCandidates,
+			    spacecal::relpose_lock::kDriftStepMinCm);
+		}
+
 		CalCtx.Log("Finished calibration, profile saved\n");
 	}
 	else {
