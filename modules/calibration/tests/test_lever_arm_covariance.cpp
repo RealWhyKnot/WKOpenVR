@@ -214,7 +214,7 @@ TEST(LeverArmCovarianceTest, EigenstructureMatchesClosedForm)
 	const Eigen::Matrix3d sigma = levercov::TranslationCovariance(t, sTheta, sJit);
 
 	Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(sigma);
-	const Eigen::Vector3d ev = es.eigenvalues(); // ascending
+	const Eigen::Vector3d& ev = es.eigenvalues(); // ascending
 	EXPECT_NEAR(ev(0), sJit * sJit, 1e-12);
 	EXPECT_NEAR(ev(1), sJit * sJit + sTheta * sTheta * t.squaredNorm(), 1e-12);
 	EXPECT_NEAR(ev(2), sJit * sJit + sTheta * sTheta * t.squaredNorm(), 1e-12);
@@ -222,14 +222,16 @@ TEST(LeverArmCovarianceTest, EigenstructureMatchesClosedForm)
 	EXPECT_NEAR(std::abs(es.eigenvectors().col(0).dot(t.normalized())), 1.0, 1e-9);
 }
 
-// Positive definite at the origin and at an extreme lever arm (LLT succeeds).
+// Positive definite at the origin and at an extreme lever arm: the smallest
+// eigenvalue stays at (or above) the jitter floor, so the inverse used for
+// the weights always exists.
 TEST(LeverArmCovarianceTest, PositiveDefiniteAcrossLeverArms)
 {
 	const double sTheta = 0.003, sJit = 0.0007;
 	for (const Eigen::Vector3d& t : {Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(10, 0, 0), Eigen::Vector3d(-3, 7, -2)}) {
 		const Eigen::Matrix3d sigma = levercov::TranslationCovariance(t, sTheta, sJit);
-		Eigen::LLT<Eigen::Matrix3d> llt(sigma);
-		EXPECT_EQ(llt.info(), Eigen::Success) << "t=" << t.transpose();
+		Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(sigma);
+		EXPECT_GE(es.eigenvalues()(0), sJit * sJit * 0.999) << "t=" << t.transpose();
 	}
 }
 

@@ -1420,7 +1420,8 @@ private:
 	Eigen::Vector3d accum = Eigen::Vector3d::Zero();
 	int i = 0;
 	double weightSum = 0.0;
-	// Covariance-weighted translation accumulators (PushCovarianceWeighted).
+	// Covariance-weighted accumulators (PushCovarianceWeighted).
+	Eigen::Matrix4d quatOuterSum = Eigen::Matrix4d::Zero();
 	Eigen::Matrix3d infoSum = Eigen::Matrix3d::Zero();
 	Eigen::Vector3d infoAccum = Eigen::Vector3d::Zero();
 
@@ -1530,29 +1531,32 @@ public:
 	// anisotropic information matrix W = Sigma^-1 (a far sample is distrusted
 	// only in the directions its lever arm actually corrupts), solved as
 	// (sum W_i)^-1 * (sum W_i * t_i). The quaternion mean has no matrix form,
-	// so it takes the isotropic scalar equivalent of the same covariance.
+	// so it takes the isotropic scalar equivalent of the same covariance,
+	// accumulated directly as sum(w * q q^T) -- same eigen-mean as the column
+	// form above without staging the columns.
 	template <typename P> void PushCovarianceWeighted(const P& pose, const Eigen::Matrix3d& infoW, double scalarW)
 	{
 		if (!(scalarW > 0.0)) return;
-		const double sw = std::sqrt(scalarW);
 		const Eigen::Quaterniond rot(pose.rotation());
-		quatAvg.col(i++) = sw * Eigen::Vector4d(rot.w(), rot.x(), rot.y(), rot.z());
+		const Eigen::Vector4d q(rot.w(), rot.x(), rot.y(), rot.z());
+		quatOuterSum += scalarW * (q * q.transpose());
 		infoSum += infoW;
 		infoAccum += infoW * pose.translation();
 	}
 
 	Eigen::AffineCompact3d CovarianceWeightedAverage()
 	{
-		Eigen::Matrix4d quatMul = quatAvg.leftCols(i) * quatAvg.leftCols(i).transpose();
 		Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
-		solver.compute(quatMul);
+		solver.compute(quatOuterSum);
 
 		Eigen::Vector4d quatAvgV = solver.eigenvectors().col(3).real().normalized();
 		Eigen::Quaterniond avgQ(quatAvgV(0), quatAvgV(1), quatAvgV(2), quatAvgV(3));
 		avgQ.normalize();
 
 		Eigen::AffineCompact3d pose(avgQ);
-		pose.pretranslate(Eigen::Vector3d(infoSum.ldlt().solve(infoAccum)));
+		// Fixed-size closed-form inverse; infoSum is a sum of SPD information
+		// matrices, each floored by the jitter term.
+		pose.pretranslate(Eigen::Vector3d(infoSum.inverse() * infoAccum));
 
 		return pose;
 	}
@@ -1572,8 +1576,9 @@ public:
 		for (auto& sample : samples) {
 			if (!sample.valid) continue;
 			const Eigen::Matrix3d sigma = covarianceProvider(sample);
-			accum.PushCovarianceWeighted(poseProvider(sample),
-			                             Eigen::Matrix3d(sigma.llt().solve(Eigen::Matrix3d::Identity())),
+			// Fixed-size closed-form inverse; sigma is SPD with a jitter
+			// floor, so it is always well conditioned for it.
+			accum.PushCovarianceWeighted(poseProvider(sample), Eigen::Matrix3d(sigma.inverse()),
 			                             spacecal::levercov::ScalarPrecision(sigma));
 		}
 

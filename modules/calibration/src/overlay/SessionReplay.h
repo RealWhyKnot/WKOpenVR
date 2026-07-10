@@ -618,12 +618,12 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 					const bool classifiedStep =
 					    classifiedAcceptBudget > 0 || calc.LastAcceptWasConsensusStep() || driftStep;
 					if (classifiedAcceptBudget > 0) --classifiedAcceptBudget;
-					const bool hadApplied = hasApplied;
-					const Eigen::Vector3d beforeCm = prevAppliedCm;
+					const double stepCmForDrift =
+					    hasApplied ? (applied.translation() * 100.0 - prevAppliedCm).norm() : 0.0;
 					stepApplied(applied, classifiedStep);
 					if (driftStep) {
 						++res.driftSteps;
-						if (hadApplied) res.driftPathCm += (applied.translation() * 100.0 - beforeCm).norm();
+						res.driftPathCm += stepCmForDrift;
 					}
 				}
 				for (std::size_t i = 0; i < drop; ++i)

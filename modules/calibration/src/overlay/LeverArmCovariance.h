@@ -86,7 +86,9 @@ inline double MahalanobisSq(const Eigen::Matrix<double, 6, 1>& residual, const E
 	const Eigen::Vector3d rho = residual.head<3>();
 	const Eigen::Vector3d phi = residual.tail<3>();
 	const Eigen::Matrix3d sigmaT = SampleTranslationCovariance(refTrans, tgtTrans, sigmaThetaRad, sigmaJitM);
-	const Eigen::Vector3d whitened = sigmaT.llt().solve(rho);
+	// Fixed-size closed-form inverse; sigmaT is SPD with a jitter floor, so
+	// it is always well conditioned for it.
+	const Eigen::Vector3d whitened = sigmaT.inverse() * rho;
 	const double rotVar = 2.0 * sigmaThetaRad * sigmaThetaRad;
 	return rho.dot(whitened) + phi.squaredNorm() / rotVar;
 }
