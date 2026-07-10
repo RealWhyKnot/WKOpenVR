@@ -36,7 +36,14 @@ param(
 	[switch]$SkipBuild,
 
 	# Pass through to build.ps1 when building.
-	[switch]$SkipConfigure
+	[switch]$SkipConfigure,
+
+	# Run every scenario replay concurrently instead of one at a time. Each
+	# scenario is an independent process differing only in environment
+	# variables, so the wall time collapses to the slowest single replay.
+	# Results, output CSV, and baseline handling are identical to the
+	# sequential path.
+	[switch]$Parallel
 )
 
 $ErrorActionPreference = "Stop"
@@ -347,22 +354,60 @@ Write-Host "Output: $OutputCsv"
 Write-Host ""
 
 $Results = @()
+
+# Parallel mode: launch every scenario as its own job up front. Environment
+# is per-process inside each job, so no shared-state save/restore is needed;
+# outputs are collected here and consumed by the same per-scenario loop below.
+$ScenarioRuns = @{}
+if ($Parallel) {
+	$Jobs = @()
+	foreach ($Item in $Scenarios) {
+		$RunEnv = @{}
+		foreach ($Entry in $BaseEnv.GetEnumerator()) { $RunEnv[$Entry.Key] = [string]$Entry.Value }
+		foreach ($Entry in $Item.Env.GetEnumerator()) { $RunEnv[$Entry.Key] = [string]$Entry.Value }
+		if (-not [string]::IsNullOrWhiteSpace($TraceDir)) {
+			$RunEnv["WKOPENVR_REPLAY_TRACE_CSV"] = Join-Path (Resolve-RepoPath $TraceDir "") $Item.Name
+		}
+		$Jobs += Start-Job -Name $Item.Name -ScriptBlock {
+			param($Exe, $RunEnv)
+			foreach ($Key in $RunEnv.Keys) {
+				[Environment]::SetEnvironmentVariable($Key, [string]$RunEnv[$Key], "Process")
+			}
+			$Output = & $Exe --gtest_filter=*ReplayLocalRecordingsWhenRequested --gtest_brief=1 2>&1 |
+				ForEach-Object { "$_" }
+			[pscustomobject]@{ Output = $Output; ExitCode = $LASTEXITCODE }
+		} -ArgumentList $TestExe, $RunEnv
+	}
+	Wait-Job -Job $Jobs | Out-Null
+	foreach ($Job in $Jobs) {
+		$ScenarioRuns[$Job.Name] = Receive-Job -Job $Job
+	}
+	Remove-Job -Job $Jobs -Force
+}
+
 try {
 	foreach ($Item in $Scenarios) {
 		Write-Host ("== Calibration replay: {0} ==" -f $Item.Name)
-		Set-ReplayEnvironment $BaseEnv $Item.Env
-		if (-not [string]::IsNullOrWhiteSpace($TraceDir)) {
-			# Per-scenario subdirectory so runs don't overwrite each other's traces.
-			Set-Item -Path "Env:\WKOPENVR_REPLAY_TRACE_CSV" -Value (Join-Path (Resolve-RepoPath $TraceDir "") $Item.Name)
+		if ($Parallel) {
+			$Run = $ScenarioRuns[$Item.Name]
+			$Output = @($Run.Output)
+			$ExitCode = [int]$Run.ExitCode
 		}
-		$PreviousErrorActionPreference = $ErrorActionPreference
-		$ErrorActionPreference = "Continue"
-		try {
-			$Output = & $TestExe --gtest_filter=*ReplayLocalRecordingsWhenRequested --gtest_brief=1 2>&1
-			$ExitCode = $LASTEXITCODE
-		}
-		finally {
-			$ErrorActionPreference = $PreviousErrorActionPreference
+		else {
+			Set-ReplayEnvironment $BaseEnv $Item.Env
+			if (-not [string]::IsNullOrWhiteSpace($TraceDir)) {
+				# Per-scenario subdirectory so runs don't overwrite each other's traces.
+				Set-Item -Path "Env:\WKOPENVR_REPLAY_TRACE_CSV" -Value (Join-Path (Resolve-RepoPath $TraceDir "") $Item.Name)
+			}
+			$PreviousErrorActionPreference = $ErrorActionPreference
+			$ErrorActionPreference = "Continue"
+			try {
+				$Output = & $TestExe --gtest_filter=*ReplayLocalRecordingsWhenRequested --gtest_brief=1 2>&1
+				$ExitCode = $LASTEXITCODE
+			}
+			finally {
+				$ErrorActionPreference = $PreviousErrorActionPreference
+			}
 		}
 		$ReplayLines = @($Output | Where-Object { $_ -is [string] -and $_.StartsWith("[replay] ") })
 		if ($ReplayLines.Count -eq 0) {
