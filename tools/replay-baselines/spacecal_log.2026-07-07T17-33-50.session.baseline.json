@@ -8,11 +8,15 @@
   "warm_restart_snaps": 3.0,
   "sub_threshold_relocs": 2.0,
   "rows": 1430.0,
-  "accepts": 7.0,
-  "applied_path_cm": 38.015,
+  "accepts": 1.0,
+  "applied_path_cm": 18.2477,
   "peak_step_cm": 18.2477,
-  "net_drift_mag_cm": 24.0031,
+  "net_drift_mag_cm": 18.2477,
   "sub_threshold_residual_cm": 15.076,
-  "wander_per_10min_cm": 3.33815,
-  "max_unclassified_step_cm": 9.42185
+  "wander_per_10min_cm": 0.0,
+  "max_unclassified_step_cm": 0.0,
+  "rot_wander_per_10min_deg": 0.0,
+  "max_unclassified_rot_step_deg": 0.0,
+  "drift_steps": 0.0,
+  "drift_path_cm": 0.0
 }
