@@ -2,9 +2,13 @@ name: CI
 
 # Triggered on PRs against main, direct pushes to main, and manual dispatch.
 # Per-push CI is deliberately focused: formatting plus clang-tidy on changed
-# C/C++ source files, then the C++ build + unit tests. Slow full-tree passes
-# live elsewhere:
+# C/C++ source files, then the C++ build + tests. The dev leg runs the full
+# test pipeline through test.ps1 (gtest binaries, sidecar self-tests, and the
+# in-process driver harness); the release leg runs the gtest binaries inline
+# because release gates the sidecars off. Slow or network-bound passes live
+# elsewhere:
 #   - full clang-tidy        -> .github/workflows/nightly-tidy.yml (scheduled)
+#   - download + load tests  -> .github/workflows/nightly-tests.yml (scheduled)
 #   - installer validation   -> .github/workflows/release.yml (on tag)
 on:
   push:
@@ -204,7 +208,20 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Run test pipeline
+        if: matrix.channel == 'dev'
+        # test.ps1 runs every *_tests.exe gtest binary, the captions host and
+        # phantom sidecar self-tests, and the WKOpenVR.exe --test-harness
+        # in-process driver harness (no SteamVR needed). Downloads stay in the
+        # scheduled nightly-tests.yml.
+        shell: pwsh
+        run: ./test.ps1 -SkipBuild -SkipDownload
+
       - name: Run tests
+        if: matrix.channel == 'release'
+        # Release gates the captions host and phantom sidecar off
+        # (disabled-in-release.flag), and test.ps1 hard-fails when they are
+        # missing, so the release leg runs the gtest binaries directly.
         shell: pwsh
         run: |
           $tests = Get-ChildItem build/artifacts/Release/*_tests.exe
@@ -214,22 +231,6 @@ jobs:
             & $t.FullName --gtest_brief=1
             if ($LASTEXITCODE -ne 0) { throw "$($t.Name) failed (exit $LASTEXITCODE)" }
           }
-
-      - name: Run captions host self-test
-        if: matrix.channel == 'dev'
-        # Release builds gate captions off (disabled-in-release.flag), so this dev
-        # build is the only place the captions host smoke-tests. The host links as
-        # SUBSYSTEM:WINDOWS, so `& exe` would start it detached without waiting;
-        # Start-Process -Wait blocks and exposes the real exit code.
-        shell: pwsh
-        run: |
-          $hostExe = 'build/driver_wkopenvr/resources/captions/host/WKOpenVR.CaptionsHost.exe'
-          if (-not (Test-Path -LiteralPath $hostExe)) {
-            throw "Captions host missing at $hostExe"
-          }
-          $p = Start-Process -FilePath $hostExe -ArgumentList '--self-test' `
-              -Wait -PassThru -NoNewWindow
-          if ($p.ExitCode -ne 0) { throw "Captions host self-test failed (exit $($p.ExitCode))" }
 
       - name: Stage artifacts
         if: matrix.channel == 'dev'
