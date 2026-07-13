@@ -1630,60 +1630,15 @@ static void TickStuckCalWatchdog(CalibrationContext& ctx, double time)
 	}
 }
 
-void CalibrationTick(double time)
+// Periodic cal heartbeat. Throttled to once per 10 s while in Continuous
+// or ContinuousStandby. Emits a one-line "you are here" snapshot so a
+// post-session reader can scrub the log without grepping multiple event
+// types just to learn the cal's current state. Fields chosen to maximize
+// signal-per-character: state, lock resolution (mode + resolved + detector
+// internal), recent error level, sample-buffer size, time since last
+// reset.
+static void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 {
-	if (!vr::VRSystem()) {
-		static double s_lastNoVrSystemLog = -1e9;
-		if (time - s_lastNoVrSystemLog >= 5.0) {
-			s_lastNoVrSystemLog = time;
-			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
-		}
-		return;
-	}
-
-	auto& ctx = CalCtx;
-
-	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
-	// the toggle stays responsive and the driver keeps getting heartbeats. While
-	// frozen, hold everything: skip the rest of the pose-reactive tick so the
-	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
-	// destructive auto-recovery, especially when the HMD is left live).
-	TickFreezeAllTracking(ctx, time);
-	if (ctx.freezeAllTracking) return;
-
-	if ((time - ctx.timeLastTick) < 0.05) return;
-
-	// Resolve LockMode -> lockRelativePosition every tick before any code
-	// downstream reads the bool. The detector itself is updated in
-	// CollectSample further down; this just transcribes mode + detector
-	// state into the resolved field.
-	ctx.ResolveLockMode();
-
-	// Propagate the resolved lock bool to the CalibrationCalc instance the
-	// solver actually reads. Without this, calibration.lockRelativePosition
-	// only updates at StartContinuousCalibration time (once per cal cycle),
-	// so an AUTO Lock engagement that happens mid-cycle never reaches the
-	// ComputeIncremental relPose-constraint branch until the next restart.
-	// The geometry-shift fire annotation also reads this bool, which is why
-	// post-fix log readers will see lockRelativePosition=1 in fires after
-	// AUTO Lock engages (previously stuck at 0).
-	calibration.lockRelativePosition = ctx.lockRelativePosition;
-
-	TickWarmRestartDetection(ctx, time);
-
-	TraceRelPoseCalFlips(ctx);
-
-	TickPoseFreshnessWatchdog(ctx, time);
-
-	TickStuckCalWatchdog(ctx, time);
-
-	// Periodic cal heartbeat. Throttled to once per 10 s while in Continuous
-	// or ContinuousStandby. Emits a one-line "you are here" snapshot so a
-	// post-session reader can scrub the log without grepping multiple event
-	// types just to learn the cal's current state. Fields chosen to maximize
-	// signal-per-character: state, lock resolution (mode + resolved + detector
-	// internal), recent error level, sample-buffer size, time since last
-	// reset.
 	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
 		static double s_lastHeartbeatTime = -1e9;
 		if ((time - s_lastHeartbeatTime) >= 10.0) {
@@ -1799,12 +1754,15 @@ void CalibrationTick(double time)
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
+}
 
-	// One-shot session-start config dump. Fires on the first non-skipped
-	// CalibrationTick after the profile has been loaded, so the annotation
-	// reflects the user's actual saved settings. Captures every experimental
-	// toggle + the load-bearing tunables. Lets a session reader skip the
-	// "what version of the math is running" reverse-derivation from code.
+// One-shot session-start config dump. Fires on the first non-skipped
+// CalibrationTick after the profile has been loaded, so the annotation
+// reflects the user's actual saved settings. Captures every experimental
+// toggle + the load-bearing tunables. Lets a session reader skip the
+// "what version of the math is running" reverse-derivation from code.
+static void EmitSessionConfigDumpOnce(CalibrationContext& ctx)
+{
 	{
 		static bool s_loggedConfigDump = false;
 		if (!s_loggedConfigDump) {
@@ -1820,6 +1778,58 @@ void CalibrationTick(double time)
 			Metrics::WriteLogAnnotation(dumpBuf);
 		}
 	}
+}
+
+void CalibrationTick(double time)
+{
+	if (!vr::VRSystem()) {
+		static double s_lastNoVrSystemLog = -1e9;
+		if (time - s_lastNoVrSystemLog >= 5.0) {
+			s_lastNoVrSystemLog = time;
+			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
+		}
+		return;
+	}
+
+	auto& ctx = CalCtx;
+
+	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
+	// the toggle stays responsive and the driver keeps getting heartbeats. While
+	// frozen, hold everything: skip the rest of the pose-reactive tick so the
+	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
+	// destructive auto-recovery, especially when the HMD is left live).
+	TickFreezeAllTracking(ctx, time);
+	if (ctx.freezeAllTracking) return;
+
+	if ((time - ctx.timeLastTick) < 0.05) return;
+
+	// Resolve LockMode -> lockRelativePosition every tick before any code
+	// downstream reads the bool. The detector itself is updated in
+	// CollectSample further down; this just transcribes mode + detector
+	// state into the resolved field.
+	ctx.ResolveLockMode();
+
+	// Propagate the resolved lock bool to the CalibrationCalc instance the
+	// solver actually reads. Without this, calibration.lockRelativePosition
+	// only updates at StartContinuousCalibration time (once per cal cycle),
+	// so an AUTO Lock engagement that happens mid-cycle never reaches the
+	// ComputeIncremental relPose-constraint branch until the next restart.
+	// The geometry-shift fire annotation also reads this bool, which is why
+	// post-fix log readers will see lockRelativePosition=1 in fires after
+	// AUTO Lock engages (previously stuck at 0).
+	calibration.lockRelativePosition = ctx.lockRelativePosition;
+
+	TickWarmRestartDetection(ctx, time);
+
+	TraceRelPoseCalFlips(ctx);
+
+	TickPoseFreshnessWatchdog(ctx, time);
+
+	TickStuckCalWatchdog(ctx, time);
+
+	EmitCalHeartbeat(ctx, time);
+
+	EmitSessionConfigDumpOnce(ctx);
 
 	// Bounds-check the device IDs once at the top of the tick. Many code paths
 	// downstream index devicePoses[ctx.referenceID] / devicePoses[ctx.targetID]
