@@ -12,6 +12,7 @@
 #include "MockPoseSource.h"
 #include "PhantomStateShmem.h"
 #include "Protocol.h"
+#include "ShmemRegion.h"
 
 #include <chrono>
 #include <cstring>
@@ -33,17 +34,10 @@ uint64_t Fnv1a64(const std::string& s)
 
 bool ProbePhantomShmem(uint32_t& magic, uint32_t& version, uint32_t& device_count)
 {
-	HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, "WKOpenVRPhantomStateV2");
-	if (h == nullptr) return false;
-	void* view = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
-	if (view == nullptr) {
-		::CloseHandle(h);
-		return false;
-	}
+	const auto region = openvr_pair::common::ShmemRegion::OpenForRead("WKOpenVRPhantomStateV2");
+	if (!region.valid()) return false;
 	uint32_t hdr[3]{};
-	std::memcpy(hdr, view, sizeof(hdr));
-	::UnmapViewOfFile(view);
-	::CloseHandle(h);
+	std::memcpy(hdr, region.data(), sizeof(hdr));
 	magic = hdr[0];
 	version = hdr[1];
 	device_count = hdr[2];

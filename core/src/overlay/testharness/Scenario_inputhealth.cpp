@@ -11,6 +11,7 @@
 #include "HarnessScenario.h"
 #include "MockPoseSource.h" // brings in the full MockOpenVRRuntime definition
 #include "Protocol.h"
+#include "ShmemRegion.h"
 
 #include <chrono>
 #include <cstring>
@@ -25,17 +26,10 @@ namespace {
 // missing or the header looks wrong.
 bool ProbeInputHealthShmem(uint32_t& magic, uint32_t& version, uint32_t& slot_count)
 {
-	HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, "WKOpenVRInputHealthMemoryV1");
-	if (h == nullptr) return false;
-	void* view = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
-	if (view == nullptr) {
-		::CloseHandle(h);
-		return false;
-	}
+	const auto region = openvr_pair::common::ShmemRegion::OpenForRead("WKOpenVRInputHealthMemoryV1");
+	if (!region.valid()) return false;
 	uint32_t hdr[3]{};
-	std::memcpy(hdr, view, sizeof(hdr));
-	::UnmapViewOfFile(view);
-	::CloseHandle(h);
+	std::memcpy(hdr, region.data(), sizeof(hdr));
 	magic = hdr[0];
 	version = hdr[1];
 	slot_count = hdr[2];

@@ -10,6 +10,7 @@
 #include "HarnessIpcClient.h"
 #include "HarnessScenario.h"
 #include "Protocol.h"
+#include "ShmemRegion.h"
 
 #include <atomic>
 #include <chrono>
@@ -38,16 +39,9 @@ struct FaceTrackingShmemHeader
 
 bool ReadFaceTrackingHeader(FaceTrackingShmemHeader& out)
 {
-	HANDLE h = ::OpenFileMappingA(FILE_MAP_READ, FALSE, "WKOpenVRFaceTrackingFrameRingV2");
-	if (h == nullptr) return false;
-	void* view = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
-	if (view == nullptr) {
-		::CloseHandle(h);
-		return false;
-	}
-	std::memcpy(&out, view, sizeof(out));
-	::UnmapViewOfFile(view);
-	::CloseHandle(h);
+	const auto region = openvr_pair::common::ShmemRegion::OpenForRead("WKOpenVRFaceTrackingFrameRingV2");
+	if (!region.valid()) return false;
+	std::memcpy(&out, region.data(), sizeof(out));
 	return true;
 }
 
