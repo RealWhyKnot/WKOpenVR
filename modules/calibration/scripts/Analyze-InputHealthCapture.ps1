@@ -1,3 +1,16 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+Summarizes an InputHealth capture CSV with per-input diagnostics.
+.DESCRIPTION
+Reads an InputHealth capture CSV (defaults to the newest file in
+AppData\LocalLow\SpaceCalibrator\InputHealth) and prints per-path stats
+with hints such as trigger rest/max anomalies, drift detector trips,
+and missing button presses.
+.EXAMPLE
+./Analyze-InputHealthCapture.ps1 -Path C:\captures\inputhealth_capture.001.csv
+#>
+[CmdletBinding()]
 param(
     [string]$Path
 )

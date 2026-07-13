@@ -1,3 +1,15 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+Configures and builds the WKOpenVR solution via CMake and MSBuild.
+.DESCRIPTION
+Runs the CMake configure step, builds the requested targets (or the full
+solution), and optionally produces a release zip with a per-file manifest.
+Also activates the repo's tracked git hooks and stamps the build version.
+.EXAMPLE
+./build.ps1 -SkipConfigure
+#>
+[CmdletBinding()]
 param(
 	# When set, overrides the auto-derived YYYY.M.D.N-XXXX stamp. Release CI
 	# passes the git tag (with leading "v" stripped) so the published

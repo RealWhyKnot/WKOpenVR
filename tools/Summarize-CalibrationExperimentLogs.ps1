@@ -1,4 +1,15 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Summarizes calibration experiment data from spacecal_log files.
+.DESCRIPTION
+Reads one or more spacecal_log.*.txt files (defaulting to the newest retained
+logs under the WKOpenVR log directory) and emits per-log summary rows.
+Optionally writes the summary to a CSV file.
+.EXAMPLE
+./Summarize-CalibrationExperimentLogs.ps1 -Latest 3
+#>
+[CmdletBinding()]
 param(
 	# One or more spacecal_log.*.txt files. Defaults to the newest retained logs.
 	[string[]]$LogPath = @(),

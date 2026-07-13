@@ -1,4 +1,17 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Replays a recorded session through the session-replay layer and gates counters against a baseline.
+.DESCRIPTION
+Replays a recorded session through the full session-replay layer (solver +
+auto-lock + relocalization recovery, including recorded snap corroboration
+and warm-restart away-gap eviction) and gates the counters against a stored
+baseline. Complements Run-CalibrationReplayMatrix.ps1, which gates the
+solver-scenario metrics but never exercises the recovery layer.
+.EXAMPLE
+./Run-SessionReplayGate.ps1 -Baseline -Quick
+#>
+[CmdletBinding()]
 param(
 	# spacecal_log recording to session-replay. Defaults to the newest pinned
 	# spacecal_log capture in Logs\corpus.
@@ -30,12 +43,6 @@ param(
 	# Row cap used by -Quick.
 	[int]$QuickRows = 8000
 )
-
-# Replays a recorded session through the full session-replay layer (solver +
-# auto-lock + relocalization recovery, including recorded snap corroboration
-# and warm-restart away-gap eviction) and gates the counters against a stored
-# baseline. Complements Run-CalibrationReplayMatrix.ps1, which gates the
-# solver-scenario metrics but never exercises the recovery layer.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot

@@ -1,4 +1,15 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Copies a log recording into the corpus folder so retention never deletes it.
+.DESCRIPTION
+Recording retention prunes Logs\<prefix>.*.<ext> by count/size; it never looks inside
+subdirectories, so copies placed in Logs\corpus\ survive rotation indefinitely.
+Each pinned file is recorded in corpus\manifest.txt with size, mtime, SHA256, and a note.
+.EXAMPLE
+./Pin-Recording.ps1 -Prefix spacecal_log -Why "baseline walk capture"
+#>
+[CmdletBinding()]
 param(
 	# Recording prefix under the logs directory (e.g. "phantom_replay", "spacecal_log").
 	[Parameter(Mandatory = $true)]
@@ -14,9 +25,6 @@ param(
 	# Logs directory override. Defaults to %LocalAppDataLow%\WKOpenVR\Logs.
 	[string]$LogDir = ""
 )
-
-# Recording retention prunes Logs\<prefix>.*.<ext> by count/size; it never looks inside
-# subdirectories, so copies placed in Logs\corpus\ survive rotation indefinitely.
 
 $ErrorActionPreference = "Stop"
 

@@ -1,3 +1,16 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+Builds, validates, and deploys WKOpenVR to the local install and SteamVR driver directories.
+.DESCRIPTION
+Runs build.ps1 (unless skipped), validates the artifacts under build/, then copies them
+to the install directory and the SteamVR drivers directory and verifies the copies.
+Stops Steam/SteamVR before deploying and relaunches SteamVR afterward unless disabled.
+Refuses to deploy while VRChat is running unless explicitly allowed.
+.EXAMPLE
+./quick.ps1 -Yes
+#>
+[CmdletBinding()]
 param(
 	# Skip the build and deploy the artifacts currently under build/.
 	[switch]$SkipBuild,

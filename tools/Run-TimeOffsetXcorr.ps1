@@ -1,4 +1,21 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Estimates the time offset between the headset tracking stack and the lighthouse stack.
+.DESCRIPTION
+Cross-correlates the angular-speed profiles of the HMD and the head-mounted tracker
+in a full-rate phantom_replay capture, then reports the relative-pose MAD paired at
+lag zero vs at the recovered lag.
+.EXAMPLE
+./Run-TimeOffsetXcorr.ps1 -SkipBuild
+.NOTES
+Full-rate capture: create the flag file
+%USERPROFILE%\AppData\LocalLow\WKOpenVR\phantom_replay_fullrate.enabled
+before starting SteamVR (WKOPENVR_PHANTOM_REPLAY_FULLRATE=1 also works when the
+environment actually reaches vrserver). Hidden devices are recorded with their
+real pre-quash poses, so the head tracker may stay hidden.
+#>
+[CmdletBinding()]
 param(
 	# phantom_replay_v1 CSV to analyse. Defaults to the newest pinned
 	# phantom_replay capture in Logs\corpus.
@@ -10,16 +27,6 @@ param(
 
 	[switch]$SkipBuild
 )
-
-# Estimates the time offset between the headset's tracking stack and the
-# lighthouse stack by cross-correlating the angular-speed profiles of the HMD
-# and the head-mounted tracker in a full-rate phantom_replay capture, then
-# reports the relative-pose MAD paired at lag zero vs at the recovered lag.
-# Full-rate capture: create the flag file
-#   %USERPROFILE%\AppData\LocalLow\WKOpenVR\phantom_replay_fullrate.enabled
-# before starting SteamVR (WKOPENVR_PHANTOM_REPLAY_FULLRATE=1 also works when
-# the environment actually reaches vrserver). Hidden devices are recorded with
-# their real pre-quash poses, so the head tracker may stay hidden.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot

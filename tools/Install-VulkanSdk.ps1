@@ -1,8 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Ensure the Vulkan SDK (headers + glslc) is available for building the captions
-    speech host with the Vulkan GPU backend (-DWKOPENVR_CAPTIONS_VULKAN=ON).
+    Makes the Vulkan SDK (headers + glslc) available for the captions speech host GPU build (-DWKOPENVR_CAPTIONS_VULKAN=ON).
 
 .DESCRIPTION
     Detects an existing Vulkan SDK. If none is found it prompts (or, with
@@ -32,7 +31,10 @@
     Install without prompting for confirmation. The UAC elevation prompt may
     still appear unless the shell is already elevated. Used by CI and other
     non-interactive callers.
+.EXAMPLE
+    ./Install-VulkanSdk.ps1 -AutoInstall
 #>
+[CmdletBinding()]
 param(
     [string]$Version = "1.3.296.0",
     [string]$Root = "",

@@ -1,3 +1,16 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+Builds and runs the WKOpenVR test suites.
+.DESCRIPTION
+Builds the test targets via build.ps1 (unless skipped), then runs every
+*_tests.exe gtest binary under build\artifacts\Release, the captions host and
+phantom sidecar self-tests, the WKOpenVR.exe --test-harness in-process driver
+harness, and the Phase 4 download + load tests.
+.EXAMPLE
+./test.ps1 -SkipBuild -Suite calibration
+#>
+[CmdletBinding()]
 param(
 	# Run the current test binaries without rebuilding first.
 	[switch]$SkipBuild,

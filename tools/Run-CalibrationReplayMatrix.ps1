@@ -1,4 +1,16 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Replays a spacecal_log recording through the calibration scenario matrix.
+.DESCRIPTION
+Runs a spacecal_log_v2/v3/v4/v5 recording through the drift-guard scenario matrix
+and writes parsed replay rows to a CSV. Supports parallel scenario runs, a quick
+row-capped pre-flight mode, per-tick trace CSVs, and golden-baseline comparison
+against tools\replay-baselines.
+.EXAMPLE
+./Run-CalibrationReplayMatrix.ps1 -Parallel -Baseline
+#>
+[CmdletBinding()]
 param(
 	# spacecal_log_v2/v3/v4/v5 recording to replay. Defaults to the newest retained
 	# %LocalAppDataLow%\WKOpenVR\Logs\spacecal_log.*.txt capture.

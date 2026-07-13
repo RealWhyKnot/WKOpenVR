@@ -1,4 +1,16 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Previews and applies calibration experiment profile scenarios for WKOpenVR-SpaceCalibrator.
+.DESCRIPTION
+Reads the calibration profile JSON blob from the live registry Config value or a file,
+shows the current experimental key state, and applies a named scenario preset.
+Registry writes back up the raw profile first; all writes require -Apply.
+Can also restore a raw-profile backup or create the debug logging opt-in flag.
+.EXAMPLE
+./Set-CalibrationExperimentProfile.ps1 -Scenario baseline -Apply
+#>
+[CmdletBinding()]
 param(
 	[ValidateSet(
 		"show",

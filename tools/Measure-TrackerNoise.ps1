@@ -1,4 +1,16 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Measures per-device pose jitter from recorded spacecal_log sessions.
+.DESCRIPTION
+Estimates angular (sigma_theta) and translational (sigma_jit) noise from the
+stationary stretches of recorded sessions. These are the parameters of the
+lever-arm covariance sample weighting; the medians across recordings feed the
+defaults in LeverArmCovariance.h and the profile knobs.
+.EXAMPLE
+./Measure-TrackerNoise.ps1 -SkipBuild
+#>
+[CmdletBinding()]
 param(
 	# spacecal_log recordings to measure. Defaults to every pinned
 	# spacecal_log capture in Logs\corpus.
@@ -7,11 +19,6 @@ param(
 	# Run the current test binary without rebuilding first.
 	[switch]$SkipBuild
 )
-
-# Measures per-device pose jitter (angular sigma_theta, translational
-# sigma_jit) from the stationary stretches of recorded sessions. These are the
-# parameters of the lever-arm covariance sample weighting; the medians across
-# recordings feed the defaults in LeverArmCovariance.h and the profile knobs.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot

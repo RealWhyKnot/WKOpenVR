@@ -1,3 +1,15 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+Runs recorded replay scenarios through WKOpenVR.exe --test-harness.
+.DESCRIPTION
+Feeds a replay CSV into WKOpenVR.exe --test-harness for one or more scenario
+windows and writes per-scenario metric CSVs and captured logs to the output
+directory. Builds OpenVRPairOverlay first unless -SkipBuild is set.
+.EXAMPLE
+./Run-PhantomHarness.ps1 -ReplayPath recordings\session.csv -Scenario waist:0:60000
+#>
+[CmdletBinding()]
 param(
 	# Replay CSV to feed into WKOpenVR.exe --test-harness.
 	[string]$ReplayPath = "",

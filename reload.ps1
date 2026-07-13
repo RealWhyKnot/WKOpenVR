@@ -1,26 +1,22 @@
+#Requires -Version 5.1
 <#
-    reload.ps1 -- developer hot-reload for iterating while in VR.
-
-    One entry point for the four reload paths, lowest interruption first:
-
-      .\reload.ps1 Tuning              Create/open dev_tuning.ini (edit values;
-                                       the driver re-reads it in ~1s, no restart).
-      .\reload.ps1 Overlay            Rebuild WKOpenVR.exe and hand it to the
-                                       running overlay to swap itself in. Stays
-                                       in VR (SteamVR/driver untouched).
-      .\reload.ps1 Sidecar -Sidecar face|captions|phantom
-                                       Rebuild a host and drop it next to the
-                                       driver; the driver's supervisor respawns
-                                       it. Stays in VR.
-      .\reload.ps1 Driver             Rebuild the driver DLL and redeploy via
-                                       quick.ps1. This restarts SteamVR (~15s VR
-                                       blip) -- the driver DLL cannot be swapped
-                                       while vrserver holds it.
-
-    Overlay/Sidecar/Tuning write into Program Files / the SteamVR drivers dir, so
-    run this from an ELEVATED PowerShell (Overlay and Sidecar staging need it).
-    All hot-reload behavior is dev-build only; a release driver ignores it.
+.SYNOPSIS
+Developer hot-reload for iterating while in VR.
+.DESCRIPTION
+One entry point for four reload paths, lowest interruption first: Tuning creates/opens
+dev_tuning.ini (the driver re-reads it in ~1s, no restart); Overlay rebuilds WKOpenVR.exe
+and hands it to the running overlay to swap itself in (SteamVR/driver untouched); Sidecar
+rebuilds a host (face|captions|phantom) and drops it next to the driver for the supervisor
+to respawn; Driver rebuilds the driver DLL and redeploys via quick.ps1, restarting SteamVR
+(~15s VR blip) since the DLL cannot be swapped while vrserver holds it.
+Overlay/Sidecar/Tuning write into Program Files / the SteamVR drivers dir, so run from an
+ELEVATED PowerShell. All hot-reload behavior is dev-build only; a release driver ignores it.
+.EXAMPLE
+./reload.ps1 Overlay
+.EXAMPLE
+./reload.ps1 Sidecar -Sidecar face
 #>
+[CmdletBinding()]
 param(
 	[Parameter(Mandatory = $true, Position = 0)]
 	[ValidateSet("Driver", "Overlay", "Sidecar", "Tuning")]

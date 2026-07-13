@@ -1,3 +1,16 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+Formats and lints the project's C/C++ and C# sources.
+.DESCRIPTION
+Runs clang-format over project C/C++ files, dotnet format over the
+facetracking host solution and test module, and clang-tidy against a
+Ninja-generated compile database. Supports check-only, format-only, and
+changed-files-only runs.
+.EXAMPLE
+./lint.ps1 -Check -ChangedOnly
+#>
+[CmdletBinding()]
 param(
 	# Verify formatting without changing files.
 	[switch]$Check,

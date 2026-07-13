@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   Score a phantom_replay capture offline to tune Phantom auto role-detection
@@ -24,7 +25,11 @@
 .PARAMETER Pin
   Copy the resolved capture to .local\phantom_capture.csv so later runs reuse the
   exact same data.
+
+.EXAMPLE
+./Score-PhantomReplay.ps1 -Build
 #>
+[CmdletBinding()]
 param(
     [string]$Csv = "",
     [switch]$Build,
