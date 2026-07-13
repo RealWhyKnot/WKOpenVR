@@ -49,9 +49,24 @@ Each is wired up at SteamVR startup by a marker file in the driver's `resources/
 
 A SteamVR driver hooks into `vrserver.exe` via MinHook. MinHook is process-global: only one detour can exist per target function. Independently-installed driver DLLs trying to patch the same slot of `IVRDriverContext::GetGenericInterface` would collide; the second install silently fails and that driver's detours never fire. Sharing one DLL means one MinHook install per target function regardless of which features are enabled.
 
+## Modules
+
+| Module | Purpose |
+| --- | --- |
+| [calibration](modules/calibration/README.md) | continuous playspace calibration between the HMD and lighthouse-tracked devices |
+| [captions](modules/captions/README.md) | on-device speech recognition and translation with OSC chatbox routing |
+| [dev](modules/dev/README.md) | dev-build overlay tab collecting development-module toggles and per-module dev tools |
+| [dynamicres](modules/dynamicres/README.md) | automatic SteamVR render-resolution scaling under GPU load |
+| [facetracking](modules/facetracking/README.md) | face and eye tracking through a .NET host that loads hardware-vendor VRCFT modules |
+| [inputhealth](modules/inputhealth/README.md) | per-button, per-axis, and per-finger drift detection with learned compensation |
+| [oscrouter](modules/oscrouter/README.md) | OSC fan-out of pose, tracker, face, and chatbox data |
+| [phantom](modules/phantom/README.md) | tracker dropout dead-reckoning, IK fallback, and virtual placeholder trackers |
+| [questapp](modules/questapp/README.md) | Quest companion setup, APK install, and Quest-side support tooling |
+| [smoothing](modules/smoothing/README.md) | finger smoothing and pose-prediction suppression for Index controllers |
+
 ## Build
 
-Requires CMake 3.15+, Visual Studio Build Tools 2022 (or the VS 2022 IDE), and submodules initialised.
+Requires CMake 3.15+, Visual Studio Build Tools 2022 (or the VS 2022 IDE), the .NET 10 SDK (without it the build silently skips the facetracking host), Python 3 (used by helper scripts in CI), and submodules initialised.
 
 ```
 git clone --recursive https://github.com/RealWhyKnot/WKOpenVR
@@ -83,11 +98,11 @@ Debug logging is controlled from the Logs tab. When enabled, logs are written un
 
 ## Pipes and shared memory
 
-- `\\.\pipe\OpenVR-Calibration` -- calibration overlay <-> driver
+- `\\.\pipe\WKOpenVR-Calibration` -- calibration overlay <-> driver
 - `\\.\pipe\WKOpenVR-Smoothing` -- smoothing overlay <-> driver
 - `\\.\pipe\WKOpenVR-InputHealth` -- input-health overlay <-> driver
 - `\\.\pipe\WKOpenVR-FaceTracking` -- face-tracking overlay <-> driver
-- `\\.\pipe\WKOpenVR-OSCRouter` -- OSC router overlay <-> driver
+- `\\.\pipe\WKOpenVR-OscRouter` -- OSC router overlay <-> driver
 
 Plus the shmem segments `WKOpenVRInputHealthMemoryV1` for the input-health snapshot stream and `WKOpenVRFaceTrackingFrameRingV2` for face-tracking frames.
 
@@ -98,6 +113,11 @@ Wire format is defined in [core/src/common/Protocol.h](core/src/common/Protocol.
 These modules live under `modules/` and build in dev (`./build.ps1` with no `-Release` flag), but are excluded from published release artifacts via `modules/<slug>/disabled-in-release.flag`. They are exercised in the test suite but are not yet stable enough to ship. Removing the flag re-enables the matching release artifact on the next tag.
 
 - **phantom** -- tracker dropout dead-reckoning, IK fallback, and virtual-tracker placeholders for missing hardware, with an out-of-process ML pose-completion sidecar. Toggled by `enable_phantom.flag`.
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) -- process layout, module wiring, and host sidecars
+- [docs/ipc-protocol.md](docs/ipc-protocol.md) -- pipe and shared-memory wire protocol
 
 ## License
 
