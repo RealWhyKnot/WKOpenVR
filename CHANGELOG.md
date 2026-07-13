@@ -89,6 +89,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Flag-file full-rate replay capture and hidden-witness recording (1388e24)
 - **facetracking:** Continuous auto-calibration with bounded gain and rest anchoring (27a89f8)
 - **calibration:** Enhanced-tracking switch with classic-pipeline fallback (427c167)
+- **phantom:** Persist and self-correct roles, surface snap status (95e1be1)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -142,6 +143,14 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Retire the micro-reanchor experiment (7ce1a9f)
 - style(calibration): clang-format the drift-follower and warm-restart changes (b34de8f)
 - **calibration:** Fixed-size math paths for the covariance solve (abd2ff1)
+- style(dynamicres): apply clang-format (91942c2)
+- **calibration:** Extract heartbeat and config-dump phases from CalibrationTick (d75986c)
+- **calibration:** Extract warm-restart and watchdog phases from CalibrationTick (78b1060)
+- **common:** Add a RAII shared-memory helper and use it in the test harness (ff06c84)
+- **calibration:** Share one HmdMatrix34ToAffine helper (9ab97d3)
+- **facetracking:** Remove continuous auto-calibration (4b3a354)
+- **tools:** Make Pin-CalibrationRecording delegate to Pin-Recording (a08d887)
+- **calibration:** Drop disabled boundary-capture bodies (ac7c42e)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -288,6 +297,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Gate in-band locked-relpose steps on a candidate-median drift follower (bc58f5f)
 - **calibration:** Stop warm-restart validation fighting witnessed frame moves (ef4974b)
 - **calibration:** Require real bias evidence for warm-restart bias-failed (5124f27)
+- **phantom:** Compose world-from-driver calibration at pose intake (b487877)
+- **dynamicres:** Gate scaling on measured frame harm rates (39bcdfb)
 
 ---
 
