@@ -3505,35 +3505,11 @@ void CalibrationTick(double time)
 void LoadChaperoneBounds()
 {
 	// Boundary/floor subsystem disabled.
-	return;
-#if 0
-	vr::VRChaperoneSetup()->RevertWorkingCopy();
-
-	uint32_t quadCount = 0;
-	vr::VRChaperoneSetup()->GetLiveCollisionBoundsInfo(nullptr, &quadCount);
-
-	CalCtx.chaperone.geometry.resize(quadCount);
-	vr::VRChaperoneSetup()->GetLiveCollisionBoundsInfo(&CalCtx.chaperone.geometry[0], &quadCount);
-	vr::VRChaperoneSetup()->GetWorkingStandingZeroPoseToRawTrackingPose(&CalCtx.chaperone.standingCenter);
-	vr::VRChaperoneSetup()->GetWorkingPlayAreaSize(&CalCtx.chaperone.playSpaceSize.v[0],
-	                                               &CalCtx.chaperone.playSpaceSize.v[1]);
-	CalCtx.chaperone.valid = true;
-#endif
 }
 
 void ApplyChaperoneBounds()
 {
 	// Boundary/floor subsystem disabled.
-	return;
-#if 0
-	vr::VRChaperoneSetup()->RevertWorkingCopy();
-	vr::VRChaperoneSetup()->SetWorkingCollisionBoundsInfo(&CalCtx.chaperone.geometry[0],
-	                                                      (uint32_t)CalCtx.chaperone.geometry.size());
-	vr::VRChaperoneSetup()->SetWorkingStandingZeroPoseToRawTrackingPose(&CalCtx.chaperone.standingCenter);
-	vr::VRChaperoneSetup()->SetWorkingPlayAreaSize(CalCtx.chaperone.playSpaceSize.v[0],
-	                                               CalCtx.chaperone.playSpaceSize.v[1]);
-	vr::VRChaperoneSetup()->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
-#endif
 }
 
 void DebugApplyRandomOffset()
