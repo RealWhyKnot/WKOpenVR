@@ -1404,62 +1404,25 @@ void FlushPendingContinuousSave()
 	Metrics::WriteLogAnnotation("[profile-save][flush] reason=continuous_pending_on_shutdown");
 }
 
-void CalibrationTick(double time)
+// Warm-restart detection. In plain Continuous mode, the user takes the
+// HMD off (activity level falls to Standby), comes back later, puts it
+// on (activity level snaps back to UserInteraction). If the away duration
+// cleared the threshold and the saved profile is valid, snap the driver
+// to the saved transform and grant a validation grace window.
+//
+// GetTrackedDeviceActivityLevel is preferred over Prop_UserPresent_Bool
+// here because the activity-level path is driven by both the proximity
+// sensor AND motion -- so an HMD with no working proximity sensor
+// (some Quest variants over Link) still produces a usable signal as
+// long as the IMU sees the HMD sitting still long enough for the
+// runtime to transition to Standby (>= 5 s of stillness, configurable
+// in SteamVR Power Management).
+//
+// k_EDeviceActivityLevel_Unknown returns for devices that aren't
+// reporting yet (e.g. a fresh HMD that hasn't woken up); we treat
+// Unknown as "not present" so no spurious edges fire during startup.
+static void TickWarmRestartDetection(CalibrationContext& ctx, double time)
 {
-	if (!vr::VRSystem()) {
-		static double s_lastNoVrSystemLog = -1e9;
-		if (time - s_lastNoVrSystemLog >= 5.0) {
-			s_lastNoVrSystemLog = time;
-			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
-		}
-		return;
-	}
-
-	auto& ctx = CalCtx;
-
-	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
-	// the toggle stays responsive and the driver keeps getting heartbeats. While
-	// frozen, hold everything: skip the rest of the pose-reactive tick so the
-	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
-	// destructive auto-recovery, especially when the HMD is left live).
-	TickFreezeAllTracking(ctx, time);
-	if (ctx.freezeAllTracking) return;
-
-	if ((time - ctx.timeLastTick) < 0.05) return;
-
-	// Resolve LockMode -> lockRelativePosition every tick before any code
-	// downstream reads the bool. The detector itself is updated in
-	// CollectSample further down; this just transcribes mode + detector
-	// state into the resolved field.
-	ctx.ResolveLockMode();
-
-	// Propagate the resolved lock bool to the CalibrationCalc instance the
-	// solver actually reads. Without this, calibration.lockRelativePosition
-	// only updates at StartContinuousCalibration time (once per cal cycle),
-	// so an AUTO Lock engagement that happens mid-cycle never reaches the
-	// ComputeIncremental relPose-constraint branch until the next restart.
-	// The geometry-shift fire annotation also reads this bool, which is why
-	// post-fix log readers will see lockRelativePosition=1 in fires after
-	// AUTO Lock engages (previously stuck at 0).
-	calibration.lockRelativePosition = ctx.lockRelativePosition;
-
-	// Warm-restart detection. In plain Continuous mode, the user takes the
-	// HMD off (activity level falls to Standby), comes back later, puts it
-	// on (activity level snaps back to UserInteraction). If the away duration
-	// cleared the threshold and the saved profile is valid, snap the driver
-	// to the saved transform and grant a validation grace window.
-	//
-	// GetTrackedDeviceActivityLevel is preferred over Prop_UserPresent_Bool
-	// here because the activity-level path is driven by both the proximity
-	// sensor AND motion -- so an HMD with no working proximity sensor
-	// (some Quest variants over Link) still produces a usable signal as
-	// long as the IMU sees the HMD sitting still long enough for the
-	// runtime to transition to Standby (>= 5 s of stillness, configurable
-	// in SteamVR Power Management).
-	//
-	// k_EDeviceActivityLevel_Unknown returns for devices that aren't
-	// reporting yet (e.g. a fresh HMD that hasn't woken up); we treat
-	// Unknown as "not present" so no spurious edges fire during startup.
 	{
 		auto* vrSystem = vr::VRSystem();
 		const vr::EDeviceActivityLevel activity =
@@ -1575,14 +1538,17 @@ void CalibrationTick(double time)
 			ctx.lastUserPresent = nowPresent;
 		}
 	}
+}
 
-	// Diagnostic: trace relPose-cal validity flips. The flag is set/cleared
-	// from several call sites and is currently only externally visible inside
-	// the rate-limited usingRelPose_fired event. Catching every change is
-	// cheap (one bool compare per tick) and reveals the cycle: cal converges
-	// -> relPosCal=1 -> geometry-shift fire historically cleared it -> 0.
-	// After the T1.5 fix this trace tells us whether the constraint actually
-	// survives geometry-shift events.
+// Diagnostic: trace relPose-cal validity flips. The flag is set/cleared
+// from several call sites and is currently only externally visible inside
+// the rate-limited usingRelPose_fired event. Catching every change is
+// cheap (one bool compare per tick) and reveals the cycle: cal converges
+// -> relPosCal=1 -> geometry-shift fire historically cleared it -> 0.
+// After the T1.5 fix this trace tells us whether the constraint actually
+// survives geometry-shift events.
+static void TraceRelPoseCalFlips(CalibrationContext& ctx)
+{
 	{
 		static bool s_lastRelPosCal = false;
 		const bool nowRelPosCal = ctx.relativePosCalibrated;
@@ -1594,14 +1560,17 @@ void CalibrationTick(double time)
 			s_lastRelPosCal = nowRelPosCal;
 		}
 	}
+}
 
-	// Tracker pose-freshness check. The driver writes a QPC timestamp into
-	// devicePoseSampleTimes[] each time a pose is published. If the ref or
-	// target sample timestamp hasn't advanced in the last 5 s, that device
-	// has gone silent (the pose value may still appear valid because the
-	// last-known position is still in the array, but no new data has
-	// arrived). Log throttled to once per 30 s per device so a chronic
-	// silence doesn't flood. ID < 0 (unassigned) is skipped.
+// Tracker pose-freshness check. The driver writes a QPC timestamp into
+// devicePoseSampleTimes[] each time a pose is published. If the ref or
+// target sample timestamp hasn't advanced in the last 5 s, that device
+// has gone silent (the pose value may still appear valid because the
+// last-known position is still in the array, but no new data has
+// arrived). Log throttled to once per 30 s per device so a chronic
+// silence doesn't flood. ID < 0 (unassigned) is skipped.
+static void TickPoseFreshnessWatchdog(CalibrationContext& ctx, double time)
+{
 	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
 		static double s_lastFreshnessLogTime = -1e9;
 		const double freshnessWarnSec = 5.0;
@@ -1628,13 +1597,16 @@ void CalibrationTick(double time)
 		checkFresh(ctx.referenceID, "reference");
 		checkFresh(ctx.targetID, "target");
 	}
+}
 
-	// Stuck-cal watchdog. If we've been in Continuous state for >60 s but
-	// error_currentCal has not received a new sample in the last 30 s, the
-	// cal solver is not actually running -- ComputeIncremental isn't being
-	// called, or is rejecting every input, or the time series has otherwise
-	// stopped advancing. Edge-triggered, one log per detection, re-armed
-	// when error_currentCal advances again.
+// Stuck-cal watchdog. If we've been in Continuous state for >60 s but
+// error_currentCal has not received a new sample in the last 30 s, the
+// cal solver is not actually running -- ComputeIncremental isn't being
+// called, or is rejecting every input, or the time series has otherwise
+// stopped advancing. Edge-triggered, one log per detection, re-armed
+// when error_currentCal advances again.
+static void TickStuckCalWatchdog(CalibrationContext& ctx, double time)
+{
 	if (ctx.state == CalibrationState::Continuous) {
 		static double s_lastCalActiveTs = 0.0;
 		static double s_lastStuckLogTime = -1e9;
@@ -1656,6 +1628,54 @@ void CalibrationTick(double time)
 			Metrics::WriteLogAnnotation(stuckBuf);
 		}
 	}
+}
+
+void CalibrationTick(double time)
+{
+	if (!vr::VRSystem()) {
+		static double s_lastNoVrSystemLog = -1e9;
+		if (time - s_lastNoVrSystemLog >= 5.0) {
+			s_lastNoVrSystemLog = time;
+			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
+		}
+		return;
+	}
+
+	auto& ctx = CalCtx;
+
+	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
+	// the toggle stays responsive and the driver keeps getting heartbeats. While
+	// frozen, hold everything: skip the rest of the pose-reactive tick so the
+	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
+	// destructive auto-recovery, especially when the HMD is left live).
+	TickFreezeAllTracking(ctx, time);
+	if (ctx.freezeAllTracking) return;
+
+	if ((time - ctx.timeLastTick) < 0.05) return;
+
+	// Resolve LockMode -> lockRelativePosition every tick before any code
+	// downstream reads the bool. The detector itself is updated in
+	// CollectSample further down; this just transcribes mode + detector
+	// state into the resolved field.
+	ctx.ResolveLockMode();
+
+	// Propagate the resolved lock bool to the CalibrationCalc instance the
+	// solver actually reads. Without this, calibration.lockRelativePosition
+	// only updates at StartContinuousCalibration time (once per cal cycle),
+	// so an AUTO Lock engagement that happens mid-cycle never reaches the
+	// ComputeIncremental relPose-constraint branch until the next restart.
+	// The geometry-shift fire annotation also reads this bool, which is why
+	// post-fix log readers will see lockRelativePosition=1 in fires after
+	// AUTO Lock engages (previously stuck at 0).
+	calibration.lockRelativePosition = ctx.lockRelativePosition;
+
+	TickWarmRestartDetection(ctx, time);
+
+	TraceRelPoseCalFlips(ctx);
+
+	TickPoseFreshnessWatchdog(ctx, time);
+
+	TickStuckCalWatchdog(ctx, time);
 
 	// Periodic cal heartbeat. Throttled to once per 10 s while in Continuous
 	// or ContinuousStandby. Emits a one-line "you are here" snapshot so a
