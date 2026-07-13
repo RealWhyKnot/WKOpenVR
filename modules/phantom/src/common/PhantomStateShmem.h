@@ -93,13 +93,21 @@ struct PhantomStateShmemLayout
 
 	PhantomDeviceState devices[kMaxPhantomDevices];
 	PhantomRoleCompletionState roles[kBodyRoleCount];
+
+	// v4: snap-calibrate status surface, so the overlay can say why roles are
+	// or are not being assigned instead of leaving that to the driver log.
+	// Single-byte fields cannot tear; age is a best-effort display value.
+	uint8_t last_snap_status;        // SnapStatus wire value; 255 = no snap yet
+	uint8_t auto_snap_waiting_still; // 1 = auto-snap armed, waiting for stillness
+	uint8_t _pad2[2];
+	uint32_t last_snap_age_ms; // ms since the last snap attempt
 };
 
 static_assert(sizeof(PhantomStateShmemLayout) < 8192,
               "PhantomStateShmemLayout must fit comfortably in a single 4 KB page family");
 
 constexpr uint32_t kPhantomStateShmemMagic = 0x54534850; // 'PHST' little-endian
-constexpr uint32_t kPhantomStateShmemVersion = 3;        // v3 adds passive role inference fields
+constexpr uint32_t kPhantomStateShmemVersion = 4;        // v4 adds the snap status surface
 
 // Thin RAII wrapper around the named-shmem mapping. Driver calls Create,
 // overlay calls Open; both call Close on shutdown.

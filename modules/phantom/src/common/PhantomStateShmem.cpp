@@ -38,6 +38,7 @@ bool PhantomStateShmem::Create(const char* segmentName)
 	layout_->magic = kPhantomStateShmemMagic;
 	layout_->version = kPhantomStateShmemVersion;
 	layout_->device_count = kMaxPhantomDevices;
+	layout_->last_snap_status = 255; // zero would read as SnapStatus Ok
 	return true;
 }
 

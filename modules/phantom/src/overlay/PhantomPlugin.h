@@ -52,7 +52,7 @@ private:
 	void SendConfig();
 	void SendSolverConfig();
 	void SendDeviceOptIn(const std::string& serial, bool enabled);
-	void SendDeviceRole(const std::string& serial, phantom::BodyRole role);
+	void SendDeviceRole(const std::string& serial, phantom::BodyRole role, bool manual);
 	void SendVirtualEnabled(phantom::BodyRole role, bool enabled);
 	void SendSnapCalibrate();
 	void ReplayDriverState();

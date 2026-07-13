@@ -71,4 +71,43 @@ inline RoleAction DecideRole(BodyRole current, bool userTagged, BodyRole inferre
 	return RoleAction::Keep;
 }
 
+// Correction gate for snap-sourced sticky roles. A snap can be wrong (two feet
+// side by side read nearly the same), and a sticky role would otherwise never
+// heal. This keeps snap roles immune to ordinary inference churn but lets a
+// sustained, clearly-better contradiction through: the same candidate role must
+// beat the held role by the reassign margin AND clear adopt_conf + extra_margin
+// on `required_streak` consecutive inference cycles (~1 Hz each). Any weaker
+// cycle or a different candidate resets the streak. Never drops -- only swaps
+// to the contradicting role. Manual roles must not be routed through this.
+struct StickyOverrideState
+{
+	BodyRole candidate = BodyRole::None;
+	uint8_t streak = 0;
+};
+
+inline bool UpdateStickyOverride(StickyOverrideState& state, BodyRole current, BodyRole inferred, float inferredConf,
+                                 float currentFit, const RoleArbiterParams& params = {}, float extra_margin = 0.15f,
+                                 uint8_t required_streak = 5)
+{
+	const bool contradicts = inferred != BodyRole::None && current != BodyRole::None && inferred != current &&
+	                         inferredConf >= params.adopt_conf + extra_margin &&
+	                         inferredConf >= currentFit + params.reassign_margin;
+	if (!contradicts) {
+		state = StickyOverrideState{};
+		return false;
+	}
+	if (state.candidate != inferred) {
+		state.candidate = inferred;
+		state.streak = 1;
+	}
+	else if (state.streak < required_streak) {
+		++state.streak;
+	}
+	if (state.streak < required_streak) {
+		return false;
+	}
+	state = StickyOverrideState{};
+	return true;
+}
+
 } // namespace phantom

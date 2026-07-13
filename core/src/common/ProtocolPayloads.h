@@ -635,11 +635,19 @@ struct PhantomDeviceOptIn
 // overlay sends one of these per assignment, including a clearing
 // message with body_role = 0 (None) when the user un-assigns. The body
 // completion solver treats assigned trackers as measured anchors.
+//
+// role_source claims a byte of the old _reserved padding (senders always
+// zeroed it, and 0 keeps the previous semantics, so no version bump):
+//   0 = unspecified: sticky, never revisited (legacy behaviour)
+//   1 = manual: hand-picked, sticky, never revisited
+//   2 = detected: snap/auto sourced; the driver may correct it later under
+//       sustained contradicting inference
 struct PhantomDeviceRole
 {
 	uint64_t device_serial_hash;
-	uint8_t body_role; // BodyRole enum value
-	uint8_t _reserved[7];
+	uint8_t body_role;   // BodyRole enum value
+	uint8_t role_source; // see above
+	uint8_t _reserved[6];
 };
 
 // POD payload for RequestSetPhantomTrackerOffset. Reserved for older

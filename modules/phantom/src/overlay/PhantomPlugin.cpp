@@ -559,12 +559,15 @@ std::string SourceMaskLabel(uint16_t mask)
 
 } // namespace
 
-void PhantomPlugin::SendDeviceRole(const std::string& serial, phantom::BodyRole role)
+void PhantomPlugin::SendDeviceRole(const std::string& serial, phantom::BodyRole role, bool manual)
 {
 	if (!ipc_.IsConnected()) return;
 	protocol::Request req(protocol::RequestSetPhantomDeviceRole);
 	req.setPhantomDeviceRole.device_serial_hash = Fnv1a64Local(serial);
 	req.setPhantomDeviceRole.body_role = static_cast<uint8_t>(role);
+	// 1 = manual (inviolate), 2 = detected (driver may correct a wrong snap
+	// under sustained contradicting inference).
+	req.setPhantomDeviceRole.role_source = manual ? 1u : 2u;
 	std::memset(req.setPhantomDeviceRole._reserved, 0, sizeof(req.setPhantomDeviceRole._reserved));
 	try {
 		ipc_.SendBlocking(req);
@@ -623,7 +626,8 @@ void PhantomPlugin::ReplayDriverState()
 	}
 	SendSolverConfig();
 	for (const auto& kv : cfg_.device_role) {
-		SendDeviceRole(kv.first, kv.second);
+		const auto manualIt = cfg_.role_manual.find(kv.first);
+		SendDeviceRole(kv.first, kv.second, manualIt != cfg_.role_manual.end() && manualIt->second);
 	}
 	for (const auto& kv : cfg_.virtual_enabled) {
 		if (kv.second) SendVirtualEnabled(kv.first, true);
@@ -638,8 +642,8 @@ void PhantomPlugin::DrawAutoDetectPanel()
 		                    "out which body point it sits on. With auto-snap on it does this hands-free as "
 		                    "soon as you stand still. Passive detection keeps refining in the background and "
 		                    "self-corrects a wrong guess as you move. The Assigned column badges whether a "
-		                    "saved role was detected (Auto) or hand-picked (Manual); Manual and snapped roles "
-		                    "are never overwritten by passive detection.");
+		                    "saved role was detected (Auto) or hand-picked (Manual). Manual roles are never "
+		                    "overwritten; a snapped role changes only under sustained contradicting evidence.");
 		ImGui::Spacing();
 
 		if (ImGui::Button("Snap calibrate")) {
@@ -662,7 +666,7 @@ void PhantomPlugin::DrawAutoDetectPanel()
 		if (ImGui::Checkbox("Save confident detections automatically", &cfg_.auto_accept_roles)) {
 			SavePhantomConfig(cfg_);
 		}
-		ui::TooltipForLastItem("When on, a detection above ~70% confidence (including snaps) is written to the "
+		ui::TooltipForLastItem("When on, a detection above ~60% confidence (including snaps) is written to the "
 		                       "saved tracker mapping so it is remembered next session.");
 		ImGui::Spacing();
 
@@ -678,6 +682,17 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			return;
 		}
 
+		// Live snap status so "nothing happened" always has a visible reason.
+		if (cfg_.auto_snap && layout->auto_snap_waiting_still != 0) {
+			ImGui::TextDisabled("Auto-snap armed -- stand still for a moment to map unassigned trackers.");
+			ImGui::Spacing();
+		}
+		else if (layout->last_snap_status != 255) {
+			ImGui::TextDisabled("Last snap (%us ago): %s", layout->last_snap_age_ms / 1000u,
+			                    phantom::ui::SnapResultMessage(layout->last_snap_status, 2));
+			ImGui::Spacing();
+		}
+
 		ui::TableScope table("PhantomAutoDetect", 5,
 		                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp);
 		if (!table) return;
@@ -688,7 +703,9 @@ void PhantomPlugin::DrawAutoDetectPanel()
 		ui::SetupFixedColumn("", 138.0f);
 		ImGui::TableHeadersRow();
 
-		constexpr float kAutoAcceptConfidence = 0.70f;
+		// Mirrors the driver's RoleArbiterParams::adopt_conf: anything the
+		// driver applies live is also worth remembering for next session.
+		constexpr float kAutoAcceptConfidence = 0.60f;
 		int shown = 0;
 		for (uint32_t i = 0; i < layout->device_count; ++i) {
 			const auto& d = layout->devices[i];
@@ -760,7 +777,7 @@ void PhantomPlugin::DrawAutoDetectPanel()
 					cfg_.dropout_enabled[serial] = true;
 					SendDeviceOptIn(serial, true);
 				}
-				SendDeviceRole(serial, inferredRole);
+				SendDeviceRole(serial, inferredRole, /*manual=*/false);
 				SavePhantomConfig(cfg_);
 			}
 			ImGui::EndDisabled();
@@ -770,7 +787,7 @@ void PhantomPlugin::DrawAutoDetectPanel()
 			if (ImGui::Button("Clear")) {
 				cfg_.device_role.erase(serial);
 				cfg_.role_manual.erase(serial);
-				SendDeviceRole(serial, phantom::BodyRole::None);
+				SendDeviceRole(serial, phantom::BodyRole::None, /*manual=*/false);
 				SavePhantomConfig(cfg_);
 			}
 			ImGui::EndDisabled();
@@ -788,7 +805,7 @@ void PhantomPlugin::DrawAutoDetectPanel()
 					cfg_.dropout_enabled[serial] = true;
 					SendDeviceOptIn(serial, true);
 				}
-				SendDeviceRole(serial, inferredRole);
+				SendDeviceRole(serial, inferredRole, /*manual=*/false);
 				SavePhantomConfig(cfg_);
 			}
 		}
@@ -894,7 +911,7 @@ void PhantomPlugin::DrawBodyTab()
 								SendDeviceOptIn(serial, true);
 							}
 						}
-						SendDeviceRole(serial, r);
+						SendDeviceRole(serial, r, /*manual=*/r != phantom::BodyRole::None);
 						SavePhantomConfig(cfg_);
 					}
 					if (selected) ImGui::SetItemDefaultFocus();

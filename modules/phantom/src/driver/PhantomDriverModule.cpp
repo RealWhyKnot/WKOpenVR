@@ -40,6 +40,7 @@
 #include <string>
 #include <utility>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace phantom {
@@ -298,6 +299,10 @@ struct DeviceSlot
 	// QPC tick of the last role change on this slot; the arbiter's hold timer
 	// reads it to debounce reassignment. 0 = never changed.
 	int64_t role_change_qpc = 0;
+
+	// Streak tracker for correcting a wrong snap-sourced sticky role under
+	// sustained contradicting inference. Manual roles never use it.
+	StickyOverrideState sticky_override;
 };
 
 class PhantomModule final : public DriverModule
@@ -360,6 +365,11 @@ private:
 	// OnRealPoseObserved (or immediately if the slot already resolved).
 	std::unordered_map<uint64_t, BodyRole> role_by_serial_hash_;
 
+	// Serial hashes whose sticky role is hand-picked (or legacy-unspecified):
+	// inviolate, never corrected. Snap/detected sticky roles stay out of this
+	// set so sustained contradicting inference may still fix a wrong snap.
+	std::unordered_set<uint64_t> manual_role_hashes_;
+
 	// Live HMD pose cache after upstream driver transforms. The IK fallback
 	// applies role-relative offsets to this pose. Updated on every
 	// OnRealPoseObserved for the device flagged is_hmd.
@@ -384,6 +394,14 @@ private:
 	int64_t still_since_qpc_ = 0;    // when the user last became still (0 = moving)
 	int64_t last_auto_snap_qpc_ = 0; // throttle hands-free snaps
 	int64_t last_pose_qpc_ = 0;      // freshest hot-path tick, used as "now" for liveness
+
+	// Snap status surface for the overlay (shmem v4). has_unassigned_tracker_
+	// is refreshed by the ~1 Hz inference pass so the hot-path auto-snap check
+	// can report "armed, waiting for stillness" without taking the state lock.
+	std::atomic<uint8_t> last_snap_status_{255}; // SnapStatus wire value; 255 = none yet
+	std::atomic<int64_t> last_snap_qpc_{0};
+	std::atomic<bool> auto_snap_waiting_still_{false};
+	std::atomic<bool> has_unassigned_tracker_{false};
 
 	IkFallback ik_fallback_;
 	BodyPriorEstimator body_prior_estimator_;
@@ -777,10 +795,29 @@ void PhantomModule::MaybeRunInference(int64_t now_qpc)
 		// Fade old samples so the features keep following the user's setup.
 		s.infer_accum.Decay(0.8);
 
-		// Snapped / manually-assigned roles are sticky; the arbiter never
-		// second-guesses them. Only unassigned or auto-adopted slots are managed.
-		const bool user_tagged = role_by_serial_hash_.count(s.serial_hash) != 0;
-		if (user_tagged) continue;
+		// Sticky roles resist ordinary inference churn. Manual (hand-picked)
+		// roles are inviolate. A snap-sourced sticky role can still be wrong
+		// (feet side by side read nearly alike), so it accepts a correction
+		// under sustained, clearly-better contradicting inference.
+		const bool sticky = role_by_serial_hash_.count(s.serial_hash) != 0;
+		if (sticky) {
+			if (manual_role_hashes_.count(s.serial_hash) != 0 || s.role == BodyRole::None) continue;
+			const float sticky_fit = RoleFitConfidence(feats[k], s.role, candidates, infer_params_);
+			if (UpdateStickyOverride(s.sticky_override, s.role, result[k].role, result[k].confidence, sticky_fit,
+			                         arbiter_params_)) {
+				const BodyRole prev = s.role;
+				role_by_serial_hash_[s.serial_hash] = result[k].role;
+				s.role = result[k].role;
+				s.inferred_applied = true;
+				s.role_change_qpc = now_qpc;
+				s.ladder.SetIkAvailable(true);
+				applied_any = true;
+				LOG("[phantom][infer] corrected snap role=%s (was %s) serial_hash=0x%016llx conf=%.2f held_fit=%.2f",
+				    BodyRoleToKey(s.role), BodyRoleToKey(prev), static_cast<unsigned long long>(s.serial_hash),
+				    result[k].confidence, sticky_fit);
+			}
+			continue;
+		}
 		if (s.role != BodyRole::None && !s.inferred_applied) continue;
 
 		const float current_fit =
@@ -835,6 +872,20 @@ void PhantomModule::MaybeRunInference(int64_t now_qpc)
 		}
 	}
 
+	// Refresh the auto-snap arming hint for the status surface: a live,
+	// untagged, role-less generic tracker means a snap would assign something.
+	bool has_unassigned = false;
+	for (const auto& s : slots_) {
+		if (s.device_class != vr::TrackedDeviceClass_GenericTracker) continue;
+		if (s.serial.empty() || !s.last_observed_valid) continue;
+		if (role_by_serial_hash_.count(s.serial_hash) != 0) continue;
+		if (s.role == BodyRole::None) {
+			has_unassigned = true;
+			break;
+		}
+	}
+	has_unassigned_tracker_.store(has_unassigned, std::memory_order_relaxed);
+
 	// Refresh liveness-based virtual blocks every cycle so a tracker going stale
 	// (or returning) hands its role to/from the virtual without needing a role
 	// change to trigger it.
@@ -877,7 +928,10 @@ SnapResult PhantomModule::RunSnapLocked(int64_t now_qpc)
 	for (const auto& a : r.assignments) {
 		if (a.role == BodyRole::None || a.id >= slots_.size()) continue;
 		auto& s = slots_[a.id];
+		// A hand-picked role outranks a snap; the snap fills in the rest.
+		if (manual_role_hashes_.count(s.serial_hash) != 0) continue;
 		role_by_serial_hash_[s.serial_hash] = a.role; // sticky: arbiter leaves it alone
+		s.sticky_override = StickyOverrideState{};
 		s.role = a.role;
 		s.inferred_role = a.role; // surfaces in the badge + drives overlay auto-persist
 		s.inferred_confidence = a.confidence;
@@ -907,19 +961,25 @@ void PhantomModule::MaybeAutoSnap(int64_t now_qpc)
 {
 	if (qpc_freq_ <= 0 || !auto_snap_enabled_.load(std::memory_order_acquire) || !last_hmd_valid_) {
 		still_since_qpc_ = 0;
+		auto_snap_waiting_still_.store(false, std::memory_order_relaxed);
 		return;
 	}
+
+	// "Armed" for the status surface: there is something a snap would assign.
+	const bool armed = has_unassigned_tracker_.load(std::memory_order_relaxed);
 
 	double right[2];
 	double fwd[2];
 	if (!HmdHorizontalAxes(last_hmd_pose_.qRotation, right, fwd)) {
 		still_since_qpc_ = 0;
+		auto_snap_waiting_still_.store(armed, std::memory_order_relaxed);
 		return;
 	}
 	const double planar = std::sqrt((last_hmd_pose_.vecVelocity[0] * last_hmd_pose_.vecVelocity[0]) +
 	                                (last_hmd_pose_.vecVelocity[2] * last_hmd_pose_.vecVelocity[2]));
 	if (planar > kAutoSnapStillSpeed) {
 		still_since_qpc_ = 0;
+		auto_snap_waiting_still_.store(armed, std::memory_order_relaxed);
 		return;
 	}
 
@@ -943,12 +1003,16 @@ void PhantomModule::MaybeAutoSnap(int64_t now_qpc)
 	}
 	if (!has_unassigned) {
 		still_since_qpc_ = 0;
+		auto_snap_waiting_still_.store(false, std::memory_order_relaxed);
 		return;
 	}
 
 	const SnapResult r = RunSnapLocked(now_qpc);
 	last_auto_snap_qpc_ = now_qpc;
 	still_since_qpc_ = 0;
+	last_snap_status_.store(static_cast<uint8_t>(r.status), std::memory_order_relaxed);
+	last_snap_qpc_.store(now_qpc, std::memory_order_relaxed);
+	auto_snap_waiting_still_.store(false, std::memory_order_relaxed);
 	LOG("[phantom][snap] auto-snap status=%d assigned=%u", static_cast<int>(r.status), r.assigned_count);
 }
 
@@ -1050,14 +1114,24 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 		case protocol::RequestSetPhantomDeviceRole: {
 			const auto& e = request.setPhantomDeviceRole;
 			const BodyRole role = static_cast<BodyRole>(e.body_role);
+			// role_source 2 (detected) stays correctable; 1 (manual) and the
+			// legacy 0 are inviolate.
+			const bool manual = e.role_source != 2;
 			uint32_t applied_slots = 0;
 			{
 				std::lock_guard<std::mutex> lk(state_mutex_);
 				if (role == BodyRole::None) {
 					role_by_serial_hash_.erase(e.device_serial_hash);
+					manual_role_hashes_.erase(e.device_serial_hash);
 				}
 				else {
 					role_by_serial_hash_[e.device_serial_hash] = role;
+					if (manual) {
+						manual_role_hashes_.insert(e.device_serial_hash);
+					}
+					else {
+						manual_role_hashes_.erase(e.device_serial_hash);
+					}
 					if (opt_in_by_serial_hash_.count(e.device_serial_hash) == 0) {
 						opt_in_by_serial_hash_[e.device_serial_hash] = true;
 					}
@@ -1065,6 +1139,7 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 				for (auto& s : slots_) {
 					if (s.serial_hash == e.device_serial_hash) {
 						s.role = role;
+						s.sticky_override = StickyOverrideState{};
 						if (role != BodyRole::None && opt_in_by_serial_hash_.count(e.device_serial_hash) != 0) {
 							s.opted_in = opt_in_by_serial_hash_[e.device_serial_hash];
 						}
@@ -1075,8 +1150,9 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 				RefreshVirtualRoleBlocksLocked();
 			}
 			response.type = protocol::ResponseSuccess;
-			LOG("[phantom][diag] role serial_hash=0x%016llx role=%s applied_slots=%u",
-			    static_cast<unsigned long long>(e.device_serial_hash), BodyRoleToKey(role), (unsigned)applied_slots);
+			LOG("[phantom][diag] role serial_hash=0x%016llx role=%s source=%u applied_slots=%u",
+			    static_cast<unsigned long long>(e.device_serial_hash), BodyRoleToKey(role), (unsigned)e.role_source,
+			    (unsigned)applied_slots);
 			return true;
 		}
 		case protocol::RequestSetPhantomTrackerOffset: {
@@ -1097,10 +1173,13 @@ bool PhantomModule::HandleRequest(const protocol::Request& request, protocol::Re
 		}
 		case protocol::RequestSnapCalibrate: {
 			SnapResult r;
+			const int64_t snap_qpc = NowQpc();
 			{
 				std::lock_guard<std::mutex> lk(state_mutex_);
-				r = RunSnapLocked(NowQpc());
+				r = RunSnapLocked(snap_qpc);
 			}
+			last_snap_status_.store(static_cast<uint8_t>(r.status), std::memory_order_relaxed);
+			last_snap_qpc_.store(snap_qpc, std::memory_order_relaxed);
 			response.type = protocol::ResponsePhantomSnap;
 			response.phantomSnap.status = static_cast<uint8_t>(r.status);
 			response.phantomSnap.assigned_count =
@@ -1368,6 +1447,10 @@ void PhantomModule::PublishStateSnapshot()
 		MemoryBarrier();
 		dst.epoch = dst.epoch + 1;
 	}
+
+	layout->last_snap_status = last_snap_status_.load(std::memory_order_relaxed);
+	layout->auto_snap_waiting_still = auto_snap_waiting_still_.load(std::memory_order_relaxed) ? 1u : 0u;
+	layout->last_snap_age_ms = AgeMsFromQpc(now_qpc, last_snap_qpc_.load(std::memory_order_relaxed), freq);
 }
 
 } // namespace
