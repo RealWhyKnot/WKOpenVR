@@ -7,22 +7,22 @@ namespace wkopenvr::dynamicres {
 namespace {
 
 constexpr int kMinActSamples = 3;
-constexpr int kRecentTicks = 3;                     // sub-window for raise-gating motion rate
+constexpr int kRecentTicks = 3; // sub-window for raise-gating motion rate
 constexpr double kMinStep = 0.03;
 constexpr double kMaxAdaptiveStep = 0.25;
-constexpr double kAboveBaselineStep = 0.05;         // gentle additive nudge when supersampling above baseline
+constexpr double kAboveBaselineStep = 0.05; // gentle additive nudge when supersampling above baseline
 constexpr double kBetaMin = 0.4;
 constexpr double kBetaMax = 1.6;
 constexpr double kBetaEmaAlpha = 0.5;
-constexpr double kBetaMinScaleLogDelta = 0.05;      // writes closer than this cannot measure cost sensitivity
+constexpr double kBetaMinScaleLogDelta = 0.05; // writes closer than this cannot measure cost sensitivity
 constexpr double kBetaMinP95Ms = 0.5;
-constexpr double kMotionSustainedRate = 0.30;       // motion-smoothing frame share meaning "engaged"
-constexpr double kMotionHarmP95Fraction = 0.90;     // engaged smoothing counts as GPU harm above this p95
-constexpr double kDropAttributionP95Fraction = 0.95;// drops attribute to GPU only with p95 at budget, no CPU bits
+constexpr double kMotionSustainedRate = 0.30;        // motion-smoothing frame share meaning "engaged"
+constexpr double kMotionHarmP95Fraction = 0.90;      // engaged smoothing counts as GPU harm above this p95
+constexpr double kDropAttributionP95Fraction = 0.95; // drops attribute to GPU only with p95 at budget, no CPU bits
 constexpr double kAppPacedIntervalFraction = 1.15;
 constexpr double kSuperOverBudgetRateMax = 0.005;
 constexpr double kBurnedScaleMargin = 0.98;
-constexpr double kNoEffectBetaFloor = 0.10;         // observed sensitivity below this means lowering did nothing
+constexpr double kNoEffectBetaFloor = 0.10; // observed sensitivity below this means lowering did nothing
 
 double Median(std::vector<double> values)
 {
@@ -98,8 +98,8 @@ double PercentileSorted(std::vector<double> values, double fraction)
 	if (values.empty()) return 0.0;
 	std::sort(values.begin(), values.end());
 	const double clamped = std::clamp(fraction, 0.0, 1.0);
-	const size_t index = static_cast<size_t>(std::max(
-	    0.0, std::ceil(clamped * static_cast<double>(values.size())) - 1.0));
+	const size_t index =
+	    static_cast<size_t>(std::max(0.0, std::ceil(clamped * static_cast<double>(values.size())) - 1.0));
 	return values[std::min(index, values.size() - 1)];
 }
 
@@ -484,8 +484,8 @@ DynamicResolutionControllerOutput DynamicResolutionController::Evaluate(const Dy
 	// recovery goes exclusively through the release path above, honoring its own toggle. --
 	if (settings.allowRaiseBack && cls.pressure != ResolutionPressure::CpuBound && current < baseline - 0.005) {
 		const int requiredCleanTicks = raiseStreak_ ? 1 : std::max(1, settings.raiseRequiredTicks);
-		const bool motionOk = cls.recentMotionRate < settings.motionRateFraction ||
-		                      (cls.motionSmoothingEngaged && cls.gpuHasHeadroom);
+		const bool motionOk =
+		    cls.recentMotionRate < settings.motionRateFraction || (cls.motionSmoothingEngaged && cls.gpuHasHeadroom);
 		if (cls.harmRate > settings.raiseHarmRateFraction) {
 			withhold("raise", "harm_rate", cls.harmRate, settings.raiseHarmRateFraction);
 		}

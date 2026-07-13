@@ -138,8 +138,7 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 			profile.settings.raiseSafetyFraction =
 			    std::clamp(ParseDouble(value, profile.settings.raiseSafetyFraction), 0.70, 0.98);
 		else if (key == "burned_decay_ticks")
-			profile.settings.burnedDecayTicks =
-			    std::clamp(ParseInt(value, profile.settings.burnedDecayTicks), 10, 600);
+			profile.settings.burnedDecayTicks = std::clamp(ParseInt(value, profile.settings.burnedDecayTicks), 10, 600);
 		else if (key == "raise_above_baseline_fraction")
 			profile.settings.raiseAboveBaselineFraction =
 			    std::clamp(ParseDouble(value, profile.settings.raiseAboveBaselineFraction), 0.30, 0.95);

@@ -41,24 +41,24 @@ struct DynamicResolutionSettings
 {
 	// Defaults match the FpsFirst preset (see ApplyQualityPreset).
 	QualityPreset qualityPreset = QualityPreset::FpsFirst;
-	double minScaleFraction = 0.60;         // quality floor, as a fraction of baseline
-	double maxScaleFraction = 1.50;         // quality ceiling; >1 supersamples above baseline
-	double stepFraction = 0.15;             // max scale change per write
-	double gpuHarmRateFraction = 0.015;     // share of a tick's frames GPU-harmed before the tick counts as harmed
-	double raiseHarmRateFraction = 0.002;   // max window harmed-frame rate a raise tolerates
-	double motionRateFraction = 0.05;       // recent motion-smoothing frame rate that blocks raises
-	double lowerTargetFraction = 0.90;      // lowering solves p95 GPU time toward this fraction of budget
-	double raiseSafetyFraction = 0.90;      // predicted p95 at a raise target must fit this fraction of budget
+	double minScaleFraction = 0.60;           // quality floor, as a fraction of baseline
+	double maxScaleFraction = 1.50;           // quality ceiling; >1 supersamples above baseline
+	double stepFraction = 0.15;               // max scale change per write
+	double gpuHarmRateFraction = 0.015;       // share of a tick's frames GPU-harmed before the tick counts as harmed
+	double raiseHarmRateFraction = 0.002;     // max window harmed-frame rate a raise tolerates
+	double motionRateFraction = 0.05;         // recent motion-smoothing frame rate that blocks raises
+	double lowerTargetFraction = 0.90;        // lowering solves p95 GPU time toward this fraction of budget
+	double raiseSafetyFraction = 0.90;        // predicted p95 at a raise target must fit this fraction of budget
 	double raiseAboveBaselineFraction = 0.65; // window p95 <= this*budget gates >baseline raises
-	double cpuStallFraction = 1.05;         // frame interval > this*budget (GPU idle) -> CPU-bound
+	double cpuStallFraction = 1.05;           // frame interval > this*budget (GPU idle) -> CPU-bound
 	int windowSize = 6;
-	int lowerRequiredTicks = 2;             // consecutive GPU-harmed ticks before lowering (min 2 enforced)
-	int raiseRequiredTicks = 4;             // consecutive clean ticks before recovering toward baseline
+	int lowerRequiredTicks = 2; // consecutive GPU-harmed ticks before lowering (min 2 enforced)
+	int raiseRequiredTicks = 4; // consecutive clean ticks before recovering toward baseline
 	int cpuReleaseTicks = 4;
 	int raiseAboveBaselineTicks = 8;
 	int settleTicks = 2;
 	int noEffectLimit = 3;
-	int burnedDecayTicks = 120;             // ticks a regressed raise target stays off-limits
+	int burnedDecayTicks = 120; // ticks a regressed raise target stays off-limits
 	bool allowRaiseBack = true;
 	bool releaseOnCpuBound = true;
 };
@@ -67,7 +67,7 @@ struct DynamicResolutionSettings
 struct DynamicResolutionTiming
 {
 	double frameBudgetMs = 1000.0 / 90.0;
-	int framesConsidered = 0;           // deduped frames in this tick; 0 => not usable
+	int framesConsidered = 0; // deduped frames in this tick; 0 => not usable
 	double appGpuP50Ms = 0.0;
 	double appGpuP95Ms = 0.0;
 	double appGpuMaxMs = 0.0;
@@ -79,8 +79,8 @@ struct DynamicResolutionTiming
 	int framesThrottled = 0;            // compositor throttled the app this frame
 	int framesWithDrops = 0;
 	int framesMispresented = 0;
-	int framesMultiPresented = 0;       // presented more than once (app below refresh)
-	int framesOverBudget = 0;           // per-frame app GPU >= budget
+	int framesMultiPresented = 0; // presented more than once (app below refresh)
+	int framesOverBudget = 0;     // per-frame app GPU >= budget
 	bool valid = true;
 };
 
@@ -91,28 +91,28 @@ struct DynamicResolutionClassification
 	int tickCount = 0;
 	int framesTotal = 0;
 	double appGpuP50Ms = 0.0;
-	double appGpuP95Ms = 0.0;           // control value for solves
+	double appGpuP95Ms = 0.0; // control value for solves
 	double appGpuPeakMs = 0.0;
 	double clientFrameIntervalMs = 0.0;
 	double compositorIdleCpuMs = 0.0;
 	// Window frame rates in [0,1]: harmed frames / framesTotal.
-	double gpuHarmRate = 0.0;           // GPU-reproj + throttled + GPU-attributed drops
+	double gpuHarmRate = 0.0; // GPU-reproj + throttled + GPU-attributed drops
 	double cpuHarmRate = 0.0;
-	double motionRate = 0.0;            // whole window
-	double recentMotionRate = 0.0;      // last few ticks; gates raises
+	double motionRate = 0.0;       // whole window
+	double recentMotionRate = 0.0; // last few ticks; gates raises
 	double dropRate = 0.0;
 	double multiPresentRate = 0.0;
 	double overBudgetRate = 0.0;
-	double harmRate = 0.0;              // all non-motion harm conditions
+	double harmRate = 0.0; // all non-motion harm conditions
 	int consecutiveHarmTicks = 0;
 	int consecutiveCleanTicks = 0;
-	bool tickHarmed = false;            // most recent tick GPU-harmed
-	bool motionSmoothingEngaged = false;// sustained motion smoothing (half-rate)
-	bool appPaced = false;              // app below refresh by its own cap; not a GPU problem
+	bool tickHarmed = false;             // most recent tick GPU-harmed
+	bool motionSmoothingEngaged = false; // sustained motion smoothing (half-rate)
+	bool appPaced = false;               // app below refresh by its own cap; not a GPU problem
 	bool cpuStalled = false;
 	bool gpuHasHeadroom = false;
 	double costBeta = 1.0;
-	double predictedRaiseP95Ms = 0.0;   // model output for the last evaluated raise target
+	double predictedRaiseP95Ms = 0.0; // model output for the last evaluated raise target
 };
 
 struct DynamicResolutionControllerInput
@@ -135,7 +135,7 @@ struct DynamicResolutionEffectCheck
 	double postP95Ms = 0.0;
 	double betaObserved = 0.0;
 	bool betaMeasured = false;
-	const char* verdict = "";           // effective | no_effect | regressed | unmeasured
+	const char* verdict = ""; // effective | no_effect | regressed | unmeasured
 };
 
 struct DynamicResolutionControllerOutput
@@ -147,7 +147,8 @@ struct DynamicResolutionControllerOutput
 	DynamicResolutionEffectCheck effectCheck;
 	// First blocking gate of the most relevant withheld action, for audit logging.
 	const char* withheldGate = nullptr; // lower | raise | supersample | cpu_release
-	const char* withheldCause = nullptr;// dwell | harm_rate | motion_rate | predicted_fit | burned | floor | ceiling | app_paced
+	const char* withheldCause =
+	    nullptr; // dwell | harm_rate | motion_rate | predicted_fit | burned | floor | ceiling | app_paced
 	double withheldValue = 0.0;
 	double withheldLimit = 0.0;
 };
@@ -208,9 +209,9 @@ private:
 	int consecutiveHarmTicks_ = 0;
 	int consecutiveCleanTicks_ = 0;
 	bool harmSinceWrite_ = false;
-	bool raiseStreak_ = false;          // last raise passed its effect check; follow up quickly
+	bool raiseStreak_ = false; // last raise passed its effect check; follow up quickly
 	double costBeta_ = 1.0;
-	double burnedScale_ = 0.0;          // raise target that regressed; off-limits while decaying
+	double burnedScale_ = 0.0; // raise target that regressed; off-limits while decaying
 	int burnedTicksRemaining_ = 0;
 	std::optional<PendingWrite> pendingWrite_;
 	double lastEvaluatedScale_ = 0.0;
