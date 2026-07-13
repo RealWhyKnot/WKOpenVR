@@ -356,7 +356,9 @@ PhantomReplayLoadResult LoadPhantomReplay(const std::filesystem::path& path)
 	for (const auto& raw : lines) {
 		const auto t = Trim(raw);
 		if (t.empty()) continue;
-		if (t.find("phantom_replay_v1") != std::string::npos) {
+		// v2 shares the v1 column set; only the pose-space semantics differ
+		// (v2 is world-space, v1 raw driver-local).
+		if (t.find("phantom_replay_v1") != std::string::npos || t.find("phantom_replay_v2") != std::string::npos) {
 			return ParsePhantomReplayV1(lines);
 		}
 		if (t.find("spacecal_log_v4") != std::string::npos) {

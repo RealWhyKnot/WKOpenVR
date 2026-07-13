@@ -17,7 +17,7 @@ real pre-quash poses, so the head tracker may stay hidden.
 #>
 [CmdletBinding()]
 param(
-	# phantom_replay_v1 CSV to analyse. Defaults to the newest pinned
+	# phantom_replay CSV to analyse. Defaults to the newest pinned
 	# phantom_replay capture in Logs\corpus.
 	[string]$RecordingPath = "",
 

@@ -103,6 +103,9 @@ std::string SanitizeCsvField(const std::string& input)
 	return out;
 }
 
+// v2: pose columns are world-space (worldFromDriver folded in before
+// recording), so devices from different drivers share one frame. v1 recorded
+// raw driver-local values; column names and order are unchanged.
 constexpr const char* kColumns =
     "time_ms,device_id,serial,class,controller_role,body_role,dropout_enabled,pose_valid,connected,"
     "result,x,y,z,qw,qx,qy,qz,vx,vy,vz";
@@ -160,7 +163,7 @@ bool PhantomReplayRecorder::OpenIfNeeded()
 	recording::EnvelopeOptions options;
 	options.prefix = L"phantom_replay";
 	options.extension = L"csv";
-	options.schemaBanner = "phantom_replay_v1";
+	options.schemaBanner = "phantom_replay_v2";
 	options.headerKVs = {{"columns", kColumns}};
 	options.retention.maxFiles = kReplayRetentionMaxFiles;
 	options.retention.maxTotalBytes = kReplayRetentionMaxBytes;

@@ -68,6 +68,24 @@ TEST(PhantomReplayPlayer, ParsesV1Csv)
 	EXPECT_NEAR(parsed.samples[1].pos[1], 0.90, 1e-9);
 }
 
+// v2 recordings (world-space poses) share the v1 column set and parse the
+// same way; only the banner and pose-space semantics differ.
+TEST(PhantomReplayPlayer, ParsesV2Csv)
+{
+	const std::vector<std::string> lines = {
+	    "# phantom_replay_v2",
+	    "# build_stamp=test",
+	    "time_ms,device_id,serial,class,controller_role,body_role,dropout_enabled,pose_valid,connected,result,x,y,z,qw,"
+	    "qx,qy,qz,vx,vy,vz",
+	    "0,0,PHR-HMD,hmd,invalid,hmd,0,1,1,ok,0,1.70,0,1,0,0,0,0,0,0",
+	    "0,5,PHR-WAIST,tracker,opt_out,waist,1,1,1,ok,0,0.90,0,1,0,0,0,0,0,0",
+	};
+	const ParsedReplay parsed = ParseReplay(lines);
+	ASSERT_TRUE(parsed.ok);
+	ASSERT_EQ(parsed.samples.size(), 2u);
+	EXPECT_EQ(parsed.samples[1].ground_truth_role, BodyRole::Waist);
+}
+
 // Annotation lines interleaved with data rows are comments and must not
 // change what parses out -- recordings carry budget/decision markers between
 // samples.

@@ -5,7 +5,7 @@
   without re-entering VR.
 
 .DESCRIPTION
-  Replays a recorded phantom_replay_v1 CSV (HMD + controllers + trackers, with a
+  Replays a recorded phantom_replay CSV (HMD + controllers + trackers, with a
   ground-truth body_role column) through the same role inference + snap the driver
   runs, and reports per-tracker predicted-vs-truth + overall accuracy. The driver
   records these CSVs to %LocalAppDataLow%\WKOpenVR\Logs automatically whenever

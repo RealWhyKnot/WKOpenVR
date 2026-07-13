@@ -13,7 +13,7 @@
 
 namespace phantom {
 
-// Offline replay of a phantom_replay_v1 capture (the CSV PhantomReplayRecorder
+// Offline replay of a phantom_replay capture (the CSV PhantomReplayRecorder
 // writes when WKOPENVR_PHANTOM_REPLAY_RECORD=1 or debug logging is on). The CSV
 // carries every frame of the HMD + controllers + trackers with pose/velocity
 // plus a ground-truth body_role column, which lets us score auto-detection on a
@@ -21,6 +21,11 @@ namespace phantom {
 // PassiveRoleInference + SnapCalibrate the driver runs and compare the predicted
 // roles to the recorded truth. Pure (no OpenVR / Win32) so it builds in tests and
 // the sidecar CLI alike.
+//
+// Banners: v1 and v2 share the column set. v2 records world-space poses
+// (worldFromDriver folded before recording); v1 recorded raw driver-local
+// values, so a v1 capture from a rig whose trackers came from a second driver
+// legitimately scores NotCalibrated -- its devices never shared one frame.
 
 struct ReplaySample
 {
