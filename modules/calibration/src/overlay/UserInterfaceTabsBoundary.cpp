@@ -1681,15 +1681,6 @@ Eigen::Affine3d DriverPoseToWorldAffine(const vr::DriverPose_t& dp)
 	return pose;
 }
 
-Eigen::Affine3d HmdMatrix34ToAffine(const vr::HmdMatrix34_t& m)
-{
-	Eigen::Affine3d affine = Eigen::Affine3d::Identity();
-	affine.linear() << m.m[0][0], m.m[0][1], m.m[0][2], m.m[1][0], m.m[1][1], m.m[1][2], m.m[2][0], m.m[2][1],
-	    m.m[2][2];
-	affine.translation() = Eigen::Vector3d(m.m[0][3], m.m[1][3], m.m[2][3]);
-	return affine;
-}
-
 void WriteBoundaryInputSummary(const BoundaryInputStats& stats, uint64_t sessionId, size_t rawCount)
 {
 	char lbuf[760];

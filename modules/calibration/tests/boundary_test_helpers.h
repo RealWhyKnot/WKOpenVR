@@ -2,6 +2,7 @@
 
 #include "Boundary.h"
 #include "BoundaryPreview.h"
+#include "CalibrationDevicePoseUtils.h"
 
 #include <Eigen/Geometry>
 #include <gtest/gtest.h>
@@ -46,11 +47,7 @@ inline void SetTranslation(vr::HmdMatrix34_t& m, float x, float y, float z)
 
 inline Eigen::Affine3d Matrix34ToAffine(const vr::HmdMatrix34_t& m)
 {
-	Eigen::Affine3d affine = Eigen::Affine3d::Identity();
-	affine.linear() << m.m[0][0], m.m[0][1], m.m[0][2], m.m[1][0], m.m[1][1], m.m[1][2], m.m[2][0], m.m[2][1],
-	    m.m[2][2];
-	affine.translation() = Eigen::Vector3d(m.m[0][3], m.m[1][3], m.m[2][3]);
-	return affine;
+	return HmdMatrix34ToAffine(m);
 }
 
 inline Eigen::Vector3d TransformStandingPointToRaw(const vr::HmdMatrix34_t& standingToRaw, double x, double y, double z)
