@@ -15,7 +15,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(FT_DRIVER_SRC "${CMAKE_SOURCE_DIR}/modules/facetracking/src/driver")
 
 add_executable(facetracking_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/calibration_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vergence_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/eyelid_sync_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/face_signal_processor_tests.cpp
@@ -28,7 +27,6 @@ add_executable(facetracking_tests
     ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/Logging.cpp
     ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/ModuleSources.cpp
     ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay/Profiles.cpp
-    ${FT_DRIVER_SRC}/CalibrationEngine.cpp
     ${FT_DRIVER_SRC}/VergenceLock.cpp
     ${FT_DRIVER_SRC}/EyelidSync.cpp
     ${FT_DRIVER_SRC}/FaceSignalProcessor.cpp

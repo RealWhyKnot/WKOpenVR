@@ -81,12 +81,6 @@ public:
 	void ResetGlobalShapeTuning();
 	void ResetAvatarShapeTuning(const std::string& avatarKey);
 
-	// Continuous auto-calibration: driver-side commands (save / reset learned
-	// state) and the per-expression opt-out list.
-	void SendCalibrationCommand(protocol::FaceCalibrationOp op);
-	bool IsCalibExcluded(uint32_t index) const;
-	void SetCalibExcluded(uint32_t index, bool excluded);
-
 private:
 	friend void facetracking::ui::DrawSettingsTab(FacetrackingPlugin& plugin);
 	friend void facetracking::ui::DrawTuningTab(FacetrackingPlugin& plugin);

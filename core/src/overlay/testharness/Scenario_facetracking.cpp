@@ -93,7 +93,6 @@ ScenarioResult RunScenario_facetracking(ScenarioContext& ctx)
 		cfg.eyelid_sync_strength = 75;
 		cfg.vergence_lock_enabled = 1;
 		cfg.vergence_lock_strength = 50;
-		cfg.continuous_calib_mode = 1;
 		cfg.output_osc_enabled = 1;
 		cfg.gaze_smoothing = 50;
 		cfg.openness_smoothing = 50;

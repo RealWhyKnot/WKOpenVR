@@ -344,13 +344,6 @@ struct FaceTrackingConfig
 	uint8_t eyelid_sync_preserve_winks;
 	uint8_t vergence_lock_enabled;
 
-	// v42: continuous auto-calibration. 0 = off (identity), 1 = on: the driver
-	// learns a per-shape rest baseline + max envelope and remaps raw values
-	// through a gain-capped, deadbanded, confidence-blended normalizer before
-	// any other transform. (The v15 percentile range-stretch this byte
-	// originally controlled is gone; the byte keeps its slot.)
-	uint8_t continuous_calib_mode;
-
 	// Output sink toggles. The host process sends OSC to VRChat when
 	// output_osc_enabled is set. The native OpenXR eye-gaze path is
 	// reserved for Phase 3 -- always zero for now.
@@ -389,27 +382,6 @@ struct FaceTrackingConfig
 	char active_module_uuid[FACETRACKING_MODULE_UUID_LEN];
 };
 
-enum FaceCalibrationOp : uint8_t
-{
-	FaceCalibBegin = 0,
-	FaceCalibEnd = 1,
-	FaceCalibSave = 2,
-	FaceCalibResetAll = 3,
-	FaceCalibResetEye = 4,
-	FaceCalibResetExpr = 5,
-};
-
-// POD payload for RequestSetFaceCalibrationCommand. v42: the driver-side
-// calibration engine owns the persistent learned state; Save flushes it to
-// disk, the Reset ops clear it (ResetAll also deletes the persisted file).
-// Begin/End are accepted as no-ops -- calibration is always-learning while
-// enabled, there is no explicit capture window.
-struct FaceCalibrationCommand
-{
-	uint8_t op; // see FaceCalibrationOp
-	uint8_t _reserved[7];
-};
-
 // POD payload for RequestSetFaceActiveModule. Picks which hardware
 // module the host should load (Quest Pro, Vive FT, etc.). Driver
 // forwards this to the host process over the internal control pipe
@@ -439,22 +411,15 @@ struct FaceShapeTuningParams
 	int16_t max_percent; // output at input 1, -200..200; default 100
 };
 
-// v42: per-shape flag bits carried alongside the tuning values.
-// bit 0: exclude this shape from continuous auto-calibration (the driver
-// leaves the raw value untouched for that shape while calibration runs).
-static const uint8_t FACETRACKING_SHAPE_TUNING_FLAG_CALIB_EXCLUDE = 0x01;
-
 // POD payload for RequestSetFaceShapeTuning. index addresses one
 // FACETRACKING_EXPRESSION_COUNT slot. index == RESET_INDEX clears the driver's
-// cached table back to defaults (tuning values AND flags); overlays send that
-// first before the non-default entries for a newly active avatar.
+// cached table back to defaults; overlays send that first before the
+// non-default entries for a newly active avatar.
 struct FaceShapeTuning
 {
 	uint16_t index;
 	int16_t min_percent; // output at input 0, -200..200; default 0
 	int16_t max_percent; // output at input 1, -200..200; default 100
-	uint8_t flags;       // v42: FACETRACKING_SHAPE_TUNING_FLAG_* bits; pre-v42 senders leave 0
-	uint8_t _reserved;   // pad; must be 0
 };
 
 // =========================================================================
@@ -812,12 +777,10 @@ struct Request
 		// v12: per-device prediction smoothness from the Smoothing overlay.
 		// Much smaller than SetDeviceTransform so the union does not grow.
 		SetDevicePrediction setDevicePrediction;
-		// v15: face-tracking master config + compatibility calibration
-		// command + module selection + shape tuning. All are smaller than
-		// SetDeviceTransform so the union does not grow; the static_asserts
-		// below enforce that.
+		// v15: face-tracking master config + module selection + shape
+		// tuning. All are smaller than SetDeviceTransform so the union does
+		// not grow; the static_asserts below enforce that.
 		FaceTrackingConfig setFaceTrackingConfig;
-		FaceCalibrationCommand setFaceCalibrationCommand;
 		FaceModuleSelection setFaceActiveModule;
 		FaceShapeTuning setFaceShapeTuning;
 		// v16: OSC router control. All three are smaller than
@@ -866,8 +829,6 @@ static_assert(sizeof(AlignmentSpeedParams) <= sizeof(SetDeviceTransform), "Align
 static_assert(sizeof(InputHealthCompensationEntry) <= sizeof(SetDeviceTransform),
               "InputHealthCompensationEntry must not grow Request");
 static_assert(sizeof(FaceTrackingConfig) <= sizeof(SetDeviceTransform), "FaceTrackingConfig must not grow Request");
-static_assert(sizeof(FaceCalibrationCommand) <= sizeof(SetDeviceTransform),
-              "FaceCalibrationCommand must not grow Request");
 static_assert(sizeof(FaceModuleSelection) <= sizeof(SetDeviceTransform), "FaceModuleSelection must not grow Request");
 static_assert(sizeof(FaceShapeTuning) <= sizeof(SetDeviceTransform), "FaceShapeTuning must not grow Request");
 static_assert(sizeof(OscRouteSubscribe) <= sizeof(SetDeviceTransform), "OscRouteSubscribe must not grow Request");

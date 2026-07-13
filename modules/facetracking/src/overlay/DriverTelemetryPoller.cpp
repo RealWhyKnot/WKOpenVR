@@ -120,17 +120,6 @@ void DriverTelemetryPoller::ReadFile()
 		s.focus_distance_m = static_cast<float>(openvr_pair::common::json::NumberAt(*verg, "focus_distance_m"));
 		s.ipd_m = static_cast<float>(openvr_pair::common::json::NumberAt(*verg, "ipd_m"));
 	}
-	if (const auto* calib = openvr_pair::common::json::ValueAt(root, "calibration");
-	    calib && calib->is<picojson::object>()) {
-		s.calib_enabled = openvr_pair::common::json::BoolAt(*calib, "enabled");
-		s.calib_loaded = openvr_pair::common::json::BoolAt(*calib, "loaded");
-		s.calib_avg_conf = static_cast<float>(openvr_pair::common::json::NumberAt(*calib, "avg_conf"));
-		s.calib_min_conf = static_cast<float>(openvr_pair::common::json::NumberAt(*calib, "min_conf"));
-		s.calib_capped_shapes = openvr_pair::common::json::IntAt(*calib, "capped_shapes");
-		s.calib_idle_frames = static_cast<uint64_t>(openvr_pair::common::json::NumberAt(*calib, "idle_frames"));
-		s.calib_idle_false_act = static_cast<uint64_t>(openvr_pair::common::json::NumberAt(*calib, "idle_false_act"));
-		s.calib_open_lr_div_avg = static_cast<float>(openvr_pair::common::json::NumberAt(*calib, "open_lr_div_avg"));
-	}
 	if (const auto* shapes = openvr_pair::common::json::ValueAt(root, "shape_values");
 	    shapes && shapes->is<picojson::object>()) {
 		s.shape_values_valid = openvr_pair::common::json::BoolAt(*shapes, "valid");

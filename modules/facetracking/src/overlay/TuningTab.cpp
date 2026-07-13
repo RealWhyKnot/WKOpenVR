@@ -2,7 +2,6 @@
 
 #include "FacetrackingPlugin.h"
 #include "UiHelpers.h"
-#include "facetracking/CalibrationShapeTable.h"
 #include "facetracking/ExpressionNames.h"
 
 #include <imgui/imgui.h>
@@ -683,24 +682,6 @@ void DrawTuningTab(FacetrackingPlugin& plugin)
 			if (saveAfterEdit) plugin.Profile().Save();
 
 			ImGui::TableSetColumnIndex(3);
-			{
-				const bool calibratable = facetracking::calib_table::IsCalibratable((int)i);
-				if (!calibratable) ImGui::BeginDisabled();
-				bool autoCal = calibratable && !plugin.IsCalibExcluded(i);
-				if (ImGui::Checkbox("Auto##calib", &autoCal)) {
-					plugin.SetCalibExcluded(i, !autoCal);
-				}
-				if (!calibratable) {
-					ImGui::EndDisabled();
-					TooltipForLastItem("Auto calibration never adjusts this expression --\n"
-					                   "its full range is not reliably seen during normal play.");
-				}
-				else {
-					TooltipForLastItem("Let auto calibration adjust this expression's range.\n"
-					                   "Uncheck to keep the tracker's raw value (your Min/Max\n"
-					                   "tuning still applies).");
-				}
-			}
 			if (IsShapeModified(tuning)) {
 				if (ImGui::SmallButton("Reset")) {
 					values[i] = DefaultFaceShapeTuningValue();

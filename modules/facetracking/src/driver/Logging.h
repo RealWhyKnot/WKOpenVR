@@ -4,7 +4,7 @@
 #include <ctime>
 
 #ifdef FACETRACKING_TESTS
-// Stub out the logging infrastructure so CalibrationEngine.cpp links inside
+// Stub out the logging infrastructure so driver sources link inside
 // the gtest binary without pulling in Logging.cpp (which opens files, calls
 // SHGetKnownFolderPath, etc.).
 inline FILE* FtDrvLogFile = nullptr;

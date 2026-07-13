@@ -210,21 +210,6 @@ FacetrackingProfile Decode(const picojson::value& v)
 	}
 	getBool("vergence_lock_enabled", p.vergence_lock_enabled);
 	getInt("vergence_lock_strength", p.vergence_lock_strength);
-	// The pre-v42 "continuous_calib_mode" key is ignored: the calibration it
-	// controlled was removed, and the v42 engine starts from its own default.
-	getBool("continuous_calib_enabled", p.continuous_calib_enabled);
-	{
-		auto it = obj.find("calib_excluded_shapes");
-		if (it != obj.end() && it->second.is<picojson::array>()) {
-			for (const auto& el : it->second.get<picojson::array>()) {
-				if (!el.is<double>()) continue;
-				const int idx = (int)el.get<double>();
-				if (idx >= 0 && idx < (int)protocol::FACETRACKING_EXPRESSION_COUNT) {
-					p.calib_excluded_shapes.push_back(idx);
-				}
-			}
-		}
-	}
 	getBool("output_osc_enabled", p.output_osc_enabled);
 	getInt("gaze_smoothing", p.gaze_smoothing);
 	getInt("openness_smoothing", p.openness_smoothing);
@@ -274,13 +259,6 @@ std::string Encode(const FacetrackingProfile& p)
 	obj["eyelid_sync_mode"] = picojson::value((double)p.eyelid_sync_mode);
 	obj["vergence_lock_enabled"] = picojson::value(p.vergence_lock_enabled);
 	obj["vergence_lock_strength"] = picojson::value((double)p.vergence_lock_strength);
-	obj["continuous_calib_enabled"] = picojson::value(p.continuous_calib_enabled);
-	if (!p.calib_excluded_shapes.empty()) {
-		picojson::array arr;
-		for (int idx : p.calib_excluded_shapes)
-			arr.push_back(picojson::value((double)idx));
-		obj["calib_excluded_shapes"] = picojson::value(arr);
-	}
 	obj["output_osc_enabled"] = picojson::value(p.output_osc_enabled);
 	obj["gaze_smoothing"] = picojson::value((double)p.gaze_smoothing);
 	obj["openness_smoothing"] = picojson::value((double)p.openness_smoothing);

@@ -1,5 +1,4 @@
 #define _CRT_SECURE_NO_DEPRECATE
-#include "CalibrationEngine.h"
 #include "EyelidSync.h"
 #include "FaceFrameReader.h"
 #include "FaceOscPublisher.h"
@@ -106,8 +105,7 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
                                       const std::string& active_module_uuid, bool vergence_enabled, float focus_m,
                                       float ipd_m, bool shape_values_valid, uint64_t shape_values_frame,
                                       const FaceExpressionArray& pre_tuning_expressions,
-                                      const FaceExpressionArray& post_tuning_expressions, bool calib_enabled,
-                                      const CalibrationEngine::Telemetry& calib)
+                                      const FaceExpressionArray& post_tuning_expressions)
 {
 	// Timestamp.
 	SYSTEMTIME st{};
@@ -141,16 +139,6 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
 	o << "    \"focus_distance_m\": " << focus_m << ",\n";
 	o << "    \"ipd_m\": " << ipd_m << "\n";
 	o << "  },\n";
-	o << "  \"calibration\": {\n";
-	o << "    \"enabled\": " << (calib_enabled ? "true" : "false") << ",\n";
-	o << "    \"loaded\": " << (calib.loaded ? "true" : "false") << ",\n";
-	o << "    \"avg_conf\": " << calib.avg_conf << ",\n";
-	o << "    \"min_conf\": " << calib.min_conf << ",\n";
-	o << "    \"capped_shapes\": " << calib.capped_shapes << ",\n";
-	o << "    \"idle_frames\": " << calib.idle_frames << ",\n";
-	o << "    \"idle_false_act\": " << calib.idle_false_act << ",\n";
-	o << "    \"open_lr_div_avg\": " << calib.open_lr_div_avg << "\n";
-	o << "  },\n";
 	o << "  \"shape_values\": {\n";
 	o << "    \"valid\": " << (shape_values_valid ? "true" : "false") << ",\n";
 	o << "    \"frame\": " << shape_values_frame << ",\n";
@@ -163,26 +151,6 @@ static std::string BuildTelemetryJson(DWORD pid, uint64_t frames_processed, uint
 	o << "  }\n";
 	o << "}\n";
 	return o.str();
-}
-
-static const char* FaceCalibrationOpName(protocol::FaceCalibrationOp op)
-{
-	switch (op) {
-		case protocol::FaceCalibBegin:
-			return "begin";
-		case protocol::FaceCalibEnd:
-			return "end";
-		case protocol::FaceCalibSave:
-			return "save";
-		case protocol::FaceCalibResetAll:
-			return "reset-all";
-		case protocol::FaceCalibResetEye:
-			return "reset-eye";
-		case protocol::FaceCalibResetExpr:
-			return "reset-expr";
-		default:
-			return "unknown";
-	}
 }
 
 static std::string FixedString(const char* value, size_t capacity)
@@ -318,7 +286,6 @@ public:
 		if (supervisor_) supervisor_->Stop();
 		supervisor_.reset();
 
-		calib_.Save();
 		reader_.Close();
 		device_.reset();
 
@@ -340,22 +307,21 @@ public:
 				const std::string new_uuid =
 				    FixedString(config_.active_module_uuid, protocol::FACETRACKING_MODULE_UUID_LEN);
 				FT_LOG_DRV("[module] config update: master=%u->%u osc=%u->%u native=%u->%u "
-				           "module='%s'->'%s' calib=%u->%u eyelid=%u/%u/mode=%u->%u/%u/mode=%u "
+				           "module='%s'->'%s' eyelid=%u/%u/mode=%u->%u/%u/mode=%u "
 				           "vergence=%u/%u->%u/%u smooth(gaze=%u->%u open=%u->%u) "
 				           "corr=0x%02x->0x%02x corr_strengths=0x%04x->0x%04x osc_port=%u->%u",
 				           (unsigned)old.master_enabled, (unsigned)config_.master_enabled,
 				           (unsigned)old.output_osc_enabled, (unsigned)config_.output_osc_enabled,
 				           (unsigned)old._reserved_native, (unsigned)config_._reserved_native, old_uuid.c_str(),
-				           new_uuid.c_str(), (unsigned)old.continuous_calib_mode,
-				           (unsigned)config_.continuous_calib_mode, (unsigned)old.eyelid_sync_enabled,
-				           (unsigned)old.eyelid_sync_strength, (unsigned)old.eyelid_sync_mode,
-				           (unsigned)config_.eyelid_sync_enabled, (unsigned)config_.eyelid_sync_strength,
-				           (unsigned)config_.eyelid_sync_mode, (unsigned)old.vergence_lock_enabled,
-				           (unsigned)old.vergence_lock_strength, (unsigned)config_.vergence_lock_enabled,
-				           (unsigned)config_.vergence_lock_strength, (unsigned)old.gaze_smoothing,
-				           (unsigned)config_.gaze_smoothing, (unsigned)old.openness_smoothing,
-				           (unsigned)config_.openness_smoothing, (unsigned)old.expression_correction_flags,
-				           (unsigned)config_.expression_correction_flags, (unsigned)old.expression_correction_strengths,
+				           new_uuid.c_str(), (unsigned)old.eyelid_sync_enabled, (unsigned)old.eyelid_sync_strength,
+				           (unsigned)old.eyelid_sync_mode, (unsigned)config_.eyelid_sync_enabled,
+				           (unsigned)config_.eyelid_sync_strength, (unsigned)config_.eyelid_sync_mode,
+				           (unsigned)old.vergence_lock_enabled, (unsigned)old.vergence_lock_strength,
+				           (unsigned)config_.vergence_lock_enabled, (unsigned)config_.vergence_lock_strength,
+				           (unsigned)old.gaze_smoothing, (unsigned)config_.gaze_smoothing,
+				           (unsigned)old.openness_smoothing, (unsigned)config_.openness_smoothing,
+				           (unsigned)old.expression_correction_flags, (unsigned)config_.expression_correction_flags,
+				           (unsigned)old.expression_correction_strengths,
 				           (unsigned)config_.expression_correction_strengths, (unsigned)old.osc_port,
 				           (unsigned)config_.osc_port);
 				// Forward active module selection to supervisor.
@@ -365,16 +331,6 @@ public:
 				else {
 					FT_LOG_DRV("[module] config update could not reach host supervisor: supervisor unavailable", 0);
 				}
-				// Rebind calibration persistence when the active module changes
-				// (learned ranges are per hardware module).
-				if (new_uuid != old_uuid) OnActiveModuleChanged(new_uuid);
-				resp.type = protocol::ResponseSuccess;
-				return true;
-			}
-			case protocol::RequestSetFaceCalibrationCommand: {
-				const protocol::FaceCalibrationOp op = (protocol::FaceCalibrationOp)req.setFaceCalibrationCommand.op;
-				FT_LOG_DRV("[module] calibration command: op=%s(%u)", FaceCalibrationOpName(op), (unsigned)op);
-				calib_.Reset(op); // Begin/End are no-ops inside the engine
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
@@ -389,7 +345,6 @@ public:
 					FT_LOG_DRV("[module] active module request could not reach host supervisor: supervisor unavailable",
 					           0);
 				}
-				OnActiveModuleChanged(uuid);
 				resp.type = protocol::ResponseSuccess;
 				return true;
 			}
@@ -398,7 +353,6 @@ public:
 				std::lock_guard<std::mutex> lk(config_mutex_);
 				if (tune.index == protocol::FACETRACKING_SHAPE_TUNING_RESET_INDEX) {
 					shape_tuning_percent_.fill(DefaultShapeTuning());
-					calib_.ClearUserExclusions();
 					FT_LOG_DRV("[module] face shape tuning reset", 0);
 					resp.type = protocol::ResponseSuccess;
 					return true;
@@ -412,8 +366,6 @@ public:
 				const protocol::FaceShapeTuningParams params = NormalizeShapeTuning(tune);
 				const protocol::FaceShapeTuningParams old = shape_tuning_percent_[tune.index];
 				shape_tuning_percent_[tune.index] = params;
-				calib_.SetUserExcluded(tune.index,
-				                       (tune.flags & protocol::FACETRACKING_SHAPE_TUNING_FLAG_CALIB_EXCLUDE) != 0);
 				if (old.min_percent != params.min_percent || old.max_percent != params.max_percent) {
 					FT_LOG_DRV("[module] face shape tuning update: index=%u min=%d%%->%d%% max=%d%%->%d%%",
 					           (unsigned)tune.index, (int)old.min_percent, (int)params.min_percent,
@@ -450,19 +402,6 @@ private:
 	VergenceLock vergence_;
 	EyelidSync eyelid_;
 	FaceSignalProcessor signal_processor_;
-	CalibrationEngine calib_;
-	std::string calib_uuid_; // module uuid the engine is currently bound to
-	std::chrono::steady_clock::time_point last_calib_autosave_{};
-
-	// Rebind calibration persistence when the active hardware module changes.
-	// Safe from the request thread: the engine has its own internal lock.
-	void OnActiveModuleChanged(const std::string& uuid)
-	{
-		if (uuid.empty() || uuid == calib_uuid_) return;
-		calib_.Save();
-		calib_.Load(uuid);
-		calib_uuid_ = uuid;
-	}
 
 	// Config cache -- written by HandleRequest, read by WorkerLoop.
 	protocol::FaceTrackingConfig config_{};
@@ -786,16 +725,6 @@ private:
 			diag_pre_browInnerL_ = frame.expressions[14];
 			diag_pre_eyeWideL_ = frame.expressions[8];
 
-			// Continuous calibration runs FIRST so every downstream transform
-			// (vergence, eye-close assist, eyelid sync, corrections, manual
-			// tuning) operates on normalized signals. The diag_pre_* captures
-			// above deliberately stay pre-calibration: they show true module
-			// output, and calibration is now the first of our corrections.
-			if (cfg.master_enabled && cfg.continuous_calib_mode == 1) {
-				calib_.IngestFrame(frame);
-				calib_.Normalize(frame);
-			}
-
 			// Vergence lock.
 			if (cfg.vergence_lock_enabled) {
 				vergence_.Apply(frame, cfg.vergence_lock_strength);
@@ -906,21 +835,21 @@ private:
 				if (!first_frame_diag_logged_) {
 					first_frame_diag_logged_ = true;
 					FT_LOG_DRV("[facetracking][diag] first-frame flags_in=0x%x flags_out=0x%x "
-					           "host_state=%u hb_age_ms=%llu module='%s' osc=%u calib=%u "
+					           "host_state=%u hb_age_ms=%llu module='%s' osc=%u "
 					           "eyelid=%u/%u/mode=%u vergence=%u/%u corr=0x%02x smooth(gaze=%u open=%u) "
 					           "jaw(raw=%.3f out=%.3f mouthClosedRaw=%.3f) "
 					           "eyeOpen=(%.3f,%.3f) gazeL=(%.3f,%.3f,%.3f) "
 					           "pupil=(%.3f,%.3f) rawEyeWideL=%.3f allowlist=%u allowlist_status=%s",
 					           (unsigned)input_flags, (unsigned)frame.flags, host_state,
 					           static_cast<unsigned long long>(hb_age_ms), cfg.active_module_uuid,
-					           (unsigned)cfg.output_osc_enabled, (unsigned)cfg.continuous_calib_mode,
-					           (unsigned)cfg.eyelid_sync_enabled, (unsigned)cfg.eyelid_sync_strength,
-					           (unsigned)cfg.eyelid_sync_mode, (unsigned)cfg.vergence_lock_enabled,
-					           (unsigned)cfg.vergence_lock_strength, (unsigned)cfg.expression_correction_flags,
-					           (unsigned)cfg.gaze_smoothing, (unsigned)cfg.openness_smoothing, input_jaw_open,
-					           frame.expressions[26], input_mouth_closed, frame.eye_openness_l, frame.eye_openness_r,
-					           frame.eye_gaze_l[0], frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.pupil_dilation_l,
-					           frame.pupil_dilation_r, input_eye_wide_l, (unsigned)osc_filter_.AllowedCount(),
+					           (unsigned)cfg.output_osc_enabled, (unsigned)cfg.eyelid_sync_enabled,
+					           (unsigned)cfg.eyelid_sync_strength, (unsigned)cfg.eyelid_sync_mode,
+					           (unsigned)cfg.vergence_lock_enabled, (unsigned)cfg.vergence_lock_strength,
+					           (unsigned)cfg.expression_correction_flags, (unsigned)cfg.gaze_smoothing,
+					           (unsigned)cfg.openness_smoothing, input_jaw_open, frame.expressions[26],
+					           input_mouth_closed, frame.eye_openness_l, frame.eye_openness_r, frame.eye_gaze_l[0],
+					           frame.eye_gaze_l[1], frame.eye_gaze_l[2], frame.pupil_dilation_l, frame.pupil_dilation_r,
+					           input_eye_wide_l, (unsigned)osc_filter_.AllowedCount(),
 					           FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
 				}
 
@@ -934,7 +863,7 @@ private:
 					    "zero_expr=%llu host_state=%u hb_age_ms=%llu module='%s' "
 					    "osc=%u osc_delta=(attempt=%llu sent=%llu drop=%llu filtered=%llu deduped=%llu remapped=%llu) "
 					    "total_osc=(sent=%llu drop=%llu) allowlist=%u allowlist_status=%s read_fail=%llu "
-					    "calib=%u eyelid=%u/mode=%u vergence=%u corr=0x%02x "
+					    "eyelid=%u/mode=%u vergence=%u corr=0x%02x "
 					    "last_jaw=%.3f last_eye=(%.3f,%.3f) last_pupil=(%.3f,%.3f)",
 					    static_cast<unsigned long long>(diag_frames_), static_cast<unsigned long long>(diag_eye_valid_),
 					    static_cast<unsigned long long>(diag_expr_valid_),
@@ -949,11 +878,10 @@ private:
 					    static_cast<unsigned long long>(osc_messages_sent_),
 					    static_cast<unsigned long long>(osc_messages_dropped_), (unsigned)osc_filter_.AllowedCount(),
 					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()),
-					    static_cast<unsigned long long>(diag_read_failures_), (unsigned)cfg.continuous_calib_mode,
-					    (unsigned)cfg.eyelid_sync_enabled, (unsigned)cfg.eyelid_sync_mode,
-					    (unsigned)cfg.vergence_lock_enabled, (unsigned)cfg.expression_correction_flags,
-					    frame.expressions[26], frame.eye_openness_l, frame.eye_openness_r, frame.pupil_dilation_l,
-					    frame.pupil_dilation_r);
+					    static_cast<unsigned long long>(diag_read_failures_), (unsigned)cfg.eyelid_sync_enabled,
+					    (unsigned)cfg.eyelid_sync_mode, (unsigned)cfg.vergence_lock_enabled,
+					    (unsigned)cfg.expression_correction_flags, frame.expressions[26], frame.eye_openness_l,
+					    frame.eye_openness_r, frame.pupil_dilation_l, frame.pupil_dilation_r);
 
 					// Per-shape module-output vs our-corrected for the avatar's
 					// most-visible shapes (latest frame). A large pre->post swing
@@ -983,14 +911,6 @@ private:
 					    diag_filter_active ? "filtered" : "legacy+v2+vrcft(failopen,dedup-off)",
 					    (unsigned)osc_filter_.AllowedCount(),
 					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
-
-					// Learned-mapping health while calibration is active: watch
-					// idle_act (false activations at rest -- must stay ~0) and
-					// capped (shapes whose gain sits at its ceiling).
-					if (cfg.master_enabled && cfg.continuous_calib_mode == 1) {
-						FT_LOG_DRV("[facetracking][calib] %s", calib_.DebugSummary().c_str());
-						calib_.ResetPeriodCounters();
-					}
 
 					ResetDebugPeriodCounters();
 					last_diag_log_ = diag_now;
@@ -1022,25 +942,10 @@ private:
 		const float focus_m = verg_enabled ? vergence_.LastFocusDistanceM() : 0.f;
 		const float ipd_m = verg_enabled ? vergence_.LastIpdM() : 0.f;
 
-		const bool calib_enabled = cfg.master_enabled != 0 && cfg.continuous_calib_mode == 1;
-		const CalibrationEngine::Telemetry calib_t = calib_.Snapshot();
-
-		// Persist learned calibration periodically so a crash loses at most
-		// a minute of range learning.
-		if (calib_enabled) {
-			if (last_calib_autosave_ == std::chrono::steady_clock::time_point{}) {
-				last_calib_autosave_ = now;
-			}
-			else if (now - last_calib_autosave_ >= std::chrono::seconds(60)) {
-				calib_.Save();
-				last_calib_autosave_ = now;
-			}
-		}
-
-		std::string json = BuildTelemetryJson(
-		    pid, frames_processed_, frames_read_, osc_messages_sent_, osc_messages_dropped_, cfg.active_module_uuid,
-		    verg_enabled, focus_m, ipd_m, latest_shape_values_valid_, latest_shape_values_frame_,
-		    latest_pre_tuning_expressions_, latest_post_tuning_expressions_, calib_enabled, calib_t);
+		std::string json = BuildTelemetryJson(pid, frames_processed_, frames_read_, osc_messages_sent_,
+		                                      osc_messages_dropped_, cfg.active_module_uuid, verg_enabled, focus_m,
+		                                      ipd_m, latest_shape_values_valid_, latest_shape_values_frame_,
+		                                      latest_pre_tuning_expressions_, latest_post_tuning_expressions_);
 
 		if (!AtomicWriteFile(telemetry_path_, json)) {
 			if (!telemetry_write_failed_) {

@@ -326,7 +326,14 @@ namespace protocol {
 // again: Save/ResetAll/ResetEye/ResetExpr act on the driver-side learned
 // state; Begin/End are accepted as no-ops. Requires a paired overlay+driver
 // install.
-const uint32_t Version = 42;
+//
+// v43 (2026-07-12): face-tracking continuous calibration removed.
+// FaceTrackingConfig drops continuous_calib_mode; FaceShapeTuning drops the
+// flags byte (back to the v41 layout); FaceCalibrationOp and
+// FaceCalibrationCommand are gone and the RequestSetFaceCalibrationCommand
+// slot is retired (ordinal reserved). Requires a paired overlay+driver
+// install.
+const uint32_t Version = 43;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps
@@ -381,9 +388,8 @@ enum RequestType
 	// strengths, OSC output endpoint, active module uuid). Driver caches
 	// the payload and applies it on its pose-update + frame-publish path.
 	RequestSetFaceTrackingConfig,
-	// v15: calibration command retained for compatibility. Normal runtime
-	// accepts it without mutating face-signal state.
-	RequestSetFaceCalibrationCommand,
+	// v15 slot, retired in v43. Kept to preserve prior request ordinals.
+	RequestReservedFaceCalibrationCommand,
 	// v15: pick which hardware module (Quest Pro, Vive FT, ...) the host
 	// should load. Driver forwards over its host-side control pipe.
 	RequestSetFaceActiveModule,
@@ -1116,7 +1122,8 @@ struct FaceTrackingFrameBody
 
 	// FNV-1a-ish 64-bit hash of the source module's stable identity string
 	// (e.g. "QuestPro_v2"). Lets the driver detect a hot-swap and reset its
-	// calibration state without parsing the full uuid. 0 = unknown / not set.
+	// per-module processing state without parsing the full uuid. 0 = unknown /
+	// not set.
 	uint64_t source_module_uuid_hash;
 
 	// Per-eye origin in HMD space, metres. The host either obtains these

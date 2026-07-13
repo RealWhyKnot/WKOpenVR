@@ -15,53 +15,6 @@ void DrawSettingsTab(FacetrackingPlugin& plugin)
 {
 	FacetrackingProfile& p = plugin.profile_.current;
 
-	// ---- Auto Calibration ----
-	DrawSectionHeading("Auto Calibration");
-
-	if (CheckboxWithTooltip("Auto calibration", &p.continuous_calib_enabled,
-	                        "Learns your personal expression ranges during normal play and\n"
-	                        "remaps them toward full output, so weak smiles and half blinks\n"
-	                        "reach the avatar without hand-tuning every shape.\n"
-	                        "Amplification is capped per shape and idle noise is gated, so a\n"
-	                        "resting face stays at rest. Learning takes effect gradually over\n"
-	                        "the first seconds of a session.")) {
-		plugin.PushConfigToDriver();
-	}
-
-	{
-		const auto& t = plugin.driver_telemetry_.Snapshot();
-		if (!p.continuous_calib_enabled) {
-			ImGui::TextDisabled("Off");
-		}
-		else if (!t.valid || t.stale || !t.calib_enabled) {
-			ImGui::TextDisabled("Waiting for driver...");
-		}
-		else if (!t.calib_loaded) {
-			ImGui::TextDisabled("Waiting for a tracking module...");
-		}
-		else {
-			ImGui::Text("Learning: %d%% confident (weakest shape %d%%)", (int)(t.calib_avg_conf * 100.f),
-			            (int)(t.calib_min_conf * 100.f));
-		}
-	}
-
-	if (!p.continuous_calib_enabled) ImGui::BeginDisabled();
-	if (ImGui::Button("Reset all##calib")) {
-		plugin.SendCalibrationCommand(protocol::FaceCalibResetAll);
-	}
-	TooltipForLastItem("Forget every learned range and start over.");
-	ImGui::SameLine();
-	if (ImGui::Button("Reset eyes##calib")) {
-		plugin.SendCalibrationCommand(protocol::FaceCalibResetEye);
-	}
-	TooltipForLastItem("Forget the learned eye openness range only.");
-	ImGui::SameLine();
-	if (ImGui::Button("Reset expressions##calib")) {
-		plugin.SendCalibrationCommand(protocol::FaceCalibResetExpr);
-	}
-	TooltipForLastItem("Forget the learned face expression ranges only.");
-	if (!p.continuous_calib_enabled) ImGui::EndDisabled();
-
 	// ---- Eyelid Sync ----
 	DrawSectionHeading("Eyelid Sync");
 

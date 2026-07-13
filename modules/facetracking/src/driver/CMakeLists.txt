@@ -4,8 +4,6 @@ cmake_minimum_required(VERSION 3.15)
 set(FACETRACKING_PAIRDRIVER_ROOT "${CMAKE_SOURCE_DIR}")
 
 add_library(openvr_pair_feature_facetracking_driver STATIC
-	CalibrationEngine.cpp
-	CalibrationEngine.h
 	EyelidSync.cpp
 	EyelidSync.h
 	FaceFrameReader.cpp

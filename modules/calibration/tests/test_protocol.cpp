@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 TEST(ProtocolTest, VersionPinnedToCurrent)
 {
-	EXPECT_EQ(protocol::Version, 42u) << "Protocol version changed without updating the test pin. If this is "
+	EXPECT_EQ(protocol::Version, 43u) << "Protocol version changed without updating the test pin. If this is "
 	                                     "intentional: bump the literal here and document the wire change.";
 }
 
