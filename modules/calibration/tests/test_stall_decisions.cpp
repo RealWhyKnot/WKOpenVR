@@ -3,11 +3,11 @@
 // 2026-05-04 spacecal_log proved caused 7-9 cm cumulative drift on every HMD
 // off/on cycle.
 //
-// Test purpose (from the audit's "transparent gaps" section): the old test
-// suite did not exercise the runtime CalibrationTick state machine, which is
-// where 9d0ba0b shipped its bug. We can't easily test CalibrationTick directly
+// Test purpose: the old test suite did not exercise the runtime
+// CalibrationTick state machine, which is where 9d0ba0b shipped its bug.
+// We can't easily test CalibrationTick directly
 // (huge function, OpenVR/glfw dependencies), so we extracted the decision
-// — "should we demote on HMD stall?" — into a pure function and pinned its
+// -- "should we demote on HMD stall?" -- into a pure function and pinned its
 // contract here. Anyone trying to re-introduce the demote/purge behaviour by
 // flipping `ShouldDemoteOnHmdStall` to return true will fail this test.
 

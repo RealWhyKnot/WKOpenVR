@@ -17,8 +17,8 @@ namespace phantom {
 // for tear-free reads.
 //
 // Phase 3 ships the IPC + sidecar process scaffold only; the sidecar is
-// a passthrough stub until an ONNX Runtime + SparsePoser model land
-// alongside the AMASS / SMPL licensing review noted in the plan.
+// a passthrough stub until an ONNX Runtime + SparsePoser model land,
+// which also needs an AMASS / SMPL licensing review first.
 
 constexpr uint32_t kPhantomInferenceShmemMagic = 0x49484850; // 'PHIN'
 constexpr uint32_t kPhantomInferenceShmemVersion = 1;

@@ -117,7 +117,7 @@ TEST(SnapSuppression, Jump_detector_autopaired_no_snap)
 }
 
 // Exact-boundary cases (thresholds are non-strict inequalities in the
-// required direction per the plan).
+// required direction).
 TEST(SnapSuppression, Jump_detector_exactly_at_hmd_threshold)
 {
 	// hmdDelta == kSnapHmdJumpM: should fire (>= threshold).
@@ -225,9 +225,9 @@ TEST(SnapSuppression, EffectiveMode_enables_snap_classification_in_continuous)
 }
 
 // ---------------------------------------------------------------------------
-// Pinned threshold constants (per plan spec -- must not drift without review)
+// Pinned threshold constants (must not drift without review)
 // ---------------------------------------------------------------------------
 
-static_assert(ss::kSnapHmdJumpM == 0.30, "kSnapHmdJumpM changed from 0.30 -- update the plan spec before tuning");
+static_assert(ss::kSnapHmdJumpM == 0.30, "kSnapHmdJumpM changed from 0.30 -- retune the suppression tests with it");
 static_assert(ss::kSnapTrackerMaxDispM == 0.02,
-              "kSnapTrackerMaxDispM changed from 0.02 -- update the plan spec before tuning");
+              "kSnapTrackerMaxDispM changed from 0.02 -- retune the suppression tests with it");

@@ -71,8 +71,8 @@ inline double EffectiveSpeedMps(HeadMountMode mode, double hmdSpeedMps, double t
 // When false, treat the event as a genuine physical jump and proceed with
 // the normal recovery path unchanged.
 //
-// Thresholds are per the plan spec and must not be tuned here without
-// updating the plan.
+// The thresholds are pinned by static_asserts in test_snap_suppression.cpp;
+// retune the constants and the pins together.
 constexpr double kSnapHmdJumpM = 0.30;        // 30 cm
 constexpr double kSnapTrackerMaxDispM = 0.02; // 2 cm
 

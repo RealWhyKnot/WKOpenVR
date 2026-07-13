@@ -121,4 +121,4 @@ TEST(RecoveryPolicy, WarmRestart_witnessed_frame_move_holds_resolved_frame)
 }
 
 static_assert(rp::kWarmRestartMaxReanchors == 2,
-              "kWarmRestartMaxReanchors changed -- update the plan spec before tuning");
+              "kWarmRestartMaxReanchors changed -- revisit the recovery-policy tests with it");

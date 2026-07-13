@@ -80,6 +80,6 @@ TEST(ReanchorRamp, Settles_08m_flip_in_about_18s)
 }
 
 static_assert(rr::kReanchorSlewTransMps == 0.045,
-              "kReanchorSlewTransMps changed -- update the plan spec before tuning");
+              "kReanchorSlewTransMps changed -- revisit the ramp-duration tests with it");
 static_assert(rr::kReanchorSlewRotRadps == 0.0785,
-              "kReanchorSlewRotRadps changed -- update the plan spec before tuning");
+              "kReanchorSlewRotRadps changed -- revisit the ramp-duration tests with it");

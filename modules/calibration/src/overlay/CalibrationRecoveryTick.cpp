@@ -1139,9 +1139,9 @@ bool LastAutoRecoveryActive(double& outAge, double& outDeltaMeters)
 	if (s.lastAutoRecoverTime <= -1e8) return false;
 	const double now = glfwGetTime();
 	const double age = now - s.lastAutoRecoverTime;
-	// 60 s sticky window matches the audit suggestion. After that the
-	// banner self-dismisses; the snapshot itself stays valid in case some
-	// other path wants to expose Undo (currently nothing does).
+	// The banner sticks for 60 s, then self-dismisses; the snapshot
+	// itself stays valid in case some other path wants to expose Undo
+	// (currently nothing does).
 	if (age > 60.0) return false;
 	outAge = age;
 	outDeltaMeters = s.lastFireDelta.norm();
@@ -1236,8 +1236,8 @@ size_t EvictDeadFrameSamples(CalibrationContext& ctx, const char* reason)
 // `userFacingMessage` is appended to CalCtx.messages AFTER the restart
 // (StartContinuousCalibration internally clears the buffer, so it must be
 // last). Pass nullptr to suppress the user-facing log if the trigger is
-// ambient/silent (e.g. a runtime wedge clear that shouldn't surface UI text
-// per the 2026-05-04 "user notices nothing" directive). The metrics
+// ambient/silent (e.g. a runtime wedge clear that should finish without the
+// user noticing anything, so no UI text). The metrics
 // annotation is the caller's responsibility -- this helper deliberately
 // doesn't write one so each caller's grep key can differ.
 void ArmReanchorToProfile(CalibrationContext& ctx, bool frameMoved)

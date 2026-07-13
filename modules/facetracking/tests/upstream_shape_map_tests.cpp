@@ -169,8 +169,8 @@ TEST(UpstreamShapeMap, SemanticAliasMouthFrownToMouthSad)
 TEST(UpstreamShapeMap, NasalAndJawBackwardAreDropped)
 {
 	// Upstream slots without an ours equivalent must remain dropped
-	// (table entry -1). Picking shapes the audit memo called out
-	// explicitly: nasal dilation/constriction, jaw backward, mouth
+	// (table entry -1). Spot-checks the easiest ones to regress by
+	// accident: nasal dilation/constriction, jaw backward, mouth
 	// corner-slant.
 	EXPECT_EQ(kUpstreamToOurs[12], -1); // NasalDilationRight
 	EXPECT_EQ(kUpstreamToOurs[13], -1); // NasalDilationLeft

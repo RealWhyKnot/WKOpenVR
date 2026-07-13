@@ -70,9 +70,9 @@ void CCal_BasicInfo()
 {
 	ImVec2 panelSize{ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0};
 
-	// (Tip moved to global footer; mismatch banner moved below the Actions
-	// panel per the user request -- placement preserves visibility but stops
-	// pushing the device readout off-screen on small windows.)
+	// (The tip lives in the global footer, and the mismatch banner sits
+	// below the Actions panel -- both stay visible without pushing the
+	// device readout off-screen on small windows.)
 
 	// --- Devices panel -----------------------------------------------------
 	// The same reference + target table as before, but wrapped in a group

@@ -1,5 +1,5 @@
 // Tests for the head-mount tracker pose-sampling helpers in
-// HeadMountPoseSampling.h. Verifies the four contracts the plan requires:
+// HeadMountPoseSampling.h. Verifies four contracts:
 //
 // _USE_MATH_DEFINES must appear before any math header on MSVC to get M_PI.
 #ifndef _USE_MATH_DEFINES

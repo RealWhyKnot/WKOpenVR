@@ -4,9 +4,9 @@
 // code actually performs (per a grep of `state = CalibrationState::` sites)
 // and rejects every plausibly-illegal transition.
 //
-// Per the audit's "transparent gaps" section: the runtime CalibrationTick
-// state machine wasn't covered by tests, which is how 9d0ba0b's HMD-stall
-// state demote shipped silently. This file closes that gap for the state-
+// The runtime CalibrationTick state machine used to have no test coverage,
+// which is how 9d0ba0b's HMD-stall state demote shipped silently. This
+// file closes that gap for the state-
 // machine-shape part of the problem; the wedge guard + StallDecisions cover
 // the value-of-state-fields part.
 

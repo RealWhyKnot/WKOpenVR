@@ -39,8 +39,8 @@ void Shutdown();
 // skeletal subsystem already taps. Stage 1B will replace the body with the
 // MinHook installs on slots for UpdateBooleanComponent / UpdateScalarComponent
 // (slot indices to be confirmed against headers/openvr_driver.h at the time;
-// the public IVRDriverInput_003 layout has them at slots 1 and 3 but that is
-// not load-bearing on this commit).
+// the public IVRDriverInput_003 layout has them at slots 1 and 3, but
+// nothing here depends on the exact indices yet).
 void TryInstallScalarBooleanHooks(void* iface);
 
 } // namespace inputhealth
