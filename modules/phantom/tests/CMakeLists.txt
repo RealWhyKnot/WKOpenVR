@@ -31,6 +31,7 @@ add_executable(phantom_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tracker_model_catalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_inference_shmem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_passive_role_inference.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_pose_space.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_snap_calibrate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_role_arbiter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_phantom_replay_budget.cpp

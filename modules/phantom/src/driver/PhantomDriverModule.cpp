@@ -20,6 +20,7 @@
 #include "PhantomReplayRecorder.h"
 #include "PassiveRoleInference.h"
 #include "PoseHistory.h"
+#include "PoseSpace.h"
 #include "RoleArbiter.h"
 #include "RoleCatalog.h"
 #include "SnapCalibrate.h"
@@ -163,6 +164,12 @@ vr::DriverPose_t PoseFromBodyCompletion(const vr::DriverPose_t& base, const Body
 	out.poseIsValid = true;
 	out.deviceIsConnected = true;
 	out.shouldApplyHeadModel = false;
+	// base is the HMD pose; its head-model offset must not ride along on a
+	// synthesized tracker.
+	out.qDriverFromHeadRotation = {1.0, 0.0, 0.0, 0.0};
+	out.vecDriverFromHeadTranslation[0] = 0.0;
+	out.vecDriverFromHeadTranslation[1] = 0.0;
+	out.vecDriverFromHeadTranslation[2] = 0.0;
 	out.result = vr::TrackingResult_Running_OK;
 	return out;
 }
@@ -1117,7 +1124,7 @@ void PhantomModule::RecordQuashedPose(uint32_t openVRID, int64_t qpc_ns, const v
 	DeviceSlot& s = slots_[openVRID];
 	ResolveSerialIfMissing(openVRID, s);
 	replay_recorder_.RecordPose(qpc_ns, qpc_freq_, openVRID, s.serial, s.device_class, s.controller_role, s.role,
-	                            s.opted_in, pose);
+	                            s.opted_in, ToWorldSpacePose(pose));
 }
 
 void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const vr::DriverPose_t& pose)
@@ -1126,28 +1133,33 @@ void PhantomModule::OnRealPoseObserved(uint32_t openVRID, int64_t qpc_ns, const 
 	last_pose_qpc_ = qpc_ns; // freshest hot-path tick; "now" for liveness checks
 	DeviceSlot& s = slots_[openVRID];
 	ResolveSerialIfMissing(openVRID, s);
-	const bool tracked_ok = PoseIsTrackedOk(pose);
+	// Fold worldFromDriver in up front: every cross-device comparison below
+	// (HMD-relative role inference, snap, the body solver) needs all devices
+	// in one space, and the space calibration for cross-driver devices lives
+	// entirely in the worldFromDriver fields.
+	const vr::DriverPose_t world = ToWorldSpacePose(pose);
+	const bool tracked_ok = PoseIsTrackedOk(world);
 	replay_recorder_.RecordPose(qpc_ns, qpc_freq_, openVRID, s.serial, s.device_class, s.controller_role, s.role,
-	                            s.opted_in, pose);
-	s.last_observed = pose;
+	                            s.opted_in, world);
+	s.last_observed = world;
 	s.last_observed_qpc = qpc_ns;
 	s.last_observed_valid = tracked_ok;
 	if (tracked_ok) {
-		s.history.Push(qpc_ns, pose);
+		s.history.Push(qpc_ns, world);
 	}
 	s.ladder.SetTimings(timings_);
 	s.ladder.SetIkAvailable(s.role != BodyRole::None);
-	s.ladder.OnRealPoseObserved(qpc_ns, s.history, pose);
-	if (s.is_hmd && pose.poseIsValid && pose.deviceIsConnected && pose.result == vr::TrackingResult_Running_OK) {
+	s.ladder.OnRealPoseObserved(qpc_ns, s.history, world);
+	if (s.is_hmd && tracked_ok) {
 		if (!first_hmd_diag_logged_) {
 			first_hmd_diag_logged_ = true;
 			LOG("[phantom][diag] first valid HMD pose id=%u pos=(%.3f,%.3f,%.3f) "
 			    "rot=(%.3f,%.3f,%.3f,%.3f) virtual=(enabled=%d active=%d dropout_master=%u)",
-			    (unsigned)openVRID, pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2], pose.qRotation.w,
-			    pose.qRotation.x, pose.qRotation.y, pose.qRotation.z, virtual_trackers_.EnabledCount(),
+			    (unsigned)openVRID, world.vecPosition[0], world.vecPosition[1], world.vecPosition[2], world.qRotation.w,
+			    world.qRotation.x, world.qRotation.y, world.qRotation.z, virtual_trackers_.EnabledCount(),
 			    virtual_trackers_.ActiveCount(), master_enabled_.load(std::memory_order_acquire) ? 1u : 0u);
 		}
-		last_hmd_pose_ = pose;
+		last_hmd_pose_ = world;
 		last_hmd_valid_ = true;
 		UpdateBodyCompletion(qpc_ns);
 		// Passive role inference runs on the HMD cadence (throttled to ~1 Hz
@@ -1197,9 +1209,18 @@ bool PhantomModule::MaybeOverridePose(uint32_t openVRID, int64_t qpc_ns, int64_t
 	}
 
 	if (!enabled) {
-		cachePublished(pose);
+		// Forward untouched, but cache in the folded world space the blend
+		// paths use, so enabling the master mid-session never blends a
+		// world-space synth against a raw driver-space start pose.
+		cachePublished(ToWorldSpacePose(pose));
 		return true;
 	}
+
+	// All synth sources (body completion, IK, dead reckoning) produce folded
+	// world-space poses; fold the live pose too so REAL passthrough, blends,
+	// and the published cache all share one space. The folded pose composes
+	// to the same final world pose SteamVR would have derived.
+	pose = ToWorldSpacePose(pose);
 
 	switch (s.ladder.state()) {
 		case TrackerState::REAL:

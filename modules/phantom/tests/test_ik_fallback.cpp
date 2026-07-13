@@ -72,6 +72,28 @@ TEST(IkFallbackTest, RotatedHmdRotatesOffset)
 	EXPECT_NEAR(out.vecPosition[2], 0.0, 1e-9);
 }
 
+// The solved pose starts as a copy of the HMD pose; the HMD's head-model
+// transform must not ride along on a synthesized tracker.
+TEST(IkFallbackTest, SolvedPoseHasIdentityDriverFromHead)
+{
+	phantom::IkFallback f;
+	const double off[3] = {0.0, -0.55, 0.0};
+	vr::HmdQuaternion_t I{1, 0, 0, 0};
+	f.SetOffset(phantom::BodyRole::Waist, off, I);
+
+	auto hmd = MakeHmdPose(0, 1.7, 0, I);
+	hmd.shouldApplyHeadModel = true;
+	hmd.qDriverFromHeadRotation = {0.9848, 0.0, 0.1736, 0.0};
+	hmd.vecDriverFromHeadTranslation[2] = -0.08;
+
+	vr::DriverPose_t out{};
+	ASSERT_TRUE(f.Solve(phantom::BodyRole::Waist, hmd, out));
+	EXPECT_FALSE(out.shouldApplyHeadModel);
+	EXPECT_NEAR(out.qDriverFromHeadRotation.w, 1.0, 1e-12);
+	EXPECT_NEAR(out.qDriverFromHeadRotation.y, 0.0, 1e-12);
+	EXPECT_NEAR(out.vecDriverFromHeadTranslation[2], 0.0, 1e-12);
+}
+
 TEST(IkFallbackTest, ClearOffsetRemoves)
 {
 	phantom::IkFallback f;

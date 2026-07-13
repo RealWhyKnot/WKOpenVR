@@ -120,6 +120,13 @@ bool IkFallback::Solve(BodyRole role, const vr::DriverPose_t& hmd_pose, vr::Driv
 	out_pose.poseTimeOffset = 0.0;
 	out_pose.poseIsValid = true;
 	out_pose.deviceIsConnected = true;
+	// out_pose started as a copy of the HMD pose; strip the HMD's head-model
+	// transform so it does not ride along on a synthesized tracker.
+	out_pose.shouldApplyHeadModel = false;
+	out_pose.qDriverFromHeadRotation = {1.0, 0.0, 0.0, 0.0};
+	out_pose.vecDriverFromHeadTranslation[0] = 0.0;
+	out_pose.vecDriverFromHeadTranslation[1] = 0.0;
+	out_pose.vecDriverFromHeadTranslation[2] = 0.0;
 	out_pose.result = vr::TrackingResult_Running_OK;
 	return true;
 }
