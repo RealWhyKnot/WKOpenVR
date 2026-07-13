@@ -13,10 +13,12 @@ TEST(DynamicResolutionProfile, ParsesSettingsAndRestoreState)
 	                      "min_scale_fraction=0.55\n"
 	                      "max_scale_fraction=1.40\n"
 	                      "step_fraction=0.07\n"
-	                      "lower_gpu_budget_fraction=0.83\n"
-	                      "gpu_safety_margin_fraction=0.91\n"
-	                      "over_budget_fraction=0.20\n"
-	                      "headroom_gpu_budget_fraction=0.68\n"
+	                      "gpu_harm_rate_fraction=0.025\n"
+	                      "raise_harm_rate_fraction=0.004\n"
+	                      "motion_rate_fraction=0.08\n"
+	                      "lower_target_fraction=0.88\n"
+	                      "raise_safety_fraction=0.87\n"
+	                      "burned_decay_ticks=60\n"
 	                      "raise_above_baseline_fraction=0.60\n"
 	                      "cpu_stall_fraction=1.20\n"
 	                      "lower_required_ticks=3\n"
@@ -37,10 +39,12 @@ TEST(DynamicResolutionProfile, ParsesSettingsAndRestoreState)
 	EXPECT_DOUBLE_EQ(profile.settings.minScaleFraction, 0.55);
 	EXPECT_DOUBLE_EQ(profile.settings.maxScaleFraction, 1.40);
 	EXPECT_DOUBLE_EQ(profile.settings.stepFraction, 0.07);
-	EXPECT_DOUBLE_EQ(profile.settings.lowerGpuBudgetFraction, 0.83);
-	EXPECT_DOUBLE_EQ(profile.settings.gpuSafetyMarginFraction, 0.91);
-	EXPECT_DOUBLE_EQ(profile.settings.overBudgetFraction, 0.20);
-	EXPECT_DOUBLE_EQ(profile.settings.headroomGpuBudgetFraction, 0.68);
+	EXPECT_DOUBLE_EQ(profile.settings.gpuHarmRateFraction, 0.025);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseHarmRateFraction, 0.004);
+	EXPECT_DOUBLE_EQ(profile.settings.motionRateFraction, 0.08);
+	EXPECT_DOUBLE_EQ(profile.settings.lowerTargetFraction, 0.88);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseSafetyFraction, 0.87);
+	EXPECT_EQ(profile.settings.burnedDecayTicks, 60);
 	EXPECT_DOUBLE_EQ(profile.settings.raiseAboveBaselineFraction, 0.60);
 	EXPECT_DOUBLE_EQ(profile.settings.cpuStallFraction, 1.20);
 	EXPECT_EQ(profile.settings.lowerRequiredTicks, 3);
@@ -61,8 +65,12 @@ TEST(DynamicResolutionProfile, ClampsUnsafeValues)
 	std::istringstream in("min_scale_fraction=9.0\n"
 	                      "step_fraction=0.90\n"
 	                      "max_scale_fraction=9.0\n"
-	                      "gpu_safety_margin_fraction=9.0\n"
-	                      "over_budget_fraction=9.0\n"
+	                      "gpu_harm_rate_fraction=9.0\n"
+	                      "raise_harm_rate_fraction=9.0\n"
+	                      "motion_rate_fraction=9.0\n"
+	                      "lower_target_fraction=9.0\n"
+	                      "raise_safety_fraction=0.0\n"
+	                      "burned_decay_ticks=99999\n"
 	                      "cpu_stall_fraction=9.0\n"
 	                      "raise_above_baseline_ticks=999\n"
 	                      "quality_preset=99\n"
@@ -75,8 +83,12 @@ TEST(DynamicResolutionProfile, ClampsUnsafeValues)
 	EXPECT_DOUBLE_EQ(profile.settings.minScaleFraction, 1.5);
 	EXPECT_DOUBLE_EQ(profile.settings.stepFraction, 0.25);
 	EXPECT_DOUBLE_EQ(profile.settings.maxScaleFraction, 2.0);
-	EXPECT_DOUBLE_EQ(profile.settings.gpuSafetyMarginFraction, 1.0);
-	EXPECT_DOUBLE_EQ(profile.settings.overBudgetFraction, 1.0);
+	EXPECT_DOUBLE_EQ(profile.settings.gpuHarmRateFraction, 0.20);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseHarmRateFraction, 0.05);
+	EXPECT_DOUBLE_EQ(profile.settings.motionRateFraction, 1.0);
+	EXPECT_DOUBLE_EQ(profile.settings.lowerTargetFraction, 0.98);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseSafetyFraction, 0.70);
+	EXPECT_EQ(profile.settings.burnedDecayTicks, 600);
 	EXPECT_DOUBLE_EQ(profile.settings.cpuStallFraction, 2.0);
 	EXPECT_EQ(profile.settings.raiseAboveBaselineTicks, 60);
 	EXPECT_EQ(profile.settings.qualityPreset, dynamicres::QualityPreset::Custom);
@@ -92,10 +104,12 @@ TEST(DynamicResolutionProfile, RoundTripsKeyValueState)
 	profile.settings.minScaleFraction = 0.64;
 	profile.settings.maxScaleFraction = 1.35;
 	profile.settings.stepFraction = 0.04;
-	profile.settings.lowerGpuBudgetFraction = 0.84;
-	profile.settings.gpuSafetyMarginFraction = 0.92;
-	profile.settings.overBudgetFraction = 0.18;
-	profile.settings.headroomGpuBudgetFraction = 0.66;
+	profile.settings.gpuHarmRateFraction = 0.021;
+	profile.settings.raiseHarmRateFraction = 0.003;
+	profile.settings.motionRateFraction = 0.07;
+	profile.settings.lowerTargetFraction = 0.89;
+	profile.settings.raiseSafetyFraction = 0.86;
+	profile.settings.burnedDecayTicks = 45;
 	profile.settings.raiseAboveBaselineFraction = 0.62;
 	profile.settings.cpuStallFraction = 1.10;
 	profile.settings.lowerRequiredTicks = 3;
@@ -119,10 +133,12 @@ TEST(DynamicResolutionProfile, RoundTripsKeyValueState)
 	EXPECT_DOUBLE_EQ(parsed.settings.minScaleFraction, profile.settings.minScaleFraction);
 	EXPECT_DOUBLE_EQ(parsed.settings.maxScaleFraction, profile.settings.maxScaleFraction);
 	EXPECT_DOUBLE_EQ(parsed.settings.stepFraction, profile.settings.stepFraction);
-	EXPECT_DOUBLE_EQ(parsed.settings.lowerGpuBudgetFraction, profile.settings.lowerGpuBudgetFraction);
-	EXPECT_DOUBLE_EQ(parsed.settings.gpuSafetyMarginFraction, profile.settings.gpuSafetyMarginFraction);
-	EXPECT_DOUBLE_EQ(parsed.settings.overBudgetFraction, profile.settings.overBudgetFraction);
-	EXPECT_DOUBLE_EQ(parsed.settings.headroomGpuBudgetFraction, profile.settings.headroomGpuBudgetFraction);
+	EXPECT_DOUBLE_EQ(parsed.settings.gpuHarmRateFraction, profile.settings.gpuHarmRateFraction);
+	EXPECT_DOUBLE_EQ(parsed.settings.raiseHarmRateFraction, profile.settings.raiseHarmRateFraction);
+	EXPECT_DOUBLE_EQ(parsed.settings.motionRateFraction, profile.settings.motionRateFraction);
+	EXPECT_DOUBLE_EQ(parsed.settings.lowerTargetFraction, profile.settings.lowerTargetFraction);
+	EXPECT_DOUBLE_EQ(parsed.settings.raiseSafetyFraction, profile.settings.raiseSafetyFraction);
+	EXPECT_EQ(parsed.settings.burnedDecayTicks, profile.settings.burnedDecayTicks);
 	EXPECT_DOUBLE_EQ(parsed.settings.raiseAboveBaselineFraction, profile.settings.raiseAboveBaselineFraction);
 	EXPECT_DOUBLE_EQ(parsed.settings.cpuStallFraction, profile.settings.cpuStallFraction);
 	EXPECT_EQ(parsed.settings.lowerRequiredTicks, profile.settings.lowerRequiredTicks);
@@ -138,11 +154,15 @@ TEST(DynamicResolutionProfile, RoundTripsKeyValueState)
 	EXPECT_DOUBLE_EQ(parsed.restore.lastWrittenScale, profile.restore.lastWrittenScale);
 }
 
-TEST(DynamicResolutionProfile, IgnoresLegacyStreamingKeys)
+TEST(DynamicResolutionProfile, IgnoresLegacyKeys)
 {
 	std::istringstream in("streaming_min_scale_fraction=0.82\n"
 	                      "act_under_streaming=1\n"
 	                      "conservative_streaming=0\n"
+	                      "lower_gpu_budget_fraction=0.83\n"
+	                      "gpu_safety_margin_fraction=0.91\n"
+	                      "over_budget_fraction=0.20\n"
+	                      "headroom_gpu_budget_fraction=0.68\n"
 	                      "min_scale_fraction=0.66\n"
 	                      "step_fraction=0.12\n");
 
@@ -157,4 +177,59 @@ TEST(DynamicResolutionProfile, IgnoresLegacyStreamingKeys)
 	EXPECT_EQ(body.find("streaming_min_scale_fraction"), std::string::npos);
 	EXPECT_EQ(body.find("act_under_streaming"), std::string::npos);
 	EXPECT_EQ(body.find("conservative_streaming"), std::string::npos);
+	EXPECT_EQ(body.find("lower_gpu_budget_fraction"), std::string::npos);
+	EXPECT_EQ(body.find("gpu_safety_margin_fraction"), std::string::npos);
+	EXPECT_EQ(body.find("over_budget_fraction"), std::string::npos);
+	EXPECT_EQ(body.find("headroom_gpu_budget_fraction"), std::string::npos);
+}
+
+TEST(DynamicResolutionProfile, CustomProfileMigration)
+{
+	// A field profile saved by the previous build: Custom preset with hand-tuned knobs plus the
+	// four retired metric keys. The kept knobs must load unchanged and the retired keys must
+	// vanish silently, leaving the new metric knobs at their defaults.
+	std::istringstream in("quality_preset=4\n"
+	                      "min_scale_fraction=0.8\n"
+	                      "max_scale_fraction=1.5\n"
+	                      "step_fraction=0.25\n"
+	                      "lower_gpu_budget_fraction=0.93\n"
+	                      "gpu_safety_margin_fraction=0.95\n"
+	                      "over_budget_fraction=0.15\n"
+	                      "headroom_gpu_budget_fraction=0.85\n"
+	                      "raise_above_baseline_fraction=0.85\n"
+	                      "cpu_stall_fraction=1.05\n"
+	                      "lower_required_ticks=10\n"
+	                      "raise_required_ticks=4\n"
+	                      "raise_above_baseline_ticks=4\n"
+	                      "allow_raise_back=1\n"
+	                      "release_on_cpu_bound=1\n"
+	                      "cpu_release_ticks=4\n"
+	                      "restore_pending=0\n"
+	                      "baseline_scale=1\n"
+	                      "baseline_manual_override=0\n"
+	                      "active_scene_pid=0\n"
+	                      "last_written_scale=0\n");
+
+	const auto profile = dynamicres::ParseDynamicResolutionProfile(in);
+	const dynamicres::DynamicResolutionSettings defaults;
+
+	EXPECT_EQ(profile.settings.qualityPreset, dynamicres::QualityPreset::Custom);
+	EXPECT_DOUBLE_EQ(profile.settings.minScaleFraction, 0.8);
+	EXPECT_DOUBLE_EQ(profile.settings.stepFraction, 0.25);
+	EXPECT_EQ(profile.settings.lowerRequiredTicks, 10);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseAboveBaselineFraction, 0.85);
+	EXPECT_EQ(profile.settings.raiseAboveBaselineTicks, 4);
+	EXPECT_DOUBLE_EQ(profile.settings.gpuHarmRateFraction, defaults.gpuHarmRateFraction);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseHarmRateFraction, defaults.raiseHarmRateFraction);
+	EXPECT_DOUBLE_EQ(profile.settings.motionRateFraction, defaults.motionRateFraction);
+	EXPECT_DOUBLE_EQ(profile.settings.lowerTargetFraction, defaults.lowerTargetFraction);
+	EXPECT_DOUBLE_EQ(profile.settings.raiseSafetyFraction, defaults.raiseSafetyFraction);
+	EXPECT_EQ(profile.settings.burnedDecayTicks, defaults.burnedDecayTicks);
+
+	std::ostringstream out;
+	dynamicres::WriteDynamicResolutionProfile(profile, out);
+	const std::string body = out.str();
+	EXPECT_NE(body.find("gpu_harm_rate_fraction"), std::string::npos);
+	EXPECT_EQ(body.find("lower_gpu_budget_fraction"), std::string::npos);
+	EXPECT_EQ(body.find("headroom_gpu_budget_fraction"), std::string::npos);
 }

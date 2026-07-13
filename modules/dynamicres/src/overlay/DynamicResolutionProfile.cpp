@@ -122,18 +122,24 @@ DynamicResolutionProfile ParseDynamicResolutionProfile(std::istream& in)
 		else if (key == "max_scale_fraction")
 			profile.settings.maxScaleFraction =
 			    std::clamp(ParseDouble(value, profile.settings.maxScaleFraction), 1.0, 2.0);
-		else if (key == "lower_gpu_budget_fraction")
-			profile.settings.lowerGpuBudgetFraction =
-			    std::clamp(ParseDouble(value, profile.settings.lowerGpuBudgetFraction), 0.50, 1.00);
-		else if (key == "gpu_safety_margin_fraction")
-			profile.settings.gpuSafetyMarginFraction =
-			    std::clamp(ParseDouble(value, profile.settings.gpuSafetyMarginFraction), 0.50, 1.00);
-		else if (key == "over_budget_fraction")
-			profile.settings.overBudgetFraction =
-			    std::clamp(ParseDouble(value, profile.settings.overBudgetFraction), 0.0, 1.0);
-		else if (key == "headroom_gpu_budget_fraction")
-			profile.settings.headroomGpuBudgetFraction =
-			    std::clamp(ParseDouble(value, profile.settings.headroomGpuBudgetFraction), 0.30, 0.95);
+		else if (key == "gpu_harm_rate_fraction")
+			profile.settings.gpuHarmRateFraction =
+			    std::clamp(ParseDouble(value, profile.settings.gpuHarmRateFraction), 0.001, 0.20);
+		else if (key == "raise_harm_rate_fraction")
+			profile.settings.raiseHarmRateFraction =
+			    std::clamp(ParseDouble(value, profile.settings.raiseHarmRateFraction), 0.0, 0.05);
+		else if (key == "motion_rate_fraction")
+			profile.settings.motionRateFraction =
+			    std::clamp(ParseDouble(value, profile.settings.motionRateFraction), 0.0, 1.0);
+		else if (key == "lower_target_fraction")
+			profile.settings.lowerTargetFraction =
+			    std::clamp(ParseDouble(value, profile.settings.lowerTargetFraction), 0.70, 0.98);
+		else if (key == "raise_safety_fraction")
+			profile.settings.raiseSafetyFraction =
+			    std::clamp(ParseDouble(value, profile.settings.raiseSafetyFraction), 0.70, 0.98);
+		else if (key == "burned_decay_ticks")
+			profile.settings.burnedDecayTicks =
+			    std::clamp(ParseInt(value, profile.settings.burnedDecayTicks), 10, 600);
 		else if (key == "raise_above_baseline_fraction")
 			profile.settings.raiseAboveBaselineFraction =
 			    std::clamp(ParseDouble(value, profile.settings.raiseAboveBaselineFraction), 0.30, 0.95);
@@ -179,10 +185,12 @@ void WriteDynamicResolutionProfile(const DynamicResolutionProfile& profile, std:
 	WritePair(out, "min_scale_fraction", profile.settings.minScaleFraction);
 	WritePair(out, "max_scale_fraction", profile.settings.maxScaleFraction);
 	WritePair(out, "step_fraction", profile.settings.stepFraction);
-	WritePair(out, "lower_gpu_budget_fraction", profile.settings.lowerGpuBudgetFraction);
-	WritePair(out, "gpu_safety_margin_fraction", profile.settings.gpuSafetyMarginFraction);
-	WritePair(out, "over_budget_fraction", profile.settings.overBudgetFraction);
-	WritePair(out, "headroom_gpu_budget_fraction", profile.settings.headroomGpuBudgetFraction);
+	WritePair(out, "gpu_harm_rate_fraction", profile.settings.gpuHarmRateFraction);
+	WritePair(out, "raise_harm_rate_fraction", profile.settings.raiseHarmRateFraction);
+	WritePair(out, "motion_rate_fraction", profile.settings.motionRateFraction);
+	WritePair(out, "lower_target_fraction", profile.settings.lowerTargetFraction);
+	WritePair(out, "raise_safety_fraction", profile.settings.raiseSafetyFraction);
+	WritePair(out, "burned_decay_ticks", profile.settings.burnedDecayTicks);
 	WritePair(out, "raise_above_baseline_fraction", profile.settings.raiseAboveBaselineFraction);
 	WritePair(out, "cpu_stall_fraction", profile.settings.cpuStallFraction);
 	WritePair(out, "lower_required_ticks", profile.settings.lowerRequiredTicks);

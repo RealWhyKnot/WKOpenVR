@@ -44,6 +44,7 @@ private:
 	bool WriteSteamVrScale(double scale);
 	bool WriteSteamVrManualOverride(bool value);
 	bool CollectTiming(DynamicResolutionTiming& outTiming);
+	void LogRenderTargetSize(double scale);
 	void RefreshMotionSmoothingState();
 	double ReadFrameBudgetMs();
 	SceneState ReadSceneState() const;
@@ -58,6 +59,8 @@ private:
 	DynamicResolutionClassification lastClassification_;
 	std::chrono::steady_clock::time_point nextTick_{};
 	uint32_t lastFrameIndex_ = 0;
+	uint32_t lastRtWidth_ = 0;
+	uint32_t lastRtHeight_ = 0;
 	bool haveLastFrameIndex_ = false;
 	bool externalOverride_ = false;
 	bool disabledForScene_ = false;
@@ -73,6 +76,7 @@ private:
 	std::string lastAction_ = "None";
 	std::string lastReason_ = "Waiting";
 	std::string lastError_;
+	std::string lastWithheldKey_;
 };
 
 } // namespace wkopenvr::dynamicres
