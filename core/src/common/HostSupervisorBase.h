@@ -43,6 +43,63 @@ inline bool ShouldUnhaltForNewHostExe(bool attachedToExisting, uint64_t baseline
 	return diskWrite != baselineWrite;
 }
 
+// Respawn tuning shared by the supervisor and the exit-decision helper below.
+inline constexpr int kFastExitThresholdMs = 2000;
+inline constexpr int kCircuitBreakerThreshold = 5;
+inline constexpr int kBackoffStartMs = 1000;
+inline constexpr int kBackoffMaxMs = 30000;
+inline constexpr int kSingletonRetryDelayMs = 500;
+
+// Exit codes 3/4 mean the host found another live instance holding the
+// per-user singleton mutex and exited on purpose -- a clean duplicate exit,
+// not a host failure.
+inline bool IsCleanSingletonExit(DWORD code)
+{
+	return code == 3 || code == 4;
+}
+
+// What the monitor should do after the tracked host handle signals. Pure so
+// the decision can be unit-tested without a live process; the supervisor
+// supplies generationMatches from its spawn-generation counter.
+struct HostExitAction
+{
+	// The process the monitor waited on was already replaced or reaped by a
+	// concurrent Restart()/Kill(); the tracked handle may belong to a live
+	// replacement host. Touch nothing, count nothing, keep monitoring.
+	bool ignore = false;
+	// Fast-exit counter value after accounting for this exit.
+	int consecutiveFastExits = 0;
+	// Circuit breaker tripped: halt respawns.
+	bool halt = false;
+	// Delay before the next spawn attempt. Unused when ignore/halt is set.
+	int respawnDelayMs = 0;
+};
+
+inline HostExitAction DecideHostExitAction(bool generationMatches, DWORD exitCode, long long uptimeMs,
+                                           int consecutiveFastExitsBefore, int backoffMs)
+{
+	HostExitAction action;
+	action.consecutiveFastExits = consecutiveFastExitsBefore;
+	if (!generationMatches) {
+		action.ignore = true;
+		return action;
+	}
+	if (IsCleanSingletonExit(exitCode)) {
+		// Another instance holds the singleton mutex. Respawning immediately
+		// just burns process spawns while that instance finishes starting up
+		// (its control pipe can trail the mutex by seconds); pace the retry.
+		action.respawnDelayMs = kSingletonRetryDelayMs;
+		return action;
+	}
+	action.consecutiveFastExits = (uptimeMs < kFastExitThresholdMs) ? consecutiveFastExitsBefore + 1 : 0;
+	if (action.consecutiveFastExits >= kCircuitBreakerThreshold) {
+		action.halt = true;
+		return action;
+	}
+	action.respawnDelayMs = backoffMs;
+	return action;
+}
+
 // Shared base for the C++ supervisors that spawn and manage feature-host
 // sidecar processes -- currently the facetracking C# host and the captions
 // C++ host.
@@ -162,8 +219,6 @@ protected:
 	bool IsStopRequested() const { return stop_requested_.load(std::memory_order_acquire); }
 
 private:
-	static bool IsCleanSingletonExit(DWORD code);
-
 	bool Spawn();
 	void Kill();
 	void MonitorLoop();
@@ -186,6 +241,10 @@ private:
 	// all accesses must hold process_mutex_.
 	mutable std::mutex process_mutex_;
 	HANDLE process_handle_ = INVALID_HANDLE_VALUE;
+	// Bumped whenever process_handle_ changes (spawn, reap, kill) so the
+	// monitor can tell whether the handle it waited on is still the tracked
+	// one; a raw handle-value compare could alias after handle reuse.
+	uint64_t spawn_generation_ = 0; // process_mutex_
 	HANDLE job_handle_ = nullptr;
 	bool attached_to_existing_ = false;
 	int consecutive_fast_exits_ = 0;
@@ -197,11 +256,6 @@ private:
 	std::thread monitor_thread_;
 	mutable std::mutex owner_lease_mutex_;
 	std::unique_ptr<sidecar_owner::LeaseOwner> owner_lease_;
-
-	static constexpr int kFastExitThresholdMs = 2000;
-	static constexpr int kCircuitBreakerThreshold = 5;
-	static constexpr int kBackoffStartMs = 1000;
-	static constexpr int kBackoffMaxMs = 30000;
 };
 
 } // namespace openvr_pair::common

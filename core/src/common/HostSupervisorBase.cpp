@@ -356,11 +356,6 @@ bool HostSupervisorBase::SendBytesOverControlPipe(const void* data, size_t len)
 	return ok && written == static_cast<DWORD>(len);
 }
 
-bool HostSupervisorBase::IsCleanSingletonExit(DWORD code)
-{
-	return code == 3 || code == 4;
-}
-
 uint64_t HostSupervisorBase::QueryExeWriteTime() const
 {
 	std::wstring w = WidenUtf8(host_exe_path_);
@@ -437,6 +432,7 @@ bool HostSupervisorBase::Spawn()
 				else {
 					CloseHandle(pi.hThread);
 					process_handle_ = pi.hProcess;
+					++spawn_generation_;
 					attached_to_existing_ = false;
 					running_.store(true, std::memory_order_release);
 
@@ -507,6 +503,7 @@ void HostSupervisorBase::Kill()
 	}
 	CloseHandle(process_handle_);
 	process_handle_ = INVALID_HANDLE_VALUE;
+	++spawn_generation_;
 	attached_to_existing_ = false;
 	running_.store(false, std::memory_order_release);
 }
@@ -530,14 +527,27 @@ void HostSupervisorBase::MonitorLoop()
 		return stop_requested_.load(std::memory_order_acquire);
 	};
 
+	// Time when the currently tracked spawn generation was first observed --
+	// the uptime baseline for fast-exit classification. A per-iteration
+	// timestamp would misclassify every long-lived host's eventual exit as
+	// fast, because the wait below is re-armed each tick.
+	uint64_t tracked_generation = ~0ull;
+	auto tracked_since = std::chrono::steady_clock::now();
+
 	while (!stop_requested_.load(std::memory_order_acquire)) {
 		HeartbeatOwnerLease();
 		HANDLE cur_handle = INVALID_HANDLE_VALUE;
+		uint64_t cur_generation = 0;
 		bool is_halted = false;
 		{
 			std::lock_guard<std::mutex> lk(process_mutex_);
 			cur_handle = process_handle_;
+			cur_generation = spawn_generation_;
 			is_halted = halted_;
+		}
+		if (cur_generation != tracked_generation) {
+			tracked_generation = cur_generation;
+			tracked_since = std::chrono::steady_clock::now();
 		}
 
 		if (is_halted) {
@@ -605,8 +615,6 @@ void HostSupervisorBase::MonitorLoop()
 			continue;
 		}
 
-		auto spawn_time = std::chrono::steady_clock::now();
-
 		OnHostReady();
 
 		DWORD wait = WaitForSingleObject(cur_handle, static_cast<DWORD>(backoff_ms > 1000 ? backoff_ms : 1000));
@@ -615,29 +623,51 @@ void HostSupervisorBase::MonitorLoop()
 
 		if (wait == WAIT_OBJECT_0) {
 			DWORD code = 0;
+			bool generation_matches = false;
 			bool handle_was_valid = false;
+			long long uptime_ms = 0;
+			HostExitAction action;
 			{
 				std::lock_guard<std::mutex> lk(process_mutex_);
-				if (process_handle_ != INVALID_HANDLE_VALUE) {
+				generation_matches = spawn_generation_ == cur_generation;
+				if (generation_matches && process_handle_ != INVALID_HANDLE_VALUE) {
 					GetExitCodeProcess(process_handle_, &code);
 					if (const auto perfId = PerfModuleId()) {
 						moduleperf::Registry::Instance().UnregisterChildProcess(*perfId, GetProcessId(process_handle_));
 					}
 					CloseHandle(process_handle_);
 					process_handle_ = INVALID_HANDLE_VALUE;
+					++spawn_generation_;
 					handle_was_valid = true;
+					uptime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+					                                                                  tracked_since)
+					                .count();
+					// Counter and halt update in the same critical section as
+					// the reap so a concurrent Restart() cannot interleave a
+					// reset between them.
+					action = DecideHostExitAction(true, code, uptime_ms, consecutive_fast_exits_, backoff_ms);
+					consecutive_fast_exits_ = action.consecutiveFastExits;
+					if (action.halt) halted_ = true;
 				}
 			}
+			if (!generation_matches) {
+				// Restart()/Kill() already reaped the process this wait fired
+				// for, and process_handle_ may now track a live replacement
+				// host. Reaping that one would misread it as exited
+				// (GetExitCodeProcess reports STILL_ACTIVE), abandon it
+				// mid-startup, and then respawn in a loop against the
+				// singleton mutex it still holds.
+				Log("[host-supervisor] tracked host changed during wait; ignoring stale exit");
+				continue;
+			}
 			if (!handle_was_valid) {
-				// Kill() beat us to it; just reset running state and loop.
+				// Defensive: the handle cannot go invalid without a generation
+				// bump, so this should be unreachable. Reset state and loop.
 				running_.store(false, std::memory_order_release);
 				continue;
 			}
 			running_.store(false, std::memory_order_release);
 			OnHostExited();
-
-			auto now = std::chrono::steady_clock::now();
-			long long uptime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - spawn_time).count();
 
 			std::string description = DescribeExitCode(code);
 			if (description.empty()) {
@@ -656,28 +686,16 @@ void HostSupervisorBase::MonitorLoop()
 				last_exit_description_ = description;
 			}
 
-			bool should_halt = false;
-			if (!IsCleanSingletonExit(code)) {
-				std::lock_guard<std::mutex> lk(process_mutex_);
-				if (uptime_ms < kFastExitThresholdMs) {
-					consecutive_fast_exits_++;
-					Log("[host-supervisor] fast exit count: %d/%d", consecutive_fast_exits_, kCircuitBreakerThreshold);
-				}
-				else {
-					consecutive_fast_exits_ = 0;
-				}
-				if (consecutive_fast_exits_ >= kCircuitBreakerThreshold) {
-					halted_ = true;
-					should_halt = true;
-				}
-			}
-			else {
+			if (IsCleanSingletonExit(code)) {
 				Log("[host-supervisor] clean singleton exit (code=%lu); "
 				    "skipping fast-exit counter",
 				    static_cast<unsigned long>(code));
 			}
+			else if (action.consecutiveFastExits > 0) {
+				Log("[host-supervisor] fast exit count: %d/%d", action.consecutiveFastExits, kCircuitBreakerThreshold);
+			}
 
-			if (should_halt) {
+			if (action.halt) {
 				if (description.empty()) {
 					Log("[host-supervisor] CIRCUIT BREAKER: %d consecutive fast "
 					    "exits, halting respawn. Last exit code: 0x%08lx",
@@ -691,12 +709,11 @@ void HostSupervisorBase::MonitorLoop()
 				continue;
 			}
 
-			int delay_ms = IsCleanSingletonExit(code) ? 0 : backoff_ms;
-			if (delay_ms > 0) {
+			if (action.respawnDelayMs > 0) {
 				Log("[host-supervisor] process exited (code=%lu); "
 				    "restarting in %d ms",
-				    static_cast<unsigned long>(code), delay_ms);
-				if (sleep_or_stop(delay_ms)) break;
+				    static_cast<unsigned long>(code), action.respawnDelayMs);
+				if (sleep_or_stop(action.respawnDelayMs)) break;
 			}
 
 			if (stop_requested_.load(std::memory_order_acquire)) break;

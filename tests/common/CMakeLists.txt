@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(common_helpers_tests
 	test_devtuning.cpp
+	test_host_exit_action.cpp
 	test_host_hot_reload.cpp
 	test_powershell_command.cpp
 	test_recording_envelope.cpp
