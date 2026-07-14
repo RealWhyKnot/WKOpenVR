@@ -299,6 +299,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Require real bias evidence for warm-restart bias-failed (5124f27)
 - **phantom:** Compose world-from-driver calibration at pose intake (b487877)
 - **dynamicres:** Gate scaling on measured frame harm rates (39bcdfb)
+- **core:** Guard host supervisor against restart races and respawn thrash (88dba76)
 
 ---
 
