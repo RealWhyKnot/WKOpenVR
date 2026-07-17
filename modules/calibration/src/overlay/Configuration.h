@@ -26,7 +26,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out);
 #ifdef _WIN32
 // Strip the trailing null terminator from a RegGetValueA byte count for
 // REG_SZ. Returns 0 if reportedSize == 0 (regression guard against the
-// underflow bug fixed 2026-05-04). See Configuration.cpp::ReadRegistryKey
+// underflow bug fixed 2026-05-04). See ProfileRegistry.cpp::ReadRegistryKey
 // for the full failure mode.
 size_t StripRegistryNullTerminator(DWORD reportedSize);
 #endif

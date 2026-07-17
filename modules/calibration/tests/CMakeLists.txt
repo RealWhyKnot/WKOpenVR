@@ -84,7 +84,8 @@ add_executable(spacecal_tests
     ${SPACECAL_SRC}/overlay/MotionRecording.cpp
     ${SPACECAL_SRC}/overlay/HeadFromTrackerSolve.cpp
     ${SPACECAL_SRC}/overlay/HeadMountPreview.cpp
-    ${SPACECAL_SRC}/overlay/Configuration.cpp
+    ${SPACECAL_SRC}/overlay/ProfileJson.cpp
+    ${SPACECAL_SRC}/overlay/ProfileRegistry.cpp
     ${SPACECAL_SRC}/overlay/VRState.cpp
 )
 

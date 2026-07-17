@@ -17,19 +17,6 @@
 
 #include <Eigen/Dense>
 
-const char* HeadMountSampleSourceName(HeadMountSampleSource source)
-{
-	switch (source) {
-		case HeadMountSampleSource::PhysicalTracker:
-			return "physical_tracker";
-		case HeadMountSampleSource::HeadProxy:
-			return "head_proxy";
-		case HeadMountSampleSource::Unknown:
-		default:
-			return "unknown";
-	}
-}
-
 HeadMountSampleSource CurrentHeadMountSampleSource(const CalibrationContext& ctx)
 {
 	return spacecal::headmount::SelectHeadMountSampleSource(ctx.headMount.mode, ctx.headMount.offsetCalibrated);
