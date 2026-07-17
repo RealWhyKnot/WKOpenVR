@@ -154,6 +154,16 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Move apply sends and registry saves off the render thread (3fb461a)
 - **calibration:** Throttle steady-state log spam and stage-time slow ticks (9c89940)
 - **calibration:** Remove the disabled boundary and floor subsystem (2bd78aa)
+- **overlay:** Scope-guard the SHA-256 handle cleanup in the update download path (128f572)
+- Recover pipe instances via CONTAINING_RECORD and drop the dead watchdog counter (0f49a00)
+- **common:** Pin shared-memory layouts with static_asserts (99090d5)
+- **calibration:** Split CalibrationMetrics CSV schema from logfile machinery (36bd097)
+- **calibration:** Slice UserInterface tracking-style and device-selection panels (f10e131)
+- **calibration:** Split Configuration.cpp into ProfileJson and ProfileRegistry (76b0e5e)
+- **calibration:** Move head-mount shadow-offset machinery to CalibrationHeadMountShadow.cpp (5ceba45)
+- **calibration:** Extract liveness, motion, solve and accept blocks from CalibrationTick (f38a42f)
+- **calibration:** Extract detector, telemetry and stall blocks from CalibrationTick (28176c3)
+- **calibration:** Move tick watchdog helpers to CalibrationWatchdogs.cpp (eb17863)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -307,6 +317,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Bound the first continuous candidate snap at 50 cm (2f3b0d1)
 - **calibration:** Guard oversized persists and break sustained rejection churn (b630285)
 - **core:** Bound every overlay IPC operation with a deadline (90c4252)
+- **calibration:** Clarify mixed and/or grouping and drop a dead disjunct in ComputeIncremental (36d84f6)
 
 ---
 
