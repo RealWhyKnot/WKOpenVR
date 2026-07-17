@@ -153,6 +153,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Drop disabled boundary-capture bodies (ac7c42e)
 - **calibration:** Move apply sends and registry saves off the render thread (3fb461a)
 - **calibration:** Throttle steady-state log spam and stage-time slow ticks (9c89940)
+- **calibration:** Remove the disabled boundary and floor subsystem (2bd78aa)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
