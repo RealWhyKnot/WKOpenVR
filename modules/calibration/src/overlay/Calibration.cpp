@@ -3215,9 +3215,10 @@ void CalibrationTick(double time)
 			char firstBuf[360];
 			snprintf(firstBuf, sizeof firstBuf,
 			         "first_continuous_candidate_apply: snap=%d hasBaseline=%d"
-			         " jump_cm=%.2f solve_uncertainty_cm=%.2f start_valid=%d",
+			         " jump_cm=%.2f solve_uncertainty_cm=%.2f snap_cap_cm=%.0f start_valid=%d",
 			         (int)snapFirstContinuousCandidate, (int)hasContinuousStartBaseline, firstContinuousJumpCm,
-			         solveUncertaintyCm, (int)ctx.continuousStartSnapshot.validProfile);
+			         solveUncertaintyCm, spacecal::motiongate::kFirstContinuousSnapMaxCm,
+			         (int)ctx.continuousStartSnapshot.validProfile);
 			Metrics::WriteLogAnnotation(firstBuf);
 		}
 

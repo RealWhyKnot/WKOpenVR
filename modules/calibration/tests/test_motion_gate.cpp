@@ -93,10 +93,32 @@ TEST(AutoRecoverySnapTest, FirstMeaningfulContinuousCandidateSnaps)
 	                                               /*solveUncertaintyCm=*/12.5));
 	EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(true, false, true,
 	                                               /*jumpCm=*/50.0,
-	                                               /*solveUncertaintyCm=*/5.0));
-	EXPECT_TRUE(ShouldSnapFirstContinuousCandidate(true, false, true,
-	                                               /*jumpCm=*/500.0,
-	                                               /*solveUncertaintyCm=*/10.0));
+	                                               /*solveUncertaintyCm=*/5.0))
+	    << "The cap boundary is inclusive: a jump at exactly the cap still snaps";
+}
+
+TEST(AutoRecoverySnapTest, OversizedFirstContinuousCandidateBlendsInsteadOfSnapping)
+{
+	// A first candidate hundreds of centimetres from the loaded profile is
+	// more likely a bad opening solve than a real playspace move (real frame
+	// moves go through warm-restart, which validates before snapping). It
+	// must still apply -- but blended over the driver's lerp, never as a
+	// single-frame teleport. This reverses the earlier unbounded pin; the
+	// snap path used to run in every mode with no upper bound.
+	EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(
+	    /*continuous=*/true,
+	    /*hasAcceptedSnapshot=*/false,
+	    /*hasGuardBaseline=*/true,
+	    /*jumpCm=*/500.0,
+	    /*solveUncertaintyCm=*/10.0));
+	EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(true, false, true,
+	                                                /*jumpCm=*/50.01,
+	                                                /*solveUncertaintyCm=*/5.0))
+	    << "Just past the cap must blend";
+	EXPECT_FALSE(ShouldSnapFirstContinuousCandidate(true, false, true,
+	                                                /*jumpCm=*/30392.0,
+	                                                /*solveUncertaintyCm=*/10.0))
+	    << "The 2026-05-19 wedged-profile magnitude must never snap-apply";
 }
 
 TEST(AutoRecoverySnapTest, FirstContinuousCandidateDoesNotSnapForSmallOrUnclearDeltas)
@@ -145,6 +167,8 @@ static_assert(!ShouldBlendCycle(false, false, false), "non-continuous state must
 static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 3.0, 0.5),
               "first meaningful continuous correction must snap");
 static_assert(ShouldSnapFirstContinuousCandidate(true, false, true, 50.0, 5.0),
-              "first continuous corrections clearly above solve uncertainty must snap");
+              "first continuous corrections up to the cap (inclusive) must snap");
 static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 25.0, 30.0),
               "first continuous corrections below solve uncertainty must blend");
+static_assert(!ShouldSnapFirstContinuousCandidate(true, false, true, 500.0, 10.0),
+              "oversized first continuous corrections must blend, never teleport");

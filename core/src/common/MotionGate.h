@@ -16,6 +16,16 @@ namespace spacecal::motiongate {
 
 constexpr double kFirstContinuousSnapJumpCm = 3.0;
 
+// Upper bound on the first-candidate snap. Below this the jump is a normal
+// "calibration takes effect" correction and lands instantly; above it the
+// candidate is more likely a bad first solve (stale buffer, wrong target)
+// than a real playspace move, so it blends in over the driver's lerp
+// instead of teleporting the world. Real frame moves are handled by the
+// warm-restart path, which validates before snapping. 50 cm sits an order
+// of magnitude above per-solve noise while still letting genuine
+// setup-scale corrections land in one step.
+constexpr double kFirstContinuousSnapMaxCm = 50.0;
+
 // Returns false (i.e. SNAP -- driver assigns transform := target without
 // blending) in three cases:
 //   1. We're not in continuous state -- only continuous mode lerps; one-
@@ -36,12 +46,18 @@ constexpr bool ShouldBlendCycle(bool inContinuousState, bool isFreshlyAdopted, b
 // special handling: if it differs from the profile that was just loaded by
 // more than the solve's own noise floor, snap so the user sees the calibration
 // take effect immediately instead of waiting on a blend from stale state.
+// Bounded above by kFirstContinuousSnapMaxCm: an oversized first candidate
+// blends instead of snapping, so one bad opening solve cannot teleport the
+// applied calibration in a single frame. This bound holds in every mode --
+// the step-limiting locked-accept gate is an opt-in check, but the first
+// candidate lands before any of that machinery engages.
 constexpr bool ShouldSnapFirstContinuousCandidate(bool inContinuousState, bool hasAcceptedSnapshot,
                                                   bool hasGuardBaseline, double jumpCm, double solveUncertaintyCm)
 {
 	const double snapThresholdCm =
 	    solveUncertaintyCm > kFirstContinuousSnapJumpCm ? solveUncertaintyCm : kFirstContinuousSnapJumpCm;
-	return inContinuousState && !hasAcceptedSnapshot && hasGuardBaseline && jumpCm >= snapThresholdCm;
+	return inContinuousState && !hasAcceptedSnapshot && hasGuardBaseline && jumpCm >= snapThresholdCm &&
+	       jumpCm <= kFirstContinuousSnapMaxCm;
 }
 
 } // namespace spacecal::motiongate
