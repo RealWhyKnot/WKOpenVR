@@ -9,6 +9,7 @@
 #include "UserInterface.h"
 #include "UserInterfaceHeadMount.h"
 
+#include <GLFW/glfw3.h>
 #include <openvr.h>
 
 #include <chrono>
@@ -24,13 +25,6 @@ bool g_vrReady = false;
 std::string g_lastVRError;
 std::chrono::steady_clock::time_point g_lastRetry{};
 const auto g_retryPeriod = std::chrono::seconds(1);
-
-double SecondsSinceStart()
-{
-	static const auto start = std::chrono::steady_clock::now();
-	const auto now = std::chrono::steady_clock::now();
-	return std::chrono::duration<double>(now - start).count();
-}
 
 bool TryConnect()
 {
@@ -126,7 +120,10 @@ void CCal_UmbrellaTick()
 	}
 
 	if (g_vrReady) {
-		CalibrationTick(SecondsSinceStart());
+		// glfwGetTime() is the calibration module's clock: samples, the
+		// recovery tick, and tracker liveness already stamp with it. Passing
+		// the same epoch here keeps every deadline and stamp comparable.
+		CalibrationTick(glfwGetTime());
 
 		std::vector<openvr_pair::overlay::CalibrationDeviceLock> locks;
 		const bool continuous =

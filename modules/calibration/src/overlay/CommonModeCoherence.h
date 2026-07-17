@@ -14,7 +14,7 @@
 //
 // Lives next to the existing geometry-shift detector at
 // modules/calibration/src/overlay/Calibration.cpp's fire site. The fire
-// decision goes through the legacy / CUSUM path first as today; if it
+// decision goes through the sustained-spike path first as today; if it
 // votes to fire, the coherence check runs and can suppress the verdict
 // when the spike was global.
 
