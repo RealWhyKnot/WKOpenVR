@@ -1843,120 +1843,8 @@ static bool TickHmdStallGuard(CalibrationContext& ctx, double time)
 	return false;
 }
 
-void CalibrationTick(double time)
+static void TickHeadMountSolverFeed(CalibrationContext& ctx)
 {
-	if (!vr::VRSystem()) {
-		static double s_lastNoVrSystemLog = -1e9;
-		if (time - s_lastNoVrSystemLog >= 5.0) {
-			s_lastNoVrSystemLog = time;
-			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
-		}
-		return;
-	}
-
-	auto& ctx = CalCtx;
-
-	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
-	// the toggle stays responsive and the driver keeps getting heartbeats. While
-	// frozen, hold everything: skip the rest of the pose-reactive tick so the
-	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
-	// destructive auto-recovery, especially when the HMD is left live).
-	TickFreezeAllTracking(ctx, time);
-	if (ctx.freezeAllTracking) return;
-
-	if ((time - ctx.timeLastTick) < 0.05) return;
-
-	// Stage clock for the [cal-tick-slow] breakdown at the end of the tick.
-	LARGE_INTEGER tickWallStart;
-	QueryPerformanceCounter(&tickWallStart);
-	LARGE_INTEGER stageMark = tickWallStart;
-	g_tickGatesMs = g_tickDetectMs = g_tickSampleMs = 0.0;
-
-	// Resolve LockMode -> lockRelativePosition every tick before any code
-	// downstream reads the bool. The detector itself is updated in
-	// CollectSample further down; this just transcribes mode + detector
-	// state into the resolved field.
-	ctx.ResolveLockMode();
-
-	// Propagate the resolved lock bool to the CalibrationCalc instance the
-	// solver actually reads. Without this, calibration.lockRelativePosition
-	// only updates at StartContinuousCalibration time (once per cal cycle),
-	// so an AUTO Lock engagement that happens mid-cycle never reaches the
-	// ComputeIncremental relPose-constraint branch until the next restart.
-	// The geometry-shift fire annotation also reads this bool, which is why
-	// post-fix log readers will see lockRelativePosition=1 in fires after
-	// AUTO Lock engages (previously stuck at 0).
-	calibration.lockRelativePosition = ctx.lockRelativePosition;
-
-	TickWarmRestartDetection(ctx, time);
-
-	TraceRelPoseCalFlips(ctx);
-
-	TickPoseFreshnessWatchdog(ctx, time);
-
-	TickStuckCalWatchdog(ctx, time);
-
-	EmitCalHeartbeat(ctx, time);
-
-	EmitSessionConfigDumpOnce(ctx);
-
-	{
-		LARGE_INTEGER now;
-		QueryPerformanceCounter(&now);
-		g_tickGatesMs = QpcMsBetween(stageMark, now);
-		stageMark = now;
-	}
-
-	// Bounds-check the device IDs once at the top of the tick. Many code paths
-	// downstream index devicePoses[ctx.referenceID] / devicePoses[ctx.targetID]
-	// directly (CollectSample, the sample-history pose recording near the end of
-	// this function, etc.), and a stale negative or out-of-range value reaches
-	// for memory outside the array. We tolerate -1 (the not-yet-assigned sentinel)
-	// because state machines below explicitly handle that, but anything else that
-	// isn't in [0, k_unMaxTrackedDeviceCount) means we cannot run any per-device
-	// logic this tick -- bail out and try again next tick.
-	const int32_t maxId = (int32_t)vr::k_unMaxTrackedDeviceCount;
-	auto idInRangeOrUnset = [maxId](int32_t id) {
-		return id == -1 || (id >= 0 && id < maxId);
-	};
-	if (!idInRangeOrUnset(ctx.referenceID) || !idInRangeOrUnset(ctx.targetID)) {
-		// Defensive reset: a corrupted ID is unrecoverable for this tick. Don't
-		// touch state -- we just skip the tick so the next AssignTargets() call can
-		// reseat the IDs cleanly.
-		return;
-	}
-
-	TickRelocDetectorGate(ctx, time);
-
-	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
-		ctx.ClearLogOnMessage();
-	}
-
-	TickDeviceRescan(ctx, time);
-
-	TickGeometryShiftWatchdog(ctx, time);
-
-	// External smoothing-tool detection moved to the Smoothing overlay's
-	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
-	// cadence and surfaces the banner inside its Prediction sub-tab.
-
-	{
-		LARGE_INTEGER now;
-		QueryPerformanceCounter(&now);
-		g_tickDetectMs = QpcMsBetween(stageMark, now);
-		stageMark = now;
-	}
-
-	ctx.timeLastTick = time;
-	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
-		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
-			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
-			ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
-		}
-	});
-
-	TickDriverTelemetryDeltas(ctx);
-
 	// Feed the head-mount offset solver with fresh pose pairs. The modal's
 	// Solver is a no-op when not in Collecting state, so this call is cheap on
 	// every tick that doesn't have an active calibration modal.
@@ -2011,147 +1899,10 @@ void CalibrationTick(double time)
 			                                    hmdSpeed);
 		}
 	}
+}
 
-	if (TickHmdStallGuard(ctx, time)) {
-		return;
-	}
-
-	// Run the scan in every state where a profile can be active. Previously the scan
-	// was skipped once continuous calibration had a valid result, which meant a tracker
-	// powered on mid-session never received its offset until calibration was restarted.
-	// Per-ID dedupe inside ScanAndApplyProfile keeps IPC churn near zero when nothing
-	// has changed.
-	if (ctx.state == CalibrationState::None || ctx.state == CalibrationState::ContinuousStandby ||
-	    ctx.state == CalibrationState::Continuous) {
-		if ((time - ctx.timeLastScan) >= 1.0) {
-			ScanAndApplyProfile(ctx);
-			ctx.timeLastScan = time;
-		}
-	}
-
-	if (ctx.state == CalibrationState::ContinuousStandby) {
-		if (AssignTargets()) {
-			StartContinuousCalibration("continuous_standby_transition");
-		}
-		else {
-			ctx.wantedUpdateInterval = 0.5;
-			ctx.Log("Waiting for devices...\n");
-			return;
-		}
-	}
-
-	if (ctx.state == CalibrationState::None) {
-		static double s_lastNoneStateAnnotation = -1e9;
-		if (time - s_lastNoneStateAnnotation >= 5.0) {
-			s_lastNoneStateAnnotation = time;
-			char noneBuf[512];
-			snprintf(noneBuf, sizeof noneBuf,
-			         "cal_state_none: validProfile=%d enabled=%d profile_trans_cm=(%.2f,%.2f,%.2f)"
-			         " profile_mag_cm=%.2f ref='%s' target='%s' refID=%d targetID=%d"
-			         " continuous_snapshot=%d last_accepted=%d",
-			         (int)ctx.validProfile, (int)ctx.enabled, ctx.calibratedTranslation.x(),
-			         ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(),
-			         ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str(), ctx.referenceID,
-			         ctx.targetID, (int)ctx.continuousStartSnapshot.captured,
-			         (int)ctx.lastAcceptedContinuousSnapshot.captured);
-			Metrics::WriteLogAnnotation(noneBuf);
-		}
-
-		// Base station drift correction (one-shot mode only): catch SteamVR
-		// universe shifts so body trackers stay aligned with the user's
-		// physical position. No-op when no base stations are detected.
-		// Continuous mode is intentionally skipped -- the live solver would
-		// converge through the shift on its own within a few seconds.
-		if (ctx.CustomChecksActive()) {
-			TickBaseStationDrift(time);
-		}
-
-		ctx.wantedUpdateInterval = 1.0;
-		return;
-	}
-
-	if (ctx.state == CalibrationState::Editing) {
-		ctx.wantedUpdateInterval = 0.1;
-
-		if ((time - ctx.timeLastScan) >= 0.1) {
-			ScanAndApplyProfile(ctx);
-			ctx.timeLastScan = time;
-		}
-		return;
-	}
-
-	bool ok = true;
-
-	if (ctx.referenceID == -1 || ctx.referenceID >= vr::k_unMaxTrackedDeviceCount) {
-		CalCtx.Log("Missing reference device\n");
-		ok = false;
-	}
-	if (ctx.targetID == -1 || ctx.targetID >= vr::k_unMaxTrackedDeviceCount) {
-		CalCtx.Log("Missing target device\n");
-		ok = false;
-	}
-
-	if (ctx.state == CalibrationState::Begin) {
-		char referenceSerial[256], targetSerial[256];
-		referenceSerial[0] = targetSerial[0] = 0;
-		if (auto* vrSystem = vr::VRSystem()) {
-			vrSystem->GetStringTrackedDeviceProperty(ctx.referenceID, vr::Prop_SerialNumber_String, referenceSerial,
-			                                         256);
-			vrSystem->GetStringTrackedDeviceProperty(ctx.targetID, vr::Prop_SerialNumber_String, targetSerial, 256);
-		}
-
-		char buf[256];
-		snprintf(buf, sizeof buf, "Reference device ID: %d, serial: %s\n", ctx.referenceID, referenceSerial);
-		CalCtx.Log(buf);
-		snprintf(buf, sizeof buf, "Target device ID: %d, serial %s\n", ctx.targetID, targetSerial);
-		CalCtx.Log(buf);
-
-		ScanAndApplyProfile(ctx);
-
-		// (Removed: the original code pushed position-spread metrics here,
-		// in the Begin state, before CollectSample had ever populated
-		// calibration.m_samples. The pushed value was always 0.0 from an
-		// empty buffer. Those metrics now live at the end of CollectSample.)
-
-		if (!CalCtx.ReferencePoseIsValidSimple()) {
-			CalCtx.Log("Reference device is not tracking\n");
-			ok = false;
-		}
-
-		if (!CalCtx.TargetPoseIsValidSimple()) {
-			CalCtx.Log("Target device is not tracking\n");
-			ok = false;
-		}
-
-		// @TOOD: Determine if the tracking is jittery
-		if (calibration.ReferenceJitter() > ctx.jitterThreshold) {
-			CalCtx.Log("Reference device is not tracking\n");
-			ok = false;
-		}
-		if (calibration.TargetJitter() > ctx.jitterThreshold) {
-			CalCtx.Log("Target device is not tracking\n");
-			ok = false;
-		}
-
-		if (ok) {
-			// ResetAndDisableOffsets(ctx.targetID);
-			ctx.state = CalibrationState::Rotation;
-			ctx.wantedUpdateInterval = 0.0;
-
-			CalCtx.Log("Starting calibration...\n");
-			return;
-		}
-	}
-
-	if (!ok) {
-		if (ctx.state != CalibrationState::Continuous) {
-			ctx.state = CalibrationState::None;
-
-			CalCtx.Log("Aborting calibration!\n");
-		}
-		return;
-	}
-
+static bool TickTrackerLivenessGate(CalibrationContext& ctx, double time)
+{
 	// Tracker liveness gate (TrackerLiveness.h). Active only in continuous-
 	// calibration mode; one-shot states (Begin/Rotation/Translation) run the
 	// user through a deliberate motion sequence and have their own validity
@@ -2232,7 +1983,7 @@ void CalibrationTick(double time)
 
 		if (refOfflineNow || tgtOfflineNow) {
 			ctx.wantedUpdateInterval = 0.5;
-			return; // skip CollectSample + ComputeIncremental + SaveProfile
+			return true; // skip CollectSample + ComputeIncremental + SaveProfile
 		}
 
 		if (refReturned || tgtReturned) {
@@ -2261,11 +2012,15 @@ void CalibrationTick(double time)
 				// states + the edge-tracking flags, so the next tick starts
 				// from a clean baseline.
 				StartContinuousCalibration("tracker_liveness_reconnect");
-				return;
+				return true;
 			}
 		}
 	}
+	return false;
+}
 
+static void TickDriverSynthContinuousStatus(CalibrationContext& ctx, double time)
+{
 	if (ctx.state == CalibrationState::Continuous && ctx.headMount.mode == HeadMountMode::DriverSynth) {
 		const bool targetMatches = wkopenvr::headmount::HeadMountMatchesContinuousTarget(ctx);
 		const auto synthStatus = spacecal::headmount::EvaluateDriverSynthContinuousStatus(
@@ -2310,24 +2065,10 @@ void CalibrationTick(double time)
 		}
 		s_lastDriverSynthReady = synthStatus.ready;
 	}
+}
 
-	TickHeadMountSourceTransitionGuard(ctx, time);
-	TickHeadMountShadowOffsetEstimator(ctx, time);
-
-	if (!CollectSample(ctx)) {
-		return;
-	}
-
-	const int sampleProgress = (int)calibration.SampleCount();
-	const int sampleTarget = (int)ctx.SampleCount();
-	CalCtx.Progress(sampleProgress, sampleTarget);
-	spacecal::oneshot::MaybeLogReadiness(ctx, sampleProgress, sampleTarget, calibration.RotationDiversity(),
-	                                     calibration.TranslationDiversity(), time);
-
-	if (calibration.SampleCount() < CalCtx.SampleCount()) return;
-	while (calibration.SampleCount() > CalCtx.SampleCount())
-		calibration.ShiftSample();
-
+static bool TickOneShotMotionVarietyGate()
+{
 	// Two-phase one-shot motion-variety gate. Continuous mode bypasses this --
 	// it has its own incremental accept/reject loop that doesn't need a "stop
 	// here" signal.
@@ -2357,7 +2098,7 @@ void CalibrationTick(double time)
 		constexpr double kPhaseDiversity = spacecal::calibration_progress::kOneShotRotationReadyDiversity;
 		if (calibration.RotationDiversity() < kPhaseDiversity) {
 			calibration.ShiftSample();
-			return;
+			return true;
 		}
 		// Rotation phase complete. Freeze the buffer, transition state, and
 		// return so the next CollectSample tick starts populating a fresh
@@ -2369,7 +2110,7 @@ void CalibrationTick(double time)
 		CalCtx.state = CalibrationState::Translation;
 		CalCtx.Log("Rotation phase complete. Now wave the tracker through ~15 cm on every axis.\n");
 		Metrics::WriteLogAnnotation("RotationPhaseFrozen");
-		return;
+		return true;
 	}
 	if (CalCtx.state == CalibrationState::Translation) {
 		// Lowered from 0.70 (2026-05-13): combined with kDesiredAxisRange=0.20m
@@ -2381,13 +2122,17 @@ void CalibrationTick(double time)
 		constexpr double kPhaseDiversity = spacecal::calibration_progress::kOneShotTranslationReadyDiversity;
 		if (calibration.TranslationDiversity() < kPhaseDiversity) {
 			calibration.ShiftSample();
-			return;
+			return true;
 		}
 		// Translation diversity satisfied -- fall through to ComputeOneshot
 		// below. ComputeOneshot's RotationFreezeSplice will prepend the
 		// frozen rotation samples for the duration of the solve.
 	}
+	return false;
+}
 
+static bool TickTriggerHoldGate()
+{
 	if (CalCtx.state == CalibrationState::Continuous && CalCtx.requireTriggerPressToApply &&
 	    CalCtx.hasAppliedCalibrationResult) {
 		bool triggerPressed = true;
@@ -2411,7 +2156,7 @@ void CalibrationTick(double time)
 		if (sawController && !triggerPressed) {
 			CalCtx.Log("Waiting for trigger press...\n");
 			CalCtx.wasWaitingForTriggers = true;
-			return;
+			return true;
 		}
 
 		if (CalCtx.wasWaitingForTriggers) {
@@ -2419,483 +2164,352 @@ void CalibrationTick(double time)
 			CalCtx.wasWaitingForTriggers = false;
 		}
 	}
+	return false;
+}
 
-	LARGE_INTEGER start_time;
-	QueryPerformanceCounter(&start_time);
-	g_tickSampleMs = QpcMsBetween(stageMark, start_time);
+static void TickWarmRestartGraceValidation(double time)
+{
+	// Warm-restart grace counts down per Continuous-mode solve. When
+	// it hits zero, the prior-vs-new error gate snaps back on -- the
+	// solver has had ~30 s of bypassed acceptance and should be sitting
+	// on the saved offset now. Validation phase replaces the prior
+	// silent samples_exhausted success path: each tick checks the
+	// rolling MAD floor, ends grace early on convergence (Settled),
+	// triggers RecoverFromWedgedCalibration at grace end with elevated
+	// MAD (Failed -- snap landed on a profile that no longer matches
+	// reality), or rides out the window as Inconclusive (MAD between
+	// thresholds, current behaviour but logged with the actual reading
+	// so a reader can see whether the snap was load-bearing).
+	if (CalCtx.CustomChecksActive() && CalCtx.warmRestartGraceSamples > 0) {
+		--CalCtx.warmRestartGraceSamples;
+		const int samplesSinceSnap = spacecal::warm_restart::kGraceSamples - CalCtx.warmRestartGraceSamples;
+		const bool graceEndedThisTick = (CalCtx.warmRestartGraceSamples == 0);
+		const double madFloor = CalCtx.autoLockMadFloor;
 
-	bool lerp = false;
-	bool solveAttempted = false;
-	bool solveProducedCandidate = false;
-
-	if (CalCtx.state == CalibrationState::Continuous) {
-		CalCtx.messages.clear();
-		calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
-		const bool blockStaleRelPose =
-		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
-		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
-		// Geometry-precision weighting of the relpose average (default on;
-		// Advanced toggle). The experimental confidence fusion implies it --
-		// the Kalman accept needs the weighted measurement. With the
-		// enhanced-tracking switch the live weight is the full lever-arm
-		// covariance model; off means the classic uniform average.
-		const bool distanceWeighted = CalCtx.CustomChecksActive() && (CalCtx.precisionWeightedRelPose ||
-		                                                              CalCtx.headMount.experimentalConfidenceFusion);
-		calibration.SetRelPoseWeightMode(distanceWeighted ? CalibrationCalc::RelPoseWeightMode::Covariance
-		                                                  : CalibrationCalc::RelPoseWeightMode::Uniform);
-		calibration.SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
-		calibration.SetLockedAcceptGate(CalCtx.CustomChecksActive());
-		calibration.SetV2Math(CalCtx.CustomChecksActive());
-		// Large intentional moves (warm-restart re-acquire, session-first
-		// candidate) go through their own classification; everywhere else the
-		// locked accept keeps single steps bounded. The fusion accept is its
-		// own step absorber (gain-scaled blending + stale-seed breaker) and
-		// needs the full candidate stream, so the step gates stand down there
-		// -- the quality gates still apply.
-		calibration.SetStepGateBypass(CalCtx.warmRestartGraceSamples > 0 ||
-		                              !CalCtx.lastAcceptedContinuousSnapshot.captured ||
-		                              (CalCtx.CustomChecksActive() && CalCtx.headMount.experimentalConfidenceFusion));
-		if (blockStaleRelPose) {
-			static double s_lastHeadMountRelPoseGuardLog = -1e9;
-			if ((time - s_lastHeadMountRelPoseGuardLog) >= 1.0) {
-				s_lastHeadMountRelPoseGuardLog = time;
-				char gbuf[480];
-				std::snprintf(gbuf, sizeof gbuf,
-				              "head_mount_relpose_guard: bug_condition=1"
-				              " reason=fresh_relative_pose_required source=%s"
-				              " offset_version=%u lockRel=%d relPosCal=%d"
-				              " needsFreshRelPose=%d profile_mag_cm=%.2f",
-				              HeadMountSampleSourceName(CurrentHeadMountSampleSource(CalCtx)),
-				              (unsigned)CalCtx.headMountOffsetVersion, (int)CalCtx.lockRelativePosition,
-				              (int)CalCtx.relativePosCalibrated, (int)CalCtx.headMountNeedsFreshRelativePose,
-				              CalCtx.calibratedTranslation.norm());
-				Metrics::WriteLogAnnotation(gbuf);
+		// Accumulate any fresh error_currentCal sample produced by
+		// the ComputeIncremental call above into the post-snap
+		// bias mean. error_currentCal.Push only fires when the
+		// solver successfully ValidateCalibration's the applied
+		// transform, so some ticks contribute no sample; the
+		// timestamp gate keeps stale samples (carried over from
+		// before the snap, or from a missed-push earlier tick)
+		// out of the mean. This is the correctness signal the
+		// previous validator was missing: it tracks how well the
+		// applied calibration fits the live samples, not just how
+		// quiet the relative-pose dispersion is.
+		const double latestErrTs = Metrics::error_currentCal.lastTs();
+		if (latestErrTs > CalCtx.warmRestartLastConsumedErrTs) {
+			CalCtx.postSnapErrorSumMm += Metrics::error_currentCal.last();
+			CalCtx.postSnapErrorSampleCount += 1;
+			CalCtx.warmRestartLastConsumedErrTs = latestErrTs;
+			// Sequential validation (SprtValidation.h): the same
+			// fresh-sample edge feeds the whitened SE(3) residual of
+			// the latest sample against the applied transform. The
+			// Mahalanobis normalization uses the lever-arm noise
+			// model, so the verdict thresholds hold at any distance
+			// from the origin -- the fixed-millimetre MAD/bias
+			// thresholds this replaces did not.
+			Eigen::Matrix<double, 6, 1> sprtResidual;
+			Eigen::Vector3d sprtRefT, sprtTgtT;
+			if (calibration.LatestSe3Residual(calibration.Transformation(), &sprtResidual, &sprtRefT, &sprtTgtT)) {
+				const double d2 = spacecal::levercov::MahalanobisSq(
+				    sprtResidual, sprtRefT, sprtTgtT, CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
+				spacecal::sprt::Step(CalCtx.warmRestartSprt, d2);
 			}
 		}
+		const double meanBiasTransM =
+		    (CalCtx.postSnapErrorSampleCount > 0)
+		        ? (CalCtx.postSnapErrorSumMm / static_cast<double>(CalCtx.postSnapErrorSampleCount)) / 1000.0
+		        : 0.0;
 
-		const double hmdSpeedMps = ComputeEffectiveSpeedMps(CalCtx);
+		// MAD/bias values stay computed for the annotations below;
+		// the verdict itself is the sequential test's decision.
+		// (spacecal::warm_restart::EvaluateValidation remains the
+		// documented threshold fallback, pinned by its own tests.)
+		const auto outcome = spacecal::sprt::ToValidationOutcome(spacecal::sprt::Decide(CalCtx.warmRestartSprt));
 
-		// User-toggled "Pause updates" from the continuous-cal UI: keep the
-		// already-applied driver offset live, skip any new solve cycle so the
-		// math doesn't fight the user trying to inspect the current result.
-		const bool deferSolveForUnstableTarget =
-		    !CalCtx.calibrationPaused && CalCtx.CustomChecksActive() &&
-		    spacecal::target_stability::ShouldDeferSolve(CalCtx.targetInvalidEwma,
-		                                                 spacecal::target_stability::kSolveDeferInvalidFraction);
-		if (deferSolveForUnstableTarget) {
-			// The target tracking link is flapping (recent invalid-pose rate high).
-			// A solve built from samples stitched across the dropouts is unreliable
-			// churn, so defer it -- the applied offset stays put and CollectSample
-			// keeps refilling the buffer until the link steadies. Skipping this
-			// branch also skips the warm-restart grace countdown below, which is
-			// correct: no solve happened this tick.
-			static double s_lastSolveDeferLog = -1e9;
-			if (time - s_lastSolveDeferLog >= 1.0) {
-				s_lastSolveDeferLog = time;
-				Metrics::LogAnnotationf("continuous_solve_deferred: reason=target_unstable"
-				                        " target_invalid_ewma=%.3f threshold=%.2f sample_count=%zu",
-				                        CalCtx.targetInvalidEwma,
-				                        spacecal::target_stability::kSolveDeferInvalidFraction,
-				                        calibration.SampleCount());
+		// mad_floor_source labels whether the rolling-min floor
+		// was produced by a pre-snap sample (inherited quiet
+		// floor; Settled-by-floor is suspect) or a post-snap
+		// sample (genuine convergence).
+		const char* madFloorSource = (CalCtx.warmRestartSnapTime > 0.0 && CalCtx.autoLockMadFloorTs > 0.0 &&
+		                              CalCtx.autoLockMadFloorTs >= CalCtx.warmRestartSnapTime)
+		                                 ? "postSnap"
+		                                 : "preSnap";
+
+		if (outcome == spacecal::warm_restart::ValidationOutcome::Settled &&
+		    CalCtx.warmRestartValidationState != spacecal::warm_restart::ValidationOutcome::Settled) {
+			CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Settled;
+			CalCtx.warmRestartGraceSamples = 0;  // end grace early
+			CalCtx.warmRestartReanchorCount = 0; // episode resolved
+			char vbuf[360];
+			snprintf(vbuf, sizeof vbuf,
+			         "[warm-restart][validated] mad_mm=%.3f samples_since_snap=%d"
+			         " mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
+			         " post_snap_samples=%d mad_floor_source=%s reason=settled"
+			         " sprt_llr=%.2f sprt_n=%d",
+			         madFloor * 1000.0, samplesSinceSnap, CalCtx.warmRestartMadAtSnap * 1000.0, meanBiasTransM * 1000.0,
+			         CalCtx.postSnapErrorSampleCount, madFloorSource, CalCtx.warmRestartSprt.llr,
+			         CalCtx.warmRestartSprt.n);
+			Metrics::WriteLogAnnotation(vbuf);
+			Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=validated_settled");
+		}
+		else if (outcome == spacecal::warm_restart::ValidationOutcome::Failed &&
+		         CalCtx.warmRestartValidationState != spacecal::warm_restart::ValidationOutcome::Failed) {
+			// Bias-Failed can fire mid-grace (post-snap retargeting
+			// error too large); end grace immediately and trigger
+			// recovery. MAD-Failed only fires at grace end and is
+			// handled in the graceEndedThisTick branch below.
+			CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Failed;
+			CalCtx.warmRestartGraceSamples = 0;
+			const char* failReason = "sprt_frame_mismatch";
+			char fbuf[360];
+			snprintf(fbuf, sizeof fbuf,
+			         "[warm-restart][failed] mad_mm=%.3f samples_since_snap=%d"
+			         " mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
+			         " post_snap_samples=%d mad_floor_source=%s reason=%s"
+			         " sprt_llr=%.2f sprt_n=%d",
+			         madFloor * 1000.0, samplesSinceSnap, CalCtx.warmRestartMadAtSnap * 1000.0, meanBiasTransM * 1000.0,
+			         CalCtx.postSnapErrorSampleCount, madFloorSource, failReason, CalCtx.warmRestartSprt.llr,
+			         CalCtx.warmRestartSprt.n);
+			Metrics::WriteLogAnnotation(fbuf);
+			Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=validation_failed");
+
+			// Witness veto: a present witness puck independently confirms
+			// the saved profile, so re-anchor and re-arm grace (bounded
+			// retries) instead of destroying the user's calibration. The
+			// destructive clear is a true last resort -- only when no
+			// saved profile exists to fall back to (RecoveryPolicy.h).
+			// This is the path the take-off/put-back-on field sessions
+			// hit; the old code cleared unconditionally here.
+			const bool witnessPresent = wkopenvr::headmount::WitnessPresent(CalCtx);
+			const auto wrAction = spacecal::recovery::ChooseWarmRestartFailureAction(
+			    CalCtx.warmRestartFrameMoved, witnessPresent, CalCtx.validProfile, CalCtx.warmRestartReanchorCount,
+			    spacecal::recovery::kWarmRestartMaxReanchors);
+			if (wrAction == spacecal::recovery::RecoveryAction::ReanchorToProfile) {
+				CalCtx.warmRestartReanchorCount += 1;
+				char vbuf[256];
+				snprintf(vbuf, sizeof vbuf,
+				         "[warm-restart][witness-veto] reanchor=%d/%d frame_moved=%d -> profile re-applied,"
+				         " grace re-armed (no destructive clear)",
+				         CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors,
+				         (int)CalCtx.warmRestartFrameMoved);
+				Metrics::WriteLogAnnotation(vbuf);
+				ArmReanchorToProfile(CalCtx, CalCtx.warmRestartFrameMoved);
+			}
+			else if (wrAction == spacecal::recovery::RecoveryAction::DestructiveClear) {
+				RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
+				                             "warm_restart_validation_failed");
+			}
+			else { // Hold -- keep the current frame; the profile stays on disk
+				char hbuf[256];
+				snprintf(hbuf, sizeof hbuf,
+				         "[warm-restart][held] witnessPresent=%d reanchors=%d validProfile=%d"
+				         " frame_moved=%d -> current frame held, no profile re-apply, no destructive clear",
+				         (int)witnessPresent, CalCtx.warmRestartReanchorCount, (int)CalCtx.validProfile,
+				         (int)CalCtx.warmRestartFrameMoved);
+				Metrics::WriteLogAnnotation(hbuf);
 			}
 		}
-		else if (!CalCtx.calibrationPaused) {
-			solveAttempted = true;
-			solveProducedCandidate = calibration.ComputeIncremental(
-			    lerp, CalCtx.continuousCalibrationThreshold, CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers);
-			{
-				// Steady-state continuous solves repeat the same outcome
-				// several times a second for hours (26k lines in one recorded
-				// session). Log when the outcome or reject reason changes,
-				// otherwise at most once per 5 s -- transitions carry the
-				// signal.
-				static double s_lastContinuousSolveAnnotation = -1e9;
-				static bool s_lastSolveProduced = false;
-				static std::string s_lastSolveRejectReason;
-				const bool producedValidCandidate = solveProducedCandidate && calibration.isValid();
-				const char* rejectReason =
-				    producedValidCandidate
-				        ? "none"
-				        : (Metrics::lastRejectReason.empty() ? "none" : Metrics::lastRejectReason.c_str());
-				const bool outcomeChanged =
-				    solveProducedCandidate != s_lastSolveProduced || s_lastSolveRejectReason != rejectReason;
-				if (outcomeChanged || time - s_lastContinuousSolveAnnotation >= 5.0) {
-					s_lastContinuousSolveAnnotation = time;
-					s_lastSolveProduced = solveProducedCandidate;
-					s_lastSolveRejectReason = rejectReason;
-					const Eigen::Vector3d candidateCm = calibration.Transformation().translation() * 100.0;
-					Metrics::LogAnnotationf(
-					    "continuous_solve_tick: state=%d(%s) paused=%d attempted=1 produced=%d"
-					    " calc_valid=%d source=%s sample_count=%zu required=%zu"
-					    " relPosCal=%d lockRel=%d validProfile=%d hasAccepted=%d"
-					    " candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f"
-					    " reject_reason=%s warm_grace=%d",
-					    (int)ctx.state, CalibrationStateName(ctx.state), (int)CalCtx.calibrationPaused,
-					    (int)solveProducedCandidate, (int)calibration.isValid(),
-					    calibration.LastComputeUsedRelPose() ? "relpose" : "full", calibration.SampleCount(),
-					    CalCtx.SampleCount(), (int)CalCtx.relativePosCalibrated, (int)CalCtx.lockRelativePosition,
-					    (int)CalCtx.validProfile, (int)CalCtx.lastAcceptedContinuousSnapshot.captured, candidateCm.x(),
-					    candidateCm.y(), candidateCm.z(), candidateCm.norm(), rejectReason,
-					    CalCtx.warmRestartGraceSamples);
-				}
-			}
+		else if (graceEndedThisTick) {
+			// Inconclusive at grace end: MAD between thresholds and
+			// bias under the fail threshold. Profile stays; log
+			// loudly so this case is visible in triage.
+			char ibuf[360];
+			snprintf(ibuf, sizeof ibuf,
+			         "[warm-restart][inconclusive] mad_mm=%.3f samples_since_snap=%d"
+			         " mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
+			         " post_snap_samples=%d mad_floor_source=%s"
+			         " reason=between_thresholds sprt_llr=%.2f sprt_n=%d",
+			         madFloor * 1000.0, samplesSinceSnap, CalCtx.warmRestartMadAtSnap * 1000.0, meanBiasTransM * 1000.0,
+			         CalCtx.postSnapErrorSampleCount, madFloorSource, CalCtx.warmRestartSprt.llr,
+			         CalCtx.warmRestartSprt.n);
+			Metrics::WriteLogAnnotation(ibuf);
+			Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=samples_exhausted");
+		}
+	}
+}
 
-			// Warm-restart grace counts down per Continuous-mode solve. When
-			// it hits zero, the prior-vs-new error gate snaps back on -- the
-			// solver has had ~30 s of bypassed acceptance and should be sitting
-			// on the saved offset now. Validation phase replaces the prior
-			// silent samples_exhausted success path: each tick checks the
-			// rolling MAD floor, ends grace early on convergence (Settled),
-			// triggers RecoverFromWedgedCalibration at grace end with elevated
-			// MAD (Failed -- snap landed on a profile that no longer matches
-			// reality), or rides out the window as Inconclusive (MAD between
-			// thresholds, current behaviour but logged with the actual reading
-			// so a reader can see whether the snap was load-bearing).
-			if (CalCtx.CustomChecksActive() && CalCtx.warmRestartGraceSamples > 0) {
-				--CalCtx.warmRestartGraceSamples;
-				const int samplesSinceSnap = spacecal::warm_restart::kGraceSamples - CalCtx.warmRestartGraceSamples;
-				const bool graceEndedThisTick = (CalCtx.warmRestartGraceSamples == 0);
-				const double madFloor = CalCtx.autoLockMadFloor;
+static void TickAdditionalCalibrations(double time, double hmdSpeedMps)
+{
+	const int32_t maxId = (int32_t)vr::k_unMaxTrackedDeviceCount;
 
-				// Accumulate any fresh error_currentCal sample produced by
-				// the ComputeIncremental call above into the post-snap
-				// bias mean. error_currentCal.Push only fires when the
-				// solver successfully ValidateCalibration's the applied
-				// transform, so some ticks contribute no sample; the
-				// timestamp gate keeps stale samples (carried over from
-				// before the snap, or from a missed-push earlier tick)
-				// out of the mean. This is the correctness signal the
-				// previous validator was missing: it tracks how well the
-				// applied calibration fits the live samples, not just how
-				// quiet the relative-pose dispersion is.
-				const double latestErrTs = Metrics::error_currentCal.lastTs();
-				if (latestErrTs > CalCtx.warmRestartLastConsumedErrTs) {
-					CalCtx.postSnapErrorSumMm += Metrics::error_currentCal.last();
-					CalCtx.postSnapErrorSampleCount += 1;
-					CalCtx.warmRestartLastConsumedErrTs = latestErrTs;
-					// Sequential validation (SprtValidation.h): the same
-					// fresh-sample edge feeds the whitened SE(3) residual of
-					// the latest sample against the applied transform. The
-					// Mahalanobis normalization uses the lever-arm noise
-					// model, so the verdict thresholds hold at any distance
-					// from the origin -- the fixed-millimetre MAD/bias
-					// thresholds this replaces did not.
-					Eigen::Matrix<double, 6, 1> sprtResidual;
-					Eigen::Vector3d sprtRefT, sprtTgtT;
-					if (calibration.LatestSe3Residual(calibration.Transformation(), &sprtResidual, &sprtRefT,
-					                                  &sprtTgtT)) {
-						const double d2 = spacecal::levercov::MahalanobisSq(sprtResidual, sprtRefT, sprtTgtT,
-						                                                    CalCtx.leverArmSigmaThetaRad,
-						                                                    CalCtx.leverArmSigmaJitterM);
-						spacecal::sprt::Step(CalCtx.warmRestartSprt, d2);
-					}
-				}
-				const double meanBiasTransM =
-				    (CalCtx.postSnapErrorSampleCount > 0)
-				        ? (CalCtx.postSnapErrorSumMm / static_cast<double>(CalCtx.postSnapErrorSampleCount)) / 1000.0
-				        : 0.0;
+	// Multi-ecosystem extras: each runs its own continuous calibration
+	// loop in parallel with the primary, against the SAME reference
+	// device (the HMD) and its own target. Each extra has its own
+	// sample buffer (extra.calc) so noisy samples on one don't taint
+	// another. Cheap -- the math is bounded by sample-buffer size and
+	// runs at the same low cadence as the primary.
+	for (auto& extra : CalCtx.additionalCalibrations) {
+		if (!extra.enabled) continue;
+		if (extra.referenceID < 0 || extra.targetID < 0) continue;
+		if (extra.referenceID >= maxId || extra.targetID >= maxId) continue;
 
-				// MAD/bias values stay computed for the annotations below;
-				// the verdict itself is the sequential test's decision.
-				// (spacecal::warm_restart::EvaluateValidation remains the
-				// documented threshold fallback, pinned by its own tests.)
-				const auto outcome =
-				    spacecal::sprt::ToValidationOutcome(spacecal::sprt::Decide(CalCtx.warmRestartSprt));
+		const auto& refPose = CalCtx.devicePoses[extra.referenceID];
+		const auto& tgtPose = CalCtx.devicePoses[extra.targetID];
+		if (!refPose.poseIsValid || !tgtPose.poseIsValid) continue;
+		if (refPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
+		if (tgtPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
 
-				// mad_floor_source labels whether the rolling-min floor
-				// was produced by a pre-snap sample (inherited quiet
-				// floor; Settled-by-floor is suspect) or a post-snap
-				// sample (genuine convergence).
-				const char* madFloorSource = (CalCtx.warmRestartSnapTime > 0.0 && CalCtx.autoLockMadFloorTs > 0.0 &&
-				                              CalCtx.autoLockMadFloorTs >= CalCtx.warmRestartSnapTime)
-				                                 ? "postSnap"
-				                                 : "preSnap";
+		Sample s(ConvertPose(refPose), ConvertPose(tgtPose), glfwGetTime());
+		extra.calc->PushSample(s);
+		while (extra.calc->SampleCount() > CalCtx.SampleCount())
+			extra.calc->ShiftSample();
 
-				if (outcome == spacecal::warm_restart::ValidationOutcome::Settled &&
-				    CalCtx.warmRestartValidationState != spacecal::warm_restart::ValidationOutcome::Settled) {
-					CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Settled;
-					CalCtx.warmRestartGraceSamples = 0;  // end grace early
-					CalCtx.warmRestartReanchorCount = 0; // episode resolved
-					char vbuf[360];
-					snprintf(vbuf, sizeof vbuf,
-					         "[warm-restart][validated] mad_mm=%.3f samples_since_snap=%d"
-					         " mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
-					         " post_snap_samples=%d mad_floor_source=%s reason=settled"
-					         " sprt_llr=%.2f sprt_n=%d",
-					         madFloor * 1000.0, samplesSinceSnap, CalCtx.warmRestartMadAtSnap * 1000.0,
-					         meanBiasTransM * 1000.0, CalCtx.postSnapErrorSampleCount, madFloorSource,
-					         CalCtx.warmRestartSprt.llr, CalCtx.warmRestartSprt.n);
-					Metrics::WriteLogAnnotation(vbuf);
-					Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=validated_settled");
-				}
-				else if (outcome == spacecal::warm_restart::ValidationOutcome::Failed &&
-				         CalCtx.warmRestartValidationState != spacecal::warm_restart::ValidationOutcome::Failed) {
-					// Bias-Failed can fire mid-grace (post-snap retargeting
-					// error too large); end grace immediately and trigger
-					// recovery. MAD-Failed only fires at grace end and is
-					// handled in the graceEndedThisTick branch below.
-					CalCtx.warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Failed;
-					CalCtx.warmRestartGraceSamples = 0;
-					const char* failReason = "sprt_frame_mismatch";
-					char fbuf[360];
-					snprintf(fbuf, sizeof fbuf,
-					         "[warm-restart][failed] mad_mm=%.3f samples_since_snap=%d"
-					         " mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
-					         " post_snap_samples=%d mad_floor_source=%s reason=%s"
-					         " sprt_llr=%.2f sprt_n=%d",
-					         madFloor * 1000.0, samplesSinceSnap, CalCtx.warmRestartMadAtSnap * 1000.0,
-					         meanBiasTransM * 1000.0, CalCtx.postSnapErrorSampleCount, madFloorSource, failReason,
-					         CalCtx.warmRestartSprt.llr, CalCtx.warmRestartSprt.n);
-					Metrics::WriteLogAnnotation(fbuf);
-					Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=validation_failed");
+		// Per-extra auto-lock detector update.
+		Eigen::AffineCompact3d refW = Eigen::AffineCompact3d::Identity();
+		refW.linear() = ConvertPose(refPose).rot;
+		refW.translation() = ConvertPose(refPose).trans;
+		Eigen::AffineCompact3d tgtW = Eigen::AffineCompact3d::Identity();
+		tgtW.linear() = ConvertPose(tgtPose).rot;
+		tgtW.translation() = ConvertPose(tgtPose).trans;
+		const Eigen::AffineCompact3d rel = refW.inverse() * tgtW;
+		extra.autoLockHistory.push_back(rel);
+		while (extra.autoLockHistory.size() > spacecal::autolock::kHistoryMax) {
+			extra.autoLockHistory.pop_front();
+		}
 
-					// Witness veto: a present witness puck independently confirms
-					// the saved profile, so re-anchor and re-arm grace (bounded
-					// retries) instead of destroying the user's calibration. The
-					// destructive clear is a true last resort -- only when no
-					// saved profile exists to fall back to (RecoveryPolicy.h).
-					// This is the path the take-off/put-back-on field sessions
-					// hit; the old code cleared unconditionally here.
-					const bool witnessPresent = wkopenvr::headmount::WitnessPresent(CalCtx);
-					const auto wrAction = spacecal::recovery::ChooseWarmRestartFailureAction(
-					    CalCtx.warmRestartFrameMoved, witnessPresent, CalCtx.validProfile,
-					    CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors);
-					if (wrAction == spacecal::recovery::RecoveryAction::ReanchorToProfile) {
-						CalCtx.warmRestartReanchorCount += 1;
-						char vbuf[256];
-						snprintf(vbuf, sizeof vbuf,
-						         "[warm-restart][witness-veto] reanchor=%d/%d frame_moved=%d -> profile re-applied,"
-						         " grace re-armed (no destructive clear)",
-						         CalCtx.warmRestartReanchorCount, spacecal::recovery::kWarmRestartMaxReanchors,
-						         (int)CalCtx.warmRestartFrameMoved);
-						Metrics::WriteLogAnnotation(vbuf);
-						ArmReanchorToProfile(CalCtx, CalCtx.warmRestartFrameMoved);
-					}
-					else if (wrAction == spacecal::recovery::RecoveryAction::DestructiveClear) {
-						RecoverFromWedgedCalibration("Warm-restart validation failed -- recalibrating from scratch\n",
-						                             "warm_restart_validation_failed");
-					}
-					else { // Hold -- keep the current frame; the profile stays on disk
-						char hbuf[256];
-						snprintf(hbuf, sizeof hbuf,
-						         "[warm-restart][held] witnessPresent=%d reanchors=%d validProfile=%d"
-						         " frame_moved=%d -> current frame held, no profile re-apply, no destructive clear",
-						         (int)witnessPresent, CalCtx.warmRestartReanchorCount, (int)CalCtx.validProfile,
-						         (int)CalCtx.warmRestartFrameMoved);
-						Metrics::WriteLogAnnotation(hbuf);
-					}
-				}
-				else if (graceEndedThisTick) {
-					// Inconclusive at grace end: MAD between thresholds and
-					// bias under the fail threshold. Profile stays; log
-					// loudly so this case is visible in triage.
-					char ibuf[360];
-					snprintf(ibuf, sizeof ibuf,
-					         "[warm-restart][inconclusive] mad_mm=%.3f samples_since_snap=%d"
-					         " mad_at_snap_mm=%.3f post_snap_bias_mm=%.3f"
-					         " post_snap_samples=%d mad_floor_source=%s"
-					         " reason=between_thresholds sprt_llr=%.2f sprt_n=%d",
-					         madFloor * 1000.0, samplesSinceSnap, CalCtx.warmRestartMadAtSnap * 1000.0,
-					         meanBiasTransM * 1000.0, CalCtx.postSnapErrorSampleCount, madFloorSource,
-					         CalCtx.warmRestartSprt.llr, CalCtx.warmRestartSprt.n);
-					Metrics::WriteLogAnnotation(ibuf);
-					Metrics::WriteLogAnnotation("[warm-restart][grace-ended] reason=samples_exhausted");
-				}
-			}
+		// Mirrors CalibrationContext::UpdateAutoLockDetector. MAD-based
+		// robust deviation + enter/leave hysteresis + panic-unlock +
+		// pending-flip queue + stationary-HMD commit gate. The previous
+		// raw-stddev + single-threshold path flapped on cross-system
+		// extras for the same reasons the primary did pre-d1a7e9e.
+		// Decisions run only for the legacy AUTO lock mode (2), same as
+		// the primary detector: explicit ON/OFF pins the lock and never
+		// reads the verdict. No extra consumes the MAD floor, so the
+		// whole detector stands down outside AUTO.
+		const bool extraDetectorActive = spacecal::autolock::ScopeFor(extra.lockMode == 2, false).runDecisions;
+		if (!extraDetectorActive) {
+			extra.autoLockHasPendingFlip = false;
+			extra.autoLockPendingFlipFirstSeen = 0.0;
+		}
+		else if (extra.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
+			extra.autoLockEffectivelyLocked = false;
+			extra.autoLockHasPendingFlip = false;
 		}
 		else {
-			static double s_lastPausedSolveAnnotation = -1e9;
-			if (time - s_lastPausedSolveAnnotation >= 2.0) {
-				s_lastPausedSolveAnnotation = time;
-				char pausedBuf[320];
-				snprintf(pausedBuf, sizeof pausedBuf,
-				         "continuous_solve_skipped: state=%d(%s) reason=paused sample_count=%zu required=%zu"
-				         " validProfile=%d hasAccepted=%d",
-				         (int)ctx.state, CalibrationStateName(ctx.state), calibration.SampleCount(),
-				         CalCtx.SampleCount(), (int)CalCtx.validProfile,
-				         (int)CalCtx.lastAcceptedContinuousSnapshot.captured);
-				Metrics::WriteLogAnnotation(pausedBuf);
-			}
-		}
+			const double translMad = spacecal::autolock::RobustTranslDeviation(extra.autoLockHistory);
+			const double rotMad = spacecal::autolock::RobustRotDeviation(extra.autoLockHistory);
 
-		// Multi-ecosystem extras: each runs its own continuous calibration
-		// loop in parallel with the primary, against the SAME reference
-		// device (the HMD) and its own target. Each extra has its own
-		// sample buffer (extra.calc) so noisy samples on one don't taint
-		// another. Cheap -- the math is bounded by sample-buffer size and
-		// runs at the same low cadence as the primary.
-		for (auto& extra : CalCtx.additionalCalibrations) {
-			if (!extra.enabled) continue;
-			if (extra.referenceID < 0 || extra.targetID < 0) continue;
-			if (extra.referenceID >= maxId || extra.targetID >= maxId) continue;
-
-			const auto& refPose = CalCtx.devicePoses[extra.referenceID];
-			const auto& tgtPose = CalCtx.devicePoses[extra.targetID];
-			if (!refPose.poseIsValid || !tgtPose.poseIsValid) continue;
-			if (refPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
-			if (tgtPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
-
-			Sample s(ConvertPose(refPose), ConvertPose(tgtPose), glfwGetTime());
-			extra.calc->PushSample(s);
-			while (extra.calc->SampleCount() > CalCtx.SampleCount())
-				extra.calc->ShiftSample();
-
-			// Per-extra auto-lock detector update.
-			Eigen::AffineCompact3d refW = Eigen::AffineCompact3d::Identity();
-			refW.linear() = ConvertPose(refPose).rot;
-			refW.translation() = ConvertPose(refPose).trans;
-			Eigen::AffineCompact3d tgtW = Eigen::AffineCompact3d::Identity();
-			tgtW.linear() = ConvertPose(tgtPose).rot;
-			tgtW.translation() = ConvertPose(tgtPose).trans;
-			const Eigen::AffineCompact3d rel = refW.inverse() * tgtW;
-			extra.autoLockHistory.push_back(rel);
-			while (extra.autoLockHistory.size() > spacecal::autolock::kHistoryMax) {
-				extra.autoLockHistory.pop_front();
-			}
-
-			// Mirrors CalibrationContext::UpdateAutoLockDetector. MAD-based
-			// robust deviation + enter/leave hysteresis + panic-unlock +
-			// pending-flip queue + stationary-HMD commit gate. The previous
-			// raw-stddev + single-threshold path flapped on cross-system
-			// extras for the same reasons the primary did pre-d1a7e9e.
-			// Decisions run only for the legacy AUTO lock mode (2), same as
-			// the primary detector: explicit ON/OFF pins the lock and never
-			// reads the verdict. No extra consumes the MAD floor, so the
-			// whole detector stands down outside AUTO.
-			const bool extraDetectorActive = spacecal::autolock::ScopeFor(extra.lockMode == 2, false).runDecisions;
-			if (!extraDetectorActive) {
-				extra.autoLockHasPendingFlip = false;
-				extra.autoLockPendingFlipFirstSeen = 0.0;
-			}
-			else if (extra.autoLockHistory.size() < spacecal::autolock::kSamplesNeeded) {
+			if (extra.autoLockEffectivelyLocked && spacecal::autolock::IsPanicLevelDeviation(translMad, rotMad)) {
 				extra.autoLockEffectivelyLocked = false;
 				extra.autoLockHasPendingFlip = false;
+				extra.autoLockPendingFlipFirstSeen = 0.0;
+				extra.autoLockGateHeldWarned = false;
+				char buf[224];
+				snprintf(buf, sizeof buf, "auto_lock_panic_unlock extra=%s: translMad=%.4fm rotMad=%.4frad",
+				         extra.targetTrackingSystem.c_str(), translMad, rotMad);
+				Metrics::WriteLogAnnotation(buf);
 			}
 			else {
-				const double translMad = spacecal::autolock::RobustTranslDeviation(extra.autoLockHistory);
-				const double rotMad = spacecal::autolock::RobustRotDeviation(extra.autoLockHistory);
+				const bool verdict =
+				    spacecal::autolock::VerdictWithHysteresis(translMad, rotMad, extra.autoLockEffectivelyLocked);
 
-				if (extra.autoLockEffectivelyLocked && spacecal::autolock::IsPanicLevelDeviation(translMad, rotMad)) {
-					extra.autoLockEffectivelyLocked = false;
-					extra.autoLockHasPendingFlip = false;
-					extra.autoLockPendingFlipFirstSeen = 0.0;
-					extra.autoLockGateHeldWarned = false;
-					char buf[224];
-					snprintf(buf, sizeof buf, "auto_lock_panic_unlock extra=%s: translMad=%.4fm rotMad=%.4frad",
-					         extra.targetTrackingSystem.c_str(), translMad, rotMad);
-					Metrics::WriteLogAnnotation(buf);
+				if (verdict != extra.autoLockEffectivelyLocked) {
+					const bool prevPending = extra.autoLockHasPendingFlip;
+					const bool prevTarget = extra.autoLockPendingFlipTo;
+					extra.autoLockHasPendingFlip = true;
+					extra.autoLockPendingFlipTo = verdict;
+					if (!prevPending || prevTarget != verdict) {
+						char buf[240];
+						snprintf(buf, sizeof buf,
+						         "auto_lock_flip_pending extra=%s: target=%d current=%d"
+						         " translMad=%.4fm rotMad=%.4frad",
+						         extra.targetTrackingSystem.c_str(), (int)verdict, (int)extra.autoLockEffectivelyLocked,
+						         translMad, rotMad);
+						Metrics::WriteLogAnnotation(buf);
+					}
 				}
-				else {
-					const bool verdict =
-					    spacecal::autolock::VerdictWithHysteresis(translMad, rotMad, extra.autoLockEffectivelyLocked);
+				else if (extra.autoLockHasPendingFlip) {
+					extra.autoLockHasPendingFlip = false;
+				}
 
-					if (verdict != extra.autoLockEffectivelyLocked) {
-						const bool prevPending = extra.autoLockHasPendingFlip;
-						const bool prevTarget = extra.autoLockPendingFlipTo;
-						extra.autoLockHasPendingFlip = true;
-						extra.autoLockPendingFlipTo = verdict;
-						if (!prevPending || prevTarget != verdict) {
-							char buf[240];
-							snprintf(buf, sizeof buf,
-							         "auto_lock_flip_pending extra=%s: target=%d current=%d"
-							         " translMad=%.4fm rotMad=%.4frad",
-							         extra.targetTrackingSystem.c_str(), (int)verdict,
-							         (int)extra.autoLockEffectivelyLocked, translMad, rotMad);
-							Metrics::WriteLogAnnotation(buf);
-						}
-					}
-					else if (extra.autoLockHasPendingFlip) {
-						extra.autoLockHasPendingFlip = false;
-					}
-
-					if (extra.autoLockHasPendingFlip) {
-						if (extra.autoLockPendingFlipFirstSeen <= 0.0) {
-							extra.autoLockPendingFlipFirstSeen = time;
-							extra.autoLockGateHeldWarned = false;
-						}
-						const double heldSec = time - extra.autoLockPendingFlipFirstSeen;
-						const auto gate = spacecal::autolock::EvaluateCommitGate(extra.autoLockPendingFlipTo,
-						                                                         hmdSpeedMps, time, heldSec);
-						if (gate.commit) {
-							const bool prev = extra.autoLockEffectivelyLocked;
-							extra.autoLockEffectivelyLocked = extra.autoLockPendingFlipTo;
-							extra.autoLockHasPendingFlip = false;
-							extra.autoLockPendingFlipFirstSeen = 0.0;
-							extra.autoLockGateHeldWarned = false;
-							char buf[256];
-							snprintf(buf, sizeof buf,
-							         "auto_lock_flip extra=%s: previous=%d now=%d hmdSpeed=%.3fmps"
-							         " held_sec=%.2f committed_via=%s",
-							         extra.targetTrackingSystem.c_str(), (int)prev,
-							         (int)extra.autoLockEffectivelyLocked, hmdSpeedMps, heldSec, gate.mode);
-							Metrics::WriteLogAnnotation(buf);
-						}
-					}
-					else {
-						extra.autoLockPendingFlipFirstSeen = 0.0;
+				if (extra.autoLockHasPendingFlip) {
+					if (extra.autoLockPendingFlipFirstSeen <= 0.0) {
+						extra.autoLockPendingFlipFirstSeen = time;
 						extra.autoLockGateHeldWarned = false;
 					}
-				}
-			}
-
-			// Resolve effective lock for this extra.
-			switch (extra.lockMode) {
-				case 0:
-					extra.lockRelativePosition = false;
-					break;
-				case 1:
-					extra.lockRelativePosition = true;
-					break;
-				default:
-					extra.lockRelativePosition = false;
-					break;
-			}
-
-			extra.calc->lockRelativePosition = extra.lockRelativePosition;
-			extra.calc->enableStaticRecalibration = CalCtx.enableStaticRecalibration;
-			extra.calc->SetStepGateBypass(CalCtx.warmRestartGraceSamples > 0 || !extra.valid);
-			const bool extraDistanceWeighted =
-			    CalCtx.CustomChecksActive() &&
-			    (CalCtx.precisionWeightedRelPose || CalCtx.headMount.experimentalConfidenceFusion);
-			extra.calc->SetRelPoseWeightMode(extraDistanceWeighted ? CalibrationCalc::RelPoseWeightMode::Covariance
-			                                                       : CalibrationCalc::RelPoseWeightMode::Uniform);
-			extra.calc->SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
-			extra.calc->SetLockedAcceptGate(CalCtx.CustomChecksActive());
-			extra.calc->SetV2Math(CalCtx.CustomChecksActive());
-
-			if (!CalCtx.calibrationPaused && extra.calc->SampleCount() >= CalCtx.SampleCount()) {
-				bool extraLerp = false;
-				if (extra.calc->ComputeIncremental(extraLerp, CalCtx.continuousCalibrationThreshold,
-				                                   CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers)) {
-					if (extra.calc->isValid()) {
-						extra.calibratedRotation = extra.calc->EulerRotation();
-						extra.calibratedTranslation = extra.calc->Transformation().translation() * 100.0;
-						extra.refToTargetPose = extra.calc->RelativeTransformation();
-						extra.relativePosCalibrated = extra.calc->isRelativeTransformationCalibrated();
-						extra.valid = true;
+					const double heldSec = time - extra.autoLockPendingFlipFirstSeen;
+					const auto gate =
+					    spacecal::autolock::EvaluateCommitGate(extra.autoLockPendingFlipTo, hmdSpeedMps, time, heldSec);
+					if (gate.commit) {
+						const bool prev = extra.autoLockEffectivelyLocked;
+						extra.autoLockEffectivelyLocked = extra.autoLockPendingFlipTo;
+						extra.autoLockHasPendingFlip = false;
+						extra.autoLockPendingFlipFirstSeen = 0.0;
+						extra.autoLockGateHeldWarned = false;
+						char buf[256];
+						snprintf(buf, sizeof buf,
+						         "auto_lock_flip extra=%s: previous=%d now=%d hmdSpeed=%.3fmps"
+						         " held_sec=%.2f committed_via=%s",
+						         extra.targetTrackingSystem.c_str(), (int)prev, (int)extra.autoLockEffectivelyLocked,
+						         hmdSpeedMps, heldSec, gate.mode);
+						Metrics::WriteLogAnnotation(buf);
 					}
 				}
-				// Track this extra's recent priorCalibrationError values
-				// for the geometry-shift common-mode coherence check.
-				// LastPriorErrorM is INFINITY until a validated compute
-				// has happened; skip pushes until then so the rolling
-				// median is built from real readings, not sentinels.
-				const double extraErrM = extra.calc->LastPriorErrorM();
-				if (std::isfinite(extraErrM)) {
-					extra.recentErrorsMm.push_back(extraErrM * 1000.0);
-					while (extra.recentErrorsMm.size() > 30) {
-						extra.recentErrorsMm.pop_front();
-					}
+				else {
+					extra.autoLockPendingFlipFirstSeen = 0.0;
+					extra.autoLockGateHeldWarned = false;
+				}
+			}
+		}
+
+		// Resolve effective lock for this extra.
+		switch (extra.lockMode) {
+			case 0:
+				extra.lockRelativePosition = false;
+				break;
+			case 1:
+				extra.lockRelativePosition = true;
+				break;
+			default:
+				extra.lockRelativePosition = false;
+				break;
+		}
+
+		extra.calc->lockRelativePosition = extra.lockRelativePosition;
+		extra.calc->enableStaticRecalibration = CalCtx.enableStaticRecalibration;
+		extra.calc->SetStepGateBypass(CalCtx.warmRestartGraceSamples > 0 || !extra.valid);
+		const bool extraDistanceWeighted =
+		    CalCtx.CustomChecksActive() &&
+		    (CalCtx.precisionWeightedRelPose || CalCtx.headMount.experimentalConfidenceFusion);
+		extra.calc->SetRelPoseWeightMode(extraDistanceWeighted ? CalibrationCalc::RelPoseWeightMode::Covariance
+		                                                       : CalibrationCalc::RelPoseWeightMode::Uniform);
+		extra.calc->SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
+		extra.calc->SetLockedAcceptGate(CalCtx.CustomChecksActive());
+		extra.calc->SetV2Math(CalCtx.CustomChecksActive());
+
+		if (!CalCtx.calibrationPaused && extra.calc->SampleCount() >= CalCtx.SampleCount()) {
+			bool extraLerp = false;
+			if (extra.calc->ComputeIncremental(extraLerp, CalCtx.continuousCalibrationThreshold,
+			                                   CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers)) {
+				if (extra.calc->isValid()) {
+					extra.calibratedRotation = extra.calc->EulerRotation();
+					extra.calibratedTranslation = extra.calc->Transformation().translation() * 100.0;
+					extra.refToTargetPose = extra.calc->RelativeTransformation();
+					extra.relativePosCalibrated = extra.calc->isRelativeTransformationCalibrated();
+					extra.valid = true;
+				}
+			}
+			// Track this extra's recent priorCalibrationError values
+			// for the geometry-shift common-mode coherence check.
+			// LastPriorErrorM is INFINITY until a validated compute
+			// has happened; skip pushes until then so the rolling
+			// median is built from real readings, not sentinels.
+			const double extraErrM = extra.calc->LastPriorErrorM();
+			if (std::isfinite(extraErrM)) {
+				extra.recentErrorsMm.push_back(extraErrM * 1000.0);
+				while (extra.recentErrorsMm.size() > 30) {
+					extra.recentErrorsMm.pop_front();
 				}
 			}
 		}
 	}
-	else {
-		calibration.enableStaticRecalibration = false;
-		solveAttempted = true;
-		solveProducedCandidate = calibration.ComputeOneshot(CalCtx.ignoreOutliers);
-	}
+}
 
+static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, bool solveAttempted,
+                                          bool solveProducedCandidate)
+{
 	const bool inContinuousState = ctx.state == CalibrationState::Continuous;
 	const bool hasPublishableCandidate = solveProducedCandidate && calibration.isValid();
 
@@ -3156,6 +2770,441 @@ void CalibrationTick(double time)
 			}
 		}
 	}
+}
+
+void CalibrationTick(double time)
+{
+	if (!vr::VRSystem()) {
+		static double s_lastNoVrSystemLog = -1e9;
+		if (time - s_lastNoVrSystemLog >= 5.0) {
+			s_lastNoVrSystemLog = time;
+			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
+		}
+		return;
+	}
+
+	auto& ctx = CalCtx;
+
+	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
+	// the toggle stays responsive and the driver keeps getting heartbeats. While
+	// frozen, hold everything: skip the rest of the pose-reactive tick so the
+	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
+	// destructive auto-recovery, especially when the HMD is left live).
+	TickFreezeAllTracking(ctx, time);
+	if (ctx.freezeAllTracking) return;
+
+	if ((time - ctx.timeLastTick) < 0.05) return;
+
+	// Stage clock for the [cal-tick-slow] breakdown at the end of the tick.
+	LARGE_INTEGER tickWallStart;
+	QueryPerformanceCounter(&tickWallStart);
+	LARGE_INTEGER stageMark = tickWallStart;
+	g_tickGatesMs = g_tickDetectMs = g_tickSampleMs = 0.0;
+
+	// Resolve LockMode -> lockRelativePosition every tick before any code
+	// downstream reads the bool. The detector itself is updated in
+	// CollectSample further down; this just transcribes mode + detector
+	// state into the resolved field.
+	ctx.ResolveLockMode();
+
+	// Propagate the resolved lock bool to the CalibrationCalc instance the
+	// solver actually reads. Without this, calibration.lockRelativePosition
+	// only updates at StartContinuousCalibration time (once per cal cycle),
+	// so an AUTO Lock engagement that happens mid-cycle never reaches the
+	// ComputeIncremental relPose-constraint branch until the next restart.
+	// The geometry-shift fire annotation also reads this bool, which is why
+	// post-fix log readers will see lockRelativePosition=1 in fires after
+	// AUTO Lock engages (previously stuck at 0).
+	calibration.lockRelativePosition = ctx.lockRelativePosition;
+
+	TickWarmRestartDetection(ctx, time);
+
+	TraceRelPoseCalFlips(ctx);
+
+	TickPoseFreshnessWatchdog(ctx, time);
+
+	TickStuckCalWatchdog(ctx, time);
+
+	EmitCalHeartbeat(ctx, time);
+
+	EmitSessionConfigDumpOnce(ctx);
+
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		g_tickGatesMs = QpcMsBetween(stageMark, now);
+		stageMark = now;
+	}
+
+	// Bounds-check the device IDs once at the top of the tick. Many code paths
+	// downstream index devicePoses[ctx.referenceID] / devicePoses[ctx.targetID]
+	// directly (CollectSample, the sample-history pose recording near the end of
+	// this function, etc.), and a stale negative or out-of-range value reaches
+	// for memory outside the array. We tolerate -1 (the not-yet-assigned sentinel)
+	// because state machines below explicitly handle that, but anything else that
+	// isn't in [0, k_unMaxTrackedDeviceCount) means we cannot run any per-device
+	// logic this tick -- bail out and try again next tick.
+	const int32_t maxId = (int32_t)vr::k_unMaxTrackedDeviceCount;
+	auto idInRangeOrUnset = [maxId](int32_t id) {
+		return id == -1 || (id >= 0 && id < maxId);
+	};
+	if (!idInRangeOrUnset(ctx.referenceID) || !idInRangeOrUnset(ctx.targetID)) {
+		// Defensive reset: a corrupted ID is unrecoverable for this tick. Don't
+		// touch state -- we just skip the tick so the next AssignTargets() call can
+		// reseat the IDs cleanly.
+		return;
+	}
+
+	TickRelocDetectorGate(ctx, time);
+
+	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
+		ctx.ClearLogOnMessage();
+	}
+
+	TickDeviceRescan(ctx, time);
+
+	TickGeometryShiftWatchdog(ctx, time);
+
+	// External smoothing-tool detection moved to the Smoothing overlay's
+	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
+	// cadence and surfaces the banner inside its Prediction sub-tab.
+
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		g_tickDetectMs = QpcMsBetween(stageMark, now);
+		stageMark = now;
+	}
+
+	ctx.timeLastTick = time;
+	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
+		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
+			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
+			ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
+		}
+	});
+
+	TickDriverTelemetryDeltas(ctx);
+
+	TickHeadMountSolverFeed(ctx);
+
+	if (TickHmdStallGuard(ctx, time)) {
+		return;
+	}
+
+	// Run the scan in every state where a profile can be active. Previously the scan
+	// was skipped once continuous calibration had a valid result, which meant a tracker
+	// powered on mid-session never received its offset until calibration was restarted.
+	// Per-ID dedupe inside ScanAndApplyProfile keeps IPC churn near zero when nothing
+	// has changed.
+	if (ctx.state == CalibrationState::None || ctx.state == CalibrationState::ContinuousStandby ||
+	    ctx.state == CalibrationState::Continuous) {
+		if ((time - ctx.timeLastScan) >= 1.0) {
+			ScanAndApplyProfile(ctx);
+			ctx.timeLastScan = time;
+		}
+	}
+
+	if (ctx.state == CalibrationState::ContinuousStandby) {
+		if (AssignTargets()) {
+			StartContinuousCalibration("continuous_standby_transition");
+		}
+		else {
+			ctx.wantedUpdateInterval = 0.5;
+			ctx.Log("Waiting for devices...\n");
+			return;
+		}
+	}
+
+	if (ctx.state == CalibrationState::None) {
+		static double s_lastNoneStateAnnotation = -1e9;
+		if (time - s_lastNoneStateAnnotation >= 5.0) {
+			s_lastNoneStateAnnotation = time;
+			char noneBuf[512];
+			snprintf(noneBuf, sizeof noneBuf,
+			         "cal_state_none: validProfile=%d enabled=%d profile_trans_cm=(%.2f,%.2f,%.2f)"
+			         " profile_mag_cm=%.2f ref='%s' target='%s' refID=%d targetID=%d"
+			         " continuous_snapshot=%d last_accepted=%d",
+			         (int)ctx.validProfile, (int)ctx.enabled, ctx.calibratedTranslation.x(),
+			         ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(),
+			         ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str(), ctx.referenceID,
+			         ctx.targetID, (int)ctx.continuousStartSnapshot.captured,
+			         (int)ctx.lastAcceptedContinuousSnapshot.captured);
+			Metrics::WriteLogAnnotation(noneBuf);
+		}
+
+		// Base station drift correction (one-shot mode only): catch SteamVR
+		// universe shifts so body trackers stay aligned with the user's
+		// physical position. No-op when no base stations are detected.
+		// Continuous mode is intentionally skipped -- the live solver would
+		// converge through the shift on its own within a few seconds.
+		if (ctx.CustomChecksActive()) {
+			TickBaseStationDrift(time);
+		}
+
+		ctx.wantedUpdateInterval = 1.0;
+		return;
+	}
+
+	if (ctx.state == CalibrationState::Editing) {
+		ctx.wantedUpdateInterval = 0.1;
+
+		if ((time - ctx.timeLastScan) >= 0.1) {
+			ScanAndApplyProfile(ctx);
+			ctx.timeLastScan = time;
+		}
+		return;
+	}
+
+	bool ok = true;
+
+	if (ctx.referenceID == -1 || ctx.referenceID >= vr::k_unMaxTrackedDeviceCount) {
+		CalCtx.Log("Missing reference device\n");
+		ok = false;
+	}
+	if (ctx.targetID == -1 || ctx.targetID >= vr::k_unMaxTrackedDeviceCount) {
+		CalCtx.Log("Missing target device\n");
+		ok = false;
+	}
+
+	if (ctx.state == CalibrationState::Begin) {
+		char referenceSerial[256], targetSerial[256];
+		referenceSerial[0] = targetSerial[0] = 0;
+		if (auto* vrSystem = vr::VRSystem()) {
+			vrSystem->GetStringTrackedDeviceProperty(ctx.referenceID, vr::Prop_SerialNumber_String, referenceSerial,
+			                                         256);
+			vrSystem->GetStringTrackedDeviceProperty(ctx.targetID, vr::Prop_SerialNumber_String, targetSerial, 256);
+		}
+
+		char buf[256];
+		snprintf(buf, sizeof buf, "Reference device ID: %d, serial: %s\n", ctx.referenceID, referenceSerial);
+		CalCtx.Log(buf);
+		snprintf(buf, sizeof buf, "Target device ID: %d, serial %s\n", ctx.targetID, targetSerial);
+		CalCtx.Log(buf);
+
+		ScanAndApplyProfile(ctx);
+
+		// (Removed: the original code pushed position-spread metrics here,
+		// in the Begin state, before CollectSample had ever populated
+		// calibration.m_samples. The pushed value was always 0.0 from an
+		// empty buffer. Those metrics now live at the end of CollectSample.)
+
+		if (!CalCtx.ReferencePoseIsValidSimple()) {
+			CalCtx.Log("Reference device is not tracking\n");
+			ok = false;
+		}
+
+		if (!CalCtx.TargetPoseIsValidSimple()) {
+			CalCtx.Log("Target device is not tracking\n");
+			ok = false;
+		}
+
+		// @TOOD: Determine if the tracking is jittery
+		if (calibration.ReferenceJitter() > ctx.jitterThreshold) {
+			CalCtx.Log("Reference device is not tracking\n");
+			ok = false;
+		}
+		if (calibration.TargetJitter() > ctx.jitterThreshold) {
+			CalCtx.Log("Target device is not tracking\n");
+			ok = false;
+		}
+
+		if (ok) {
+			// ResetAndDisableOffsets(ctx.targetID);
+			ctx.state = CalibrationState::Rotation;
+			ctx.wantedUpdateInterval = 0.0;
+
+			CalCtx.Log("Starting calibration...\n");
+			return;
+		}
+	}
+
+	if (!ok) {
+		if (ctx.state != CalibrationState::Continuous) {
+			ctx.state = CalibrationState::None;
+
+			CalCtx.Log("Aborting calibration!\n");
+		}
+		return;
+	}
+
+	if (TickTrackerLivenessGate(ctx, time)) {
+		return;
+	}
+
+	TickDriverSynthContinuousStatus(ctx, time);
+
+	TickHeadMountSourceTransitionGuard(ctx, time);
+	TickHeadMountShadowOffsetEstimator(ctx, time);
+
+	if (!CollectSample(ctx)) {
+		return;
+	}
+
+	const int sampleProgress = (int)calibration.SampleCount();
+	const int sampleTarget = (int)ctx.SampleCount();
+	CalCtx.Progress(sampleProgress, sampleTarget);
+	spacecal::oneshot::MaybeLogReadiness(ctx, sampleProgress, sampleTarget, calibration.RotationDiversity(),
+	                                     calibration.TranslationDiversity(), time);
+
+	if (calibration.SampleCount() < CalCtx.SampleCount()) return;
+	while (calibration.SampleCount() > CalCtx.SampleCount())
+		calibration.ShiftSample();
+
+	if (TickOneShotMotionVarietyGate()) {
+		return;
+	}
+
+	if (TickTriggerHoldGate()) {
+		return;
+	}
+
+	LARGE_INTEGER start_time;
+	QueryPerformanceCounter(&start_time);
+	g_tickSampleMs = QpcMsBetween(stageMark, start_time);
+
+	bool lerp = false;
+	bool solveAttempted = false;
+	bool solveProducedCandidate = false;
+
+	if (CalCtx.state == CalibrationState::Continuous) {
+		CalCtx.messages.clear();
+		calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
+		const bool blockStaleRelPose =
+		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
+		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
+		// Geometry-precision weighting of the relpose average (default on;
+		// Advanced toggle). The experimental confidence fusion implies it --
+		// the Kalman accept needs the weighted measurement. With the
+		// enhanced-tracking switch the live weight is the full lever-arm
+		// covariance model; off means the classic uniform average.
+		const bool distanceWeighted = CalCtx.CustomChecksActive() && (CalCtx.precisionWeightedRelPose ||
+		                                                              CalCtx.headMount.experimentalConfidenceFusion);
+		calibration.SetRelPoseWeightMode(distanceWeighted ? CalibrationCalc::RelPoseWeightMode::Covariance
+		                                                  : CalibrationCalc::RelPoseWeightMode::Uniform);
+		calibration.SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
+		calibration.SetLockedAcceptGate(CalCtx.CustomChecksActive());
+		calibration.SetV2Math(CalCtx.CustomChecksActive());
+		// Large intentional moves (warm-restart re-acquire, session-first
+		// candidate) go through their own classification; everywhere else the
+		// locked accept keeps single steps bounded. The fusion accept is its
+		// own step absorber (gain-scaled blending + stale-seed breaker) and
+		// needs the full candidate stream, so the step gates stand down there
+		// -- the quality gates still apply.
+		calibration.SetStepGateBypass(CalCtx.warmRestartGraceSamples > 0 ||
+		                              !CalCtx.lastAcceptedContinuousSnapshot.captured ||
+		                              (CalCtx.CustomChecksActive() && CalCtx.headMount.experimentalConfidenceFusion));
+		if (blockStaleRelPose) {
+			static double s_lastHeadMountRelPoseGuardLog = -1e9;
+			if ((time - s_lastHeadMountRelPoseGuardLog) >= 1.0) {
+				s_lastHeadMountRelPoseGuardLog = time;
+				char gbuf[480];
+				std::snprintf(gbuf, sizeof gbuf,
+				              "head_mount_relpose_guard: bug_condition=1"
+				              " reason=fresh_relative_pose_required source=%s"
+				              " offset_version=%u lockRel=%d relPosCal=%d"
+				              " needsFreshRelPose=%d profile_mag_cm=%.2f",
+				              HeadMountSampleSourceName(CurrentHeadMountSampleSource(CalCtx)),
+				              (unsigned)CalCtx.headMountOffsetVersion, (int)CalCtx.lockRelativePosition,
+				              (int)CalCtx.relativePosCalibrated, (int)CalCtx.headMountNeedsFreshRelativePose,
+				              CalCtx.calibratedTranslation.norm());
+				Metrics::WriteLogAnnotation(gbuf);
+			}
+		}
+
+		const double hmdSpeedMps = ComputeEffectiveSpeedMps(CalCtx);
+
+		// User-toggled "Pause updates" from the continuous-cal UI: keep the
+		// already-applied driver offset live, skip any new solve cycle so the
+		// math doesn't fight the user trying to inspect the current result.
+		const bool deferSolveForUnstableTarget =
+		    !CalCtx.calibrationPaused && CalCtx.CustomChecksActive() &&
+		    spacecal::target_stability::ShouldDeferSolve(CalCtx.targetInvalidEwma,
+		                                                 spacecal::target_stability::kSolveDeferInvalidFraction);
+		if (deferSolveForUnstableTarget) {
+			// The target tracking link is flapping (recent invalid-pose rate high).
+			// A solve built from samples stitched across the dropouts is unreliable
+			// churn, so defer it -- the applied offset stays put and CollectSample
+			// keeps refilling the buffer until the link steadies. Skipping this
+			// branch also skips the warm-restart grace countdown below, which is
+			// correct: no solve happened this tick.
+			static double s_lastSolveDeferLog = -1e9;
+			if (time - s_lastSolveDeferLog >= 1.0) {
+				s_lastSolveDeferLog = time;
+				Metrics::LogAnnotationf("continuous_solve_deferred: reason=target_unstable"
+				                        " target_invalid_ewma=%.3f threshold=%.2f sample_count=%zu",
+				                        CalCtx.targetInvalidEwma,
+				                        spacecal::target_stability::kSolveDeferInvalidFraction,
+				                        calibration.SampleCount());
+			}
+		}
+		else if (!CalCtx.calibrationPaused) {
+			solveAttempted = true;
+			solveProducedCandidate = calibration.ComputeIncremental(
+			    lerp, CalCtx.continuousCalibrationThreshold, CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers);
+			{
+				// Steady-state continuous solves repeat the same outcome
+				// several times a second for hours (26k lines in one recorded
+				// session). Log when the outcome or reject reason changes,
+				// otherwise at most once per 5 s -- transitions carry the
+				// signal.
+				static double s_lastContinuousSolveAnnotation = -1e9;
+				static bool s_lastSolveProduced = false;
+				static std::string s_lastSolveRejectReason;
+				const bool producedValidCandidate = solveProducedCandidate && calibration.isValid();
+				const char* rejectReason =
+				    producedValidCandidate
+				        ? "none"
+				        : (Metrics::lastRejectReason.empty() ? "none" : Metrics::lastRejectReason.c_str());
+				const bool outcomeChanged =
+				    solveProducedCandidate != s_lastSolveProduced || s_lastSolveRejectReason != rejectReason;
+				if (outcomeChanged || time - s_lastContinuousSolveAnnotation >= 5.0) {
+					s_lastContinuousSolveAnnotation = time;
+					s_lastSolveProduced = solveProducedCandidate;
+					s_lastSolveRejectReason = rejectReason;
+					const Eigen::Vector3d candidateCm = calibration.Transformation().translation() * 100.0;
+					Metrics::LogAnnotationf(
+					    "continuous_solve_tick: state=%d(%s) paused=%d attempted=1 produced=%d"
+					    " calc_valid=%d source=%s sample_count=%zu required=%zu"
+					    " relPosCal=%d lockRel=%d validProfile=%d hasAccepted=%d"
+					    " candidate_cm=(%.2f,%.2f,%.2f) candidate_mag_cm=%.2f"
+					    " reject_reason=%s warm_grace=%d",
+					    (int)ctx.state, CalibrationStateName(ctx.state), (int)CalCtx.calibrationPaused,
+					    (int)solveProducedCandidate, (int)calibration.isValid(),
+					    calibration.LastComputeUsedRelPose() ? "relpose" : "full", calibration.SampleCount(),
+					    CalCtx.SampleCount(), (int)CalCtx.relativePosCalibrated, (int)CalCtx.lockRelativePosition,
+					    (int)CalCtx.validProfile, (int)CalCtx.lastAcceptedContinuousSnapshot.captured, candidateCm.x(),
+					    candidateCm.y(), candidateCm.z(), candidateCm.norm(), rejectReason,
+					    CalCtx.warmRestartGraceSamples);
+				}
+			}
+
+			TickWarmRestartGraceValidation(time);
+		}
+		else {
+			static double s_lastPausedSolveAnnotation = -1e9;
+			if (time - s_lastPausedSolveAnnotation >= 2.0) {
+				s_lastPausedSolveAnnotation = time;
+				char pausedBuf[320];
+				snprintf(pausedBuf, sizeof pausedBuf,
+				         "continuous_solve_skipped: state=%d(%s) reason=paused sample_count=%zu required=%zu"
+				         " validProfile=%d hasAccepted=%d",
+				         (int)ctx.state, CalibrationStateName(ctx.state), calibration.SampleCount(),
+				         CalCtx.SampleCount(), (int)CalCtx.validProfile,
+				         (int)CalCtx.lastAcceptedContinuousSnapshot.captured);
+				Metrics::WriteLogAnnotation(pausedBuf);
+			}
+		}
+
+		TickAdditionalCalibrations(time, hmdSpeedMps);
+	}
+	else {
+		calibration.enableStaticRecalibration = false;
+		solveAttempted = true;
+		solveProducedCandidate = calibration.ComputeOneshot(CalCtx.ignoreOutliers);
+	}
+
+	TickCandidateAcceptAndPersist(ctx, time, solveAttempted, solveProducedCandidate);
 
 	LARGE_INTEGER end_time;
 	QueryPerformanceCounter(&end_time);
