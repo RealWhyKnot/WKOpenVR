@@ -307,7 +307,7 @@ if(WKOPENVR_CAPTIONS_VULKAN)
         WKOPENVR_CAPTIONS_VULKAN_ENABLED=1)
 endif()
 
-target_compile_features(WKOpenVRCaptionsHost PRIVATE cxx_std_17)
+target_compile_features(WKOpenVRCaptionsHost PRIVATE cxx_std_20)
 
 # WIN32_EXECUTABLE sets SUBSYSTEM:WINDOWS (no console window) but expects WinMain.
 # Override the entry point so int main() is used as-is.
