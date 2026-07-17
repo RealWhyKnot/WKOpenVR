@@ -1053,11 +1053,6 @@ void DebugApplyRandomOffset();
 // "Dump drift state" button.
 void DumpDriftSubsystemState();
 
-// Accessor for the session-counter of stuck-loop watchdog firings. The
-// underlying CalibrationCalc instance lives in an anonymous namespace inside
-// Calibration.cpp, so we expose this via a free function.
-int GetWatchdogResetCount();
-
 // Most recent HMD-relocalization detection event. Returns true if any event
 // has been logged this session and populates out parameters with the time
 // since the event (seconds), the translation magnitude (meters), and the

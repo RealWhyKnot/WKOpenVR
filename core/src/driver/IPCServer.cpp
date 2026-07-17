@@ -264,7 +264,7 @@ BOOL IPCServer::CreateAndConnectInstance(LPOVERLAPPED overlap, HANDLE& pipe)
 
 void IPCServer::CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED overlap)
 {
-	PipeInstance* pipeInst = (PipeInstance*)overlap;
+	PipeInstance* pipeInst = CONTAINING_RECORD(overlap, PipeInstance, overlap);
 	BOOL success = FALSE;
 
 	if (err == 0 && bytesRead == sizeof(protocol::Request)) {
@@ -295,7 +295,7 @@ void IPCServer::CompletedReadCallback(DWORD err, DWORD bytesRead, LPOVERLAPPED o
 
 void IPCServer::CompletedWriteCallback(DWORD err, DWORD bytesWritten, LPOVERLAPPED overlap)
 {
-	PipeInstance* pipeInst = (PipeInstance*)overlap;
+	PipeInstance* pipeInst = CONTAINING_RECORD(overlap, PipeInstance, overlap);
 	BOOL success = FALSE;
 
 	if (err == 0 && bytesWritten == sizeof(protocol::Response)) {

@@ -2811,11 +2811,6 @@ void DebugApplyRandomOffset()
 	Driver.SendBlocking(req);
 }
 
-int GetWatchdogResetCount()
-{
-	return 0;
-}
-
 // (RecenterPlayspaceToCurrentHmd removed: superseded by lighthouse-anchored
 // boundary push -- shifting the SZP to the HMD pose would push the boundary
 // off the physical room geometry.)

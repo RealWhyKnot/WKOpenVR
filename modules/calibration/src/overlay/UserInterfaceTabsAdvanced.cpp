@@ -92,9 +92,9 @@ static void SetContinuousSpeed(CalibrationContext::Speed value)
 	SaveProfile(CalCtx);
 }
 
-// Render the watchdog / HMD-stall diagnostic counters wrapped in a group panel.
-// Lives in Advanced (not Basic) since these are bug-report breadcrumbs, not
-// something a casual user needs to see while running.
+// Render the HMD-stall diagnostic counter wrapped in a group panel. Lives in
+// Advanced (not Basic) since these are bug-report breadcrumbs, not something a
+// casual user needs to see while running.
 static void DrawDiagnosticsPanel(ImVec2 panelSize)
 {
 	openvr_pair::overlay::ui::DrawPanel(
@@ -102,24 +102,11 @@ static void DrawDiagnosticsPanel(ImVec2 panelSize)
 	    [&] {
 		    const auto& pal = openvr_pair::overlay::ui::GetPalette();
 
-		    // Watchdog reset tracking. We reflect whether the count has changed
-		    // recently (within ~15 s) by colouring the line amber, matching the
-		    // continuous-recalibration banner pattern.
-		    static int s_lastSeenWatchdog = -1;
-		    static double s_lastWatchdogResetTime = 0.0;
 		    static int s_lastSeenStallCount = 0;
 		    static int s_stallPurgeCount = 0;
 		    static double s_lastStallPurgeTime = 0.0;
 
-		    const int wdResets = GetWatchdogResetCount();
 		    const double now = ImGui::GetTime();
-		    if (s_lastSeenWatchdog < 0) {
-			    s_lastSeenWatchdog = wdResets;
-		    }
-		    else if (wdResets != s_lastSeenWatchdog) {
-			    s_lastSeenWatchdog = wdResets;
-			    s_lastWatchdogResetTime = now;
-		    }
 
 		    // Long-stall counter: HMD stalled for >=30 ticks (~1.5 s). Previously the
 		    // calibration tick purged the sample buffer at this point; reverted
@@ -133,30 +120,6 @@ static void DrawDiagnosticsPanel(ImVec2 panelSize)
 			    s_lastStallPurgeTime = now;
 		    }
 		    s_lastSeenStallCount = curStalls;
-
-		    const bool wdRecent =
-		        wdResets > 0 && (now - s_lastWatchdogResetTime) < 15.0 && s_lastWatchdogResetTime > 0.0;
-		    if (wdRecent) {
-			    ImGui::PushStyleColor(ImGuiCol_Text, pal.statusPending);
-			    ImGui::Text("Watchdog reset %.0fs ago - recollecting samples (count: %d)",
-			                now - s_lastWatchdogResetTime, wdResets);
-			    ImGui::PopStyleColor();
-		    }
-		    else if (wdResets == 0) {
-			    ImGui::TextDisabled("Watchdog resets: 0 (last: never)");
-		    }
-		    else {
-			    ImGui::TextDisabled("Watchdog resets: %d (last: %.0fs ago)", wdResets,
-			                        s_lastWatchdogResetTime > 0.0 ? (now - s_lastWatchdogResetTime) : 0.0);
-		    }
-		    if (ImGui::IsItemHovered()) {
-			    ImGui::SetTooltip(
-			        "Stuck-loop watchdog: fires when continuous calibration has been rejecting every new\n"
-			        "sample for ~25 seconds. When it fires, the current estimate is discarded and\n"
-			        "we recollect from scratch. A high count here usually means motion conditioning is\n"
-			        "poor (move slower, rotate around more axes) or trackers are drifting against each\n"
-			        "other faster than the solver can keep up.");
-		    }
 
 		    const bool stallRecent = s_stallPurgeCount > 0 && (now - s_lastStallPurgeTime) < 15.0;
 		    if (stallRecent) {
