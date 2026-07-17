@@ -303,6 +303,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Unify the tick clock and revive the geometry-shift detector (9fb31ae)
 - **calibration:** Bound the first continuous candidate snap at 50 cm (2f3b0d1)
 - **calibration:** Guard oversized persists and break sustained rejection churn (b630285)
+- **core:** Bound every overlay IPC operation with a deadline (90c4252)
 
 ---
 
