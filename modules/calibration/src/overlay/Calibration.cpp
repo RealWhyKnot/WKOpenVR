@@ -1423,89 +1423,8 @@ void FlushPendingContinuousSave()
 	Metrics::WriteLogAnnotation("[profile-save][flush] reason=continuous_pending_on_shutdown");
 }
 
-void CalibrationTick(double time)
+static void TickRelocDetectorGate(CalibrationContext& ctx, double time)
 {
-	if (!vr::VRSystem()) {
-		static double s_lastNoVrSystemLog = -1e9;
-		if (time - s_lastNoVrSystemLog >= 5.0) {
-			s_lastNoVrSystemLog = time;
-			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
-		}
-		return;
-	}
-
-	auto& ctx = CalCtx;
-
-	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
-	// the toggle stays responsive and the driver keeps getting heartbeats. While
-	// frozen, hold everything: skip the rest of the pose-reactive tick so the
-	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
-	// destructive auto-recovery, especially when the HMD is left live).
-	TickFreezeAllTracking(ctx, time);
-	if (ctx.freezeAllTracking) return;
-
-	if ((time - ctx.timeLastTick) < 0.05) return;
-
-	// Stage clock for the [cal-tick-slow] breakdown at the end of the tick.
-	LARGE_INTEGER tickWallStart;
-	QueryPerformanceCounter(&tickWallStart);
-	LARGE_INTEGER stageMark = tickWallStart;
-	g_tickGatesMs = g_tickDetectMs = g_tickSampleMs = 0.0;
-
-	// Resolve LockMode -> lockRelativePosition every tick before any code
-	// downstream reads the bool. The detector itself is updated in
-	// CollectSample further down; this just transcribes mode + detector
-	// state into the resolved field.
-	ctx.ResolveLockMode();
-
-	// Propagate the resolved lock bool to the CalibrationCalc instance the
-	// solver actually reads. Without this, calibration.lockRelativePosition
-	// only updates at StartContinuousCalibration time (once per cal cycle),
-	// so an AUTO Lock engagement that happens mid-cycle never reaches the
-	// ComputeIncremental relPose-constraint branch until the next restart.
-	// The geometry-shift fire annotation also reads this bool, which is why
-	// post-fix log readers will see lockRelativePosition=1 in fires after
-	// AUTO Lock engages (previously stuck at 0).
-	calibration.lockRelativePosition = ctx.lockRelativePosition;
-
-	TickWarmRestartDetection(ctx, time);
-
-	TraceRelPoseCalFlips(ctx);
-
-	TickPoseFreshnessWatchdog(ctx, time);
-
-	TickStuckCalWatchdog(ctx, time);
-
-	EmitCalHeartbeat(ctx, time);
-
-	EmitSessionConfigDumpOnce(ctx);
-
-	{
-		LARGE_INTEGER now;
-		QueryPerformanceCounter(&now);
-		g_tickGatesMs = QpcMsBetween(stageMark, now);
-		stageMark = now;
-	}
-
-	// Bounds-check the device IDs once at the top of the tick. Many code paths
-	// downstream index devicePoses[ctx.referenceID] / devicePoses[ctx.targetID]
-	// directly (CollectSample, the sample-history pose recording near the end of
-	// this function, etc.), and a stale negative or out-of-range value reaches
-	// for memory outside the array. We tolerate -1 (the not-yet-assigned sentinel)
-	// because state machines below explicitly handle that, but anything else that
-	// isn't in [0, k_unMaxTrackedDeviceCount) means we cannot run any per-device
-	// logic this tick -- bail out and try again next tick.
-	const int32_t maxId = (int32_t)vr::k_unMaxTrackedDeviceCount;
-	auto idInRangeOrUnset = [maxId](int32_t id) {
-		return id == -1 || (id >= 0 && id < maxId);
-	};
-	if (!idInRangeOrUnset(ctx.referenceID) || !idInRangeOrUnset(ctx.targetID)) {
-		// Defensive reset: a corrupted ID is unrecoverable for this tick. Don't
-		// touch state -- we just skip the tick so the next AssignTargets() call can
-		// reseat the IDs cleanly.
-		return;
-	}
-
 	// Hybrid HMD-relocalization detector. Runs in every state where a tick
 	// proceeds; the function itself skips active calibration sub-states
 	// where the HMD is being deliberately moved. Logging-only -- emits a
@@ -1531,11 +1450,10 @@ void CalibrationTick(double time)
 	if (ctx.CustomChecksActive()) {
 		TickHmdRelocalizationDetector(time);
 	}
+}
 
-	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
-		ctx.ClearLogOnMessage();
-	}
-
+static void TickDeviceRescan(CalibrationContext& ctx, double time)
+{
 	// Device rescan: runs in every state at 1 Hz. AssignTargets is the only
 	// site that resolves targetID and headMount.deviceID by serial; without
 	// an idle-state rescan, a continuous target picked on the Basic tab
@@ -1550,7 +1468,10 @@ void CalibrationTick(double time)
 		ctx.timeLastAssign = time;
 		AssignTargets();
 	}
+}
 
+static void TickGeometryShiftWatchdog(CalibrationContext& ctx, double time)
+{
 	// Sudden-tracking-shift watchdog. The 50-rejection watchdog inside CalibrationCalc
 	// only fires after ~25s of consistent rejection; that's appropriate for genuinely
 	// degraded calibration but too slow for catastrophic geometry shifts (a lighthouse
@@ -1808,26 +1729,10 @@ void CalibrationTick(double time)
 			}
 		} // close `if (inGeometryShiftGrace) ... else { ...`
 	}
+}
 
-	// External smoothing-tool detection moved to the Smoothing overlay's
-	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
-	// cadence and surfaces the banner inside its Prediction sub-tab.
-
-	{
-		LARGE_INTEGER now;
-		QueryPerformanceCounter(&now);
-		g_tickDetectMs = QpcMsBetween(stageMark, now);
-		stageMark = now;
-	}
-
-	ctx.timeLastTick = time;
-	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
-		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
-			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
-			ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
-		}
-	});
-
+static void TickDriverTelemetryDeltas(CalibrationContext& ctx)
+{
 	// Sample driver-side telemetry counters and push the per-tick deltas (in Hz)
 	// into the metrics time series. Initialize the prior snapshot lazily on the
 	// first valid sample so the first delta is zero rather than a huge spike
@@ -1870,6 +1775,187 @@ void CalibrationTick(double time)
 			}
 		}
 	}
+}
+
+static bool TickHmdStallGuard(CalibrationContext& ctx, double time)
+{
+	// check for non-updating headset tracking space (caused by quest out of bounds or taken off head for example) and
+	// abort everything for this tick
+	auto p = ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd].vecPosition;
+	if ((p[0] == 0.0 && p[1] == 0.0 && p[2] == 0.0) || (ctx.xprev == p[0] && ctx.yprev == p[1] && ctx.zprev == p[2])) {
+		// std::cerr << "HMD tracking didn't update, skipping update" << std::endl;
+		// Counter is preserved for the existing diagnostic UI in
+		// UserInterface.cpp ("Stall purge: N events") and the
+		// "hmd_stall_recovered after N ticks" log annotation below.
+		if (ctx.consecutiveHmdStalls == 0) {
+			// Stall-entered edge: companion to the existing recovered log so
+			// a reader can compute the wall-clock stall duration without
+			// having to guess the start by subtracting tick count from the
+			// recovered timestamp. One line per stall, no per-tick noise.
+			char enterBuf[200];
+			snprintf(enterBuf, sizeof enterBuf,
+			         "[hmd-stall][entered] t=%.3f hmd_pos=(%.4f,%.4f,%.4f) prev=(%.4f,%.4f,%.4f)", time, p[0], p[1],
+			         p[2], (double)ctx.xprev, (double)ctx.yprev, (double)ctx.zprev);
+			Metrics::WriteLogAnnotation(enterBuf);
+		}
+		ctx.consecutiveHmdStalls++;
+		// REVERTED 2026-05-04: previously, after MaxHmdStalls=30 ticks of stalled
+		// HMD tracking, the sample buffer was purged via calibration.Clear() and
+		// state was demoted to ContinuousStandby. The intent was "stale samples no
+		// longer represent reality" -- but the actual effect was much worse than
+		// the problem it solved: on stall recovery, StartContinuousCalibration()
+		// re-applies the saved refToTargetPose warm-start (relativePosCalibrated
+		// is NOT reset, asymmetric vs the geometry-shift detector at line 2120
+		// which DOES reset it), and continuous-cal converges from new post-stall
+		// samples against that stale constraint. Each HMD-off/on cycle landed at
+		// a slightly different local minimum; SaveProfile persisted it; cumulative
+		// drift across many cycles wedged the saved profile.
+		//
+		// Empirical evidence (spacecal_log.2026-05-04T17-14-50.txt): two HMD off/on
+		// events at t=1918 (56 ticks) and t=2096 (95 ticks) each produced a 7-9 cm
+		// Z-axis shift in posOffset_currentCal IMMEDIATELY post-recovery, with the
+		// cal magnitude climbing toward the wedge bound across the session.
+		// Upstream (hyblocker) just `return`s on stall -- no clear, no demote -- and
+		// the user reports this drift didn't happen on the old fork.
+		//
+		// Now matching upstream behavior: just return. Stale samples in the rolling
+		// buffer naturally age out as fresh ones come in post-stall; the existing
+		// rolling-window solver handles the transition without a discrete reset.
+		return true;
+	}
+	if (ctx.consecutiveHmdStalls > 0) {
+		// Annotate recovery with both the legacy tick count and the
+		// approximate duration in seconds (computed from tick rate).
+		// Most stalls in normal sessions are 1-2 ticks; the long ones
+		// (200+) are the interesting cases worth investigating, and
+		// having a seconds value next to the tick count saves a
+		// conversion step during triage.
+		char buf[200];
+		const double approxDurSec = (double)ctx.consecutiveHmdStalls / 90.0; // ~90 Hz typical
+		snprintf(buf, sizeof buf, "hmd_stall_recovered after %d ticks (approx %.2fs at 90Hz, t=%.3f)",
+		         ctx.consecutiveHmdStalls, approxDurSec, time);
+		Metrics::WriteLogAnnotation(buf);
+	}
+	ctx.consecutiveHmdStalls = 0;
+	ctx.xprev = (float)p[0];
+	ctx.yprev = (float)p[1];
+	ctx.zprev = (float)p[2];
+	return false;
+}
+
+void CalibrationTick(double time)
+{
+	if (!vr::VRSystem()) {
+		static double s_lastNoVrSystemLog = -1e9;
+		if (time - s_lastNoVrSystemLog >= 5.0) {
+			s_lastNoVrSystemLog = time;
+			Metrics::WriteLogAnnotation("[tick-skip] reason=no_vrsystem");
+		}
+		return;
+	}
+
+	auto& ctx = CalCtx;
+
+	// Global freeze hotkey + heartbeat runs every frame (before the throttle) so
+	// the toggle stays responsive and the driver keeps getting heartbeats. While
+	// frozen, hold everything: skip the rest of the pose-reactive tick so the
+	// frozen poses aren't misread as tracker dropout (which would otherwise fire a
+	// destructive auto-recovery, especially when the HMD is left live).
+	TickFreezeAllTracking(ctx, time);
+	if (ctx.freezeAllTracking) return;
+
+	if ((time - ctx.timeLastTick) < 0.05) return;
+
+	// Stage clock for the [cal-tick-slow] breakdown at the end of the tick.
+	LARGE_INTEGER tickWallStart;
+	QueryPerformanceCounter(&tickWallStart);
+	LARGE_INTEGER stageMark = tickWallStart;
+	g_tickGatesMs = g_tickDetectMs = g_tickSampleMs = 0.0;
+
+	// Resolve LockMode -> lockRelativePosition every tick before any code
+	// downstream reads the bool. The detector itself is updated in
+	// CollectSample further down; this just transcribes mode + detector
+	// state into the resolved field.
+	ctx.ResolveLockMode();
+
+	// Propagate the resolved lock bool to the CalibrationCalc instance the
+	// solver actually reads. Without this, calibration.lockRelativePosition
+	// only updates at StartContinuousCalibration time (once per cal cycle),
+	// so an AUTO Lock engagement that happens mid-cycle never reaches the
+	// ComputeIncremental relPose-constraint branch until the next restart.
+	// The geometry-shift fire annotation also reads this bool, which is why
+	// post-fix log readers will see lockRelativePosition=1 in fires after
+	// AUTO Lock engages (previously stuck at 0).
+	calibration.lockRelativePosition = ctx.lockRelativePosition;
+
+	TickWarmRestartDetection(ctx, time);
+
+	TraceRelPoseCalFlips(ctx);
+
+	TickPoseFreshnessWatchdog(ctx, time);
+
+	TickStuckCalWatchdog(ctx, time);
+
+	EmitCalHeartbeat(ctx, time);
+
+	EmitSessionConfigDumpOnce(ctx);
+
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		g_tickGatesMs = QpcMsBetween(stageMark, now);
+		stageMark = now;
+	}
+
+	// Bounds-check the device IDs once at the top of the tick. Many code paths
+	// downstream index devicePoses[ctx.referenceID] / devicePoses[ctx.targetID]
+	// directly (CollectSample, the sample-history pose recording near the end of
+	// this function, etc.), and a stale negative or out-of-range value reaches
+	// for memory outside the array. We tolerate -1 (the not-yet-assigned sentinel)
+	// because state machines below explicitly handle that, but anything else that
+	// isn't in [0, k_unMaxTrackedDeviceCount) means we cannot run any per-device
+	// logic this tick -- bail out and try again next tick.
+	const int32_t maxId = (int32_t)vr::k_unMaxTrackedDeviceCount;
+	auto idInRangeOrUnset = [maxId](int32_t id) {
+		return id == -1 || (id >= 0 && id < maxId);
+	};
+	if (!idInRangeOrUnset(ctx.referenceID) || !idInRangeOrUnset(ctx.targetID)) {
+		// Defensive reset: a corrupted ID is unrecoverable for this tick. Don't
+		// touch state -- we just skip the tick so the next AssignTargets() call can
+		// reseat the IDs cleanly.
+		return;
+	}
+
+	TickRelocDetectorGate(ctx, time);
+
+	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
+		ctx.ClearLogOnMessage();
+	}
+
+	TickDeviceRescan(ctx, time);
+
+	TickGeometryShiftWatchdog(ctx, time);
+
+	// External smoothing-tool detection moved to the Smoothing overlay's
+	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
+	// cadence and surfaces the banner inside its Prediction sub-tab.
+
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		g_tickDetectMs = QpcMsBetween(stageMark, now);
+		stageMark = now;
+	}
+
+	ctx.timeLastTick = time;
+	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
+		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId < (int)vr::k_unMaxTrackedDeviceCount) {
+			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
+			ctx.devicePoseSampleTimes[augmented_pose.deviceId] = augmented_pose.sample_time;
+		}
+	});
+
+	TickDriverTelemetryDeltas(ctx);
 
 	// Feed the head-mount offset solver with fresh pose pairs. The modal's
 	// Solver is a no-op when not in Collecting state, so this call is cheap on
@@ -1926,67 +2012,9 @@ void CalibrationTick(double time)
 		}
 	}
 
-	// check for non-updating headset tracking space (caused by quest out of bounds or taken off head for example) and
-	// abort everything for this tick
-	auto p = ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd].vecPosition;
-	if ((p[0] == 0.0 && p[1] == 0.0 && p[2] == 0.0) || (ctx.xprev == p[0] && ctx.yprev == p[1] && ctx.zprev == p[2])) {
-		// std::cerr << "HMD tracking didn't update, skipping update" << std::endl;
-		// Counter is preserved for the existing diagnostic UI in
-		// UserInterface.cpp ("Stall purge: N events") and the
-		// "hmd_stall_recovered after N ticks" log annotation below.
-		if (ctx.consecutiveHmdStalls == 0) {
-			// Stall-entered edge: companion to the existing recovered log so
-			// a reader can compute the wall-clock stall duration without
-			// having to guess the start by subtracting tick count from the
-			// recovered timestamp. One line per stall, no per-tick noise.
-			char enterBuf[200];
-			snprintf(enterBuf, sizeof enterBuf,
-			         "[hmd-stall][entered] t=%.3f hmd_pos=(%.4f,%.4f,%.4f) prev=(%.4f,%.4f,%.4f)", time, p[0], p[1],
-			         p[2], (double)ctx.xprev, (double)ctx.yprev, (double)ctx.zprev);
-			Metrics::WriteLogAnnotation(enterBuf);
-		}
-		ctx.consecutiveHmdStalls++;
-		// REVERTED 2026-05-04: previously, after MaxHmdStalls=30 ticks of stalled
-		// HMD tracking, the sample buffer was purged via calibration.Clear() and
-		// state was demoted to ContinuousStandby. The intent was "stale samples no
-		// longer represent reality" -- but the actual effect was much worse than
-		// the problem it solved: on stall recovery, StartContinuousCalibration()
-		// re-applies the saved refToTargetPose warm-start (relativePosCalibrated
-		// is NOT reset, asymmetric vs the geometry-shift detector at line 2120
-		// which DOES reset it), and continuous-cal converges from new post-stall
-		// samples against that stale constraint. Each HMD-off/on cycle landed at
-		// a slightly different local minimum; SaveProfile persisted it; cumulative
-		// drift across many cycles wedged the saved profile.
-		//
-		// Empirical evidence (spacecal_log.2026-05-04T17-14-50.txt): two HMD off/on
-		// events at t=1918 (56 ticks) and t=2096 (95 ticks) each produced a 7-9 cm
-		// Z-axis shift in posOffset_currentCal IMMEDIATELY post-recovery, with the
-		// cal magnitude climbing toward the wedge bound across the session.
-		// Upstream (hyblocker) just `return`s on stall -- no clear, no demote -- and
-		// the user reports this drift didn't happen on the old fork.
-		//
-		// Now matching upstream behavior: just return. Stale samples in the rolling
-		// buffer naturally age out as fresh ones come in post-stall; the existing
-		// rolling-window solver handles the transition without a discrete reset.
+	if (TickHmdStallGuard(ctx, time)) {
 		return;
 	}
-	if (ctx.consecutiveHmdStalls > 0) {
-		// Annotate recovery with both the legacy tick count and the
-		// approximate duration in seconds (computed from tick rate).
-		// Most stalls in normal sessions are 1-2 ticks; the long ones
-		// (200+) are the interesting cases worth investigating, and
-		// having a seconds value next to the tick count saves a
-		// conversion step during triage.
-		char buf[200];
-		const double approxDurSec = (double)ctx.consecutiveHmdStalls / 90.0; // ~90 Hz typical
-		snprintf(buf, sizeof buf, "hmd_stall_recovered after %d ticks (approx %.2fs at 90Hz, t=%.3f)",
-		         ctx.consecutiveHmdStalls, approxDurSec, time);
-		Metrics::WriteLogAnnotation(buf);
-	}
-	ctx.consecutiveHmdStalls = 0;
-	ctx.xprev = (float)p[0];
-	ctx.yprev = (float)p[1];
-	ctx.zprev = (float)p[2];
 
 	// Run the scan in every state where a profile can be active. Previously the scan
 	// was skipped once continuous calibration had a valid result, which meant a tracker

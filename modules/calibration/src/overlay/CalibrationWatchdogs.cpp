@@ -1,6 +1,6 @@
 #include "CalibrationWatchdogs.h"
 
-#include "CalibrationInternal.h"     // calibration solver + shared auto-lock/geometry-shift counters
+#include "CalibrationInternal.h" // calibration solver + shared auto-lock/geometry-shift counters
 #include "CalibrationMetrics.h"
 #include "CalibrationRecoveryTick.h" // ArmReanchorToProfile / EvictDeadFrameSamples / LastWitnessHealth
 #include "AutoLockHysteresis.h"      // spacecal::autolock::IsSettled / EnterThresholdFor
