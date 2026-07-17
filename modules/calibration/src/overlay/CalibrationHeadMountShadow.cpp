@@ -1,10 +1,11 @@
 #include "CalibrationHeadMountShadow.h"
 
-#include "CalibrationAutoSpeed.h"       // spacecal::calibration_speed::SelectObservedFitRmsMm
-#include "CalibrationDevicePoseUtils.h" // ConvertPose
-#include "CalibrationInternal.h"        // calibration solver, snap flags, shared transform helpers
+#include "CalibrationAutoSpeed.h"    // spacecal::calibration_speed::SelectObservedFitRmsMm
+#include "CalibrationPoseSampling.h" // ConvertPose
+#include "CalibrationInternal.h"     // calibration solver, snap flags, shared transform helpers
 #include "CalibrationMetrics.h"
 #include "HeadFromTrackerSolve.h"   // wkopenvr::headmount::Solver
+#include "HeadMountPoseSampling.h"  // spacecal::headmount::PoseIsRunningOk
 #include "HeadMountShadowOffset.h"  // shadow apply gate + offset deltas + freshness bound
 #include "HeadMountSourceGuard.h"   // head-mount source fingerprint + transition decision
 #include "HeadMountTargetBinding.h" // wkopenvr::headmount::HeadMountMatchesContinuousTarget
