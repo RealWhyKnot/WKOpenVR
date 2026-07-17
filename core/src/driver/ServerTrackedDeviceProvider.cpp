@@ -781,11 +781,21 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(uint32_t featureMask, const p
 	}
 
 	size_t index = 0;
+	LARGE_INTEGER qpcFreq{};
+	QueryPerformanceFrequency(&qpcFreq);
 	for (;;) {
 		ActiveDriverModule faulted;
 		bool disableFaulted = false;
 		{
+			// The pose path takes activeModulesMutex at frame rate; if module
+			// compute under it grows, IPC replies stall here and the overlay
+			// sees timeouts. Measure the coupling so a slow reply is
+			// attributable to lock contention vs. the handler itself.
+			LARGE_INTEGER lockWaitStart{};
+			QueryPerformanceCounter(&lockWaitStart);
 			std::unique_lock<std::mutex> activeLock(activeModulesMutex);
+			LARGE_INTEGER lockAcquired{};
+			QueryPerformanceCounter(&lockAcquired);
 			if (index >= activeModules.size()) break;
 			ActiveDriverModule& entry = activeModules[index];
 			if (!entry.module || (entry.module->FeatureMask() & featureMask) == 0) {
@@ -795,7 +805,24 @@ bool ServerTrackedDeviceProvider::HandleIpcRequest(uint32_t featureMask, const p
 
 			try {
 				ModuleSafetyScope safetyScope(entry.safety, "request");
-				if (entry.module->HandleRequest(request, response)) return true;
+				const bool handled = entry.module->HandleRequest(request, response);
+				LARGE_INTEGER handlerEnd{};
+				QueryPerformanceCounter(&handlerEnd);
+				if (qpcFreq.QuadPart > 0) {
+					const double lockWaitMs =
+					    (lockAcquired.QuadPart - lockWaitStart.QuadPart) * 1000.0 / qpcFreq.QuadPart;
+					const double handlerMs = (handlerEnd.QuadPart - lockAcquired.QuadPart) * 1000.0 / qpcFreq.QuadPart;
+					if (lockWaitMs > 5.0 || handlerMs > 10.0) {
+						static LONGLONG s_lastSlowDispatchQpc = 0;
+						if (handlerEnd.QuadPart - s_lastSlowDispatchQpc >= qpcFreq.QuadPart) {
+							s_lastSlowDispatchQpc = handlerEnd.QuadPart;
+							LOG("[ipc] slow request dispatch: module='%s' request_type=%d lock_wait_ms=%.2f"
+							    " handler_ms=%.2f",
+							    entry.module->Name(), (int)request.type, lockWaitMs, handlerMs);
+						}
+					}
+				}
+				if (handled) return true;
 				++index;
 			}
 			catch (const std::exception& ex) {

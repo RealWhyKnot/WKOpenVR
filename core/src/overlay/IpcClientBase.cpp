@@ -55,6 +55,10 @@ std::string FormatVersionMismatch(const IpcClientConnectOptions& options, uint32
 IpcClientBase::~IpcClientBase()
 {
 	Close();
+	if (ioEvent_) {
+		CloseHandle(ioEvent_);
+		ioEvent_ = nullptr;
+	}
 }
 
 void IpcClientBase::Close()
@@ -69,6 +73,22 @@ void IpcClientBase::Close()
 
 void IpcClientBase::Connect(const char* pipeName, IpcClientConnectOptions options)
 {
+	const auto now = std::chrono::steady_clock::now();
+	if (now < nextConnectAttempt_) {
+		throw std::runtime_error("IPC connect attempt deferred after a recent failure.");
+	}
+	try {
+		ConnectImpl(pipeName, std::move(options));
+		nextConnectAttempt_ = {};
+	}
+	catch (...) {
+		nextConnectAttempt_ = now + kConnectBackoff;
+		throw;
+	}
+}
+
+void IpcClientBase::ConnectImpl(const char* pipeName, IpcClientConnectOptions options)
+{
 	Close();
 	options_ = std::move(options);
 	pipeName_ = pipeName ? pipeName : "";
@@ -77,7 +97,8 @@ void IpcClientBase::Connect(const char* pipeName, IpcClientConnectOptions option
 	openvr_pair::common::DiagnosticLog(
 	    "ipc-client", "connect_start pipe='%s' wait_ok=%d wait_error=%lu wait_timeout_ms=%lu", pipeName_.c_str(),
 	    waitOk ? 1 : 0, waitError, static_cast<unsigned long>(options_.waitTimeoutMs));
-	pipe_ = CreateFileA(pipeName_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+	pipe_ = CreateFileA(pipeName_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+	                    FILE_FLAG_OVERLAPPED, nullptr);
 	DWORD openError = (pipe_ == INVALID_HANDLE_VALUE) ? GetLastError() : ERROR_SUCCESS;
 	OnPipeOpenAttempt(pipe_, openError);
 	if (pipe_ == INVALID_HANDLE_VALUE) {
@@ -161,15 +182,67 @@ protocol::Response IpcClientBase::SendBlocking(const protocol::Request& request)
 	}
 }
 
+IpcClientBase::IoResult IpcClientBase::OverlappedTransfer(bool isWrite, void* buffer, DWORD length)
+{
+	if (!ioEvent_) {
+		ioEvent_ = CreateEventW(nullptr, /*manualReset=*/TRUE, /*initial=*/FALSE, nullptr);
+		if (!ioEvent_) {
+			throw std::runtime_error("IPC event creation failed. Error " + std::to_string(GetLastError()));
+		}
+	}
+	ResetEvent(ioEvent_);
+	OVERLAPPED ov{};
+	ov.hEvent = ioEvent_;
+
+	const BOOL started =
+	    isWrite ? WriteFile(pipe_, buffer, length, nullptr, &ov) : ReadFile(pipe_, buffer, length, nullptr, &ov);
+	if (!started) {
+		const DWORD startError = GetLastError();
+		if (startError == ERROR_IO_PENDING) {
+			const DWORD wait = WaitForSingleObject(ioEvent_, options_.ioTimeoutMs);
+			if (wait != WAIT_OBJECT_0) {
+				// Deadline expired (or the wait itself failed): cancel the
+				// transfer, reap the cancellation so the OVERLAPPED can leave
+				// scope safely, and drop the pipe -- a half-transferred
+				// message stream cannot be resynchronized.
+				CancelIoEx(pipe_, &ov);
+				DWORD ignored = 0;
+				GetOverlappedResult(pipe_, &ov, &ignored, /*bWait=*/TRUE);
+				openvr_pair::common::DiagnosticLog("ipc-client", "io_timeout pipe='%s' op=%s timeout_ms=%lu",
+				                                   pipeName_.c_str(), isWrite ? "write" : "read",
+				                                   static_cast<unsigned long>(options_.ioTimeoutMs));
+				Close();
+				throw IpcTimeoutException(std::string("IPC ") + (isWrite ? "write" : "read") + " timed out after " +
+				                          std::to_string(options_.ioTimeoutMs) + " ms.");
+			}
+		}
+		else {
+			// Immediate failure (broken pipe, oversized message, ...). Fetch
+			// whatever partial byte count exists and hand the caller the
+			// original error for its own handling.
+			IoResult result;
+			result.ok = false;
+			result.error = startError;
+			GetOverlappedResult(pipe_, &ov, &result.bytes, /*bWait=*/FALSE);
+			return result;
+		}
+	}
+
+	IoResult result;
+	result.ok = GetOverlappedResult(pipe_, &ov, &result.bytes, /*bWait=*/FALSE) != FALSE;
+	result.error = result.ok ? ERROR_SUCCESS : GetLastError();
+	return result;
+}
+
 void IpcClientBase::Send(const protocol::Request& request)
 {
 	if (pipe_ == INVALID_HANDLE_VALUE) {
 		throw std::runtime_error("IPC pipe is not connected.");
 	}
 
-	DWORD bytesWritten = 0;
-	if (!WriteFile(pipe_, &request, sizeof request, &bytesWritten, nullptr)) {
-		DWORD err = GetLastError();
+	const IoResult io = OverlappedTransfer(/*isWrite=*/true, const_cast<protocol::Request*>(&request), sizeof request);
+	if (!io.ok) {
+		DWORD err = io.error;
 		openvr_pair::common::DiagnosticLog("ipc-client", "write_failed pipe='%s' request_type=%d error=%lu",
 		                                   pipeName_.c_str(), request.type, err);
 		Close();
@@ -180,12 +253,12 @@ void IpcClientBase::Send(const protocol::Request& request)
 		}
 		throw std::runtime_error(msg);
 	}
-	if (bytesWritten != sizeof request) {
+	if (io.bytes != sizeof request) {
 		openvr_pair::common::DiagnosticLog("ipc-client",
 		                                   "write_truncated pipe='%s' request_type=%d wrote=%lu expected=%zu",
-		                                   pipeName_.c_str(), request.type, bytesWritten, sizeof request);
+		                                   pipeName_.c_str(), request.type, io.bytes, sizeof request);
 		Close();
-		throw std::runtime_error("IPC write truncated: wrote " + std::to_string(bytesWritten) + " of " +
+		throw std::runtime_error("IPC write truncated: wrote " + std::to_string(io.bytes) + " of " +
 		                         std::to_string(sizeof request) + " bytes");
 	}
 }
@@ -197,23 +270,21 @@ protocol::Response IpcClientBase::Receive()
 	}
 
 	protocol::Response response(protocol::ResponseInvalid);
-	DWORD bytesRead = 0;
-	if (!ReadFile(pipe_, &response, sizeof response, &bytesRead, nullptr)) {
-		DWORD err = GetLastError();
+	const IoResult io = OverlappedTransfer(/*isWrite=*/false, &response, sizeof response);
+	if (!io.ok) {
+		DWORD err = io.error;
 		if (err == ERROR_MORE_DATA) {
 			openvr_pair::common::DiagnosticLog("ipc-client", "oversized_response pipe='%s' error=%lu expected_max=%zu",
 			                                   pipeName_.c_str(), err, sizeof response);
 			char drainBuffer[1024];
 			for (;;) {
-				DWORD drained = 0;
-				BOOL drainOk = ReadFile(pipe_, drainBuffer, sizeof drainBuffer, &drained, nullptr);
-				if (drainOk) break;
+				const IoResult drain = OverlappedTransfer(/*isWrite=*/false, drainBuffer, sizeof drainBuffer);
+				if (drain.ok) break;
 
-				DWORD drainErr = GetLastError();
-				if (drainErr == ERROR_MORE_DATA) continue;
-				if (IsBrokenPipeError(drainErr)) {
+				if (drain.error == ERROR_MORE_DATA) continue;
+				if (IsBrokenPipeError(drain.error)) {
 					Close();
-					throw BrokenPipeException("Pipe broken while draining oversized IPC response", drainErr);
+					throw BrokenPipeException("Pipe broken while draining oversized IPC response", drain.error);
 				}
 				break;
 			}
@@ -229,11 +300,11 @@ protocol::Response IpcClientBase::Receive()
 		}
 		throw std::runtime_error(msg);
 	}
-	if (bytesRead != sizeof response) {
+	if (io.bytes != sizeof response) {
 		openvr_pair::common::DiagnosticLog("ipc-client", "read_truncated pipe='%s' read=%lu expected=%zu",
-		                                   pipeName_.c_str(), bytesRead, sizeof response);
+		                                   pipeName_.c_str(), io.bytes, sizeof response);
 		Close();
-		throw std::runtime_error(options_.sizeMismatchMessagePrefix + ": got " + std::to_string(bytesRead) +
+		throw std::runtime_error(options_.sizeMismatchMessagePrefix + ": got " + std::to_string(io.bytes) +
 		                         " bytes, expected " + std::to_string(sizeof response));
 	}
 

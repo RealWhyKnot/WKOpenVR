@@ -17,10 +17,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(ui_core_tests
 	test_bug_report.cpp
 	test_frame_hitch_logic.cpp
+	test_ipc_client_deadline.cpp
 	test_overlay_hot_reload.cpp
 	test_perf_history.cpp
 	test_ui_core.cpp
-	test_ui_responsive_logic.cpp)
+	test_ui_responsive_logic.cpp
+	${CMAKE_SOURCE_DIR}/core/src/overlay/IpcClientBase.cpp)
 
 target_include_directories(ui_core_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common
