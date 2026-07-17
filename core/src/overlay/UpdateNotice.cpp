@@ -245,37 +245,57 @@ std::wstring ReleasePath(const char* repoName)
 
 bool HashFileSha256(const std::wstring& path, std::string& out, std::string& err)
 {
-	HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-	                          FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-	if (file == INVALID_HANDLE_VALUE) {
+	// Scope guards so every early return below releases the file handle and
+	// BCrypt objects; the hash guard is declared last so it is destroyed
+	// before the provider it was created from.
+	struct FileGuard
+	{
+		HANDLE h;
+		~FileGuard()
+		{
+			if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+		}
+	} file{CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+	                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr)};
+	if (file.h == INVALID_HANDLE_VALUE) {
 		err = "could not open file for SHA-256";
 		return false;
 	}
 
-	BCRYPT_ALG_HANDLE alg = nullptr;
-	BCRYPT_HASH_HANDLE hash = nullptr;
+	struct AlgGuard
+	{
+		BCRYPT_ALG_HANDLE h = nullptr;
+		~AlgGuard()
+		{
+			if (h) BCryptCloseAlgorithmProvider(h, 0);
+		}
+	} alg;
+	struct HashGuard
+	{
+		BCRYPT_HASH_HANDLE h = nullptr;
+		~HashGuard()
+		{
+			if (h) BCryptDestroyHash(h);
+		}
+	} hash;
+
 	DWORD objectLen = 0;
 	DWORD cbData = 0;
-	NTSTATUS status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
+	NTSTATUS status = BCryptOpenAlgorithmProvider(&alg.h, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
 	if (status < 0) {
-		CloseHandle(file);
 		err = "BCryptOpenAlgorithmProvider failed";
 		return false;
 	}
-	status = BCryptGetProperty(alg, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectLen), sizeof(objectLen),
+	status = BCryptGetProperty(alg.h, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectLen), sizeof(objectLen),
 	                           &cbData, 0);
 	if (status < 0 || objectLen == 0) {
-		BCryptCloseAlgorithmProvider(alg, 0);
-		CloseHandle(file);
 		err = "BCryptGetProperty failed";
 		return false;
 	}
 
 	std::vector<unsigned char> object(objectLen);
-	status = BCryptCreateHash(alg, &hash, object.data(), objectLen, nullptr, 0, 0);
+	status = BCryptCreateHash(alg.h, &hash.h, object.data(), objectLen, nullptr, 0, 0);
 	if (status < 0) {
-		BCryptCloseAlgorithmProvider(alg, 0);
-		CloseHandle(file);
 		err = "BCryptCreateHash failed";
 		return false;
 	}
@@ -283,29 +303,20 @@ bool HashFileSha256(const std::wstring& path, std::string& out, std::string& err
 	std::vector<unsigned char> buffer(65536);
 	for (;;) {
 		DWORD got = 0;
-		if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr)) {
-			BCryptDestroyHash(hash);
-			BCryptCloseAlgorithmProvider(alg, 0);
-			CloseHandle(file);
+		if (!ReadFile(file.h, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr)) {
 			err = "file read failed during SHA-256";
 			return false;
 		}
 		if (got == 0) break;
-		status = BCryptHashData(hash, buffer.data(), got, 0);
+		status = BCryptHashData(hash.h, buffer.data(), got, 0);
 		if (status < 0) {
-			BCryptDestroyHash(hash);
-			BCryptCloseAlgorithmProvider(alg, 0);
-			CloseHandle(file);
 			err = "BCryptHashData failed";
 			return false;
 		}
 	}
 
 	std::vector<unsigned char> digest(32);
-	status = BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0);
-	BCryptDestroyHash(hash);
-	BCryptCloseAlgorithmProvider(alg, 0);
-	CloseHandle(file);
+	status = BCryptFinishHash(hash.h, digest.data(), static_cast<ULONG>(digest.size()), 0);
 	if (status < 0) {
 		err = "BCryptFinishHash failed";
 		return false;
