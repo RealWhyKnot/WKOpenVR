@@ -152,6 +152,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **tools:** Make Pin-CalibrationRecording delegate to Pin-Recording (a08d887)
 - **calibration:** Drop disabled boundary-capture bodies (ac7c42e)
 - **calibration:** Move apply sends and registry saves off the render thread (3fb461a)
+- **calibration:** Throttle steady-state log spam and stage-time slow ticks (9c89940)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
