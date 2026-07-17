@@ -3,8 +3,10 @@
 #include "CalibrationInternal.h"
 #include "CalibrationMetrics.h"
 #include "CalibrationPoseSampling.h"
+#include "IpcSendQueue.h"
 #include "MotionGate.h"
 #include "HeadMountVisibility.h"
+#include "ProtocolNames.h"
 #include "TransformPayloadCompare.h"
 #include "VRState.h"
 
@@ -87,10 +89,22 @@ struct ProfileApplyStatsScope
 	ProfileApplyStats* previous;
 };
 
-void SendProfileApplyRequest(const protocol::Request& request, ProfileApplySendKind kind)
+// Off-thread sender for the apply path. Transforms, fallbacks, and control
+// params republish several times per second; pushing them through the render
+// thread's blocking pipe measured 16-20 ms per apply cycle. The worker owns
+// its own pipe connection (the driver serves unlimited instances) and
+// preserves enqueue order; per-key coalescing keeps a slow driver from
+// growing a backlog of superseded values. The tick-thread caches above stay
+// tick-thread-only -- only the pipe write moves off-thread.
+openvr_pair::overlay::IpcSendQueue g_profileApplyQueue;
+
+void SendProfileApplyRequest(const protocol::Request& request, ProfileApplySendKind kind, std::string coalesceKey = {})
 {
+	if (!g_profileApplyQueue.IsRunning()) {
+		g_profileApplyQueue.Start(OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME);
+	}
 	const auto start = ProfileApplyClock::now();
-	Driver.SendBlocking(request);
+	g_profileApplyQueue.Enqueue(request, std::move(coalesceKey));
 	if (!g_profileApplyStats) return;
 
 	g_profileApplyStats->ipcMs += MsSince(start);
@@ -126,7 +140,7 @@ bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransfor
 	}
 	protocol::Request req(protocol::RequestSetDeviceTransform);
 	req.setDeviceTransform = payload;
-	SendProfileApplyRequest(req, ProfileApplySendKind::Device);
+	SendProfileApplyRequest(req, ProfileApplySendKind::Device, "d" + std::to_string(id));
 	cache.valid = true;
 	cache.payload = payload;
 	Metrics::LogAnnotationf("profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
@@ -185,7 +199,7 @@ void SendFallbackIfChanged(const std::string& systemName, bool enabled, const Ei
 
 	protocol::Request req(protocol::RequestSetTrackingSystemFallback);
 	req.setTrackingSystemFallback = payload;
-	SendProfileApplyRequest(req, ProfileApplySendKind::Fallback);
+	SendProfileApplyRequest(req, ProfileApplySendKind::Fallback, "f" + systemName);
 	g_lastFallbacksBySystem[systemName] = payload;
 	// Legacy single-slot cache kept for any code that still reads it.
 	g_lastFallback = payload;
@@ -221,6 +235,11 @@ void InvalidateAllTransformCaches()
 	g_alignmentSpeedSent = false;
 	g_lastFallbackSent = false;
 	g_lastFallbacksBySystem.clear();
+}
+
+void StopProfileApplyWorker()
+{
+	g_profileApplyQueue.Stop();
 }
 
 void ResetAndDisableOffsets(uint32_t id, const std::string& trackingSystem)
@@ -269,6 +288,33 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 	const auto applyStart = ProfileApplyClock::now();
 	ProfileApplyStats stats;
 	ProfileApplyStatsScope statsScope(stats);
+
+	// The dedupe caches below record what was ENQUEUED, not what reached the
+	// driver. If the worker's pipe reconnected (driver lost its state) or any
+	// entry was dropped (send failure, full queue), the caches are stale:
+	// invalidate so this scan re-enqueues everything current.
+	{
+		const auto workerStatus = g_profileApplyQueue.GetStatus();
+		static uint64_t s_lastSeenGeneration = 0;
+		static uint64_t s_lastSeenFailures = 0;
+		static uint64_t s_lastSeenDropped = 0;
+		if (workerStatus.connectionGeneration != s_lastSeenGeneration ||
+		    workerStatus.sendFailures != s_lastSeenFailures || workerStatus.dropped != s_lastSeenDropped) {
+			const bool firstConnect =
+			    (s_lastSeenGeneration == 0 && workerStatus.sendFailures == 0 && workerStatus.dropped == 0);
+			s_lastSeenGeneration = workerStatus.connectionGeneration;
+			s_lastSeenFailures = workerStatus.sendFailures;
+			s_lastSeenDropped = workerStatus.dropped;
+			if (!firstConnect) {
+				InvalidateAllTransformCaches();
+				Metrics::LogAnnotationf("profile_apply_caches_invalidated: reason=worker_state_change"
+				                        " generation=%llu failures=%llu dropped=%llu",
+				                        (unsigned long long)workerStatus.connectionGeneration,
+				                        (unsigned long long)workerStatus.sendFailures,
+				                        (unsigned long long)workerStatus.dropped);
+			}
+		}
+	}
 
 	std::unique_ptr<char[]> buffer_array(new char[vr::k_unMaxPropertyStringSize]);
 	char* buffer = buffer_array.get();
@@ -321,7 +367,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 			disablePayload.scale = 1.0;
 			protocol::Request req(protocol::RequestSetTrackingSystemFallback);
 			req.setTrackingSystemFallback = disablePayload;
-			SendProfileApplyRequest(req, ProfileApplySendKind::Fallback);
+			SendProfileApplyRequest(req, ProfileApplySendKind::Fallback, "f" + g_lastTargetSystem);
 		}
 
 		InvalidateAllTransformCaches();
@@ -333,7 +379,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 	    memcmp(&g_lastAlignmentSpeed, &ctx.alignmentSpeedParams, sizeof g_lastAlignmentSpeed) != 0) {
 		protocol::Request setParamsReq(protocol::RequestSetAlignmentSpeedParams);
 		setParamsReq.setAlignmentSpeedParams = ctx.alignmentSpeedParams;
-		SendProfileApplyRequest(setParamsReq, ProfileApplySendKind::Control);
+		SendProfileApplyRequest(setParamsReq, ProfileApplySendKind::Control, "c-align");
 		g_lastAlignmentSpeed = ctx.alignmentSpeedParams;
 		g_alignmentSpeedSent = true;
 	}
@@ -583,18 +629,24 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		static double s_lastApplyScanSummary = -1e9;
 		if (Metrics::CurrentTime - s_lastApplyScanSummary >= 2.0 || targetSystemChanged) {
 			s_lastApplyScanSummary = Metrics::CurrentTime;
-			char summaryBuf[640];
+			const auto workerStatus = g_profileApplyQueue.GetStatus();
+			char summaryBuf[768];
 			snprintf(summaryBuf, sizeof summaryBuf,
 			         "profile_apply_scan_summary: state=%d enabled=%d validProfile=%d"
 			         " ref='%s' target='%s' profile_trans_cm=(%.2f,%.2f,%.2f)"
 			         " profile_mag_cm=%.2f invalid=%d disabled=%d hmd=%d"
 			         " trackingErr=%d nonTarget=%d targetMatched=%d payloadSent=%d"
-			         " adopted=%zu fallbackSent=%d snap=%d",
+			         " adopted=%zu fallbackSent=%d snap=%d"
+			         " worker_connected=%d worker_depth=%u worker_sent=%llu worker_failed=%llu"
+			         " worker_coalesced=%llu worker_dropped=%llu",
 			         (int)CalCtx.state, (int)ctx.enabled, (int)ctx.validProfile, ctx.referenceTrackingSystem.c_str(),
 			         ctx.targetTrackingSystem.c_str(), ctx.calibratedTranslation.x(), ctx.calibratedTranslation.y(),
 			         ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(), scanInvalidClass,
 			         scanDisabledProfile, scanHmd, scanTrackingSystemError, scanNonTargetSystem, scanTargetMatched,
-			         scanPayloadSent, g_lastAdoptedTrackers.size(), (int)g_lastFallbackSent, (int)snapThisCycle);
+			         scanPayloadSent, g_lastAdoptedTrackers.size(), (int)g_lastFallbackSent, (int)snapThisCycle,
+			         (int)workerStatus.connected, workerStatus.queueDepth, (unsigned long long)workerStatus.sent,
+			         (unsigned long long)workerStatus.sendFailures, (unsigned long long)workerStatus.coalesced,
+			         (unsigned long long)workerStatus.dropped);
 			Metrics::WriteLogAnnotation(summaryBuf);
 		}
 	}

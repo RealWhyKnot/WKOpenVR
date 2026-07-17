@@ -96,6 +96,8 @@ add_executable(OpenVRPairOverlay WIN32
 	FrameHitchLogic.h
 	IpcClientBase.cpp
 	IpcClientBase.h
+	IpcSendQueue.cpp
+	IpcSendQueue.h
 	ManifestRegistration.cpp
 	ManifestRegistration.h
 	Migration.cpp

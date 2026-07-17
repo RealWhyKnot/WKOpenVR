@@ -4,6 +4,7 @@
 #include "Calibration.h"
 #include "CalibrationAnchor.h"
 #include "CalibrationMetrics.h"
+#include "CalibrationProfileApply.h"
 #include "Configuration.h"
 #include "TrackingStyle.h"
 #include "UserInterface.h"
@@ -173,6 +174,11 @@ void CCal_UmbrellaShutdown()
 	// Persist any continuous-mode offset the per-tick throttle left pending, so a
 	// session that quits mid-continuous-calibration still writes its final value.
 	FlushPendingContinuousSave();
+	// Join the workers after the flush: the registry writer drains its final
+	// blob before exiting, and the apply sender discards queued republish
+	// traffic (the driver is shutting down with us).
+	StopProfileSaveWorker();
+	StopProfileApplyWorker();
 	openvr_pair::overlay::SetCalibrationDeviceLocks({});
 	openvr_pair::overlay::SetHeadsetSynthesisState({}, 0, nullptr);
 }

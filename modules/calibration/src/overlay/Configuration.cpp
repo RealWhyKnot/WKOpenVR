@@ -8,13 +8,17 @@
 
 #include <picojson.h>
 
-#include <cmath>  // std::sqrt for magnitude computation in the launch log
+#include <atomic>
+#include <cmath> // std::sqrt for magnitude computation in the launch log
+#include <condition_variable>
 #include <cstdio> // snprintf for the profile_loaded_calibration log buffer
 #include <string>
 #include <iostream>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <mutex>
+#include <thread>
 
 // Profile schema versioning.
 //
@@ -1234,24 +1238,117 @@ static std::string ReadRegistryKey()
 	return str;
 }
 
-static void WriteRegistryKey(std::string str)
+static bool WriteRegistryKey(const std::string& str)
 {
 	HKEY hkey;
 	auto result =
 	    RegCreateKeyExA(HKEY_CURRENT_USER_LOCAL_SETTINGS, RegistryKey, 0, REG_NONE, 0, KEY_ALL_ACCESS, 0, &hkey, 0);
 	if (result != ERROR_SUCCESS) {
 		LogRegistryResult(result);
-		return;
+		return false;
 	}
 
 	DWORD size = static_cast<DWORD>(str.size() + 1);
 
 	result = RegSetValueExA(hkey, "Config", 0, REG_SZ, reinterpret_cast<const BYTE*>(str.c_str()), size);
-	if (result != ERROR_SUCCESS) {
+	const bool ok = (result == ERROR_SUCCESS);
+	if (!ok) {
 		LogRegistryResult(result);
 	}
 
 	RegCloseKey(hkey);
+	return ok;
+}
+
+namespace {
+
+// Latest-wins off-thread registry writer. Profile serialization (and every
+// log annotation) stays on the tick thread; only the Win32 registry write
+// moves here, so a slow HKCU flush can never stall a frame. One pending
+// slot: registry state is last-writer-wins, so intermediate blobs that were
+// superseded before the worker woke carry no information. Stop() drains the
+// final pending blob before joining -- the shutdown flush relies on that.
+class ProfileRegistryWriter
+{
+public:
+	void Submit(std::string blob)
+	{
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			if (!running_) {
+				running_ = true;
+				stop_ = false;
+				worker_ = std::thread([this] { Run(); });
+			}
+			pending_ = std::move(blob);
+			hasPending_ = true;
+		}
+		cv_.notify_one();
+	}
+
+	void Stop()
+	{
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			if (!running_) return;
+			stop_ = true;
+		}
+		cv_.notify_all();
+		if (worker_.joinable()) worker_.join();
+		std::lock_guard<std::mutex> lock(mutex_);
+		running_ = false;
+	}
+
+	uint64_t Writes() const { return writes_.load(std::memory_order_relaxed); }
+	uint64_t Failures() const { return failures_.load(std::memory_order_relaxed); }
+
+private:
+	void Run()
+	{
+		for (;;) {
+			std::string blob;
+			bool haveBlob = false;
+			{
+				std::unique_lock<std::mutex> lock(mutex_);
+				cv_.wait(lock, [this] { return stop_ || hasPending_; });
+				if (hasPending_) {
+					blob = std::move(pending_);
+					hasPending_ = false;
+					haveBlob = true;
+				}
+				else if (stop_) {
+					return;
+				}
+			}
+			if (haveBlob) {
+				if (WriteRegistryKey(blob)) {
+					writes_.fetch_add(1, std::memory_order_relaxed);
+				}
+				else {
+					failures_.fetch_add(1, std::memory_order_relaxed);
+				}
+			}
+		}
+	}
+
+	std::mutex mutex_;
+	std::condition_variable cv_;
+	std::string pending_;
+	bool hasPending_ = false;
+	bool stop_ = false;
+	bool running_ = false;
+	std::thread worker_;
+	std::atomic<uint64_t> writes_{0};
+	std::atomic<uint64_t> failures_{0};
+};
+
+ProfileRegistryWriter g_profileRegistryWriter;
+
+} // namespace
+
+void StopProfileSaveWorker()
+{
+	g_profileRegistryWriter.Stop();
 }
 
 void LoadProfile(CalibrationContext& ctx)
@@ -1373,7 +1470,16 @@ void SaveProfile(CalibrationContext& ctx)
 	s_lastSavedHash = hash;
 
 	std::cout << "Saving profile to registry" << '\n';
-	WriteRegistryKey(serialized);
+	g_profileRegistryWriter.Submit(serialized);
+
+	// Surface worker write failures on the tick thread; the worker itself
+	// never touches the metrics stream.
+	static uint64_t s_lastReportedWriteFailures = 0;
+	const uint64_t writeFailures = g_profileRegistryWriter.Failures();
+	if (writeFailures != s_lastReportedWriteFailures) {
+		s_lastReportedWriteFailures = writeFailures;
+		Metrics::LogAnnotationf("[profile-save][write-failed] total_failures=%llu", (unsigned long long)writeFailures);
+	}
 
 	// Annotate the save event so the log lets a reader correlate writes
 	// with the cal-state changes that triggered them. The wedged-state-saved

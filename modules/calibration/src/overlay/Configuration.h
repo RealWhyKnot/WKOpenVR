@@ -11,6 +11,10 @@
 void LoadProfile(CalibrationContext& ctx);
 void SaveProfile(CalibrationContext& ctx);
 
+// Join the off-thread registry writer, draining its final pending blob
+// first. Called at umbrella shutdown after FlushPendingContinuousSave.
+void StopProfileSaveWorker();
+
 // Set to true if the last LoadProfile call found a chaperone geometry array
 // whose length was not a multiple of 12 (corrupt profile). The UI uses this
 // to show a banner so the user knows auto-apply is disabled.
