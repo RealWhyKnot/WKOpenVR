@@ -619,6 +619,9 @@ public:
 		}
 	}
 
+	static_assert(std::is_standard_layout_v<ShmemData>,
+	              "ShmemData is shared across processes and must keep a standard layout");
+
 	bool Create(LPCSTR segment_name)
 	{
 		Close();
@@ -975,6 +978,9 @@ public:
 
 	// Driver-side: create or re-open the shmem segment, stamp the header,
 	// zero the slot table. Idempotent on the same name.
+	static_assert(std::is_standard_layout_v<ShmemData>,
+	              "ShmemData is shared across processes and must keep a standard layout");
+
 	bool Create(LPCSTR segment_name)
 	{
 		Close();
@@ -1337,6 +1343,9 @@ public:
 	// Driver-side: create / re-open the shmem segment, stamp the header,
 	// zero the ring. Idempotent on the same name. Returns false on failure
 	// so the driver can log + run degraded (no face tracking).
+	static_assert(std::is_standard_layout_v<ShmemData>,
+	              "ShmemData is shared across processes and must keep a standard layout");
+
 	bool Create(LPCSTR segment_name)
 	{
 		Close();
@@ -1578,6 +1587,9 @@ public:
 	}
 
 	// Driver-side: create or re-open the segment and stamp the header.
+	static_assert(std::is_standard_layout_v<ShmemData>,
+	              "ShmemData is shared across processes and must keep a standard layout");
+
 	bool Create(LPCSTR segment_name)
 	{
 		Close();
@@ -1842,6 +1854,9 @@ public:
 	}
 
 	// Driver-side: create or re-open the segment and stamp a clean header.
+	static_assert(std::is_standard_layout_v<ShmemData>,
+	              "ShmemData is shared across processes and must keep a standard layout");
+
 	bool Create(LPCSTR segment_name)
 	{
 		Close();

@@ -47,8 +47,10 @@ add_library(openvr_pair_common STATIC
 	ModulePerf.h
 	PowerShellCommand.cpp
 	PowerShellCommand.h
+	Protocol.h
 	RecordingEnvelope.cpp
 	RecordingEnvelope.h
+	ShmemRegion.h
 	RuntimeHealthSummary.cpp
 	RuntimeHealthSummary.h
 	SidecarOwnerLease.cpp
