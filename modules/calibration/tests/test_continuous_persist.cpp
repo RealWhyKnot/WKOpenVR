@@ -117,6 +117,51 @@ static_assert(!ShouldPersistContinuous(0.0, 0.0, 0.0, /*isFirstCandidate=*/false
               "steady-state zero-delta within interval must not persist");
 
 // ---------------------------------------------------------------------------
+// Oversized-delta persist guard (ShouldDeferAnomalousPersist). A translation
+// more than kDeferDeltaCm from the last persisted value must prove itself by
+// dwell or by consecutive agreeing attempts before it reaches the registry;
+// a 30392 cm transient was persisted once and poisoned the next launch.
+// Delta-based on purpose -- absolute magnitude clamps broke rigs whose
+// legitimate calibration values are large.
+// ---------------------------------------------------------------------------
+using spacecal::persist::kDeferAgreeingAttempts;
+using spacecal::persist::kDeferDeltaCm;
+using spacecal::persist::kDeferDwellSec;
+using spacecal::persist::ShouldDeferAnomalousPersist;
+
+TEST(AnomalousPersistGuard, NormalDeltasNeverDefer)
+{
+	EXPECT_FALSE(ShouldDeferAnomalousPersist(/*deltaCm=*/0.0, /*dwellSec=*/0.0, /*agreeing=*/0));
+	EXPECT_FALSE(ShouldDeferAnomalousPersist(/*deltaCm=*/50.0, 0.0, 0));
+	EXPECT_FALSE(ShouldDeferAnomalousPersist(kDeferDeltaCm, 0.0, 0)) << "boundary is inclusive-persist";
+}
+
+TEST(AnomalousPersistGuard, FreshOversizedDeltaDefers)
+{
+	EXPECT_TRUE(ShouldDeferAnomalousPersist(kDeferDeltaCm + 0.01, /*dwellSec=*/0.0, /*agreeing=*/1));
+	EXPECT_TRUE(ShouldDeferAnomalousPersist(/*deltaCm=*/30392.0, 0.0, 1))
+	    << "the persisted-wedge magnitude from the 2026-05-19 trace must defer";
+}
+
+TEST(AnomalousPersistGuard, DwellProvesTheValue)
+{
+	EXPECT_TRUE(ShouldDeferAnomalousPersist(200.0, kDeferDwellSec - 0.01, /*agreeing=*/1));
+	EXPECT_FALSE(ShouldDeferAnomalousPersist(200.0, kDeferDwellSec, 1)) << "held long enough: persist";
+}
+
+TEST(AnomalousPersistGuard, AgreeingAttemptsProveTheValue)
+{
+	EXPECT_TRUE(ShouldDeferAnomalousPersist(200.0, /*dwellSec=*/1.0, kDeferAgreeingAttempts - 1));
+	EXPECT_FALSE(ShouldDeferAnomalousPersist(200.0, 1.0, kDeferAgreeingAttempts))
+	    << "enough consecutive agreeing attempts: persist without waiting out the dwell";
+}
+
+static_assert(!ShouldDeferAnomalousPersist(100.0, 0.0, 0), "at the delta bound, persist normally");
+static_assert(ShouldDeferAnomalousPersist(100.01, 0.0, 1), "just past the bound with no proof, defer");
+static_assert(!ShouldDeferAnomalousPersist(1000.0, 10.0, 1), "dwell threshold reached, persist");
+static_assert(!ShouldDeferAnomalousPersist(1000.0, 0.0, 3), "agreeing-attempt threshold reached, persist");
+
+// ---------------------------------------------------------------------------
 // Diagnostic-log deferred device-sync policy (openvr_pair::common::ShouldFlushLog).
 // ---------------------------------------------------------------------------
 using openvr_pair::common::kLogFlushBytes;

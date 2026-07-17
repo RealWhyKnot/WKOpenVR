@@ -1303,6 +1303,10 @@ void ResetCustomCheckState(CalibrationContext& ctx)
 	// stale cached poses.
 	baseStationCache.clear();
 
+	// Quality-rejection breaker: a toggle flip starts from a clean streak so
+	// pre-toggle rejections cannot engage it right after a re-enable.
+	ctx.qualityBreakerState = {};
+
 	ResetGeometryShiftDetectorState();
 
 	// Locked-accept gate windows (consensus streak + drift-follower ring).

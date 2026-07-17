@@ -613,15 +613,18 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		         ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
 		Metrics::WriteLogAnnotation(loadbuf);
 
-		// Load-time wedge guard DISABLED 2026-05-05 — caused reset loops on
-		// the user's Quest+Lighthouse setup where legitimate convergence
-		// values fall above any plausible fixed magnitude bound. See
-		// project_wedge_guard_removed_2026-05-05.md (memory). The clearing
-		// logic and the wedgedProfileCleared cleanup at the bottom of
-		// ParseProfile are inert when this branch is gated false. Quest
-		// re-localization auto-recovery (TickHmdRelocalizationDetector)
-		// remains active — that uses HMD-jump signals, not magnitude.
+		// No load-time magnitude clamp here: fixed magnitude bounds broke
+		// rigs whose legitimate calibration values are large (2026-05-05).
+		// Corruption protection lives on the WRITE side instead -- the
+		// oversized-delta persist guard (ContinuousPersistDecision.h) keeps
+		// unproven values out of the registry, and Quest re-localization
+		// auto-recovery (TickHmdRelocalizationDetector) handles runtime
+		// jumps from HMD-motion signals, not magnitude.
 	}
+	// The on-disk profile is by definition the last persisted state; seeding
+	// the tracker here makes the oversized-delta persist guard's distance
+	// meaningful from the first continuous candidate of the session.
+	ctx.lastPersistedContinuousTranslation = ctx.calibratedTranslation;
 	LoadStandby(ctx.referenceStandby, obj["reference_device"]);
 	LoadStandby(ctx.targetStandby, obj["target_device"]);
 	if (obj["autostart_continuous_calibration"].evaluate_as_boolean()) {

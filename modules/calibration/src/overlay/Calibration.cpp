@@ -1391,6 +1391,20 @@ void FlushPendingContinuousSave()
 		return;
 	}
 	if (CalCtx.validProfile) {
+		// Same oversized-delta guard as the in-session persist path: a value
+		// that never proved itself must not reach the registry on the way
+		// out, or it poisons every later launch. The previously persisted
+		// profile stays on disk instead.
+		const double deltaCm = (CalCtx.calibratedTranslation - CalCtx.lastPersistedContinuousTranslation).norm();
+		const double dwellSec =
+		    (CalCtx.anomalousPersistFirstSeen > 0.0) ? (glfwGetTime() - CalCtx.anomalousPersistFirstSeen) : 0.0;
+		if (spacecal::persist::ShouldDeferAnomalousPersist(deltaCm, dwellSec, CalCtx.anomalousPersistAgreeCount)) {
+			CalCtx.continuousSaveDirty = false;
+			Metrics::LogAnnotationf("[profile-save][flush-skipped] reason=oversized_unproven delta_cm=%.2f"
+			                        " dwell_sec=%.2f agreeing=%d",
+			                        deltaCm, dwellSec, CalCtx.anomalousPersistAgreeCount);
+			return;
+		}
 		SaveProfile(CalCtx);
 		CalCtx.lastContinuousSaveTime = Metrics::CurrentTime;
 		CalCtx.lastPersistedContinuousTranslation = CalCtx.calibratedTranslation;
@@ -3193,7 +3207,35 @@ void CalibrationTick(double time)
 	const bool inContinuousState = ctx.state == CalibrationState::Continuous;
 	const bool hasPublishableCandidate = solveProducedCandidate && calibration.isValid();
 
-	if (hasPublishableCandidate) {
+	// Sustained quality-rejection breaker (QualityRejectionBreaker.h): fold
+	// any new verdict from this tick's solve into the streak, then hold the
+	// output side while engaged. Solver, sampling, recovery, and the periodic
+	// re-apply of the held offset keep running. Enhanced-checks only -- the
+	// default pipeline stays upstream-classic.
+	if (inContinuousState && ctx.CustomChecksActive()) {
+		const QualityVerdictObservation verdictObs = calibration.LastQualityVerdictObservation();
+		if (verdictObs.seq != ctx.qualityBreakerLastVerdictSeq) {
+			ctx.qualityBreakerLastVerdictSeq = verdictObs.seq;
+			const bool wasEngaged = ctx.qualityBreakerState.engaged;
+			ctx.qualityBreakerState =
+			    spacecal::quality_breaker::Next(ctx.qualityBreakerState, verdictObs.wouldAccept, time);
+			if (!wasEngaged && ctx.qualityBreakerState.engaged) {
+				Metrics::LogAnnotationf("[cal-quality-breaker][engaged] consecutive_rejects=%d sustain_sec=%.0f"
+				                        " -- holding accept/persist/apply until a verdict passes",
+				                        ctx.qualityBreakerState.consecutiveRejects,
+				                        time - ctx.qualityBreakerState.firstRejectSec);
+			}
+			else if (wasEngaged && !ctx.qualityBreakerState.engaged) {
+				Metrics::WriteLogAnnotation("[cal-quality-breaker][released] reason=verdict_accepted");
+			}
+		}
+	}
+	else if (ctx.qualityBreakerState.consecutiveRejects != 0 || ctx.qualityBreakerState.engaged) {
+		ctx.qualityBreakerState = {};
+	}
+	const bool suppressCandidateForQuality = inContinuousState && ctx.qualityBreakerState.engaged;
+
+	if (hasPublishableCandidate && !suppressCandidateForQuality) {
 		const Eigen::Vector3d candidateTranslationCm = calibration.Transformation().translation() * 100.0;
 		const bool firstContinuousCandidate = inContinuousState && !ctx.lastAcceptedContinuousSnapshot.captured;
 		const bool hasContinuousStartBaseline =
@@ -3283,12 +3325,56 @@ void CalibrationTick(double time)
 		// and FlushPendingContinuousSave() covers shutdown mid-continuous.
 		if (inContinuousState) {
 			const double offsetDeltaCm = (ctx.calibratedTranslation - ctx.lastPersistedContinuousTranslation).norm();
-			if (spacecal::persist::ShouldPersistContinuous(Metrics::CurrentTime, ctx.lastContinuousSaveTime,
+
+			// Oversized-delta guard: a translation implausibly far from the
+			// last persisted value must prove itself (dwell or consecutive
+			// agreeing attempts) before it may reach the registry. The applied
+			// in-memory offset is untouched -- only persistence waits.
+			bool deferAnomalousPersist = false;
+			if (offsetDeltaCm > spacecal::persist::kDeferDeltaCm) {
+				const bool agreesWithPrevious = ctx.anomalousPersistFirstSeen > 0.0 &&
+				                                (ctx.calibratedTranslation - ctx.anomalousPersistLastAttempt).norm() <=
+				                                    spacecal::persist::kDeferAgreeToleranceCm;
+				if (agreesWithPrevious) {
+					ctx.anomalousPersistAgreeCount += 1;
+				}
+				else {
+					ctx.anomalousPersistFirstSeen = time;
+					ctx.anomalousPersistAgreeCount = 1;
+				}
+				ctx.anomalousPersistLastAttempt = ctx.calibratedTranslation;
+				const double dwellSec = time - ctx.anomalousPersistFirstSeen;
+				deferAnomalousPersist = spacecal::persist::ShouldDeferAnomalousPersist(offsetDeltaCm, dwellSec,
+				                                                                       ctx.anomalousPersistAgreeCount);
+				static double s_lastDeferLog = -1e9;
+				if (deferAnomalousPersist && (time - s_lastDeferLog) >= 5.0) {
+					s_lastDeferLog = time;
+					Metrics::LogAnnotationf("[profile-save][deferred] reason=oversized_delta delta_cm=%.2f"
+					                        " dwell_sec=%.2f agreeing=%d need_dwell_sec=%.0f need_agreeing=%d",
+					                        offsetDeltaCm, dwellSec, ctx.anomalousPersistAgreeCount,
+					                        spacecal::persist::kDeferDwellSec,
+					                        spacecal::persist::kDeferAgreeingAttempts);
+				}
+				else if (!deferAnomalousPersist) {
+					Metrics::LogAnnotationf("[profile-save][oversized-allowed] delta_cm=%.2f dwell_sec=%.2f"
+					                        " agreeing=%d",
+					                        offsetDeltaCm, dwellSec, ctx.anomalousPersistAgreeCount);
+				}
+			}
+			else if (ctx.anomalousPersistFirstSeen > 0.0) {
+				ctx.anomalousPersistFirstSeen = 0.0;
+				ctx.anomalousPersistAgreeCount = 0;
+			}
+
+			if (!deferAnomalousPersist &&
+			    spacecal::persist::ShouldPersistContinuous(Metrics::CurrentTime, ctx.lastContinuousSaveTime,
 			                                               offsetDeltaCm, firstContinuousCandidate)) {
 				SaveProfile(ctx);
 				ctx.lastContinuousSaveTime = Metrics::CurrentTime;
 				ctx.lastPersistedContinuousTranslation = ctx.calibratedTranslation;
 				ctx.continuousSaveDirty = false;
+				ctx.anomalousPersistFirstSeen = 0.0;
+				ctx.anomalousPersistAgreeCount = 0;
 			}
 			else {
 				ctx.continuousSaveDirty = true;
@@ -3331,6 +3417,17 @@ void CalibrationTick(double time)
 		}
 
 		CalCtx.Log("Finished calibration, profile saved\n");
+	}
+	else if (hasPublishableCandidate) {
+		// Breaker is holding: the candidate stays unapplied and unpersisted.
+		// The 1 Hz profile scan keeps republishing the held offset.
+		static double s_lastBreakerHoldLog = -1e9;
+		if (time - s_lastBreakerHoldLog >= 5.0) {
+			s_lastBreakerHoldLog = time;
+			Metrics::LogAnnotationf("[cal-quality-breaker][holding] candidate_mag_cm=%.2f consecutive_rejects=%d",
+			                        calibration.Transformation().translation().norm() * 100.0,
+			                        ctx.qualityBreakerState.consecutiveRejects);
+		}
 	}
 	else {
 		if (!inContinuousState || (solveAttempted && !calibration.isValid())) {

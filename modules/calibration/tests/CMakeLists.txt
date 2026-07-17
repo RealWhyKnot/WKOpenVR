@@ -45,6 +45,7 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_stall_decisions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tracker_liveness.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_geometry_shift_detector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_quality_breaker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_watchdog_decisions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_state_transitions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_gate.cpp

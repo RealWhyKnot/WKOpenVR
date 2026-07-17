@@ -1378,6 +1378,7 @@ void CalibrationCalc::LogCalibrationQualitySnapshot(const char* label, const Eig
 	Metrics::WriteLogAnnotation(line2);
 
 	const CalibrationQualityVerdict verdict = EvaluateCalibrationQualityVerdict(q);
+	m_lastVerdictObservation = {verdict.wouldAccept, m_lastVerdictObservation.seq + 1};
 	char line3[360];
 	snprintf(line3, sizeof line3,
 	         "[cal-quality-verdict][%s] would_accept=%s reason=%s"

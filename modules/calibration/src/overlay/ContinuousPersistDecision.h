@@ -53,4 +53,50 @@ constexpr bool ShouldPersistContinuous(double nowSec, double lastSaveSec, double
 	return false;
 }
 
+// --- Oversized-delta persist guard ------------------------------------------
+//
+// A registry write is the only calibration output that outlives the session:
+// a wedged value that reaches disk poisons every later launch until something
+// overwrites it (a 30392 cm translation was persisted this way once, after a
+// runtime relocalization). The guard defers persistence -- never the applied
+// in-memory offset -- when the candidate translation sits implausibly far
+// from the last persisted one, until the value proves itself by dwell or by
+// consecutive agreeing attempts. Delta-based on purpose: absolute magnitude
+// bounds were tried in 2026-05 and broke rigs whose legitimate calibration
+// magnitudes are large; the distance from the previously persisted value has
+// no such floor.
+
+// Deltas at or below this persist normally (the 5-100 cm band already gets an
+// anomaly log from SaveProfile). Above it, the value must prove itself first.
+constexpr double kDeferDeltaCm = 100.0;
+
+// An oversized value that has held for this long is a real move, not a
+// transient bad solve: persist it. Backstop for slow solver cadences; the
+// agreeing-attempts path below normally clears legitimate values much sooner.
+constexpr double kDeferDwellSec = 10.0;
+
+// Consecutive persist attempts that agree with each other (within
+// kDeferAgreeToleranceCm) before an oversized value is trusted. At the
+// ~3.5 Hz solve cadence, a stable legitimate value clears this in about a
+// second; a one-off wedged solve never repeats itself and never clears it.
+constexpr int kDeferAgreeingAttempts = 3;
+
+// How close two consecutive oversized attempts must be to count as agreeing.
+constexpr double kDeferAgreeToleranceCm = 5.0;
+
+// Decide whether an oversized-delta persist attempt should be deferred.
+// `dwellSec` is the time this streak of oversized attempts has been running;
+// `agreeingAttempts` counts consecutive attempts within tolerance of each
+// other (caller tracks both; a non-agreeing attempt restarts the streak).
+constexpr bool ShouldDeferAnomalousPersist(double deltaCm, double dwellSec, int agreeingAttempts,
+                                           double deferDeltaCm = kDeferDeltaCm,
+                                           double dwellThresholdSec = kDeferDwellSec,
+                                           int agreeThreshold = kDeferAgreeingAttempts)
+{
+	if (deltaCm <= deferDeltaCm) return false;
+	if (dwellSec >= dwellThresholdSec) return false;
+	if (agreeingAttempts >= agreeThreshold) return false;
+	return true;
+}
+
 } // namespace spacecal::persist

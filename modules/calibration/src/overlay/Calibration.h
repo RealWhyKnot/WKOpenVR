@@ -16,6 +16,7 @@
 #include "CalibrationAutoSpeed.h"
 #include "WarmRestart.h" // ValidationOutcome enum
 #include "SprtValidation.h"
+#include "QualityRejectionBreaker.h"
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -332,10 +333,12 @@ struct CalibrationContext
 	// drift correction), the locked-accept/liveness gates, geometry-precision
 	// sample weighting, and the covariance-weighted solve with observability
 	// gating and sequential profile validation. OFF (default) runs the
-	// classic upstream pipeline -- the fallback when tracking misbehaves. The
-	// load-time profile-magnitude clamp stays active either way (it guards
-	// on-disk corruption, not runtime tracking). Persisted; always written so
-	// an explicit choice survives reload.
+	// classic upstream pipeline -- the fallback when tracking misbehaves.
+	// Independent of this switch: the oversized-delta persist guard
+	// (ContinuousPersistDecision.h) and the first-candidate snap bound
+	// (MotionGate.h) run in both modes; they bound output plausibility, not
+	// tracking behaviour. Persisted; always written so an explicit choice
+	// survives reload.
 	bool enhancedTrackingChecks = false;
 	bool CustomChecksActive() const { return enhancedTrackingChecks; }
 
@@ -729,6 +732,20 @@ struct CalibrationContext
 	// always survives to the next session.
 	double lastContinuousSaveTime = -1e9; // Metrics::CurrentTime basis
 	Eigen::Vector3d lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
+
+	// Oversized-persist guard streak (ContinuousPersistDecision.h). Tracks
+	// consecutive persist attempts whose translation sits more than
+	// kDeferDeltaCm from the last persisted value. firstSeen is tick time
+	// (0 = no active streak); the attempt vector judges whether the next
+	// oversized attempt agrees with the previous one.
+	double anomalousPersistFirstSeen = 0.0;
+	int anomalousPersistAgreeCount = 0;
+	Eigen::Vector3d anomalousPersistLastAttempt = Eigen::Vector3d::Zero();
+
+	// Sustained quality-rejection breaker (QualityRejectionBreaker.h) and the
+	// verdict sequence number last folded into it. Enhanced-checks only.
+	spacecal::quality_breaker::State qualityBreakerState{};
+	uint64_t qualityBreakerLastVerdictSeq = 0;
 	bool continuousSaveDirty = false;
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
@@ -896,6 +913,10 @@ struct CalibrationContext
 		continuousFusionDisagreeStreak = 0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
+		anomalousPersistFirstSeen = 0.0;
+		anomalousPersistAgreeCount = 0;
+		anomalousPersistLastAttempt = Eigen::Vector3d::Zero();
+		qualityBreakerState = {};
 		continuousSaveDirty = false;
 		headMountSourceFingerprintValid = false;
 		headMountLastSampleSource = HeadMountSampleSource::Unknown;
@@ -923,6 +944,10 @@ struct CalibrationContext
 		continuousFusionDisagreeStreak = 0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
+		anomalousPersistFirstSeen = 0.0;
+		anomalousPersistAgreeCount = 0;
+		anomalousPersistLastAttempt = Eigen::Vector3d::Zero();
+		qualityBreakerState = {};
 		continuousSaveDirty = false;
 		headMountNeedsFreshRelativePose = false;
 	}

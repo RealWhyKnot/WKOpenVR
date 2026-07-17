@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <openvr.h>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <deque>
@@ -199,6 +200,15 @@ struct CalibrationQualityShadowSignals
 
 CalibrationQualityVerdict EvaluateCalibrationQualityVerdict(const CalibrationQualityReport& report);
 CalibrationQualityShadowSignals EvaluateCalibrationQualityShadowSignals(const CalibrationQualityReport& report);
+
+// Most recent quality verdict, sequence-stamped so a per-tick poller can
+// count each verdict evaluation exactly once (seq 0 = none yet). Consumed by
+// the sustained-rejection breaker in CalibrationTick.
+struct QualityVerdictObservation
+{
+	bool wouldAccept = false;
+	uint64_t seq = 0;
+};
 
 class CalibrationCalc
 {
@@ -503,4 +513,10 @@ public:
 	                                                    bool includeHoldout = true, bool ignoreOutliers = false) const;
 	void LogCalibrationQualitySnapshot(const char* label, const Eigen::AffineCompact3d& calibration,
 	                                   bool includeHoldout, bool ignoreOutliers) const;
+	QualityVerdictObservation LastQualityVerdictObservation() const { return m_lastVerdictObservation; }
+
+private:
+	// Updated by LogCalibrationQualitySnapshot (a const logging path, hence
+	// mutable); read by the breaker poller between solve and accept.
+	mutable QualityVerdictObservation m_lastVerdictObservation;
 };
