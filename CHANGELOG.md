@@ -300,6 +300,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Compose world-from-driver calibration at pose intake (b487877)
 - **dynamicres:** Gate scaling on measured frame harm rates (39bcdfb)
 - **core:** Guard host supervisor against restart races and respawn thrash (88dba76)
+- **calibration:** Unify the tick clock and revive the geometry-shift detector (9fb31ae)
 
 ---
 
