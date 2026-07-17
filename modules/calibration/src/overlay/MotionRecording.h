@@ -339,7 +339,10 @@ struct LogFileEntry
 };
 
 constexpr std::size_t kDevAutoRecordingMaxFiles = 5;
-constexpr uint64_t kDevAutoRecordingMaxBytes = 512ull * 1024ull * 1024ull;
+// 192 MB holds several typical sessions (20-80 MB each) while stopping the
+// multi-hundred-MB pileups observed with the earlier 512 MB budget. Pinned
+// recordings live in Logs\corpus and are outside this policy.
+constexpr uint64_t kDevAutoRecordingMaxBytes = 192ull * 1024ull * 1024ull;
 
 // Applied-C step size a stationary user notices as the world shifting. 5 mm
 // sits above tracking noise but well below the 20 cm "large step" bucket.

@@ -131,6 +131,44 @@ void SetTargetSystemField(protocol::SetDeviceTransform& payload, const std::stri
 	memcpy(payload.target_system, system.data(), copyLen);
 }
 
+// Log gate for the per-device send annotation. Sends themselves run at the
+// deadband cadence; logging every one of them produced a third of an entire
+// session log (56k lines) of sub-centimetre steps. A device's send is logged
+// when its translation moved a centimetre from the LAST LOGGED value or any
+// discrete field flipped; the rest are counted and surfaced in the scan
+// summary as device_sent_log_suppressed.
+struct LastLoggedTransform
+{
+	bool valid = false;
+	protocol::SetDeviceTransform payload{0u, false};
+};
+LastLoggedTransform g_lastLoggedTransform[vr::k_unMaxTrackedDeviceCount];
+uint64_t g_deviceSentLogSuppressed = 0;
+constexpr double kDeviceSentLogDeltaM = 0.01;
+
+bool DeviceSendWorthLogging(uint32_t id, const protocol::SetDeviceTransform& payload)
+{
+	auto& logged = g_lastLoggedTransform[id];
+	bool log = !logged.valid;
+	if (!log) {
+		const double dx = payload.translation.v[0] - logged.payload.translation.v[0];
+		const double dy = payload.translation.v[1] - logged.payload.translation.v[1];
+		const double dz = payload.translation.v[2] - logged.payload.translation.v[2];
+		const double deltaM = std::sqrt(dx * dx + dy * dy + dz * dz);
+		log = deltaM >= kDeviceSentLogDeltaM || payload.enabled != logged.payload.enabled ||
+		      payload.lerp != logged.payload.lerp || payload.quash != logged.payload.quash ||
+		      payload.recalibrateOnMovement != logged.payload.recalibrateOnMovement;
+	}
+	if (log) {
+		logged.valid = true;
+		logged.payload = payload;
+	}
+	else {
+		++g_deviceSentLogSuppressed;
+	}
+	return log;
+}
+
 bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransform& payload)
 {
 	if (id >= vr::k_unMaxTrackedDeviceCount) return false;
@@ -143,17 +181,19 @@ bool SendDeviceTransformIfChanged(uint32_t id, const protocol::SetDeviceTransfor
 	SendProfileApplyRequest(req, ProfileApplySendKind::Device, "d" + std::to_string(id));
 	cache.valid = true;
 	cache.payload = payload;
-	Metrics::LogAnnotationf("profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
-	                        " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f lerp=%d quash=%d"
-	                        " recalibrateOnMovement=%d state=%d",
-	                        id, (int)payload.enabled, payload.target_system, payload.translation.v[0] * 100.0,
-	                        payload.translation.v[1] * 100.0, payload.translation.v[2] * 100.0,
-	                        std::sqrt(payload.translation.v[0] * payload.translation.v[0] +
-	                                  payload.translation.v[1] * payload.translation.v[1] +
-	                                  payload.translation.v[2] * payload.translation.v[2]) *
-	                            100.0,
-	                        payload.scale, (int)payload.lerp, (int)payload.quash, (int)payload.recalibrateOnMovement,
-	                        (int)CalCtx.state);
+	if (DeviceSendWorthLogging(id, payload)) {
+		Metrics::LogAnnotationf("profile_apply_device_sent: id=%u enabled=%d target_system='%s'"
+		                        " trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f scale=%.4f lerp=%d quash=%d"
+		                        " recalibrateOnMovement=%d state=%d",
+		                        id, (int)payload.enabled, payload.target_system, payload.translation.v[0] * 100.0,
+		                        payload.translation.v[1] * 100.0, payload.translation.v[2] * 100.0,
+		                        std::sqrt(payload.translation.v[0] * payload.translation.v[0] +
+		                                  payload.translation.v[1] * payload.translation.v[1] +
+		                                  payload.translation.v[2] * payload.translation.v[2]) *
+		                            100.0,
+		                        payload.scale, (int)payload.lerp, (int)payload.quash,
+		                        (int)payload.recalibrateOnMovement, (int)CalCtx.state);
+	}
 	return true;
 }
 
@@ -231,6 +271,7 @@ void InvalidateAllTransformCaches()
 	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id) {
 		g_lastApplied[id].valid = false;
 		g_lastSeenSerial[id].clear();
+		g_lastLoggedTransform[id].valid = false;
 	}
 	g_alignmentSpeedSent = false;
 	g_lastFallbackSent = false;
@@ -638,7 +679,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 			         " trackingErr=%d nonTarget=%d targetMatched=%d payloadSent=%d"
 			         " adopted=%zu fallbackSent=%d snap=%d"
 			         " worker_connected=%d worker_depth=%u worker_sent=%llu worker_failed=%llu"
-			         " worker_coalesced=%llu worker_dropped=%llu",
+			         " worker_coalesced=%llu worker_dropped=%llu device_sent_log_suppressed=%llu",
 			         (int)CalCtx.state, (int)ctx.enabled, (int)ctx.validProfile, ctx.referenceTrackingSystem.c_str(),
 			         ctx.targetTrackingSystem.c_str(), ctx.calibratedTranslation.x(), ctx.calibratedTranslation.y(),
 			         ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(), scanInvalidClass,
@@ -646,7 +687,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 			         scanPayloadSent, g_lastAdoptedTrackers.size(), (int)g_lastFallbackSent, (int)snapThisCycle,
 			         (int)workerStatus.connected, workerStatus.queueDepth, (unsigned long long)workerStatus.sent,
 			         (unsigned long long)workerStatus.sendFailures, (unsigned long long)workerStatus.coalesced,
-			         (unsigned long long)workerStatus.dropped);
+			         (unsigned long long)workerStatus.dropped, (unsigned long long)g_deviceSentLogSuppressed);
 			Metrics::WriteLogAnnotation(summaryBuf);
 		}
 	}

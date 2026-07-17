@@ -301,6 +301,25 @@ void RecordContinuousPolicyShadow(const char* label, bool hasCurrent, const Eige
 	const double deltaRotationDeg =
 	    hasCurrent && candidateFinite ? TransformRotationDeltaDeg(current, candidate) : -1.0;
 
+	// This fires per solve tick (~3/s) and a session's steady state repeats
+	// the same decision bits for hours -- one recorded 2.4 h session carried
+	// 28k near-identical lines. Log when any decision bit flips, otherwise at
+	// most once per 5 s; the transitions are the diagnostic signal.
+	{
+		const unsigned decisionBits =
+		    (candidateFinite ? 1u : 0u) | (runtimeWouldApply ? 2u : 0u) | (usingRelPose ? 4u : 0u) |
+		    (wouldAcceptRms ? 8u : 0u) | (wouldAcceptNovaNotWorse ? 16u : 0u) | (wouldAcceptImprove10 ? 32u : 0u) |
+		    (wouldAcceptHysteresis ? 64u : 0u) | (worseThanLast ? 128u : 0u) | (largeTransformJump ? 256u : 0u);
+		static unsigned s_lastDecisionBits = ~0u;
+		static double s_lastShadowLogTime = -1e9;
+		const double now = Metrics::CurrentTime;
+		if (decisionBits == s_lastDecisionBits && (now - s_lastShadowLogTime) < 5.0) {
+			return;
+		}
+		s_lastDecisionBits = decisionBits;
+		s_lastShadowLogTime = now;
+	}
+
 	Metrics::LogAnnotationf("[cal-shadow-continuous][%s] candidate_available=%d runtime_would_apply=%d using_relpose=%d"
 	                        " threshold=%.3f prior_rms_mm=%.3f candidate_rms_mm=%.3f relpose_rms_mm=%.3f"
 	                        " last_candidate_rms_mm=%.3f improvement_mm=%.3f candidate_prior_ratio=%.3f"

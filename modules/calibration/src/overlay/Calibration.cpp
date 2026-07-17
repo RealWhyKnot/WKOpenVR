@@ -270,6 +270,21 @@ static double g_lastAutoLockTranslMad = 0.0;
 static double g_lastAutoLockRotMad = 0.0;
 static int g_geomShiftConsecutiveBadTicks = 0;
 
+// Wall-time stage marks for the [cal-tick-slow] breakdown. Reset at the top
+// of each full tick pass; the diagnostic only fires at the end of a full
+// pass, so aborted ticks never report stale stages.
+static double g_tickGatesMs = 0.0;
+static double g_tickDetectMs = 0.0;
+static double g_tickSampleMs = 0.0;
+
+static double QpcMsBetween(const LARGE_INTEGER& from, const LARGE_INTEGER& to)
+{
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency(&freq);
+	if (freq.QuadPart <= 0) return 0.0;
+	return (to.QuadPart - from.QuadPart) * 1000.0 / (double)freq.QuadPart;
+}
+
 void ResetGeometryShiftDetectorState()
 {
 	g_geomShiftConsecutiveBadTicks = 0;
@@ -1814,6 +1829,12 @@ void CalibrationTick(double time)
 
 	if ((time - ctx.timeLastTick) < 0.05) return;
 
+	// Stage clock for the [cal-tick-slow] breakdown at the end of the tick.
+	LARGE_INTEGER tickWallStart;
+	QueryPerformanceCounter(&tickWallStart);
+	LARGE_INTEGER stageMark = tickWallStart;
+	g_tickGatesMs = g_tickDetectMs = g_tickSampleMs = 0.0;
+
 	// Resolve LockMode -> lockRelativePosition every tick before any code
 	// downstream reads the bool. The detector itself is updated in
 	// CollectSample further down; this just transcribes mode + detector
@@ -1841,6 +1862,13 @@ void CalibrationTick(double time)
 	EmitCalHeartbeat(ctx, time);
 
 	EmitSessionConfigDumpOnce(ctx);
+
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		g_tickGatesMs = QpcMsBetween(stageMark, now);
+		stageMark = now;
+	}
 
 	// Bounds-check the device IDs once at the top of the tick. Many code paths
 	// downstream index devicePoses[ctx.referenceID] / devicePoses[ctx.targetID]
@@ -2167,6 +2195,13 @@ void CalibrationTick(double time)
 	// External smoothing-tool detection moved to the Smoothing overlay's
 	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
 	// cadence and surfaces the banner inside its Prediction sub-tab.
+
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		g_tickDetectMs = QpcMsBetween(stageMark, now);
+		stageMark = now;
+	}
 
 	ctx.timeLastTick = time;
 	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
@@ -2742,6 +2777,7 @@ void CalibrationTick(double time)
 
 	LARGE_INTEGER start_time;
 	QueryPerformanceCounter(&start_time);
+	g_tickSampleMs = QpcMsBetween(stageMark, start_time);
 
 	bool lerp = false;
 	bool solveAttempted = false;
@@ -2823,14 +2859,25 @@ void CalibrationTick(double time)
 			solveProducedCandidate = calibration.ComputeIncremental(
 			    lerp, CalCtx.continuousCalibrationThreshold, CalCtx.maxRelativeErrorThreshold, CalCtx.ignoreOutliers);
 			{
+				// Steady-state continuous solves repeat the same outcome
+				// several times a second for hours (26k lines in one recorded
+				// session). Log when the outcome or reject reason changes,
+				// otherwise at most once per 5 s -- transitions carry the
+				// signal.
 				static double s_lastContinuousSolveAnnotation = -1e9;
-				if (solveProducedCandidate || time - s_lastContinuousSolveAnnotation >= 1.0) {
+				static bool s_lastSolveProduced = false;
+				static std::string s_lastSolveRejectReason;
+				const bool producedValidCandidate = solveProducedCandidate && calibration.isValid();
+				const char* rejectReason =
+				    producedValidCandidate
+				        ? "none"
+				        : (Metrics::lastRejectReason.empty() ? "none" : Metrics::lastRejectReason.c_str());
+				const bool outcomeChanged =
+				    solveProducedCandidate != s_lastSolveProduced || s_lastSolveRejectReason != rejectReason;
+				if (outcomeChanged || time - s_lastContinuousSolveAnnotation >= 5.0) {
 					s_lastContinuousSolveAnnotation = time;
-					const bool producedValidCandidate = solveProducedCandidate && calibration.isValid();
-					const char* rejectReason =
-					    producedValidCandidate
-					        ? "none"
-					        : (Metrics::lastRejectReason.empty() ? "none" : Metrics::lastRejectReason.c_str());
+					s_lastSolveProduced = solveProducedCandidate;
+					s_lastSolveRejectReason = rejectReason;
 					const Eigen::Vector3d candidateCm = calibration.Transformation().translation() * 100.0;
 					Metrics::LogAnnotationf(
 					    "continuous_solve_tick: state=%d(%s) paused=%d attempted=1 produced=%d"
@@ -3393,12 +3440,26 @@ void CalibrationTick(double time)
 			ctx.lastAcceptedContinuousSnapshot = ctx.CaptureProfileSnapshot();
 		}
 
-		Metrics::LogAnnotationf(
-		    "calibration_candidate_accepted: state=%d(%s) source=%s trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f "
-		    "relPosCal=%d validProfile=%d",
-		    (int)ctx.state, CalibrationStateName(ctx.state), calibration.LastComputeUsedRelPose() ? "relpose" : "full",
-		    ctx.calibratedTranslation.x(), ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(),
-		    ctx.calibratedTranslation.norm(), (int)ctx.relativePosCalibrated, (int)ctx.validProfile);
+		// Accepts land several times a second in steady state and mostly
+		// repeat the applied value within solver noise. Log the accepts that
+		// moved the calibration a centimetre from the last logged value, plus
+		// a 5 s heartbeat so the stream never goes fully quiet.
+		{
+			static Eigen::Vector3d s_lastLoggedAcceptCm = Eigen::Vector3d::Zero();
+			static double s_lastAcceptLogTime = -1e9;
+			const double movedCm = (ctx.calibratedTranslation - s_lastLoggedAcceptCm).norm();
+			if (movedCm >= 1.0 || (time - s_lastAcceptLogTime) >= 5.0) {
+				s_lastLoggedAcceptCm = ctx.calibratedTranslation;
+				s_lastAcceptLogTime = time;
+				Metrics::LogAnnotationf(
+				    "calibration_candidate_accepted: state=%d(%s) source=%s trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f "
+				    "relPosCal=%d validProfile=%d",
+				    (int)ctx.state, CalibrationStateName(ctx.state),
+				    calibration.LastComputeUsedRelPose() ? "relpose" : "full", ctx.calibratedTranslation.x(),
+				    ctx.calibratedTranslation.y(), ctx.calibratedTranslation.z(), ctx.calibratedTranslation.norm(),
+				    (int)ctx.relativePosCalibrated, (int)ctx.validProfile);
+			}
+		}
 
 		if (calibration.LastAcceptWasConsensusStep()) {
 			Metrics::LogAnnotationf(
@@ -3458,6 +3519,21 @@ void CalibrationTick(double time)
 	double duration = (end_time.QuadPart - start_time.QuadPart) / (double)freq.QuadPart;
 	const double computationTimeMs = duration * 1000.0;
 	Metrics::computationTime.Push(computationTimeMs);
+
+	// Whole-tick stage breakdown, so a slow-tick report is attributable to a
+	// phase instead of the tick as a whole (frame-hitch diagnostics measure
+	// the full plugin tick; computationTime above covers only solve+accept).
+	{
+		const double totalMs = QpcMsBetween(tickWallStart, end_time);
+		static double s_lastTickSlowLog = -1e9;
+		if (totalMs >= 50.0 && (time - s_lastTickSlowLog) >= 5.0) {
+			s_lastTickSlowLog = time;
+			Metrics::LogAnnotationf("[cal-tick-slow] total_ms=%.1f gates_ms=%.1f detect_ms=%.1f sample_ms=%.1f"
+			                        " solve_accept_ms=%.1f state=%d samples=%zu",
+			                        totalMs, g_tickGatesMs, g_tickDetectMs, g_tickSampleMs, computationTimeMs,
+			                        (int)ctx.state, calibration.SampleCount());
+		}
+	}
 
 	// CPU-pressure diagnostic. Sampled at the end of each CalibrationTick so the
 	// computationTime above is in scope for the per-tick spike check. Pure
