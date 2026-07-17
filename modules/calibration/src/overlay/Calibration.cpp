@@ -17,13 +17,10 @@
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
 #include "VRState.h"
-#include "WedgeDetector.h"         // ShouldFireRuntimeWedgeRecovery, kMaxPlausibleCalibrationMagnitudeCm
 #include "GeometryShiftDetector.h" // IsCurrentErrorSpike, ShouldFireGeometryShiftRecovery
 #include "CommonModeCoherence.h"   // spacecal::coherence::ComputeCoherenceScore
 #include "SnapSuppression.h"       // spacecal::snap_suppression::EffectiveSpeedMps
 #include "MotionGate.h"            // ShouldBlendCycle -- auto-recovery snap decision
-#include "Wizard.h"                // spacecal::wizard::IsActive -- gate the runtime wedge detector
-                                   // off while the user is mid-setup so it can't disrupt them.
 #include "ControllerInput.h"
 #include "HeadFromTrackerSolve.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
@@ -58,14 +55,6 @@
 #include <GLFW/glfw3.h>
 
 CalibrationContext CalCtx;
-
-// Runtime wedge detector state. Persists across CalibrationTick calls;
-// updated by spacecal::wedge::ShouldFireRuntimeWedgeRecovery (header-only,
-// pure). Sentinel <0 means "no active wedge candidate"; otherwise stores
-// the glfwGetTime() timestamp of the first tick magnitude crossed the bound.
-// File scope (not anonymous namespace) so CalibrationTick can read+write it
-// directly from earlier in the translation unit.
-static double g_runtimeWedgeSince = -1.0;
 
 static const char* CalibrationStateName(CalibrationState state)
 {
@@ -2466,7 +2455,7 @@ void CalibrationTick(double time)
 			ok = false;
 		}
 
-		// @TOOD: Determine if the tracking is jittery
+		// @TODO: Determine if the tracking is jittery
 		if (calibration.ReferenceJitter() > ctx.jitterThreshold) {
 			CalCtx.Log("Reference device is not tracking\n");
 			ok = false;

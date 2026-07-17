@@ -26,10 +26,12 @@
 //   Editing -> None            (UI: leave edit mode)
 //   Continuous -> None         (EndContinuousCalibration)
 //   Continuous -> Begin        (StartContinuousCalibration via auto-recovery / wedge recovery)
-//   Continuous -> ContinuousStandby (geometry-shift detector at Calibration.cpp:2152)
+//   Continuous -> ContinuousStandby (historical geometry-shift demote; the
+//                                    detector is log-only now and no longer
+//                                    drives this edge itself)
 //   ContinuousStandby -> None  (EndContinuousCalibration, CollectSample bail)
 //   ContinuousStandby -> Begin (StartContinuousCalibration's StartCalibration call)
-//   ContinuousStandby -> Continuous (AssignTargets succeeded, line 2353)
+//   ContinuousStandby -> Continuous (AssignTargets succeeded in CalibrationTick)
 //
 // Self-loops (state -> state) always legal — represent "no transition this tick."
 
