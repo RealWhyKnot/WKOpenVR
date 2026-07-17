@@ -1928,7 +1928,7 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
 			Metrics::error_byRelPose.Push(relPoseError * 1000);
 
-			if (relPoseError < 0.010 || m_relativePosCalibrated && relPoseError < 0.025) {
+			if (relPoseError < 0.010 || (m_relativePosCalibrated && relPoseError < 0.025)) {
 				if (relPoseError * threshold >= priorCalibrationError) {
 					return false;
 				}
@@ -1982,8 +1982,7 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 		double existingPoseErrorUsingRelPosition =
 		    RetargetingErrorRMS(m_refToTargetPose.translation(), m_estimatedTransformation);
 		Metrics::error_currentCalRelPose.Push(existingPoseErrorUsingRelPosition * 1000);
-		if (relPoseError * threshold < existingPoseErrorUsingRelPosition ||
-		    newCalibrationValid && relPoseError < newError) {
+		if (relPoseError * threshold < existingPoseErrorUsingRelPosition) {
 			newCalibrationValid = true;
 			usingRelPose = true;
 			newError = relPoseError;
