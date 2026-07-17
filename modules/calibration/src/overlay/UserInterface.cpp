@@ -14,6 +14,7 @@
 #include "UserInterfaceCalibrationProgress.h"
 #include "HeadMountOffsetModal.h"
 #include "HeadMountOffsetPreflight.h"
+#include "UserInterfaceHeadMount.h"
 #include "TrackingStyle.h"
 #include "TrackingStyleActions.h"
 #include "UiHelpers.h"
@@ -58,8 +59,6 @@ static void BuildTrackingStyleSetup(bool continuousCalibration);
 // Smoothing overlay (Protocol v12 migration, 2026-05-11).
 void CCal_BasicInfo();
 void CCal_DrawSettings();
-void CCal_DrawBoundaryTab();
-void CCal_TickBoundaryCapture();
 static void OneShot_DrawSettings();
 
 bool runningInOverlay;
@@ -345,7 +344,10 @@ void BuildContinuousCalDisplay()
 		}
 
 		if (TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle) && ImGui::BeginTabItem("Setup")) {
-			CCal_DrawBoundaryTab();
+			ImVec2 panelSize{ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, 0.0f};
+			ImGui::TextDisabled("Headset tracker setup.");
+			ImGui::Spacing();
+			CCal_DrawHeadMountSection(panelSize);
 			ImGui::EndTabItem();
 		}
 
@@ -529,46 +531,6 @@ static void OneShot_DrawSettings()
 		}
 	}
 	ImGui::EndGroupPanel();
-
-	// Boundary/floor subsystem disabled.
-	// spacecal::ui::DrawChaperoneLoadFailedBanner();
-	// ImGui::Spacing();
-	// ImGui::BeginGroupPanel("Chaperone bounds", panelSize);
-	// {
-	// 	ImGui::BeginDisabled(!IsVRReady());
-	// 	if (ImGui::Button("Copy chaperone bounds to profile")) {
-	// 		LoadChaperoneBounds();
-	// 		SaveProfile(CalCtx);
-	// 	}
-	// 	ImGui::EndDisabled();
-	// 	if (!IsVRReady() && ImGui::IsItemHovered()) {
-	// 		ImGui::SetTooltip("Waiting for SteamVR.");
-	// 	}
-	// 	if (CalCtx.chaperone.valid) {
-	// 		ImGui::SameLine();
-	// 		ImGui::BeginDisabled(!IsVRReady());
-	// 		if (ImGui::Button("Paste chaperone bounds")) {
-	// 			ApplyChaperoneBounds();
-	// 		}
-	// 		ImGui::EndDisabled();
-	// 		if (!IsVRReady() && ImGui::IsItemHovered()) {
-	// 			ImGui::SetTooltip("Waiting for SteamVR.");
-	// 		}
-	//
-	// 		if (ImGui::Checkbox("Paste automatically when geometry resets", &CalCtx.chaperone.autoApply)) {
-	// 			SaveProfile(CalCtx);
-	// 		}
-	// 	}
-	// 	else {
-	// 		ImGui::TextDisabled("(No bounds saved in profile yet -- press Copy first.)");
-	// 	}
-	// }
-	// ImGui::EndGroupPanel();
-
-	// (Recenter playspace removed: in the lighthouse-anchored boundary model
-	// the chaperone is built from boundary vertices in lighthouse space and
-	// shifting the SZP to the HMD's reported position would push the boundary
-	// off the user's physical room.)
 
 	// Wizard / reset actions, grouped in their own panel so they don't read
 	// as floating buttons under the Settings table.
@@ -884,7 +846,6 @@ void BuildMenu(bool runningInOverlay)
 			}
 		}
 
-		// Boundary/floor subsystem disabled.
 		// (Calibration Speed picker moved to the Settings tab as the
 		// "Calibration speed" group panel.)
 		// Both used to render inline here, stacking on top of the action

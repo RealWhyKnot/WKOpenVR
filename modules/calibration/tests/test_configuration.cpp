@@ -100,7 +100,6 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	src.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
 	ApplyTrackingStylePreset(src, TrackingStyle::LockedWithRecovery);
 	src.lockRelativePositionMode = CalibrationContext::LockMode::ON;
-	src.floorOffsetMetersY = -0.4375; // boundary/floor persistence is disabled
 	src.validProfile = true;
 
 	std::stringstream io;
@@ -123,8 +122,6 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::VERY_SLOW);
 	EXPECT_EQ(dst.trackingStyle, TrackingStyle::LockedWithRecovery);
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::ON);
-	EXPECT_DOUBLE_EQ(dst.floorOffsetMetersY, 0.0);
-	EXPECT_FALSE(dst.floorEnabled);
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +527,6 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned)
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);
 	EXPECT_DOUBLE_EQ(ctx.calibratedScale, 1.0);
-	EXPECT_DOUBLE_EQ(ctx.floorOffsetMetersY, 0.0)
-	    << "Floor adjustment defaults to 0 (no vertical nudge until the user sets the floor).";
 }
 
 // ---------------------------------------------------------------------------
@@ -708,41 +703,9 @@ TEST(ConfigurationTest, SaveStampsCurrentSchemaVersion)
 	EXPECT_NE(io.str().find("schema_version"), std::string::npos) << "Saved JSON should contain a schema_version key";
 }
 
-TEST(ConfigurationTest, BoundaryStandingSpaceIsNotPersisted)
-{
-	CalibrationContext src;
-	src.referenceTrackingSystem = "lighthouse";
-	src.targetTrackingSystem = "oculus";
-	src.validProfile = true;
-	src.boundary.enabled = true;
-	src.boundary.standingSpace = true;
-	src.boundary.floorY = 0.0;
-	src.boundary.ceilingY = 2.4;
-	src.boundary.vertices = {
-	    {-1.0, 0.0, -1.0},
-	    {1.0, 0.0, -1.0},
-	    {1.0, 0.0, 1.0},
-	    {-1.0, 0.0, 1.0},
-	};
-
-	std::stringstream io;
-	WriteProfile(src, io);
-
-	EXPECT_EQ(io.str().find("standing_space"), std::string::npos);
-	EXPECT_EQ(io.str().find("\"boundary\""), std::string::npos);
-
-	CalibrationContext dst;
-	std::stringstream reload(io.str());
-	ParseProfile(dst, reload);
-
-	ASSERT_TRUE(dst.validProfile);
-	EXPECT_FALSE(dst.boundary.enabled);
-	EXPECT_TRUE(dst.boundary.vertices.empty());
-}
-
 // ---------------------------------------------------------------------------
-// Schema migration v3 -> v4. v3 profiles have no head_mount or boundary
-// sections. They must load with both at their disabled defaults.
+// Schema migration v3 -> v4. v3 profiles have no head_mount section. They
+// must load with it at its disabled defaults.
 // ---------------------------------------------------------------------------
 TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 {
@@ -765,12 +728,11 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
 	    << "v3 profile must default DriverSynth timing";
-	EXPECT_FALSE(ctx.boundary.enabled) << "v3 profile must default boundary.enabled to false";
 }
 
 // ---------------------------------------------------------------------------
-// Round-trip for the v4 sections (head_mount, boundary). Non-default
-// values must survive a write->read cycle intact.
+// Round-trip for the v4 head_mount section. Non-default values must survive
+// a write->read cycle intact.
 // ---------------------------------------------------------------------------
 TEST(ConfigurationTest, V4SectionsRoundTrip)
 {
@@ -799,13 +761,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.headFromTracker = Eigen::AffineCompact3d::Identity();
 	src.headMount.headFromTracker.linear() = q.toRotationMatrix();
 	src.headMount.headFromTracker.translation() = Eigen::Vector3d(0.01, -0.02, 0.03);
-
-	src.boundary.enabled = true;
-	src.boundary.floorY = -0.05;
-	src.boundary.ceilingY = 2.3;
-	src.boundary.vertices = {{1.0, 0.0, 0.0}, {-1.0, 0.0, 0.5}};
-	src.boundary.priorChaperone = {0xDE, 0xAD, 0xBE, 0xEF};
-	src.boundary.priorChaperoneCaptured = true;
 
 	std::stringstream io;
 	WriteProfile(src, io);
@@ -842,11 +797,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	qSrc.normalize();
 	qDst.normalize();
 	EXPECT_NEAR(std::abs(qSrc.dot(qDst)), 1.0, 1e-6) << "headFromTracker rotation must round-trip";
-
-	EXPECT_FALSE(dst.boundary.enabled);
-	EXPECT_TRUE(dst.boundary.vertices.empty());
-	EXPECT_TRUE(dst.boundary.priorChaperone.empty());
-	EXPECT_FALSE(dst.boundary.priorChaperoneCaptured);
 }
 
 // Skip-if-default: the new sections must NOT appear in the JSON
@@ -857,7 +807,7 @@ TEST(ConfigurationTest, V4SectionsSkippedWhenDefault)
 	ctx.referenceTrackingSystem = "lighthouse";
 	ctx.targetTrackingSystem = "oculus";
 	ctx.validProfile = true;
-	// All head_mount / boundary fields at construction defaults.
+	// All head_mount fields at construction defaults.
 
 	std::stringstream io;
 	WriteProfile(ctx, io);
@@ -865,8 +815,6 @@ TEST(ConfigurationTest, V4SectionsSkippedWhenDefault)
 
 	EXPECT_EQ(json.find("\"head_mount\""), std::string::npos)
 	    << "head_mount must be omitted when at default (Off, no serial)";
-	EXPECT_EQ(json.find("\"boundary\""), std::string::npos)
-	    << "boundary must be omitted when disabled and no vertices captured";
 }
 
 TEST(ConfigurationTest, HeadMountAutoCorrectDisabledPersistsWhenOtherwiseDefault)

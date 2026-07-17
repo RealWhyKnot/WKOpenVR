@@ -22,7 +22,6 @@
 #include "MotionGate.h"            // ShouldBlendCycle -- auto-recovery snap decision
 #include "Wizard.h"                // spacecal::wizard::IsActive -- gate the runtime wedge detector
                                    // off while the user is mid-setup so it can't disrupt them.
-#include "BoundaryRePush.h"        // TickBoundaryRePush -- safety boundary chaperone re-push.
 #include "ControllerInput.h"
 #include "HeadFromTrackerSolve.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
@@ -33,11 +32,6 @@
 #include "RecoveryPolicy.h"
 #include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
-
-// Boundary capture session tick (defined in UserInterfaceTabsBoundary.cpp).
-// Called each CalibrationTick so capture runs independent of which tab is
-// visible. No-op when CaptureState is not Active.
-void CCal_TickBoundaryCapture();
 #include "TrackerLiveness.h"           // spacecal::liveness::* -- detect non-HMD calibration anchor
                                        // going silent under SteamVR's "Running_OK + poseIsValid stays true
                                        // while pose hash is frozen" disconnect path.
@@ -3643,10 +3637,6 @@ void CalibrationTick(double time)
 
 	Metrics::WriteLogEntry();
 
-	// Boundary/floor subsystem disabled.
-	// CCal_TickBoundaryCapture();
-	// TickBoundaryRePush(time);
-
 	if (CalCtx.state != CalibrationState::Continuous) {
 		ctx.state = CalibrationState::None;
 		calibration.Clear();
@@ -3657,16 +3647,6 @@ void CalibrationTick(double time)
 			calibration.ShiftSample();
 		}
 	}
-}
-
-void LoadChaperoneBounds()
-{
-	// Boundary/floor subsystem disabled.
-}
-
-void ApplyChaperoneBounds()
-{
-	// Boundary/floor subsystem disabled.
 }
 
 void DebugApplyRandomOffset()

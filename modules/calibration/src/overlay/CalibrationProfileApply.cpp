@@ -692,16 +692,6 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		}
 	}
 
-	// Boundary/floor subsystem disabled.
-	// if (ctx.enabled && ctx.chaperone.valid && ctx.chaperone.autoApply) {
-	// 	uint32_t quadCount = 0;
-	// 	vr::VRChaperoneSetup()->GetLiveCollisionBoundsInfo(nullptr, &quadCount);
-	//
-	// 	if (quadCount != ctx.chaperone.geometry.size()) {
-	// 		ApplyChaperoneBounds();
-	// 	}
-	// }
-
 	// Consume the one-shot auto-recovery snap flag -- only after every per-ID
 	// payload in this cycle has been sent, so the snap reaches all devices.
 	// Subsequent cycles return to normal lerp behaviour.

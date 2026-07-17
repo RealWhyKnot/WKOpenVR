@@ -166,12 +166,6 @@ extern TimeSeries<double> questHmdVsProxyDeltaMm;
 // delta between rows gives the per-tick rate.
 extern TimeSeries<uint32_t> snapSuppressedCount;
 extern TimeSeries<uint32_t> driverSynthFallbackCount;
-// Safety boundary state. boundaryActive is true while the simplified
-// PC-side boundary is pushed to SteamVR chaperone. chaperoneRePushCount
-// counts how many times the boundary was re-pushed after a Quest Guardian
-// event clobbered it.
-extern TimeSeries<bool> boundaryActive;
-extern TimeSeries<uint32_t> chaperoneRePushCount;
 
 struct LogHealth
 {

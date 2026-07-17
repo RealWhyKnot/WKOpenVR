@@ -208,7 +208,6 @@ Section "Install"
     ; on first launch and register the overlay with SteamVR for auto-start.
     File "${ARTIFACTS_BASEDIR}\manifest.vrmanifest"
     File "${ARTIFACTS_BASEDIR}\dashboard_icon.png"
-    File "${ARTIFACTS_BASEDIR}\boundary_icon.png"
     File "..\LICENSE"
     File /oname=README.md "..\README.md"
 

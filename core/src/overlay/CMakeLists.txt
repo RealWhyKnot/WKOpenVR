@@ -186,13 +186,6 @@ add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
 		"${CMAKE_CURRENT_LIST_DIR}/dashboard_icon.png"
 		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/dashboard_icon.png")
 
-# Stage the boundary marker glyph next to the exe. The boundary preview loads
-# it at runtime for the in-VR floor/start markers via an exe-relative path.
-add_custom_command(TARGET OpenVRPairOverlay POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${CMAKE_CURRENT_LIST_DIR}/boundary_icon.png"
-		"$<TARGET_FILE_DIR:OpenVRPairOverlay>/boundary_icon.png")
-
 # Stage the face-module sync script into resources/ next to the exe.
 # ModuleSyncRunner looks for it at <exe_dir>/resources/face-module-sync.ps1.
 # Source ownership lives with the facetracking module; the deployed resource

@@ -62,8 +62,6 @@ TimeSeries<double> headMountResidualMm;
 TimeSeries<double> questHmdVsProxyDeltaMm;
 TimeSeries<uint32_t> snapSuppressedCount;
 TimeSeries<uint32_t> driverSynthFallbackCount;
-TimeSeries<bool> boundaryActive;
-TimeSeries<uint32_t> chaperoneRePushCount;
 
 TimeSeries<double> fallbackApplyRate;
 TimeSeries<double> perIdApplyRate;

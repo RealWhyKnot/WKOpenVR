@@ -201,32 +201,6 @@ struct HeadMountConfig
 	int32_t deviceID = -1;
 };
 
-// One vertex of the safety boundary polygon.
-struct BoundaryVertex
-{
-	double x = 0, y = 0, z = 0;
-};
-
-// Safety boundary for SteamVR chaperone. Target-space boundaries follow the
-// calibrated tracker space and transform into standing space before push;
-// standing-space boundaries store SteamVR standing-space vertices directly.
-// priorChaperone snapshots the user's pre-existing SteamVR chaperone before
-// our first push so the "Restore original" action returns the user to where
-// they started.
-struct BoundaryConfig
-{
-	bool enabled = false;
-	std::vector<BoundaryVertex> vertices;
-	double floorY = 0.0;
-	double ceilingY = 2.5;
-	// Boundary geometry lives in SteamVR standing space, independent of the
-	// space-calibration transform. Legacy profiles may still load false and
-	// are pushed through the transform path until redrawn.
-	bool standingSpace = true;
-	std::vector<uint8_t> priorChaperone;
-	bool priorChaperoneCaptured = false;
-};
-
 struct CalibrationProfileSnapshot
 {
 	bool captured = false;
@@ -257,19 +231,6 @@ struct CalibrationContext
 	Eigen::Vector3d calibratedTranslation;
 	double calibratedScale;
 
-	// Cumulative vertical shift (meters) applied to the SteamVR standing-zero pose
-	// via "Set floor from controller". Floor height is set by editing the chaperone
-	// standing-zero (the runtime-consistent mechanism, like OpenVR Advanced Settings),
-	// not by shifting device poses. Tracked only so "Reset floor" can undo exactly
-	// what we applied; persisted to know our own contribution across restarts.
-	double floorOffsetMetersY = 0.0;
-	// True when floorOffsetMetersY is currently applied to the SteamVR
-	// standing-zero. Toggling this off lifts the rig back to the headset
-	// floor without forgetting the offset, so it can be re-applied later;
-	// "Reset floor" clears the offset entirely. Defaults true on load when an
-	// offset is present so existing profiles keep their applied floor.
-	bool floorEnabled = false;
-
 	std::string referenceTrackingSystem;
 	std::string targetTrackingSystem;
 
@@ -298,8 +259,6 @@ struct CalibrationContext
 	bool headMountNeedsFreshRelativePose = false;
 	double headMountLastSourceResetTime = -1e9;
 	uint64_t driverSynthFallbackTotal = 0;
-	// Safety boundary: captured chaperone outline + floor/ceiling for re-push.
-	BoundaryConfig boundary;
 	double timeLastTick = 0, timeLastScan = 0, timeLastAssign = 0;
 	// Default ON: drop sample pairs whose rotation axis disagrees with the
 	// consensus before the LS solve. Helps with intermittent USB glitches or
@@ -810,26 +769,10 @@ struct CalibrationContext
 		leverArmSigmaJitterM = spacecal::levercov::kDefaultSigmaJitterM;
 	}
 
-	struct Chaperone
-	{
-		bool valid = false;
-		bool autoApply = true;
-		std::vector<vr::HmdQuad_t> geometry;
-		vr::HmdMatrix34_t standingCenter = {
-		    1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
-		};
-		vr::HmdVector2_t playSpaceSize = {0.0f, 0.0f};
-	} chaperone;
-
 	void ClearLogOnMessage() { clearOnLog = true; }
 
 	void Clear()
 	{
-		chaperone.geometry.clear();
-		chaperone.standingCenter = vr::HmdMatrix34_t();
-		chaperone.playSpaceSize = vr::HmdVector2_t();
-		chaperone.valid = false;
-
 		calibratedRotation = Eigen::Vector3d();
 		calibratedTranslation = Eigen::Vector3d();
 		calibratedScale = 1.0;
@@ -1102,8 +1045,6 @@ void StartCalibration(const char* reason = "unknown");
 void StartContinuousCalibration(const char* reason = "unknown");
 void CancelCalibration(const char* reason = "unknown");
 void EndContinuousCalibration();
-void LoadChaperoneBounds();
-void ApplyChaperoneBounds();
 
 void ShowCalibrationDebug(int r, int c);
 void DebugApplyRandomOffset();

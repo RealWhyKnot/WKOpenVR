@@ -2,13 +2,13 @@
 
 Aligns two tracking systems (for example a standalone headset plus lighthouse-tracked devices)
 by solving the offset between their tracking universes and keeping it correct over time with
-continuous calibration, drift recovery, and boundary/floor tools. The overlay piece in WKOpenVR.exe
-owns the solver, state machine, and UI; the driver piece applies the transform in driver_wkopenvr.dll.
+continuous calibration and drift recovery. The overlay piece in WKOpenVR.exe owns the solver,
+state machine, and UI; the driver piece applies the transform in driver_wkopenvr.dll.
 
 ## Pieces
 
-- src/overlay -- solver, continuous-calibration and recovery logic, boundary/floor
-  capture, metrics logging, UI; builds openvr_pair_feature_calibration_overlay
+- src/overlay -- solver, continuous-calibration and recovery logic, metrics
+  logging, UI; builds openvr_pair_feature_calibration_overlay
 - src/driver -- ModuleRegistry driver module that routes calibration requests and
   applies poses; builds openvr_pair_feature_calibration_driver
 - src/common -- version header shared by both sides

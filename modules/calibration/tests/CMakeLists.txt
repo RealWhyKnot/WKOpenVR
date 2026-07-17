@@ -26,7 +26,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(SPACECAL_SRC "${CMAKE_SOURCE_DIR}/modules/calibration/src")
 
 add_executable(spacecal_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_boundary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_controller_input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_calc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_relpose_lock_gate.cpp
@@ -80,12 +79,6 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs.cpp
     ${CMAKE_SOURCE_DIR}/core/src/overlay/CalibrationAnchor.cpp
     ${CMAKE_SOURCE_DIR}/core/src/overlay/DeviceFilters.cpp
-    ${SPACECAL_SRC}/overlay/Boundary.cpp
-    ${SPACECAL_SRC}/overlay/BoundaryCapture.cpp
-    ${SPACECAL_SRC}/overlay/BoundaryFloorCapture.cpp
-    ${SPACECAL_SRC}/overlay/BoundaryPreview.cpp
-    ${SPACECAL_SRC}/overlay/BoundaryRePush.cpp
-    ${SPACECAL_SRC}/overlay/BoundarySpatial.cpp
     ${SPACECAL_SRC}/overlay/ControllerInput.cpp
     ${SPACECAL_SRC}/overlay/CalibrationCalc.cpp
     ${SPACECAL_SRC}/overlay/MotionRecording.cpp

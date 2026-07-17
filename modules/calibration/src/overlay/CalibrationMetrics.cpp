@@ -57,8 +57,6 @@ TimeSeries<double> headMountResidualMm;
 TimeSeries<double> questHmdVsProxyDeltaMm;
 TimeSeries<uint32_t> snapSuppressedCount;
 TimeSeries<uint32_t> driverSynthFallbackCount;
-TimeSeries<bool> boundaryActive;
-TimeSeries<uint32_t> chaperoneRePushCount;
 
 // https://stackoverflow.com/a/17827724
 bool IsBrowsePath(const std::wstring& path)

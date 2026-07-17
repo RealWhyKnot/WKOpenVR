@@ -1,5 +1,4 @@
 #include "Configuration.h"
-#include "BoundaryRePush.h"     // ScheduleBoundaryStartupPush -- startup push on load.
 #include "CalibrationMetrics.h" // WriteLogAnnotation -- profile_loaded_calibration
                                 // diagnostic line on launch.
 #include "TrackingStyle.h"
@@ -55,9 +54,11 @@
 //       Adds "lock_relative_position_mode" (int 0/1/2 = OFF/ON/AUTO) replacing
 //       the legacy "lock_relative_position" bool. Migration: bool true -> ON,
 //       bool false -> AUTO (the new safer default that detects rigidity).
-//   4 - Adds head_mount and boundary config sections for
-//       lighthouse-anchored head-tracker + safety boundary. No field renames;
-//       new sections default to disabled.
+//   4 - Adds the head_mount config section for the lighthouse-anchored
+//       head-tracker. No field renames; new sections default to disabled.
+//       (Also added "boundary" and "chaperone" sections plus floor keys,
+//       since retired; the loader ignores unknown keys, so profiles that
+//       still carry them load cleanly.)
 //   5 - Splits the single "calibration_speed" setting into one-shot and
 //       continuous settings. One-shot defaults to FAST; continuous defaults
 //       to AUTO. The legacy key remains readable for migration only.
@@ -87,13 +88,6 @@ static const char* HeadMountSampleSourceName(HeadMountSampleSource source)
 			return "unknown";
 	}
 }
-
-// Set to true when a chaperone geometry array with a non-multiple-of-12 length
-// is encountered during ParseProfile. The UI reads this to show a banner
-// ("corrupted size -- auto-apply disabled") rather than silently doing nothing.
-// Persists for the lifetime of the process (a second SaveProfile clears the
-// corruption, so the banner is only shown after a load, not during normal use).
-bool g_chaperoneGeometrySizeMismatch = false;
 
 // Forward-migrate an already-parsed profile object in place from `from_version`
 // up to kProfileSchemaVersion. Called between JSON parse and field population.
@@ -133,11 +127,11 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 		// drop it for new profiles.
 	}
 
-	// 3 -> 4: head_mount and boundary are new sections. The load path
-	// is tolerant of missing keys and defaults them to disabled, so nothing
-	// needs to be rewritten here. A v3 profile silently acquires the
-	// default-off state; the first save from the new overlay writes the keys
-	// only when non-default.
+	// 3 -> 4: head_mount is a new section. The load path is tolerant of
+	// missing keys and defaults it to disabled, so nothing needs to be
+	// rewritten here. A v3 profile silently acquires the default-off state;
+	// the first save from the new overlay writes the keys only when
+	// non-default.
 
 	if (from_version < 5) {
 		auto it = profile.find("calibration_speed");
@@ -313,40 +307,6 @@ static picojson::object SaveAlignmentParams(CalibrationContext& ctx)
 	return obj;
 }
 
-// Hex-encode a byte buffer to a std::string. Used for prior_chaperone bytes
-// because picojson carries no base64 helper and a hex string is readable,
-// round-trip exact, and requires no external dependency.
-static std::string BytesToHex(const std::vector<uint8_t>& bytes)
-{
-	static const char kHex[] = "0123456789abcdef";
-	std::string out;
-	out.reserve(bytes.size() * 2);
-	for (uint8_t b : bytes) {
-		out += kHex[b >> 4];
-		out += kHex[b & 0x0f];
-	}
-	return out;
-}
-
-// Decode a hex string produced by BytesToHex. Non-hex characters cause the
-// pair to be skipped (tolerant of whitespace or minor corruption).
-static std::vector<uint8_t> HexToBytes(const std::string& hex)
-{
-	std::vector<uint8_t> out;
-	out.reserve(hex.size() / 2);
-	for (size_t i = 0; i + 1 < hex.size(); i += 2) {
-		auto hval = [](char c) -> int {
-			if (c >= '0' && c <= '9') return c - '0';
-			if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-			if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-			return -1;
-		};
-		int hi = hval(hex[i]), lo = hval(hex[i + 1]);
-		if (hi >= 0 && lo >= 0) out.push_back((uint8_t)((hi << 4) | lo));
-	}
-	return out;
-}
-
 static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 {
 	if (!value.is<picojson::object>()) return;
@@ -484,63 +444,6 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	xf["translation"].set<picojson::array>(transArr);
 	xf["rotation"].set<picojson::array>(rotArr);
 	obj["head_from_tracker"].set<picojson::object>(xf);
-	return obj;
-}
-
-static void LoadBoundary(BoundaryConfig& bc, picojson::value& value)
-{
-	if (!value.is<picojson::object>()) return;
-	auto& obj = value.get<picojson::object>();
-
-	if (obj["enabled"].is<bool>()) bc.enabled = obj["enabled"].get<bool>();
-	if (obj["floor_y"].is<double>()) bc.floorY = obj["floor_y"].get<double>();
-	if (obj["ceiling_y"].is<double>()) bc.ceilingY = obj["ceiling_y"].get<double>();
-	if (obj["standing_space"].is<bool>()) bc.standingSpace = obj["standing_space"].get<bool>();
-	if (obj["prior_chaperone_captured"].is<bool>())
-		bc.priorChaperoneCaptured = obj["prior_chaperone_captured"].get<bool>();
-	if (obj["prior_chaperone"].is<std::string>())
-		bc.priorChaperone = HexToBytes(obj["prior_chaperone"].get<std::string>());
-
-	bc.vertices.clear();
-	if (obj["vertices"].is<picojson::array>()) {
-		for (auto& v : obj["vertices"].get<picojson::array>()) {
-			if (!v.is<picojson::object>()) continue;
-			auto& vo = v.get<picojson::object>();
-			BoundaryVertex bv;
-			if (vo["x"].is<double>()) bv.x = vo["x"].get<double>();
-			if (vo["y"].is<double>()) bv.y = vo["y"].get<double>();
-			if (vo["z"].is<double>()) bv.z = vo["z"].get<double>();
-			bc.vertices.push_back(bv);
-		}
-	}
-}
-
-static picojson::object SaveBoundary(const BoundaryConfig& bc)
-{
-	picojson::object obj;
-	bool en = bc.enabled;
-	obj["enabled"].set<bool>(en);
-	double fy = bc.floorY, cy = bc.ceilingY;
-	obj["floor_y"].set<double>(fy);
-	obj["ceiling_y"].set<double>(cy);
-	bool standing = bc.standingSpace;
-	obj["standing_space"].set<bool>(standing);
-	bool cap = bc.priorChaperoneCaptured;
-	obj["prior_chaperone_captured"].set<bool>(cap);
-	obj["prior_chaperone"].set<std::string>(BytesToHex(bc.priorChaperone));
-
-	picojson::array verts;
-	for (const auto& bv : bc.vertices) {
-		picojson::object vo;
-		double x = bv.x, y = bv.y, z = bv.z;
-		vo["x"].set<double>(x);
-		vo["y"].set<double>(y);
-		vo["z"].set<double>(z);
-		picojson::value vval;
-		vval.set<picojson::object>(vo);
-		verts.push_back(vval);
-	}
-	obj["vertices"].set<picojson::array>(verts);
 	return obj;
 }
 
@@ -710,17 +613,6 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.calibratedScale = 1.0;
 	}
 
-	// Boundary/floor subsystem disabled.
-	// if (obj["floor_offset_meters_y"].is<double>()) {
-	// 	ctx.floorOffsetMetersY = obj["floor_offset_meters_y"].get<double>();
-	// 	ctx.floorEnabled = obj["floor_enabled"].is<bool>() ? obj["floor_enabled"].get<bool>()
-	// 	                                                   : (std::fabs(ctx.floorOffsetMetersY) > 1e-9);
-	// }
-	// else {
-	ctx.floorOffsetMetersY = 0.0;
-	ctx.floorEnabled = false;
-	// }
-
 	auto readSpeed = [](const picojson::value& v, CalibrationContext::Speed fallback,
 	                    bool allowAuto) -> CalibrationContext::Speed {
 		if (!v.is<double>()) return fallback;
@@ -752,34 +644,6 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	// the JSON key is dead. Skip-if-default save means new profiles won't emit
 	// it; old profiles just leave the key on disk where future loads ignore it.
 
-	// Boundary/floor subsystem disabled.
-	// if (obj["chaperone"].is<picojson::object>()) {
-	// 	auto chaperone = obj["chaperone"].get<picojson::object>();
-	// 	ctx.chaperone.autoApply = chaperone["auto_apply"].get<bool>();
-	//
-	// 	LoadFloatArray(chaperone["play_space_size"], ctx.chaperone.playSpaceSize.v, 2);
-	//
-	// 	LoadFloatArray(chaperone["standing_center"], (float*)ctx.chaperone.standingCenter.m,
-	// 	               sizeof(ctx.chaperone.standingCenter.m) / sizeof(float));
-	//
-	// 	if (!chaperone["geometry"].is<picojson::array>()) {
-	// 		throw std::runtime_error("chaperone geometry is not an array");
-	// 	}
-	//
-	// 	auto& geometry = chaperone["geometry"].get<picojson::array>();
-	//
-	// 	if (geometry.size() > 0 && (geometry.size() % 12) != 0) {
-	// 		std::cerr << "Chaperone geometry length (" << geometry.size()
-	// 		          << ") is not a multiple of 12 -- skipping chaperone load." << '\n';
-	// 		g_chaperoneGeometrySizeMismatch = true;
-	// 	}
-	// 	else if (geometry.size() > 0) {
-	// 		ctx.chaperone.geometry.resize(geometry.size() * sizeof(float) / sizeof(ctx.chaperone.geometry[0]));
-	// 		LoadFloatArray(chaperone["geometry"], (float*)ctx.chaperone.geometry.data(), geometry.size());
-	//
-	// 		ctx.chaperone.valid = true;
-	// 	}
-	// }
 	if (obj["relative_pos_calibrated"].is<bool>()) {
 		ctx.relativePosCalibrated = obj["relative_pos_calibrated"].get<bool>();
 	}
@@ -892,11 +756,9 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.wizardCompleted = obj["wizard_completed"].get<bool>();
 	}
 
-	// v4: head-mounted tracker and safety boundary. All sections
-	// are optional (skip-if-absent); absent means default (disabled).
+	// v4: head-mounted tracker. The section is optional (skip-if-absent);
+	// absent means default (disabled).
 	if (obj["head_mount"].is<picojson::object>()) LoadHeadMount(ctx.headMount, obj["head_mount"]);
-	// Boundary/floor subsystem disabled.
-	// if (obj["boundary"].is<picojson::object>()) LoadBoundary(ctx.boundary, obj["boundary"]);
 	if (!loadedTrackingStyle) {
 		ctx.trackingStyle = InferTrackingStyleFromConfig(ctx);
 	}
@@ -970,12 +832,6 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	profile["y"].set<double>(ctx.calibratedTranslation(1));
 	profile["z"].set<double>(ctx.calibratedTranslation(2));
 	profile["scale"].set<double>(ctx.calibratedScale);
-	// Boundary/floor subsystem disabled.
-	// if (ctx.floorOffsetMetersY != 0.0) {
-	// 	double floorOffset = ctx.floorOffsetMetersY;
-	// 	profile["floor_offset_meters_y"].set<double>(floorOffset);
-	// 	profile["floor_enabled"].set<bool>(ctx.floorEnabled);
-	// }
 	WriteStandby(ctx.referenceStandby, profile["reference_device"]);
 	WriteStandby(ctx.targetStandby, profile["target_device"]);
 	profile["continuous_calibration_target_offset_x"].set<double>(ctx.continuousCalibrationOffset(0));
@@ -1036,22 +892,6 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 
 #undef WRITE_IF_CHANGED_BOOL
 #undef WRITE_IF_CHANGED_DOUBLE
-
-	// Boundary/floor subsystem disabled.
-	// if (ctx.chaperone.valid) {
-	// 	picojson::object chaperone;
-	// 	chaperone["auto_apply"].set<bool>(ctx.chaperone.autoApply);
-	// 	chaperone["play_space_size"].set<picojson::array>(FloatArray(ctx.chaperone.playSpaceSize.v, 2));
-	//
-	// 	chaperone["standing_center"].set<picojson::array>(
-	// 	    FloatArray((float*)ctx.chaperone.standingCenter.m, sizeof(ctx.chaperone.standingCenter.m) / sizeof(float)));
-	//
-	// 	chaperone["geometry"].set<picojson::array>(
-	// 	    FloatArray((float*)ctx.chaperone.geometry.data(),
-	// 	               sizeof(ctx.chaperone.geometry[0]) / sizeof(float) * ctx.chaperone.geometry.size()));
-	//
-	// 	profile["chaperone"].set<picojson::object>(chaperone);
-	// }
 
 	// Serialize the relative pose as a quaternion (exact round-trip) instead of
 	// Eigen's eulerAngles, which is convention-fragile near gimbal lock and can
@@ -1126,10 +966,9 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 		profile["wizard_completed"].set<bool>(wc);
 	}
 
-	// v4: head-mounted tracker and boundary. Skip-if-default: only write
-	// when the subsystem has been activated (mode != Off / enabled != false /
-	// boundary data present) so profiles for the typical no-Quest setup
-	// remain identical to v3 except for the schema_version bump.
+	// v4: head-mounted tracker. Skip-if-default: only write when the
+	// subsystem has been activated (mode != Off) so profiles for the typical
+	// no-Quest setup remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
 	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
 	    ctx.headMount.experimentalConfidenceFusion || ctx.headMount.lockedHeadsetSmoothing != 0 ||
@@ -1137,10 +976,6 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}
-	// Boundary/floor subsystem disabled.
-	// if (ctx.boundary.enabled || ctx.boundary.priorChaperoneCaptured || !ctx.boundary.vertices.empty()) {
-	// 	profile["boundary"].set<picojson::object>(SaveBoundary(ctx.boundary));
-	// }
 	picojson::value profileV;
 	profileV.set<picojson::object>(profile);
 
@@ -1386,10 +1221,6 @@ void LoadProfile(CalibrationContext& ctx)
 	try {
 		std::stringstream io(str);
 		ParseProfile(ctx, io);
-		// Boundary/floor subsystem disabled.
-		// if (ctx.boundary.enabled && !ctx.boundary.vertices.empty()) {
-		// 	ScheduleBoundaryStartupPush();
-		// }
 		std::cout << "Loaded profile" << '\n';
 		// Capture the load event in the spacecal log so anyone reading the
 		// session can correlate any post-load behavior change with the

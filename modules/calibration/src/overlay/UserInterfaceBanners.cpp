@@ -56,37 +56,4 @@ void DrawVRWaitingBanner()
 	ImGui::Spacing();
 }
 
-// Warning banner shown when the chaperone geometry in the saved profile has a
-// corrupt size (not a multiple of 12). Auto-apply is disabled when this fires.
-// Dismissed implicitly once the user saves a new chaperone via "Copy bounds"
-// (g_chaperoneGeometrySizeMismatch stays true for the lifetime of the process
-// but chaperone.valid becomes true after the copy, so we hide the banner then).
-void DrawChaperoneLoadFailedBanner()
-{
-	if (!g_chaperoneGeometrySizeMismatch) return;
-	// Once the user copies fresh bounds the problem is resolved in-session.
-	if (CalCtx.chaperone.valid) return;
-
-	const auto& palChap = openvr_pair::overlay::ui::GetPalette();
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, palChap.bannerErrorBg);
-	ImGui::PushStyleColor(ImGuiCol_Border, palChap.bannerErrorTitle);
-	ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 6.0f));
-
-	const float bannerHeight = ImGui::GetFrameHeightWithSpacing() * 2.0f;
-	if (ImGui::BeginChild("ChaperoneFailBanner", ImVec2(ImGui::GetContentRegionAvail().x, bannerHeight),
-	                      ImGuiChildFlags_Border)) {
-		ImGui::TextColored(palChap.bannerErrorTitle,
-		                   "Saved chaperone could not be loaded (corrupted size). Auto-apply is disabled.");
-		ImGui::TextColored(palChap.bannerErrorDetail,
-		                   "Press \"Copy chaperone bounds to profile\" to save a new one and restore auto-apply.");
-	}
-	ImGui::EndChild();
-
-	ImGui::PopStyleVar(2);
-	ImGui::PopStyleColor(2);
-
-	ImGui::Spacing();
-}
-
 } // namespace spacecal::ui

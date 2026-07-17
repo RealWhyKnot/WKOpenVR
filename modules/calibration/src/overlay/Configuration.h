@@ -15,11 +15,6 @@ void SaveProfile(CalibrationContext& ctx);
 // first. Called at umbrella shutdown after FlushPendingContinuousSave.
 void StopProfileSaveWorker();
 
-// Set to true if the last LoadProfile call found a chaperone geometry array
-// whose length was not a multiple of 12 (corrupt profile). The UI uses this
-// to show a banner so the user knows auto-apply is disabled.
-extern bool g_chaperoneGeometrySizeMismatch;
-
 // Stream-based serialization: registry-free counterparts to LoadProfile /
 // SaveProfile, exposed for unit-testing the schema migration + round-trip
 // without touching the Windows registry. Not used by production code (the
