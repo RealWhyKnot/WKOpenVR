@@ -119,7 +119,7 @@ jobs:
         # the installer would ship without the face-tracking host process.
         # Pinning here means a future runner-image change still produces
         # the same artifact set.
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
