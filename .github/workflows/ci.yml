@@ -55,7 +55,7 @@ jobs:
         uses: ./.github/actions/checkout-submodules
 
       - name: Set up .NET 10 SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -174,7 +174,7 @@ jobs:
         # Pinned by modules/facetracking/src/host/global.json. Without an explicit
         # setup the runner default may not include 10.x and the CMake host target
         # silently skips itself, masking the gap until release time.
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
