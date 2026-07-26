@@ -30,7 +30,7 @@ jobs:
       - name: Set up .NET 10 SDK
         # Pinned by modules/facetracking/src/host/global.json; without it the
         # CMake host target silently skips itself.
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
