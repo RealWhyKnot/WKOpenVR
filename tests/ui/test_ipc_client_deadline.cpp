@@ -40,6 +40,12 @@ public:
 		static std::atomic<int> s_counter{0};
 		name_ = "\\\\.\\pipe\\wkopenvr_ipc_test_" + std::to_string(GetCurrentProcessId()) + "_" +
 		        std::to_string(s_counter.fetch_add(1));
+		// The instance has to exist before the constructor returns: the tests
+		// connect on the next line, and WaitNamedPipe cannot wait on a pipe that
+		// has not been created yet -- it fails with ERROR_FILE_NOT_FOUND.
+		pipe_ =
+		    CreateNamedPipeA(name_.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+		                     1, sizeof(protocol::Response), sizeof(protocol::Request), 0, nullptr);
 		thread_ = std::thread([this] { Run(); });
 	}
 
@@ -51,6 +57,7 @@ public:
 		HANDLE nudge = CreateFileA(name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
 		if (nudge != INVALID_HANDLE_VALUE) CloseHandle(nudge);
 		if (thread_.joinable()) thread_.join();
+		if (pipe_ != INVALID_HANDLE_VALUE) CloseHandle(pipe_);
 	}
 
 	const char* Name() const { return name_.c_str(); }
@@ -58,20 +65,16 @@ public:
 private:
 	void Run()
 	{
-		while (!stop_.load()) {
-			HANDLE pipe = CreateNamedPipeA(name_.c_str(), PIPE_ACCESS_DUPLEX,
-			                               PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT, 1,
-			                               sizeof(protocol::Response), sizeof(protocol::Request), 0, nullptr);
-			if (pipe == INVALID_HANDLE_VALUE) return;
+		while (pipe_ != INVALID_HANDLE_VALUE && !stop_.load()) {
 			const BOOL connected =
-			    ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED ? TRUE : FALSE);
-			if (!connected || stop_.load()) {
-				CloseHandle(pipe);
-				continue;
-			}
-			ServeOne(pipe);
-			DisconnectNamedPipe(pipe);
-			CloseHandle(pipe);
+			    ConnectNamedPipe(pipe_, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED ? TRUE : FALSE);
+			if (!connected || stop_.load()) return;
+			ServeOne(pipe_);
+			// Recycle the instance rather than recreating it. Closing the handle
+			// and calling CreateNamedPipe again leaves a window with no instance
+			// at all, which a client reconnecting after a timeout sees as
+			// ERROR_FILE_NOT_FOUND instead of a busy pipe it can wait on.
+			DisconnectNamedPipe(pipe_);
 		}
 	}
 
@@ -103,6 +106,7 @@ private:
 
 	Mode mode_;
 	std::string name_;
+	HANDLE pipe_ = INVALID_HANDLE_VALUE;
 	std::atomic<bool> stop_{false};
 	std::thread thread_;
 };
