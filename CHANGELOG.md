@@ -93,6 +93,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Damp and cap the roll/pitch of the continuous calibration (821638d)
 - **facetracking:** Add analyze-face-replay dynamics subcommand (f1c1817)
 - **facetracking:** Prune old face replay recordings at recorder startup (f184c5c)
+- **phantom:** Auto-fill estimated waist and feet virtual trackers (87ce2d8)
+- **phantom:** Step synthesized feet with a walking gait (6b0d01b)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
