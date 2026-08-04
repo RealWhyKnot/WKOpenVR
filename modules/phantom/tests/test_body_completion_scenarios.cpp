@@ -123,6 +123,72 @@ TEST(BodyCompletionScenarios, HmdOnlyAllAbsentStaysBelowHighConfidence)
 	}
 }
 
+TEST(BodyCompletionScenarios, ForwardWalkFeetStepInsteadOfGliding)
+{
+	PhantomTrajectoryOptions options;
+	options.motion = PhantomMotion::ForwardWalk;
+	options.frame_count = 360; // 4 s at 90 Hz, walking at 0.8 m/s
+	const auto frames = GenerateTrajectory(options);
+	const auto priors = DefaultTrajectoryPriors(options);
+	const auto enabled = AllVirtualTrackerRolesEnabled();
+	std::array<bool, kBodyRoleCount> measured{};
+
+	BodyCompletionSolver solver;
+	const auto left_foot = SolveRoleSequence(solver, frames, priors, enabled, measured, BodyRole::LeftFoot);
+	ASSERT_EQ(left_foot.size(), frames.size());
+
+	// Planted frames must mostly hold still. Without the gait the feet glide
+	// with the pelvis at walk speed, skating on essentially every planted frame.
+	const auto skate = ComputeFootSkateStats(left_foot, options.floor_y_m, 0.05, 0.01);
+	EXPECT_GT(skate.planted_frames, 60u);
+	EXPECT_LT(skate.skating_frames, skate.planted_frames / 4);
+
+	// Stepping still has to keep up with the body instead of being left behind.
+	const double body_z = frames.back().hmd.position[2];
+	EXPECT_GT(left_foot.back().position[2], body_z - 1.0);
+
+	// No teleports: every frame-to-frame move stays within a fast swing's reach.
+	const auto continuity = ComputeContinuityStats(left_foot, 0.06, 25.0);
+	EXPECT_EQ(continuity.teleport_count, 0u);
+}
+
+TEST(BodyCompletionScenarios, WalkThenStopKeepsFeetWhereTheyLanded)
+{
+	PhantomTrajectoryOptions walk_options;
+	walk_options.motion = PhantomMotion::ForwardWalk;
+	walk_options.frame_count = 270;
+	const auto walk_frames = GenerateTrajectory(walk_options);
+	const auto priors = DefaultTrajectoryPriors(walk_options);
+	const auto enabled = AllVirtualTrackerRolesEnabled();
+	std::array<bool, kBodyRoleCount> measured{};
+
+	BodyCompletionSolver solver;
+	std::vector<BodyCompletionPose> left_foot;
+	for (const auto& frame : walk_frames) {
+		const auto input = MakeBodyCompletionInput(frame, priors, enabled, measured);
+		const auto result = solver.Solve(input);
+		left_foot.push_back(result.roles[static_cast<size_t>(BodyRole::LeftFoot)].pose);
+	}
+
+	// Freeze the body at the last walking pose for two seconds of standing.
+	PhantomTrajectoryFrame still = walk_frames.back();
+	still.hmd.velocity[0] = still.hmd.velocity[1] = still.hmd.velocity[2] = 0.0;
+	for (int i = 0; i < 180; ++i) {
+		const auto input = MakeBodyCompletionInput(still, priors, enabled, measured);
+		const auto result = solver.Solve(input);
+		left_foot.push_back(result.roles[static_cast<size_t>(BodyRole::LeftFoot)].pose);
+	}
+
+	// After stopping, the foot settles and stops moving entirely: no teleports
+	// anywhere, and the final second of standing shows no planar creep.
+	const auto continuity = ComputeContinuityStats(left_foot, 0.08, 25.0);
+	EXPECT_EQ(continuity.teleport_count, 0u);
+	const auto tail = std::vector<BodyCompletionPose>(left_foot.end() - 90, left_foot.end());
+	const auto tail_skate = ComputeFootSkateStats(tail, walk_options.floor_y_m, 0.05, 0.005);
+	EXPECT_EQ(tail_skate.skating_frames, 0u);
+	EXPECT_LT(tail_skate.total_slide_m, 0.01);
+}
+
 TEST(BodyCompletionScenarios, StandingNoFbtFeetDoNotSkateWhilePlanted)
 {
 	PhantomTrajectoryOptions options;

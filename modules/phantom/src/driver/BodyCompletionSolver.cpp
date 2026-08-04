@@ -235,6 +235,170 @@ BodyCompletionPose ApplyFootLock(BodyCompletionFootLockState& lock, const BodyCo
 	return held_pose;
 }
 
+// Walking gait. Hysteresis on smoothed planar head speed decides when the feet
+// step instead of holding a stance; while walking exactly one foot swings at a
+// time and the other stays planted in world space, which is what keeps the
+// planted foot from skating.
+constexpr double kWalkEnterSpeedMps = 0.35;
+constexpr double kWalkExitSpeedMps = 0.15;
+constexpr double kWalkEnterSeconds = 0.20;
+constexpr double kWalkExitSeconds = 0.30;
+constexpr double kStepLiftM = 0.06;
+constexpr double kStepLeadM = 0.10;
+constexpr double kFootFloorOffsetM = 0.04;
+
+double StepDurationSeconds(double speed_mps)
+{
+	// Faster walking shortens the step period (higher cadence).
+	return Clamp(0.9 - 0.4 * speed_mps, 0.30, 0.70);
+}
+
+double SmoothStep01(double t)
+{
+	t = Clamp(t, 0.0, 1.0);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+double ClampDt(double dt_seconds)
+{
+	return Clamp(dt_seconds, 1.0 / 240.0, 0.10);
+}
+
+// Where the current swing foot should land: ahead of the head along the travel
+// direction by half a step plus a small lead, offset sideways to keep the
+// stance width.
+void GaitSwingTarget(const BodyCompletionGaitState& gait, const BodyCompletionInput& input,
+                     const BodyCompletionPriors& cal, const double right[3], int foot, double out[3])
+{
+	const double side = foot == 0 ? -1.0 : 1.0;
+	const double reach = gait.speed_ema_mps * StepDurationSeconds(gait.speed_ema_mps) * 0.5 + kStepLeadM;
+	out[0] = input.hmd.pose.position[0] + gait.dir[0] * reach + right[0] * side * cal.stance_width_m * 0.5;
+	out[1] = cal.floor_y_m + kFootFloorOffsetM;
+	out[2] = input.hmd.pose.position[2] + gait.dir[1] * reach + right[2] * side * cal.stance_width_m * 0.5;
+}
+
+void BeginSwing(BodyCompletionGaitState& gait, int foot)
+{
+	gait.swing_foot = foot;
+	gait.swing_t = 0.0;
+	gait.swing_from[0] = gait.planted[foot][0];
+	gait.swing_from[1] = gait.planted[foot][1];
+	gait.swing_from[2] = gait.planted[foot][2];
+	gait.swing_pos[0] = gait.swing_from[0];
+	gait.swing_pos[1] = gait.swing_from[1];
+	gait.swing_pos[2] = gait.swing_from[2];
+}
+
+void UpdateGaitState(BodyCompletionGaitState& gait, const BodyCompletionInput& input, const BodyCompletionPriors& cal,
+                     const BodyCompletionPose& left_stance, const BodyCompletionPose& right_stance,
+                     BodyCompletionFootLockState& left_lock, BodyCompletionFootLockState& right_lock)
+{
+	const double dt = ClampDt(input.dt_seconds);
+	const double vx = input.hmd.pose.velocity[0];
+	const double vz = input.hmd.pose.velocity[2];
+	const double speed = std::sqrt(vx * vx + vz * vz);
+	const double alpha = Clamp(dt * 8.0, 0.0, 1.0);
+	gait.speed_ema_mps += (speed - gait.speed_ema_mps) * alpha;
+	if (speed > kWalkExitSpeedMps) {
+		const double inv = 1.0 / speed;
+		gait.dir[0] += (vx * inv - gait.dir[0]) * alpha;
+		gait.dir[1] += (vz * inv - gait.dir[1]) * alpha;
+		const double n = std::sqrt(gait.dir[0] * gait.dir[0] + gait.dir[1] * gait.dir[1]);
+		if (n > 1e-6) {
+			gait.dir[0] /= n;
+			gait.dir[1] /= n;
+		}
+	}
+
+	if (!gait.walking) {
+		gait.above_s = gait.speed_ema_mps > kWalkEnterSpeedMps ? gait.above_s + dt : 0.0;
+		if (gait.above_s < kWalkEnterSeconds) return;
+		gait.walking = true;
+		gait.below_s = 0.0;
+		const BodyCompletionFootLockState* locks[2] = {&left_lock, &right_lock};
+		const BodyCompletionPose* stances[2] = {&left_stance, &right_stance};
+		for (int foot = 0; foot < 2; ++foot) {
+			const double* pos = locks[foot]->locked ? locks[foot]->position : stances[foot]->position;
+			gait.planted[foot][0] = pos[0];
+			gait.planted[foot][1] = cal.floor_y_m + kFootFloorOffsetM;
+			gait.planted[foot][2] = pos[2];
+		}
+		left_lock.locked = false;
+		right_lock.locked = false;
+		// The trailing foot (least far along the travel direction) swings first.
+		const double lead_left = (gait.planted[0][0] - input.hmd.pose.position[0]) * gait.dir[0] +
+		                         (gait.planted[0][2] - input.hmd.pose.position[2]) * gait.dir[1];
+		const double lead_right = (gait.planted[1][0] - input.hmd.pose.position[0]) * gait.dir[0] +
+		                          (gait.planted[1][2] - input.hmd.pose.position[2]) * gait.dir[1];
+		BeginSwing(gait, lead_left <= lead_right ? 0 : 1);
+		return;
+	}
+
+	gait.below_s = gait.speed_ema_mps < kWalkExitSpeedMps ? gait.below_s + dt : 0.0;
+	if (gait.below_s < kWalkExitSeconds) return;
+	gait.walking = false;
+	gait.above_s = 0.0;
+	// Hand the current foot positions to the standing locks so stopping keeps
+	// the feet where they landed instead of snapping back to neutral stance;
+	// the lock's own release radius handles any residual mismatch.
+	const double* left_pos = gait.swing_foot == 0 ? gait.swing_pos : gait.planted[0];
+	const double* right_pos = gait.swing_foot == 1 ? gait.swing_pos : gait.planted[1];
+	left_lock.locked = true;
+	left_lock.position[0] = left_pos[0];
+	left_lock.position[1] = cal.floor_y_m + kFootFloorOffsetM;
+	left_lock.position[2] = left_pos[2];
+	right_lock.locked = true;
+	right_lock.position[0] = right_pos[0];
+	right_lock.position[1] = cal.floor_y_m + kFootFloorOffsetM;
+	right_lock.position[2] = right_pos[2];
+}
+
+void SolveWalkingFeet(BodyCompletionGaitState& gait, const BodyCompletionInput& input, const BodyCompletionPriors& cal,
+                      const double right[3], BodyCompletionPose& left_foot, BodyCompletionPose& right_foot,
+                      bool& left_held, bool& right_held)
+{
+	const double dt = ClampDt(input.dt_seconds);
+	gait.swing_t += dt / StepDurationSeconds(gait.speed_ema_mps);
+	double target[3];
+	GaitSwingTarget(gait, input, cal, right, gait.swing_foot, target);
+	if (gait.swing_t >= 1.0) {
+		gait.planted[gait.swing_foot][0] = target[0];
+		gait.planted[gait.swing_foot][1] = target[1];
+		gait.planted[gait.swing_foot][2] = target[2];
+		BeginSwing(gait, 1 - gait.swing_foot);
+		GaitSwingTarget(gait, input, cal, right, gait.swing_foot, target);
+	}
+
+	const double s = SmoothStep01(gait.swing_t);
+	gait.swing_pos[0] = gait.swing_from[0] + (target[0] - gait.swing_from[0]) * s;
+	gait.swing_pos[2] = gait.swing_from[2] + (target[2] - gait.swing_from[2]) * s;
+	gait.swing_pos[1] = cal.floor_y_m + kFootFloorOffsetM + kStepLiftM * std::sin(kPi * Clamp(gait.swing_t, 0.0, 1.0));
+
+	BodyCompletionPose* feet[2] = {&left_foot, &right_foot};
+	bool* held[2] = {&left_held, &right_held};
+	for (int foot = 0; foot < 2; ++foot) {
+		BodyCompletionPose& out = *feet[foot];
+		if (foot == gait.swing_foot) {
+			out.position[0] = gait.swing_pos[0];
+			out.position[1] = gait.swing_pos[1];
+			out.position[2] = gait.swing_pos[2];
+			out.velocity[0] = gait.dir[0] * gait.speed_ema_mps;
+			out.velocity[1] = 0.0;
+			out.velocity[2] = gait.dir[1] * gait.speed_ema_mps;
+			*held[foot] = false;
+		}
+		else {
+			out.position[0] = gait.planted[foot][0];
+			out.position[1] = gait.planted[foot][1];
+			out.position[2] = gait.planted[foot][2];
+			out.velocity[0] = 0.0;
+			out.velocity[1] = 0.0;
+			out.velocity[2] = 0.0;
+			*held[foot] = true;
+		}
+	}
+}
+
 double SmoothAlpha(BodyCompletionMode mode)
 {
 	switch (mode) {
@@ -306,6 +470,7 @@ void BodyCompletionSolver::Reset()
 	previous_ = {};
 	left_foot_lock_ = {};
 	right_foot_lock_ = {};
+	gait_ = {};
 }
 
 BodyCompletionResult BodyCompletionSolver::Solve(const BodyCompletionInput& input)
@@ -398,9 +563,15 @@ BodyCompletionResult BodyCompletionSolver::Solve(const BodyCompletionInput& inpu
 
 	bool leftHeld = false;
 	bool rightHeld = false;
-	const bool canPlant = ShouldPlantFoot(input.hmd, cal.floor_y_m);
-	left_foot = ApplyFootLock(left_foot_lock_, left_foot, canPlant, leftHeld);
-	right_foot = ApplyFootLock(right_foot_lock_, right_foot, canPlant, rightHeld);
+	UpdateGaitState(gait_, input, cal, left_foot, right_foot, left_foot_lock_, right_foot_lock_);
+	if (gait_.walking) {
+		SolveWalkingFeet(gait_, input, cal, right, left_foot, right_foot, leftHeld, rightHeld);
+	}
+	else {
+		const bool canPlant = ShouldPlantFoot(input.hmd, cal.floor_y_m);
+		left_foot = ApplyFootLock(left_foot_lock_, left_foot, canPlant, leftHeld);
+		right_foot = ApplyFootLock(right_foot_lock_, right_foot, canPlant, rightHeld);
+	}
 
 	SetRole(result, BodyRole::LeftFoot, left_foot, leftHeld ? 0.42f : 0.26f,
 	        kBodySourceHmd | kBodySourceFloor | kBodySourcePredicted |

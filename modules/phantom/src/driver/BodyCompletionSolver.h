@@ -100,6 +100,25 @@ struct BodyCompletionFootLockState
 	bool locked = false;
 };
 
+// Walking-gait tracker for the synthesized feet. While the headset sustains
+// planar speed the feet take alternating discrete steps along the direction of
+// travel (one foot planted in world space, the other swinging to a new target)
+// instead of gliding with the pelvis. Purely dt-integrated so replays and unit
+// tests stay deterministic.
+struct BodyCompletionGaitState
+{
+	bool walking = false;
+	double speed_ema_mps = 0.0;
+	double dir[2] = {0.0, 1.0}; // planar unit direction of travel (x, z)
+	double above_s = 0.0;
+	double below_s = 0.0;
+	int swing_foot = 0; // 0 = left, 1 = right
+	double swing_t = 0.0;
+	double swing_from[3] = {0.0, 0.0, 0.0};
+	double swing_pos[3] = {0.0, 0.0, 0.0};
+	double planted[2][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+};
+
 class BodyCompletionSolver
 {
 public:
@@ -112,6 +131,7 @@ private:
 	std::array<BodyCompletionSolverRoleState, kBodyRoleCount> previous_{};
 	BodyCompletionFootLockState left_foot_lock_{};
 	BodyCompletionFootLockState right_foot_lock_{};
+	BodyCompletionGaitState gait_{};
 };
 
 const char* BodyCompletionModeLabel(BodyCompletionMode mode);
