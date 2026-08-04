@@ -632,6 +632,31 @@ void PhantomPlugin::ReplayDriverState()
 	for (const auto& kv : cfg_.virtual_enabled) {
 		if (kv.second) SendVirtualEnabled(kv.first, true);
 	}
+	ApplyVirtualRoleAutoFill();
+}
+
+void PhantomPlugin::ApplyVirtualRoleAutoFill()
+{
+	bool changed = false;
+	for (uint8_t i = 0; i < phantom::kBodyRoleCount; ++i) {
+		const auto role = static_cast<phantom::BodyRole>(i);
+		const bool userConfigured = cfg_.virtual_enabled.count(role) != 0;
+		bool physicalRoleAssigned = false;
+		for (const auto& kv : cfg_.device_role) {
+			if (kv.second == role) {
+				physicalRoleAssigned = true;
+				break;
+			}
+		}
+		if (!phantom::ui::ShouldAutoFillVirtualRole(cfg_.auto_fill_virtual_roles, role, userConfigured,
+		                                            physicalRoleAssigned)) {
+			continue;
+		}
+		cfg_.virtual_enabled[role] = true;
+		SendVirtualEnabled(role, true);
+		changed = true;
+	}
+	if (changed) SavePhantomConfig(cfg_);
 }
 
 void PhantomPlugin::DrawAutoDetectPanel()
@@ -953,6 +978,14 @@ void PhantomPlugin::DrawAbsentTab()
 	ui::TooltipForLastItem("Visual model the estimated (virtual) trackers show in SteamVR. Cosmetic only - the "
 	                       "tracker role is unaffected. Newly enabled roles update immediately; restart SteamVR to "
 	                       "change trackers that are already showing.");
+	ImGui::Spacing();
+
+	if (ImGui::Checkbox("Add missing body points automatically", &cfg_.auto_fill_virtual_roles)) {
+		if (cfg_.auto_fill_virtual_roles) ApplyVirtualRoleAutoFill();
+		SavePhantomConfig(cfg_);
+	}
+	ui::TooltipForLastItem("Turn on estimated waist and feet trackers whenever no real tracker covers those body "
+	                       "points. Roles you untick below stay off.");
 	ImGui::Spacing();
 
 	const phantom::BodyRole roles[] = {

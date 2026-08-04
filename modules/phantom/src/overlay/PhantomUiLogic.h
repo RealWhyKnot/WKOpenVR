@@ -162,6 +162,32 @@ inline const char* VirtualRoleTierHelp(VirtualRoleTier tier)
 	return "Use only after previewing confidence.";
 }
 
+// Roles the overlay may enable a virtual tracker for on its own: the classic
+// three-point full-body set. Everything else stays strictly opt-in.
+inline bool IsAutoFillVirtualRole(phantom::BodyRole role)
+{
+	switch (role) {
+		case phantom::BodyRole::Waist:
+		case phantom::BodyRole::LeftFoot:
+		case phantom::BodyRole::RightFoot:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// Whether the overlay should turn on the virtual tracker for a role when the
+// driver (re)connects. userConfigured means the role has an explicit
+// virtual_enabled entry (either value): a hand-set off must never be re-enabled,
+// and an already-on entry needs no fill. physicalRoleAssigned means a saved
+// tracker mapping already covers the role with real hardware.
+inline bool ShouldAutoFillVirtualRole(bool autoFillEnabled, phantom::BodyRole role, bool userConfigured,
+                                      bool physicalRoleAssigned)
+{
+	if (!autoFillEnabled || userConfigured || physicalRoleAssigned) return false;
+	return IsAutoFillVirtualRole(role);
+}
+
 struct VirtualRoleReadiness
 {
 	bool canEnable = false;

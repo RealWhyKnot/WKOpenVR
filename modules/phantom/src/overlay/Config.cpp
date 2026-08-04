@@ -61,6 +61,9 @@ PhantomConfig LoadPhantomConfig()
 		else if (std::strcmp(key, "auto_snap") == 0) {
 			cfg.auto_snap = (std::atoi(val) != 0);
 		}
+		else if (std::strcmp(key, "auto_fill_virtual_roles") == 0) {
+			cfg.auto_fill_virtual_roles = (std::atoi(val) != 0);
+		}
 		else if (std::strcmp(key, "tracker_model") == 0) {
 			cfg.tracker_model = phantom::TrackerModelFromKey(val);
 		}
@@ -124,6 +127,7 @@ void SavePhantomConfig(const PhantomConfig& cfg)
 	std::fprintf(f, "master_enabled=%d\n", cfg.master_enabled ? 1 : 0);
 	std::fprintf(f, "auto_accept_roles=%d\n", cfg.auto_accept_roles ? 1 : 0);
 	std::fprintf(f, "auto_snap=%d\n", cfg.auto_snap ? 1 : 0);
+	std::fprintf(f, "auto_fill_virtual_roles=%d\n", cfg.auto_fill_virtual_roles ? 1 : 0);
 	std::fprintf(f, "tracker_model=%s\n", phantom::TrackerModelToKey(cfg.tracker_model));
 	std::fprintf(f, "blend_out_ms=%u\n", (unsigned)cfg.blend_out_ms);
 	std::fprintf(f, "blend_in_ms=%u\n", (unsigned)cfg.blend_in_ms);
@@ -147,9 +151,9 @@ void SavePhantomConfig(const PhantomConfig& cfg)
 		}
 	}
 	for (const auto& kv : cfg.virtual_enabled) {
-		if (kv.second) {
-			std::fprintf(f, "virtual_enabled.%s=1\n", phantom::BodyRoleToKey(kv.first));
-		}
+		// Explicit zeros persist too: an off entry records a user decision that
+		// auto-fill must respect, distinct from a role that was never configured.
+		std::fprintf(f, "virtual_enabled.%s=%d\n", phantom::BodyRoleToKey(kv.first), kv.second ? 1 : 0);
 	}
 	std::fclose(f);
 }

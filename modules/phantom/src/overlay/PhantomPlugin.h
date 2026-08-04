@@ -56,6 +56,7 @@ private:
 	void SendVirtualEnabled(phantom::BodyRole role, bool enabled);
 	void SendSnapCalibrate();
 	void ReplayDriverState();
+	void ApplyVirtualRoleAutoFill();
 
 	// Last manual-snap outcome, shown inline under the Snap button.
 	std::string snapMessage_;

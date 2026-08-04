@@ -67,8 +67,16 @@ struct PhantomConfig
 	// has a solver pose above the configured confidence threshold), the
 	// driver publishes a virtual GenericTracker for the role with the
 	// vive_tracker_<role> controller type so supported apps pick it up
-	// automatically as a body-bound tracker.
+	// automatically as a body-bound tracker. An entry mapped to false is an
+	// explicit user off; a role absent from the map has simply never been
+	// configured, which is what makes it eligible for auto-fill.
 	std::unordered_map<phantom::BodyRole, bool> virtual_enabled;
+
+	// When true the overlay enables the estimated waist/feet trackers on driver
+	// connect for any of those roles that no saved real-tracker mapping covers
+	// and the user has never configured. Roles it turns on land in
+	// virtual_enabled like a hand toggle, so unticking one later sticks.
+	bool auto_fill_virtual_roles = true;
 
 	// SteamVR render model for the absent-mode virtual trackers. Cosmetic only;
 	// the controller type still drives app role binding. Defaults to Vive Tracker

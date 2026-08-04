@@ -178,3 +178,31 @@ TEST(PhantomUiLogic, SnapResultMessageMapsStatusCodes)
 	EXPECT_STREQ(phantom::ui::SnapResultMessage(2, 0), "No trackers detected to map.");
 	EXPECT_STREQ(phantom::ui::SnapResultMessage(99, 0), "Snap failed.");
 }
+
+TEST(PhantomUiLogic, AutoFillTargetsClassicThreePointRolesOnly)
+{
+	EXPECT_TRUE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::Waist));
+	EXPECT_TRUE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::LeftFoot));
+	EXPECT_TRUE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::RightFoot));
+	EXPECT_FALSE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::Chest));
+	EXPECT_FALSE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::LeftKnee));
+	EXPECT_FALSE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::RightElbow));
+	EXPECT_FALSE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::Hmd));
+	EXPECT_FALSE(phantom::ui::IsAutoFillVirtualRole(phantom::BodyRole::None));
+}
+
+TEST(PhantomUiLogic, AutoFillRespectsUserConfigAndPhysicalCoverage)
+{
+	using phantom::ui::ShouldAutoFillVirtualRole;
+	const auto waist = phantom::BodyRole::Waist;
+
+	EXPECT_TRUE(ShouldAutoFillVirtualRole(true, waist, false, false));
+	// Feature off.
+	EXPECT_FALSE(ShouldAutoFillVirtualRole(false, waist, false, false));
+	// Any explicit user entry wins, whether it was on or off.
+	EXPECT_FALSE(ShouldAutoFillVirtualRole(true, waist, true, false));
+	// A saved real-tracker mapping already covers the role.
+	EXPECT_FALSE(ShouldAutoFillVirtualRole(true, waist, false, true));
+	// Non-default roles never fill, even when unconfigured and uncovered.
+	EXPECT_FALSE(ShouldAutoFillVirtualRole(true, phantom::BodyRole::Chest, false, false));
+}
