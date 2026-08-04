@@ -529,6 +529,7 @@ void CalibrationCalc::Clear()
 	m_lastAcceptWasDriftStep = false;
 	m_lockedOversizeConsensus = {};
 	m_lockedDriftFollower = {};
+	m_tiltLastAcceptTime = 0.0;
 }
 
 size_t CalibrationCalc::EvictSamplesBefore(double timestamp)
@@ -1887,6 +1888,38 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			// intentional move is expected.
 			if (m_useV2Math && m_isValid && !m_stepGateBypass) {
 				byRelPose = ApplyObservabilityGate(m_estimatedTransformation, byRelPose);
+			}
+			// Tilt damping sits after the gates and validation on purpose:
+			// they must judge the RAW candidate. The refuted hard projection
+			// (409a6ae9) sat inside CalibrateByRelPose and poisoned the fit
+			// metrics; this filter only shapes what gets applied.
+			if (m_useTiltDamping) {
+				// Clock = newest sample timestamp, not Metrics::CurrentTime:
+				// replay feeds recorded timestamps through PushSample, so the
+				// filter runs at the recorded cadence there and at session
+				// time live. The clamp bounds the first-accept / post-gap
+				// step (m_tiltLastAcceptTime starts at 0).
+				const double now = m_lastSampleTime;
+				const double dt = std::clamp(now - m_tiltLastAcceptTime, 0.0, 10.0);
+				m_tiltLastAcceptTime = now;
+				const double alpha = 1.0 - std::exp(-dt / spacecal::gravity::kTiltTimeConstantSec);
+				const double candTiltDeg = spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(byRelPose.rotation()));
+				byRelPose = hadCurrentAtStart ? spacecal::gravity::DampTilt(currentAtStart, byRelPose, alpha,
+				                                                            spacecal::gravity::kMaxTiltRad)
+				                              : spacecal::gravity::ClampTilt(byRelPose, spacecal::gravity::kMaxTiltRad);
+				const double appliedTiltDeg = spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(byRelPose.rotation()));
+				static double s_lastTiltFilterLogAt = -1e9;
+				if (Metrics::CurrentTime - s_lastTiltFilterLogAt >= 10.0) {
+					s_lastTiltFilterLogAt = Metrics::CurrentTime;
+					char tiltBuf[192];
+					snprintf(tiltBuf, sizeof tiltBuf,
+					         "[tilt-filter] cand_tilt_deg=%.2f applied_tilt_deg=%.2f alpha=%.4f"
+					         " dt_s=%.1f capped=%d",
+					         candTiltDeg, appliedTiltDeg, alpha, dt,
+					         (int)(candTiltDeg > appliedTiltDeg + 1e-3 &&
+					               appliedTiltDeg >= spacecal::gravity::kMaxTiltRad * 180.0 / EIGEN_PI - 1e-3));
+					Metrics::WriteLogAnnotation(tiltBuf);
+				}
 			}
 			m_isValid = true;
 			m_lastComputeUsedRelPose = true;

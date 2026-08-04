@@ -26,6 +26,8 @@
 
 #include "Configuration.h"
 #include "Calibration.h"
+#include "CalibrationInternal.h" // ProfileTransform -- tilt computation for the load-clamp tests
+#include "GravityAlignment.h"
 #include "TrackingStyle.h"
 
 namespace {
@@ -212,6 +214,102 @@ TEST(ConfigurationTest, PrecisionWeightedRelPoseRoundTrips)
 	CalibrationContext dst;
 	ParseProfile(dst, io);
 	EXPECT_FALSE(dst.precisionWeightedRelPose);
+}
+
+TEST(ConfigurationTest, GravityTiltDampingDefaultsOnWhenKeyAbsent)
+{
+	// Profiles written before tilt damping existed carry no key; those loads
+	// take the default (on) without migration.
+	std::string json = MakeMinimalProfile(/*schemaVersion=*/7, "\"tracking_style\":1");
+
+	CalibrationContext ctx;
+	std::stringstream io(json);
+	ParseProfile(ctx, io);
+
+	EXPECT_TRUE(ctx.gravityTiltDamping);
+}
+
+TEST(ConfigurationTest, GravityTiltDampingRoundTrips)
+{
+	CalibrationContext src;
+	src.referenceTrackingSystem = "lighthouse";
+	src.targetTrackingSystem = "oculus";
+	src.validProfile = true;
+	ApplyTrackingStylePreset(src, TrackingStyle::Continuous);
+	src.gravityTiltDamping = false; // explicit off must survive
+
+	std::stringstream io;
+	WriteProfile(src, io);
+	EXPECT_NE(io.str().find("gravity_tilt_damping"), std::string::npos)
+	    << "always written: an absent key means the on-default";
+
+	CalibrationContext dst;
+	ParseProfile(dst, io);
+	EXPECT_FALSE(dst.gravityTiltDamping);
+}
+
+namespace {
+double LoadedTiltDeg(const CalibrationContext& ctx)
+{
+	return spacecal::gravity::TiltAngleDeg(
+	    Eigen::Quaterniond(ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation()));
+}
+} // namespace
+
+// A banked tilt beyond the cap is clamped at load when damping is on -- and
+// only then. Under-cap tilt (a real floor alignment) is never touched.
+// (CalibrationContext is move-only, so each variant builds a fresh one.)
+TEST(ConfigurationTest, LoadClampsBankedTiltOnlyWhenDampingOn)
+{
+	const double capDeg = spacecal::gravity::kMaxTiltRad * 180.0 / EIGEN_PI;
+
+	auto fillSrc = [](CalibrationContext& src, double tiltDeg, bool damping) {
+		src.referenceTrackingSystem = "oculus";
+		src.targetTrackingSystem = "lighthouse";
+		src.validProfile = true;
+		ApplyTrackingStylePreset(src, TrackingStyle::Continuous);
+		src.calibratedTranslation = Eigen::Vector3d(120.0, 210.0, -230.0);
+		src.calibratedRotation = Eigen::Vector3d(tiltDeg, 45.0, 0.0);
+		src.gravityTiltDamping = damping;
+	};
+
+	// Damping on (default): load clamps to the cap, yaw survives.
+	{
+		CalibrationContext src;
+		fillSrc(src, 8.0, true);
+		// Pre-condition: the constructed profile really carries ~8 deg of tilt.
+		ASSERT_NEAR(LoadedTiltDeg(src), 8.0, 0.1);
+		std::stringstream io;
+		WriteProfile(src, io);
+		CalibrationContext dst;
+		ParseProfile(dst, io);
+		ASSERT_TRUE(dst.gravityTiltDamping);
+		EXPECT_NEAR(LoadedTiltDeg(dst), capDeg, 0.05);
+	}
+
+	// Damping off: the profile loads untouched.
+	{
+		CalibrationContext src;
+		fillSrc(src, 8.0, false);
+		std::stringstream io;
+		WriteProfile(src, io);
+		CalibrationContext dst;
+		ParseProfile(dst, io);
+		EXPECT_NEAR(LoadedTiltDeg(dst), 8.0, 0.1);
+	}
+
+	// Damping on, under-cap tilt: untouched (real floor tilt is preserved).
+	{
+		CalibrationContext src;
+		fillSrc(src, 1.5, true);
+		ASSERT_NEAR(LoadedTiltDeg(src), 1.5, 0.05);
+		std::stringstream io;
+		WriteProfile(src, io);
+		CalibrationContext dst;
+		ParseProfile(dst, io);
+		EXPECT_NEAR(LoadedTiltDeg(dst), 1.5, 0.05);
+		EXPECT_NEAR(dst.calibratedRotation.y(), 45.0, 1e-6) << "under-cap load must be byte-stable, not re-derived";
+	}
 }
 
 // v40 freeze-all-tracking: the "Include headset" preference persists; the active

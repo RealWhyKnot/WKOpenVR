@@ -843,6 +843,7 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	    EnvFlag("WKOPENVR_REPLAY_PRECISION_WEIGHT", baseOptions.precisionWeightedRelPose);
 	baseOptions.gravityConstrainedRelPose =
 	    EnvFlag("WKOPENVR_REPLAY_GRAVITY_4DOF", baseOptions.gravityConstrainedRelPose);
+	baseOptions.tiltDamping = EnvFlag("WKOPENVR_REPLAY_TILT_DAMPING", baseOptions.tiltDamping);
 	baseOptions.customChecks = EnvFlag("WKOPENVR_REPLAY_CUSTOM_CHECKS", baseOptions.customChecks);
 	baseOptions.v2Math = EnvFlag("WKOPENVR_REPLAY_V2_MATH", baseOptions.v2Math);
 	std::string seedName;
@@ -896,10 +897,13 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
 			          << " lock_rel=" << (options.lockRelativePosition ? 1 : 0)
 			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0)
+			          << " tilt_damping=" << (options.tiltDamping ? 1 : 0)
 			          << " custom_checks=" << (options.customChecks ? 1 : 0) << " seed=" << seedName
 			          << " seed_applied=" << (result.seedApplied ? 1 : 0) << " seed_mag_cm=" << result.seedMagCm
 			          << " peak_applied_mag_cm=" << result.peakAppliedMagCm
 			          << " applied_mag_wander_cm=" << result.appliedMagWanderCm
+			          << " max_applied_tilt_deg=" << result.maxAppliedTiltDeg
+			          << " final_applied_tilt_deg=" << result.finalAppliedTiltDeg
 			          << " peak_applied_step_cm=" << result.peakAppliedStepCm
 			          << " large_applied_steps=" << result.largeAppliedSteps
 			          << " total_applied_path_cm=" << result.totalAppliedPathCm

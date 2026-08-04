@@ -2,6 +2,7 @@
 
 #include "AutoLockHysteresis.h"        // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
 #include "ContinuousPrecisionFusion.h" // spacecal::precision -- confidence-weighted fusion (A/B).
+#include "GravityAlignment.h"          // spacecal::gravity::TiltAngleDeg -- applied-tilt metrics.
 
 #include <windows.h>
 #include <shlobj_core.h>
@@ -595,6 +596,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	calc.lockRelativePosition = opts.lockRelativePosition;
 	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
 	calc.SetGravityConstrainedRelPose(opts.gravityConstrainedRelPose);
+	calc.SetTiltDamping(opts.tiltDamping);
 	calc.SetLockedAcceptGate(opts.customChecks);
 	calc.SetV2Math(opts.customChecks && opts.v2Math);
 	if (opts.customChecks && opts.v2Math) {
@@ -798,6 +800,7 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 				++res.accepts;
 				// Applied-C trajectory (the worldFromDriver the driver would show).
 				Eigen::Vector3d candidateC;
+				Eigen::Quaterniond appliedRotation = Eigen::Quaterniond::Identity();
 				if (opts.precisionWeightedRelPose) {
 					const double measPrec = spacecal::precision::MeasurementPrecision(calc.MeanSquaredLeverArmM2());
 					const double disagreeM =
@@ -814,10 +817,17 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 						tick.fusionGain = gain;
 					}
 					candidateC = appliedTransform.translation() * 100.0;
+					appliedRotation = Eigen::Quaterniond(appliedTransform.rotation());
 				}
 				else {
 					candidateC = calc.Transformation().translation() * 100.0;
+					appliedRotation = Eigen::Quaterniond(calc.Transformation().rotation());
 					tick.fusionGain = 1.0;
+				}
+				{
+					const double tiltDeg = spacecal::gravity::TiltAngleDeg(appliedRotation);
+					res.maxAppliedTiltDeg = std::max(res.maxAppliedTiltDeg, tiltDeg);
+					res.finalAppliedTiltDeg = tiltDeg;
 				}
 				appliedC = candidateC;
 				const double mag = appliedC.norm();

@@ -18,6 +18,7 @@
 #include "CalibrationCalc.h"
 #include "VRState.h"
 #include "GeometryShiftDetector.h" // IsCurrentErrorSpike, ShouldFireGeometryShiftRecovery
+#include "GravityAlignment.h"      // spacecal::gravity::TiltAngleDeg -- seed/heartbeat tilt diagnostics
 #include "CommonModeCoherence.h"   // spacecal::coherence::ComputeCoherenceScore
 #include "SnapSuppression.h"       // spacecal::snap_suppression::EffectiveSpeedMps
 #include "MotionGate.h"            // ShouldBlendCycle -- auto-recovery snap decision
@@ -76,19 +77,6 @@ static const char* CalibrationStateName(CalibrationState state)
 		default:
 			return "Unknown";
 	}
-}
-
-Eigen::AffineCompact3d ProfileTransform(Eigen::Vector3d eulerDeg, Eigen::Vector3d transCm)
-{
-	auto euler = eulerDeg * EIGEN_PI / 180.0;
-	Eigen::Quaterniond rotQuat = Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()) *
-	                             Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()) *
-	                             Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX());
-
-	Eigen::AffineCompact3d transform = Eigen::AffineCompact3d::Identity();
-	transform.linear() = rotQuat.toRotationMatrix();
-	transform.translation() = transCm * 0.01;
-	return transform;
 }
 
 static bool RestoreCalibrationSolverFromProfile(CalibrationContext& ctx)
@@ -764,12 +752,15 @@ void StartContinuousCalibration(const char* reason)
 		calibration.SeedEstimatedTransformation(
 		    ProfileTransform(CalCtx.calibratedRotation, CalCtx.calibratedTranslation));
 		const double magCm = CalCtx.calibratedTranslation.norm();
-		char seedBuf[320];
+		const double seedTiltDeg = spacecal::gravity::TiltAngleDeg(
+		    Eigen::Quaterniond(ProfileTransform(CalCtx.calibratedRotation, CalCtx.calibratedTranslation).rotation()));
+		char seedBuf[340];
 		snprintf(
 		    seedBuf, sizeof seedBuf,
-		    "StartContinuousCalibration_seed_profile: trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f rot_deg=(%.3f,%.3f,%.3f)",
+		    "StartContinuousCalibration_seed_profile: trans_cm=(%.2f,%.2f,%.2f) mag_cm=%.2f rot_deg=(%.3f,%.3f,%.3f)"
+		    " tilt_deg=%.2f",
 		    CalCtx.calibratedTranslation.x(), CalCtx.calibratedTranslation.y(), CalCtx.calibratedTranslation.z(), magCm,
-		    CalCtx.calibratedRotation.x(), CalCtx.calibratedRotation.y(), CalCtx.calibratedRotation.z());
+		    CalCtx.calibratedRotation.x(), CalCtx.calibratedRotation.y(), CalCtx.calibratedRotation.z(), seedTiltDeg);
 		Metrics::WriteLogAnnotation(seedBuf);
 	}
 	else {
@@ -1934,6 +1925,7 @@ static void TickAdditionalCalibrations(double time, double hmdSpeedMps)
 		extra.calc->SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
 		extra.calc->SetLockedAcceptGate(CalCtx.CustomChecksActive());
 		extra.calc->SetV2Math(CalCtx.CustomChecksActive());
+		extra.calc->SetTiltDamping(CalCtx.gravityTiltDamping);
 
 		if (!CalCtx.calibrationPaused && extra.calc->SampleCount() >= CalCtx.SampleCount()) {
 			bool extraLerp = false;
@@ -2035,6 +2027,8 @@ static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, 
 			// overwrites the calibration with each accepted candidate (classic).
 			// See ContinuousPrecisionFusion.h.
 			const Eigen::AffineCompact3d currentC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
+			// Tilt damping (when enabled) already shaped this candidate inside
+			// ComputeIncremental; the fusion slerp below composes with it.
 			const Eigen::AffineCompact3d candidateC = calibration.Transformation();
 			const double measPrec = spacecal::precision::MeasurementPrecision(calibration.MeanSquaredLeverArmM2());
 			const double disagreeM = (candidateC.translation() - currentC.translation()).norm();
@@ -2071,9 +2065,6 @@ static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, 
 		if (inContinuousState && ctx.relativePosCalibrated && ctx.headMountNeedsFreshRelativePose) {
 			ctx.headMountNeedsFreshRelativePose = false;
 		}
-
-		auto vrTrans = VRTranslationVec(ctx.calibratedTranslation);
-		auto vrRot = VRRotationQuat(Eigen::Quaterniond(calibration.Transformation().rotation()));
 
 		ctx.validProfile = true;
 
@@ -2541,6 +2532,10 @@ void CalibrationTick(double time)
 		calibration.SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
 		calibration.SetLockedAcceptGate(CalCtx.CustomChecksActive());
 		calibration.SetV2Math(CalCtx.CustomChecksActive());
+		// Deliberately NOT behind the enhanced-tracking switch: the tilt
+		// random walk lands in the default pipeline too, and the toggle
+		// itself is the parity escape hatch.
+		calibration.SetTiltDamping(CalCtx.gravityTiltDamping);
 		// Large intentional moves (warm-restart re-acquire, session-first
 		// candidate) go through their own classification; everywhere else the
 		// locked accept keeps single steps bounded. The fusion accept is its

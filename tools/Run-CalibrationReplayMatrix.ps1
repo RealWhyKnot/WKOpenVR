@@ -153,6 +153,15 @@ function Get-ScenarioCatalog {
 		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
 		WKOPENVR_REPLAY_GRAVITY_4DOF     = "1"
 	}
+	# Tilt-damped accept: same weighted solve with the swing (roll/pitch)
+	# component low-passed and capped (the live default). Compare
+	# max_applied_tilt_deg / rot wander against relpose_weighted; final_error_mm
+	# must not regress (the criterion the hard 4-DoF projection failed).
+	$Catalog["relpose_weighted_tilt_damped"] = New-Scenario "relpose_weighted_tilt_damped" @{
+		WKOPENVR_REPLAY_LOCK_REL         = "1"
+		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
+		WKOPENVR_REPLAY_TILT_DAMPING     = "1"
+	}
 	# Warm-start A/B: replay from the recording's own stored-profile seed. The
 	# fused variant reproduces the confidence-fusion bad-seed behavior offline;
 	# compare net_drift_mag_cm and perceptible_shifts across the pair.
@@ -248,6 +257,8 @@ function Parse-ReplayLine {
 		NetDriftMagCm = $Values["net_drift_mag_cm"]
 		PeakAppliedMagCm = $Values["peak_applied_mag_cm"]
 		AppliedMagWanderCm = $Values["applied_mag_wander_cm"]
+		MaxAppliedTiltDeg = $Values["max_applied_tilt_deg"]
+		FinalAppliedTiltDeg = $Values["final_applied_tilt_deg"]
 		PeakAppliedStepCm = $Values["peak_applied_step_cm"]
 		TotalAppliedPathCm = $Values["total_applied_path_cm"]
 		HoldoutRmsMm = $Values["holdout_rms_mm"]
@@ -356,6 +367,7 @@ $script:ReplayEnvNames = @(
 	"WKOPENVR_REPLAY_LOCK_REL",
 	"WKOPENVR_REPLAY_PRECISION_WEIGHT",
 	"WKOPENVR_REPLAY_GRAVITY_4DOF",
+	"WKOPENVR_REPLAY_TILT_DAMPING",
 	"WKOPENVR_REPLAY_CUSTOM_CHECKS",
 	"WKOPENVR_REPLAY_V2_MATH",
 	"WKOPENVR_REPLAY_MAX_ROWS",
@@ -503,15 +515,17 @@ if ($Baseline -or $UpdateBaseline) {
 	$BaselinePath = Join-Path $BaselineDir ($RecName + $BaselineSuffix)
 
 	$MetricNames = @("Accepts", "FinalErrorMm", "AppliedMagWanderCm", "TotalAppliedPathCm", "PeakAppliedStepCm",
-		"PerceptibleShifts", "NetDriftMagCm")
+		"PerceptibleShifts", "NetDriftMagCm", "MaxAppliedTiltDeg", "FinalAppliedTiltDeg")
 	$Tolerances = @{
-		Accepts            = @{ Abs = 5.0; Rel = 0.05 }
-		FinalErrorMm       = @{ Abs = 0.5; Rel = 0.10 }
-		AppliedMagWanderCm = @{ Abs = 0.5; Rel = 0.10 }
-		TotalAppliedPathCm = @{ Abs = 2.0; Rel = 0.10 }
-		PeakAppliedStepCm  = @{ Abs = 0.2; Rel = 0.15 }
-		PerceptibleShifts  = @{ Abs = 2.0; Rel = 0.20 }
-		NetDriftMagCm      = @{ Abs = 1.0; Rel = 0.20 }
+		Accepts             = @{ Abs = 5.0; Rel = 0.05 }
+		FinalErrorMm        = @{ Abs = 0.5; Rel = 0.10 }
+		AppliedMagWanderCm  = @{ Abs = 0.5; Rel = 0.10 }
+		TotalAppliedPathCm  = @{ Abs = 2.0; Rel = 0.10 }
+		PeakAppliedStepCm   = @{ Abs = 0.2; Rel = 0.15 }
+		PerceptibleShifts   = @{ Abs = 2.0; Rel = 0.20 }
+		NetDriftMagCm       = @{ Abs = 1.0; Rel = 0.20 }
+		MaxAppliedTiltDeg   = @{ Abs = 0.25; Rel = 0.10 }
+		FinalAppliedTiltDeg = @{ Abs = 0.25; Rel = 0.10 }
 	}
 
 	$Current = @{}

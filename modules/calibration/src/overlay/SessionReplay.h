@@ -26,6 +26,7 @@
 
 #include "AutoLockHysteresis.h"
 #include "ContinuousPrecisionFusion.h"
+#include "GravityAlignment.h"
 #include "MotionRecording.h"
 #include "RecoveryPolicy.h"
 #include "SnapSuppression.h"
@@ -329,6 +330,10 @@ struct SessionReplayOptions
 	// gating + sequential validation as they land). Overrides the scalar
 	// weighting knob when set; inert without customChecks.
 	bool v2Math = false;
+	// Two-time-constant tilt damping (GravityAlignment.h). Independent of
+	// customChecks, mirroring the live wiring; defaults off in replay so
+	// pre-existing goldens replay the same path (the live default is on).
+	bool tiltDamping = false;
 };
 
 struct SessionReplayResult
@@ -366,6 +371,11 @@ struct SessionReplayResult
 	double unclassifiedRotPathDeg = 0.0;
 	double maxUnclassifiedRotStepDeg = 0.0;
 	double rotWanderPer10MinDeg = 0.0;
+	// Tilt (deviation of the applied rotation from pure yaw, GravityAlignment.h
+	// TiltAngleDeg) -- the "trackers lean sideways" signal the rot-wander
+	// metrics can't separate from yaw churn.
+	double maxAppliedTiltDeg = 0.0;
+	double finalAppliedTiltDeg = 0.0;
 	// In-band drift-follower accepts: classified and bounded, but tracked
 	// separately so a follower firing too often is visible in the gate.
 	int driftSteps = 0;
@@ -404,6 +414,7 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = opts.lockRelativePosition;
 	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
+	calc.SetTiltDamping(opts.tiltDamping);
 	calc.SetLockedAcceptGate(opts.customChecks);
 	calc.SetV2Math(opts.customChecks && opts.v2Math);
 	if (opts.customChecks && opts.v2Math) {
@@ -537,6 +548,9 @@ inline SessionReplayResult RunSessionReplay(const LoadedRecording& rec, const Se
 				res.maxUnclassifiedRotStepDeg = std::max(res.maxUnclassifiedRotStepDeg, rotStepDeg);
 			}
 		}
+		const double tiltDeg = spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(newApplied.rotation()));
+		res.maxAppliedTiltDeg = std::max(res.maxAppliedTiltDeg, tiltDeg);
+		res.finalAppliedTiltDeg = tiltDeg;
 		prevAppliedCm = newCm;
 		prevAppliedRot = newApplied.linear();
 		if (!hasApplied) {

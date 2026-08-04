@@ -200,6 +200,14 @@ void CCal_DrawSettings()
 		                       "Default on.  Turn off for the plain uniform average.")) {
 			SaveProfile(CalCtx);
 		}
+		if (ExperimentCheckbox("gravity_tilt_damping", "Damp calibration tilt##gravity_tilt_damping",
+		                       &CalCtx.gravityTiltDamping,
+		                       "Move the roll/pitch of the playspace calibration slowly (minutes) toward the\n"
+		                       "solver's answer and cap it at 4 degrees; yaw and position update at normal\n"
+		                       "speed.  Stops trackers from gradually leaning sideways over a session.\n"
+		                       "Default on.  Turn off for the unfiltered solve.")) {
+			SaveProfile(CalCtx);
+		}
 		ImGui::EndGroupPanel();
 		ImGui::Spacing();
 	}

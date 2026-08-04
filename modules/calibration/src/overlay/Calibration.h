@@ -672,6 +672,13 @@ struct CalibrationContext
 	// the calibration. On by default; separate from the experimental Kalman
 	// fusion accept below, which additionally blends accepted candidates.
 	bool precisionWeightedRelPose = true;
+	// Tilt damping of the locked relpose accept (GravityAlignment.h): the
+	// roll/pitch component of the calibration is low-passed and capped while
+	// yaw and translation track at full speed. On by default -- deliberately
+	// independent of the enhanced-tracking master switch, since the tilt
+	// random walk it suppresses lands in the default pipeline too; toggle off
+	// for exact upstream-parity behaviour.
+	bool gravityTiltDamping = true;
 	// Confidence-weighted continuous fusion (ContinuousPrecisionFusion.h).
 	// Accumulated precision of the running calibration; higher = more resistant
 	// to far-from-origin re-solves. Runtime-only, never persisted. lastFusionGain
@@ -763,6 +770,7 @@ struct CalibrationContext
 		baseStationDriftCorrectionEnabled = true;
 
 		precisionWeightedRelPose = true;
+		gravityTiltDamping = true;
 
 		enhancedTrackingChecks = false;
 		leverArmSigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;

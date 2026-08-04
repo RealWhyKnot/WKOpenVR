@@ -529,6 +529,7 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 	opts.lockRelativePosition = EnvFlagLocal("WKOPENVR_REPLAY_LOCK_REL", opts.lockRelativePosition);
 	opts.customChecks = EnvFlagLocal("WKOPENVR_REPLAY_CUSTOM_CHECKS", opts.customChecks);
 	opts.v2Math = EnvFlagLocal("WKOPENVR_REPLAY_V2_MATH", opts.v2Math);
+	opts.tiltDamping = EnvFlagLocal("WKOPENVR_REPLAY_TILT_DAMPING", opts.tiltDamping);
 	// Quick-gate row cap (Run-SessionReplayGate.ps1 -Quick): replay only the
 	// first N rows; capped runs gate against their own quick baselines.
 	const int maxRows = static_cast<int>(EnvDoubleLocal("WKOPENVR_REPLAY_MAX_ROWS", 0.0));
@@ -572,8 +573,10 @@ TEST(SessionReplayTest, ReplaySessionsWhenRequested)
 		          << " max_unclassified_step_cm=" << res.maxUnclassifiedStepCm
 		          << " rot_wander_per_10min_deg=" << res.rotWanderPer10MinDeg
 		          << " max_unclassified_rot_step_deg=" << res.maxUnclassifiedRotStepDeg
-		          << " drift_steps=" << res.driftSteps << " drift_path_cm=" << res.driftPathCm
-		          << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm() << "\n";
+		          << " tilt_damping=" << (opts.tiltDamping ? 1 : 0) << " max_applied_tilt_deg=" << res.maxAppliedTiltDeg
+		          << " final_applied_tilt_deg=" << res.finalAppliedTiltDeg << " drift_steps=" << res.driftSteps
+		          << " drift_path_cm=" << res.driftPathCm << " net_drift_mag_cm=" << res.netAppliedDriftCm.norm()
+		          << "\n";
 		++replayed;
 	}
 	EXPECT_GT(replayed, 0);

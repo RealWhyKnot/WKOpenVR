@@ -21,9 +21,24 @@ extern double g_lastAutoLockTranslMad;
 extern double g_lastAutoLockRotMad;
 extern int g_geomShiftConsecutiveBadTicks;
 
+// Profile euler (degrees, Z/Y/X compose order) + translation (cm) -> affine
+// transform (metres). Header-inline so overlay TUs and the test binary share
+// one definition (ProfileJson.cpp needs it in both).
+inline Eigen::AffineCompact3d ProfileTransform(Eigen::Vector3d eulerDeg, Eigen::Vector3d transCm)
+{
+	auto euler = eulerDeg * EIGEN_PI / 180.0;
+	Eigen::Quaterniond rotQuat = Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()) *
+	                             Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()) *
+	                             Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX());
+
+	Eigen::AffineCompact3d transform = Eigen::AffineCompact3d::Identity();
+	transform.linear() = rotQuat.toRotationMatrix();
+	transform.translation() = transCm * 0.01;
+	return transform;
+}
+
 // Shared transform + speed helpers defined in Calibration.cpp; used by the
 // head-mount shadow unit and the tick helpers.
-Eigen::AffineCompact3d ProfileTransform(Eigen::Vector3d eulerDeg, Eigen::Vector3d transCm);
 Eigen::Affine3d CalibrationTransformFromContext(const CalibrationContext& ctx);
 double ComputeHmdSpeedMps(const CalibrationContext& ctx);
 

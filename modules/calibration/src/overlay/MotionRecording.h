@@ -239,6 +239,10 @@ struct ReplayOptions
 	// Project the solved calibration rotation to yaw-about-gravity (see
 	// GravityAlignment.h). Replay-only A/B knob.
 	bool gravityConstrainedRelPose = false;
+	// Two-time-constant tilt damping of the locked accept (GravityAlignment.h).
+	// Defaults off in replay so pre-existing scenario goldens replay the same
+	// path; the live default is on.
+	bool tiltDamping = false;
 	// Mirror the enhanced-tracking master switch at the solver level: off
 	// applies every validated locked candidate ungated (the classic upstream
 	// behaviour). Weighting stays a separate knob above so existing A/B
@@ -291,6 +295,11 @@ struct ReplayResult
 	// magnitude; the precision-weighted solve should shrink it and the steps.
 	double peakAppliedMagCm = 0.0;
 	double appliedMagWanderCm = 0.0;
+	// Tilt of the applied rotation (deviation from pure yaw, GravityAlignment.h
+	// TiltAngleDeg): the sideways-lean signal none of the translation metrics
+	// see. The tilt-damped scenario should collapse max vs the undamped run.
+	double maxAppliedTiltDeg = 0.0;
+	double finalAppliedTiltDeg = 0.0;
 	// Per-tick applied-C jump -- what the user sees as a device "flying off". The
 	// freeze gate targets these sharp jumps (not the slow legitimate drift that
 	// sets the wander envelope), so peak/large-step should collapse gate-on.

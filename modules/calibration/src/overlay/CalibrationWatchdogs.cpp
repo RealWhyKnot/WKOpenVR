@@ -5,6 +5,7 @@
 #include "CalibrationRecoveryTick.h" // ArmReanchorToProfile / EvictDeadFrameSamples / LastWitnessHealth
 #include "AutoLockHysteresis.h"      // spacecal::autolock::IsSettled / EnterThresholdFor
 #include "GeometryShiftDetector.h"   // spacecal::geometry_shift::kMinSustainedSpikes
+#include "GravityAlignment.h"        // spacecal::gravity::TiltAngleDeg -- heartbeat tilt field
 #include "HeadMountTargetBinding.h"  // wkopenvr::headmount::EffectiveHeadMountMode
 #include "TrackingStyle.h"           // HmdPoseEventRecoveryEligible
 #include "WarmRestart.h"             // spacecal::warm_restart::ShouldEngage + tunables
@@ -349,7 +350,7 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			         " mad_floor_source=%s wr_validation=%s"
 			         " witness_eff_mode=%d reanchor_pending=%d wr_reanchors=%d synth_fallbacks=%llu"
 			         " witness_valid_pct=%.1f witness_last_valid_sec=%.1f subthreshold_relocs=%llu"
-			         " enhanced_checks=%d obs_lambda_min=%.2f",
+			         " enhanced_checks=%d obs_lambda_min=%.2f tilt_deg=%.2f tilt_damping=%d",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
 			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
@@ -363,7 +364,10 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			         ctx.warmRestartReanchorCount, (unsigned long long)ctx.driverSynthFallbackTotal,
 			         spacecal::witness_health::ValidPct(wh), spacecal::witness_health::LastValidSec(wh, time),
 			         (unsigned long long)wh.subthresholdRelocs, (int)ctx.CustomChecksActive(),
-			         calibration.LastObservabilityLambdaMin());
+			         calibration.LastObservabilityLambdaMin(),
+			         spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(
+			             ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation())),
+			         (int)ctx.gravityTiltDamping);
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
@@ -384,10 +388,10 @@ void EmitSessionConfigDumpOnce(CalibrationContext& ctx)
 			snprintf(dumpBuf, sizeof dumpBuf,
 			         "session_config_dump: ignore_outliers=%d static_recal=%d"
 			         " recalibrate_on_movement=%d one_shot_speed=%.2f continuous_speed=%.2f active_speed=%.2f "
-			         "jitter_threshold=%.2f",
+			         "jitter_threshold=%.2f gravity_tilt_damping=%d",
 			         (int)ctx.ignoreOutliers, (int)ctx.enableStaticRecalibration, (int)ctx.recalibrateOnMovement,
 			         (double)ctx.oneShotCalibrationSpeed, (double)ctx.continuousCalibrationSpeed,
-			         (double)ctx.ActiveCalibrationSpeed(), (double)ctx.jitterThreshold);
+			         (double)ctx.ActiveCalibrationSpeed(), (double)ctx.jitterThreshold, (int)ctx.gravityTiltDamping);
 			Metrics::WriteLogAnnotation(dumpBuf);
 		}
 	}

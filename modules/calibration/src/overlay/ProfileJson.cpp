@@ -1,5 +1,7 @@
 #include "Configuration.h"
-#include "CalibrationMetrics.h" // profile-migration + parse annotations
+#include "CalibrationInternal.h" // ProfileTransform -- euler-to-quat for tilt diagnostics
+#include "CalibrationMetrics.h"  // profile-migration + parse annotations
+#include "GravityAlignment.h"    // tilt angle + load-time tilt clamp
 #include "TrackingStyle.h"
 
 #include <picojson.h>
@@ -492,12 +494,14 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		const double ty = ctx.calibratedTranslation(1);
 		const double tz = ctx.calibratedTranslation(2);
 		const double magnitude = std::sqrt(tx * tx + ty * ty + tz * tz);
-		char loadbuf[256];
+		const double loadTiltDeg = spacecal::gravity::TiltAngleDeg(
+		    Eigen::Quaterniond(ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation()));
+		char loadbuf[280];
 		snprintf(loadbuf, sizeof loadbuf,
 		         "profile_loaded_calibration: t=(%.3f,%.3f,%.3f) magnitude=%.3f rot_deg=(roll=%.2f, yaw=%.2f, "
-		         "pitch=%.2f) ref_system='%s' tgt_system='%s'",
+		         "pitch=%.2f) tilt_deg=%.2f ref_system='%s' tgt_system='%s'",
 		         tx, ty, tz, magnitude, ctx.calibratedRotation(0), ctx.calibratedRotation(1), ctx.calibratedRotation(2),
-		         ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
+		         loadTiltDeg, ctx.referenceTrackingSystem.c_str(), ctx.targetTrackingSystem.c_str());
 		Metrics::WriteLogAnnotation(loadbuf);
 
 		// No load-time magnitude clamp here: fixed magnitude bounds broke
@@ -632,6 +636,11 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (obj["precision_weighted_relpose"].is<bool>()) {
 		ctx.precisionWeightedRelPose = obj["precision_weighted_relpose"].get<bool>();
 	}
+	// Absent key -> stays at the construction default (on): profiles written
+	// before tilt damping existed get the fix without migration.
+	if (obj["gravity_tilt_damping"].is<bool>()) {
+		ctx.gravityTiltDamping = obj["gravity_tilt_damping"].get<bool>();
+	}
 	// Absent key -> stays at the construction default (off = classic
 	// upstream pipeline).
 	if (obj["enhanced_tracking_checks"].is<bool>()) {
@@ -759,6 +768,37 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (wedgedProfileCleared) {
 		ctx.refToTargetPose = Eigen::AffineCompact3d::Identity();
 		ctx.relativePosCalibrated = false;
+	}
+
+	// Load-time tilt clamp (runs last: the flag and the rotation are both
+	// parsed above). A banked tilt beyond the cap is solver error, not floor
+	// alignment -- cap it, don't zero it. The on-disk profile is left as-is;
+	// it self-heals at the next natural save.
+	if (ctx.gravityTiltDamping) {
+		const Eigen::AffineCompact3d loadedC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
+		const double tiltRad = spacecal::gravity::TiltAngleRad(Eigen::Quaterniond(loadedC.rotation()));
+		if (tiltRad > spacecal::gravity::kMaxTiltRad) {
+			const Eigen::AffineCompact3d clamped =
+			    spacecal::gravity::ClampTilt(loadedC, spacecal::gravity::kMaxTiltRad);
+			ctx.calibratedRotation = Eigen::Matrix3d(clamped.rotation()).eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
+			const double capDeg = spacecal::gravity::kMaxTiltRad * 180.0 / EIGEN_PI;
+			const double tiltDeg = tiltRad * 180.0 / EIGEN_PI;
+			char clampBuf[160];
+			snprintf(clampBuf, sizeof clampBuf,
+			         "profile_load_tilt_clamped: tilt_deg=%.2f cap_deg=%.2f removed_deg=%.2f", tiltDeg, capDeg,
+			         tiltDeg - capDeg);
+			Metrics::WriteLogAnnotation(clampBuf);
+		}
+		for (auto& extra : ctx.additionalCalibrations) {
+			const Eigen::AffineCompact3d extraC =
+			    ProfileTransform(extra.calibratedRotation, extra.calibratedTranslation);
+			if (spacecal::gravity::TiltAngleRad(Eigen::Quaterniond(extraC.rotation())) >
+			    spacecal::gravity::kMaxTiltRad) {
+				const Eigen::AffineCompact3d clamped =
+				    spacecal::gravity::ClampTilt(extraC, spacecal::gravity::kMaxTiltRad);
+				extra.calibratedRotation = Eigen::Matrix3d(clamped.rotation()).eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
+			}
+		}
 	}
 
 	ctx.validProfile = true;
@@ -899,6 +939,8 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// Always emit so an explicit user OFF survives loads (absent means "on").
 	bool weightedRelPose = ctx.precisionWeightedRelPose;
 	profile["precision_weighted_relpose"].set<bool>(weightedRelPose);
+	// Always emit so an explicit user OFF survives loads (absent means "on").
+	profile["gravity_tilt_damping"].set<bool>(ctx.gravityTiltDamping);
 	// Always emit so an explicit choice survives loads (absent means "off").
 	profile["enhanced_tracking_checks"].set<bool>(ctx.enhancedTrackingChecks);
 	const auto explicitLockMode = ctx.lockRelativePositionMode == CalibrationContext::LockMode::ON

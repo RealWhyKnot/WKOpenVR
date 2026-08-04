@@ -330,10 +330,17 @@ public:
 	bool LastAcceptWasDriftStep() const { return m_lastAcceptWasDriftStep; }
 
 	// Gravity-constrained relative-pose solve: project the solved calibration
-	// rotation to its yaw-about-gravity component (both universes are +Y-up,
-	// so roll/pitch in C is lever-arm noise). Replay-only A/B for now -- no
-	// live path sets this. See GravityAlignment.h.
+	// rotation to its yaw-about-gravity component. Replay-only A/B knob --
+	// corpus replay refuted it live (real floor tilt exists on some rigs and
+	// projection worsens fit). See GravityAlignment.h.
 	void SetGravityConstrainedRelPose(bool on) { m_useGravityConstrainedRelPose = on; }
+
+	// Tilt damping for the locked-relpose accept: yaw + translation follow
+	// each accepted candidate at full speed while the swing (roll/pitch)
+	// component is low-passed toward the candidate and capped. Suppresses the
+	// weak-observability tilt random walk without zeroing a real floor tilt.
+	// See GravityAlignment.h.
+	void SetTiltDamping(bool on) { m_useTiltDamping = on; }
 
 	// Mean of (|ref.trans|^2 + |target.trans|^2) over the current sample window
 	// (m^2) -- the squared lever arm that scales the relpose solve's translation
@@ -464,6 +471,10 @@ private:
 	mutable double m_lastObservabilityLambdaMin = -1.0;
 	// Replay-only A/B knob; never set on the live path.
 	bool m_useGravityConstrainedRelPose = false;
+	// Tilt damping (SetTiltDamping) + timestamp of the last damped accept,
+	// used to derive the per-accept low-pass gain from elapsed time.
+	bool m_useTiltDamping = false;
+	double m_tiltLastAcceptTime = 0.0;
 
 	// Project `candidate`'s delta against `prior` onto the observed subspace
 	// of the current sample window (ObservabilityGate.h); returns the gated
