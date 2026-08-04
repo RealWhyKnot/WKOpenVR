@@ -16,6 +16,9 @@ await Run("explicit face replay disable overrides debug logging", ExplicitFaceRe
 await Run("records face replay frame", RecordsFaceReplayFrame);
 await Run("parses face replay jsonl", ParsesFaceReplayJsonl);
 await Run("compares face replay recordings", ComparesFaceReplayRecordings);
+await Run("analyzes episode ramps", AnalyzesEpisodeRamps);
+await Run("analyzes blinks and gaze", AnalyzesBlinksAndGaze);
+await Run("analyzes idle activity and jaw ratios", AnalyzesIdleActivityAndJawRatios);
 
 if (failures.Count > 0)
 {
@@ -277,6 +280,153 @@ static Task ComparesFaceReplayRecordings()
     return Task.CompletedTask;
 }
 
+static Task AnalyzesEpisodeRamps()
+{
+    // One smile episode at 40 Hz: 1 s quiet, 300 ms linear rise to 0.8,
+    // 1 s hold, 600 ms linear fall, 1 s quiet.
+    const double dt = 25.0;
+    var frames = new List<AnalyzerFrame>();
+    double t = 0.0;
+    void Add(float smile)
+    {
+        frames.Add(new AnalyzerFrame(t, [0.0f, smile], 0.9f, 0.0f, 0.0f));
+        t += dt;
+    }
+
+    for (int i = 0; i < 40; i++) { Add(0.0f); }
+    for (int i = 1; i <= 12; i++) { Add(0.8f * i / 12.0f); }
+    for (int i = 0; i < 40; i++) { Add(0.8f); }
+    for (int i = 1; i <= 24; i++) { Add(0.8f * (24 - i) / 24.0f); }
+    for (int i = 0; i < 40; i++) { Add(0.0f); }
+
+    FaceFrameReplayAnalyzer.Analysis a = AnalyzeFrames(["JawOpen", "MouthCornerPullLeft"], frames);
+    FaceFrameReplayAnalyzer.EpisodeSummary smile =
+        a.Episodes.Single(e => e.Name == "MouthCornerPullLeft");
+    Require(smile.Count == 1, $"expected 1 smile episode, got {smile.Count}");
+    Require(Math.Abs(smile.PeakP95 - 0.8) < 0.02, $"episode peak {smile.PeakP95:F3} != ~0.8");
+    Require(smile.OnsetMsP50 is > 180 and < 330, $"onset {smile.OnsetMsP50:F0}ms outside 300ms ramp expectation");
+    Require(smile.OffsetMsP50 is > 400 and < 650, $"offset {smile.OffsetMsP50:F0}ms outside 600ms ramp expectation");
+    Require(smile.DurationMsP50 is > 1600 and < 2100, $"duration {smile.DurationMsP50:F0}ms unexpected");
+
+    FaceFrameReplayAnalyzer.ShapeSummary stat = a.Shapes.Single(s => s.Name == "MouthCornerPullLeft");
+    Require(Math.Abs(stat.Max - 0.8) < 0.001, "shape max wrong");
+    Require(stat.StrongFraction > 0.2, "hold phase should register as strong");
+    return Task.CompletedTask;
+}
+
+static Task AnalyzesBlinksAndGaze()
+{
+    // 40 Hz, 6 s: three blinks (second forms a double), one gaze step out and back.
+    const double dt = 25.0;
+    var frames = new List<AnalyzerFrame>();
+    for (double t = 0.0; t < 6000.0; t += dt)
+    {
+        bool blink = (t >= 1000.0 && t < 1100.0) || (t >= 1400.0 && t < 1500.0) || (t >= 4500.0 && t < 4600.0);
+        bool shifted = t >= 2000.0 && t < 4000.0;
+        frames.Add(new AnalyzerFrame(
+            t,
+            [0.0f],
+            blink ? 0.1f : 0.9f,
+            shifted ? 0.3f : 0.0f,
+            shifted ? -0.2f : 0.0f));
+    }
+
+    FaceFrameReplayAnalyzer.Analysis a = AnalyzeFrames(["JawOpen"], frames);
+    Require(a.Blinks.Count == 3, $"expected 3 blinks, got {a.Blinks.Count}");
+    Require(Math.Abs(a.Blinks.DoubleBlinkFraction - 1.0 / 3.0) < 0.01, "double-blink fraction wrong");
+    Require(a.Blinks.ClosedMsP50 is > 50 and < 160, $"closed duration {a.Blinks.ClosedMsP50:F0}ms unexpected");
+    Require(a.LidRest.Mean > 0.85, $"lid rest mean {a.LidRest.Mean:F3} should ignore blink frames");
+    Require(a.Gaze.SaccadeAmplitudeP50 is > 0.30 and < 0.45,
+        $"saccade amplitude {a.Gaze.SaccadeAmplitudeP50:F3} != ~0.36");
+    Require(a.Gaze.DwellMsP50 is > 1700 and < 2300, $"dwell {a.Gaze.DwellMsP50:F0}ms != ~2000");
+    return Task.CompletedTask;
+}
+
+static Task AnalyzesIdleActivityAndJawRatios()
+{
+    // 40 Hz: 3 s speaking (jaw 0.5, smile 0.4, lip shapes at fixed ratios),
+    // then 3 s idle with two brow blips.
+    const double dt = 25.0;
+    var frames = new List<AnalyzerFrame>();
+    for (double t = 0.0; t < 6000.0; t += dt)
+    {
+        bool speaking = t < 3000.0;
+        bool browBlip = (t >= 4000.0 && t < 4100.0) || (t >= 5000.0 && t < 5100.0);
+        frames.Add(new AnalyzerFrame(
+            t,
+            [
+                speaking ? 0.5f : 0.0f,          // JawOpen
+                speaking ? 0.4f : 0.0f,          // MouthCornerPullLeft
+                browBlip ? 0.15f : 0.0f,         // BrowInnerUpLeft
+                speaking ? 0.2f : 0.0f,          // MouthLowerDownLeft
+                speaking ? 0.1f : 0.0f,          // MouthUpperUpLeft
+            ],
+            0.9f,
+            0.0f,
+            0.0f));
+    }
+
+    FaceFrameReplayAnalyzer.Analysis a = AnalyzeFrames(
+        ["JawOpen", "MouthCornerPullLeft", "BrowInnerUpLeft", "MouthLowerDownLeft", "MouthUpperUpLeft"],
+        frames);
+    Require(Math.Abs(a.SpeechSmile.SmileMeanSpeaking - 0.4) < 0.01, "speaking smile mean wrong");
+    Require(a.SpeechSmile.SmileMeanQuiet < 0.01, "quiet smile mean should be ~0");
+    Require(Math.Abs(a.JawRatios.LowerDownOverJaw - 0.4) < 0.02, "lowerDown/jaw ratio wrong");
+    Require(Math.Abs(a.JawRatios.UpperUpOverJaw - 0.2) < 0.02, "upperUp/jaw ratio wrong");
+    Require(a.Idle.IdleFraction is > 0.4 and < 0.6, $"idle fraction {a.Idle.IdleFraction:F2} != ~0.5");
+    Require(a.Idle.SegmentCount == 1, $"expected 1 idle segment, got {a.Idle.SegmentCount}");
+    FaceFrameReplayAnalyzer.IdleShapeSummary brow = a.Idle.Shapes.Single(s => s.Name == "BrowInnerUpLeft");
+    Require(brow.EventsPerMinute is > 30 and < 50, $"brow events/min {brow.EventsPerMinute:F1} != ~40");
+    Require(brow.AmplitudeP90 < 0.16, "brow idle amplitude p90 too high");
+    return Task.CompletedTask;
+}
+
+static FaceFrameReplayAnalyzer.Analysis AnalyzeFrames(string[] shapeNames, List<AnalyzerFrame> frames)
+{
+    var lines = new List<string>
+    {
+        JsonSerializer.Serialize(new
+        {
+            type = "header",
+            schema = 1,
+            shapeOrder = "test",
+            shapeCount = shapeNames.Length,
+            shapeNames,
+            maxHz = 40.0,
+        }),
+    };
+    long frameNumber = 0;
+    foreach (AnalyzerFrame f in frames)
+    {
+        lines.Add(JsonSerializer.Serialize(new
+        {
+            type = "frame",
+            timeMs = f.TimeMs,
+            frameNumber = frameNumber++,
+            moduleUuid = "u",
+            moduleName = "M",
+            flags = new { eye = true, expression = true, head = false },
+            expressions = f.Expressions,
+            eye = new
+            {
+                leftOpenness = f.Openness,
+                rightOpenness = f.Openness,
+                leftPupilDilation = 0.5f,
+                rightPupilDilation = 0.5f,
+                leftGaze = new { x = f.GazeX, y = f.GazeY, z = -0.9f },
+                rightGaze = new { x = f.GazeX, y = f.GazeY, z = -0.9f },
+            },
+            head = new { },
+        }));
+    }
+
+    FaceFrameReplayPlayer.Recording rec = FaceFrameReplayPlayer.ParseLines(lines, "test");
+    Require(rec.Ok, $"test recording failed to parse: {rec.Error}");
+    FaceFrameReplayAnalyzer.Analysis analysis = FaceFrameReplayAnalyzer.Analyze(rec);
+    Require(analysis.Ok, $"analysis failed: {analysis.Error}");
+    return analysis;
+}
+
 static void WriteReplay(string path, Func<int, float[]> shapeFactory)
 {
     using var recorder = new FaceFrameReplayRecorder(path, maxHz: 0);
@@ -320,6 +470,8 @@ static ScopedEnvironmentVariables ScopedFaceReplayEnvironment()
         "WKOPENVR_FACE_REPLAY_DIR",
         "WKOPENVR_FACE_REPLAY_HZ");
 }
+
+sealed record AnalyzerFrame(double TimeMs, float[] Expressions, float Openness, float GazeX, float GazeY);
 
 sealed class ScopedEnvironmentVariables : IDisposable
 {

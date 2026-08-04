@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using WKOpenVR.FaceModuleHost;
 using WKOpenVR.FaceModuleHost.Logging;
 using WKOpenVR.FaceModuleHost.Workers;
@@ -10,6 +11,14 @@ using WKOpenVR.FaceTracking.Registry;
 if (args.Length >= 1 && (args[0] == "compare-face-replays" || args[0] == "--compare-face-replays"))
 {
     return RunCompareFaceReplays(args);
+}
+
+// Offline subcommand: extract per-channel dynamics (percentiles, episode ramps,
+// blinks, gaze dwell, idle activity) from one or more recordings, pooling by
+// per-file medians. Feeds tuning constants for the synthetic face module.
+if (args.Length >= 1 && (args[0] == "analyze-face-replay" || args[0] == "--analyze-face-replay"))
+{
+    return RunAnalyzeFaceReplay(args);
 }
 
 var opts = HostOptions.FromArgs(args);
@@ -242,6 +251,43 @@ static int RunCompareFaceReplays(string[] args)
     Console.Out.Write(FaceFrameReplayComparer.FormatReport(cmp));
     Console.Out.Flush();
     return cmp.Ok ? 0 : 1;
+}
+
+static int RunAnalyzeFaceReplay(string[] args)
+{
+    var positional = new List<string>();
+    string? jsonPath = null;
+    for (int i = 1; i < args.Length; i++)
+    {
+        if (args[i] == "--json" && i + 1 < args.Length)
+        {
+            jsonPath = args[++i];
+        }
+        else
+        {
+            positional.Add(args[i]);
+        }
+    }
+
+    if (positional.Count < 1)
+    {
+        Console.Error.WriteLine(
+            "usage: WKOpenVR.FaceModuleHost analyze-face-replay <recording.jsonl> [<recording2.jsonl> ...] [--json out.json]");
+        Console.Error.WriteLine(
+            "  reports per-channel dynamics; several recordings add a pooled-medians section");
+        return 2;
+    }
+
+    List<FaceFrameReplayAnalyzer.Analysis> analyses = [.. positional
+        .Select(path => FaceFrameReplayAnalyzer.Analyze(FaceFrameReplayPlayer.Load(path)))];
+    Console.Out.Write(FaceFrameReplayAnalyzer.FormatReport(analyses));
+    Console.Out.Flush();
+    if (jsonPath is not null)
+    {
+        File.WriteAllText(jsonPath, FaceFrameReplayAnalyzer.ToJson(analyses), new UTF8Encoding(false));
+    }
+
+    return analyses.All(a => a.Ok) ? 0 : 1;
 }
 
 // Publish the host's current state + a heartbeat into the shmem header
