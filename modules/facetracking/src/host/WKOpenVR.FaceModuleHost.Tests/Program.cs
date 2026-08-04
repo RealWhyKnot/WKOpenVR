@@ -14,6 +14,8 @@ await Run("parses face replay options", ParsesFaceReplayOptions);
 await Run("debug logging enables face replay by default", DebugLoggingEnablesFaceReplayByDefault);
 await Run("explicit face replay disable overrides debug logging", ExplicitFaceReplayDisableOverridesDebugLogging);
 await Run("records face replay frame", RecordsFaceReplayFrame);
+await Run("prunes old face replay recordings", PrunesOldFaceReplayRecordings);
+await Run("startup sweep respects retention limits", StartupSweepRespectsRetentionLimits);
 await Run("parses face replay jsonl", ParsesFaceReplayJsonl);
 await Run("compares face replay recordings", ComparesFaceReplayRecordings);
 await Run("analyzes episode ramps", AnalyzesEpisodeRamps);
@@ -213,6 +215,64 @@ static Task RecordsFaceReplayFrame()
     float jaw = root.GetProperty("expressions").EnumerateArray().ElementAt(22).GetSingle();
     Require(Math.Abs(jaw - 0.42f) < 0.001f, "jaw value missing");
     Require(root.GetProperty("top").EnumerateArray().Any(e => e.GetProperty("name").GetString() == "JawOpen"), "top shapes missing JawOpen");
+    return Task.CompletedTask;
+}
+
+static Task PrunesOldFaceReplayRecordings()
+{
+    using var fixture = new TempFixture();
+    string dir = Path.Combine(fixture.Root, "replays");
+    Directory.CreateDirectory(dir);
+    var baseTime = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    for (int i = 0; i < 5; i++)
+    {
+        string path = Path.Combine(dir, $"face_replay.old{i}.jsonl");
+        File.WriteAllText(path, new string('x', 100));
+        File.SetLastWriteTimeUtc(path, baseTime.AddMinutes(i));
+    }
+
+    string unrelated = Path.Combine(dir, "notes.txt");
+    File.WriteAllText(unrelated, "keep");
+
+    string[] deleted = FaceFrameReplayRecorder.PruneReplayDirectory(dir, maxFiles: 3, maxTotalBytes: long.MaxValue);
+    Require(deleted.Length == 2, $"expected 2 count-cap deletions, got {deleted.Length}");
+    Require(!File.Exists(Path.Combine(dir, "face_replay.old0.jsonl")), "oldest file should be deleted");
+    Require(!File.Exists(Path.Combine(dir, "face_replay.old1.jsonl")), "second-oldest file should be deleted");
+    Require(File.Exists(Path.Combine(dir, "face_replay.old4.jsonl")), "newest file should be kept");
+    Require(File.Exists(unrelated), "non-replay files must not be touched");
+
+    // Three 100-byte files remain; a 250-byte cap keeps only the newest two.
+    deleted = FaceFrameReplayRecorder.PruneReplayDirectory(dir, maxFiles: int.MaxValue, maxTotalBytes: 250);
+    Require(deleted.Length == 1, $"expected 1 byte-cap deletion, got {deleted.Length}");
+    Require(!File.Exists(Path.Combine(dir, "face_replay.old2.jsonl")), "byte cap should delete the oldest file");
+    Require(File.Exists(Path.Combine(dir, "face_replay.old3.jsonl")), "byte cap should keep files under the cap");
+    return Task.CompletedTask;
+}
+
+static Task StartupSweepRespectsRetentionLimits()
+{
+    using var env = ScopedFaceReplayEnvironment();
+    using var fixture = new TempFixture();
+    string dir = Path.Combine(fixture.Root, "replays");
+    Directory.CreateDirectory(dir);
+    var baseTime = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    for (int i = 0; i < FaceFrameReplayRecorder.MaxRetainedReplayFiles + 2; i++)
+    {
+        string path = Path.Combine(dir, $"face_replay.old{i:D3}.jsonl");
+        File.WriteAllText(path, "x");
+        File.SetLastWriteTimeUtc(path, baseTime.AddMinutes(i));
+    }
+
+    HostOptions opts = HostOptions.FromArgs(["--face-replay-record", "--face-replay-dir", dir]);
+    using FaceFrameReplayRecorder? recorder = FaceFrameReplayRecorder.CreateFromOptions(opts, fixture.Logger);
+    Require(recorder is not null, "recorder should start");
+    Require(!File.Exists(Path.Combine(dir, "face_replay.old000.jsonl")), "startup sweep should delete the oldest file");
+    Require(!File.Exists(Path.Combine(dir, "face_replay.old001.jsonl")), "startup sweep should delete the second-oldest file");
+    Require(File.Exists(Path.Combine(dir, "face_replay.old002.jsonl")), "files within retention must survive");
+    int remaining = Directory.GetFiles(dir, "face_replay.*.jsonl").Length;
+    Require(
+        remaining == FaceFrameReplayRecorder.MaxRetainedReplayFiles + 1,
+        $"expected {FaceFrameReplayRecorder.MaxRetainedReplayFiles + 1} files (retained + new recording), got {remaining}");
     return Task.CompletedTask;
 }
 

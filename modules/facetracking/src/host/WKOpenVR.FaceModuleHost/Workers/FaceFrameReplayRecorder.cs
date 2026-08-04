@@ -10,6 +10,9 @@ public sealed class FaceFrameReplayRecorder : IDisposable
 {
     public const int ShapeCount = FrameWriter.UpstreamShapeCount;
 
+    public const int MaxRetainedReplayFiles = 20;
+    public const long MaxRetainedReplayBytes = 10L * 1024 * 1024 * 1024;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private static readonly string[] ShapeNames =
@@ -148,6 +151,19 @@ public sealed class FaceFrameReplayRecorder : IDisposable
 
         try
         {
+            string[] pruned = PruneReplayDirectory(opts.FaceReplayDirectory, MaxRetainedReplayFiles, MaxRetainedReplayBytes);
+            if (pruned.Length > 0)
+            {
+                logger.Info($"[face-replay] retention pruned {pruned.Length} old recording(s) from {opts.FaceReplayDirectory}");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Warn($"[face-replay] retention sweep failed: {ex.GetType().Name} {ex.Message}");
+        }
+
+        try
+        {
             string ts = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture);
             string outputPath = Path.Combine(opts.FaceReplayDirectory, $"face_replay.{ts}.jsonl");
             var recorder = new FaceFrameReplayRecorder(outputPath, opts.FaceReplayMaxHz);
@@ -159,6 +175,48 @@ public sealed class FaceFrameReplayRecorder : IDisposable
             logger.Warn($"[face-replay] recording disabled: {ex.GetType().Name} {ex.Message}");
             return null;
         }
+    }
+
+    // Pinned recordings are copied into Logs\corpus by Pin-Recording.ps1, so
+    // everything left in the replay directory is safe to age out.
+    public static string[] PruneReplayDirectory(string directory, int maxFiles, long maxTotalBytes)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return [];
+        }
+
+        FileInfo[] files = [.. new DirectoryInfo(directory)
+            .GetFiles("face_replay.*.jsonl")
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .ThenByDescending(f => f.Name, StringComparer.Ordinal)];
+
+        var deleted = new List<string>();
+        long totalBytes = 0;
+        int kept = 0;
+        foreach (FileInfo file in files)
+        {
+            totalBytes += file.Length;
+            kept++;
+            if (kept <= maxFiles && totalBytes <= maxTotalBytes)
+            {
+                continue;
+            }
+
+            try
+            {
+                file.Delete();
+                deleted.Add(file.Name);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return [.. deleted];
     }
 
     public void RecordFrame(
