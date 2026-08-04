@@ -90,6 +90,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Continuous auto-calibration with bounded gain and rest anchoring (27a89f8)
 - **calibration:** Enhanced-tracking switch with classic-pipeline fallback (427c167)
 - **phantom:** Persist and self-correct roles, surface snap status (95e1be1)
+- **calibration:** Damp and cap the roll/pitch of the continuous calibration (821638d)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
