@@ -9,7 +9,10 @@ name: CI
 # elsewhere:
 #   - full clang-tidy        -> .github/workflows/nightly-tidy.yml (scheduled)
 #   - download + load tests  -> .github/workflows/nightly-tests.yml (scheduled)
-#   - installer validation   -> .github/workflows/release.yml (on tag)
+# The release leg also builds the NSIS installer and runs the uninstall/
+# reinstall round-trip, so an installer payload gap or a stale round-trip
+# expectation fails on the push that introduces it -- not on the next nightly
+# tag's Release run (which repeats the same validation on the tagged commit).
 on:
   push:
     branches: [main]
@@ -231,6 +234,46 @@ jobs:
             & $t.FullName --gtest_brief=1
             if ($LASTEXITCODE -ne 0) { throw "$($t.Name) failed (exit $LASTEXITCODE)" }
           }
+
+      - name: Verify NSIS input artifacts staged
+        if: matrix.channel == 'release'
+        # Shared required-list with release.yml; catches a payload gap (or a
+        # build-cache-masked removal) at push time.
+        shell: pwsh
+        run: ./.github/scripts/Test-InstallerInputs.ps1
+
+      - name: Install NSIS
+        if: matrix.channel == 'release'
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
+            Write-Host "NSIS already present -- skipping choco install."
+            exit 0
+          }
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS install failed (exit $LASTEXITCODE)" }
+
+      - name: Build NSIS installer
+        if: matrix.channel == 'release'
+        shell: pwsh
+        run: |
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) { $makensis = "C:\Program Files\NSIS\makensis.exe" }
+          if (-not (Test-Path $makensis)) { throw "makensis.exe not found in the standard NSIS install paths." }
+          Push-Location install
+          & $makensis "/DVERSION=0.0.0.0-CI" installer.nsi
+          $exitCode = $LASTEXITCODE
+          Pop-Location
+          if ($exitCode -ne 0) { throw "makensis exited $exitCode" }
+
+      - name: Test installer uninstall/reinstall
+        if: matrix.channel == 'release'
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          ./.github/scripts/Test-InstallerRoundTrip.ps1 `
+            -InstallerPath 'build/artifacts/Release/WKOpenVR-Installer.exe' `
+            -AllowUserDataRemoval
 
       - name: Stage artifacts
         if: matrix.channel == 'dev'

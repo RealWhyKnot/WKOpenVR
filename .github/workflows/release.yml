@@ -337,9 +337,6 @@ jobs:
           if (-not (Test-Path "$artifacts/dashboard_icon.png")) {
             throw "dashboard_icon.png not found at $artifacts"
           }
-          if (-not (Test-Path "$artifacts/boundary_icon.png")) {
-            throw "boundary_icon.png not found at $artifacts"
-          }
           if (-not (Test-Path "$artifacts/resources/face-module-sync.ps1")) {
             throw "face-module-sync.ps1 not found at $artifacts/resources"
           }
@@ -364,7 +361,6 @@ jobs:
             Copy-Item "$artifacts/$resource" "$stage/$resource"
           }
           Copy-Item "$artifacts/dashboard_icon.png"  "$stage/dashboard_icon.png"
-          Copy-Item "$artifacts/boundary_icon.png"   "$stage/boundary_icon.png"
           New-Item -ItemType Directory -Force -Path "$stage/resources" | Out-Null
           Copy-Item "$artifacts/resources/face-module-sync.ps1" "$stage/resources/face-module-sync.ps1"
           New-Item -ItemType Directory -Force -Path "$stage/resources/questapp" | Out-Null
@@ -433,56 +429,11 @@ jobs:
           "umbrella_sha256=$umbrellaHash"                         >> $env:GITHUB_OUTPUT
 
       - name: Verify NSIS input artifacts staged
-        # makensis errors with an obscure "no files found" when File /r is
-        # pointed at an empty or missing directory. Failing here with the
-        # exact missing path makes future staging gaps trivial to diagnose
-        # instead of leaving the user to read the makensis output.
+        # The required list lives in .github/scripts/Test-InstallerInputs.ps1,
+        # shared with ci.yml's release leg so a payload gap fails on the push
+        # that introduces it instead of on the next tag's Release run.
         shell: pwsh
-        run: |
-          $required = [System.Collections.Generic.List[string]]@(
-            'build/artifacts/Release/WKOpenVR.exe',
-            'build/artifacts/Release/openvr_api.dll',
-            'build/artifacts/Release/manifest.vrmanifest',
-            'build/artifacts/Release/dashboard_icon.png',
-            'build/artifacts/Release/boundary_icon.png',
-            'build/artifacts/Release/resources/face-module-sync.ps1',
-            'build/artifacts/Release/resources/questapp/install-platform-tools.ps1',
-            'build/artifacts/Release/resources/questapp/uninstall-questapp.ps1',
-            'build/artifacts/Release/resources/questapp/WKOpenVRQuestCompanion.apk',
-            'build/driver_wkopenvr/driver.vrdrivermanifest',
-            'build/driver_wkopenvr/resources/driver.vrresources',
-            'build/driver_wkopenvr/resources/settings/default.vrsettings',
-            'build/driver_wkopenvr/bin/win64/driver_wkopenvr.dll'
-          )
-          # Per-module artifacts: only verify the ones whose modules are
-          # actually built into this release (the disabled-in-release marker
-          # tells the CMake helper to skip add_subdirectory for those, so
-          # their host exes / input profiles never get produced).
-          if (-not (Test-Path -LiteralPath 'modules/facetracking/disabled-in-release.flag')) {
-            $required.Add('build/driver_wkopenvr/resources/facetracking/host/WKOpenVR.FaceModuleHost.exe')
-          }
-          if (-not (Test-Path -LiteralPath 'modules/captions/disabled-in-release.flag')) {
-            $required.Add('build/driver_wkopenvr/resources/captions/host/WKOpenVR.CaptionsHost.exe')
-            $required.Add('build/driver_wkopenvr/resources/captions/host/openvr_api.dll')
-            $required.Add('build/driver_wkopenvr/resources/captions/host/resources/captions-packs.json')
-            $required.Add('build/driver_wkopenvr/resources/captions/host/resources/install-captions-pack.ps1')
-          }
-          if (-not (Test-Path -LiteralPath 'modules/phantom/disabled-in-release.flag')) {
-            $required.Add('build/driver_wkopenvr/resources/phantom/host/WKOpenVRPhantomSidecar.exe')
-            $required.Add('build/driver_wkopenvr/resources/input/vive_tracker_waist_profile.json')
-            $required.Add('build/driver_wkopenvr/resources/input/vive_tracker_left_foot_profile.json')
-            $required.Add('build/driver_wkopenvr/resources/input/vive_tracker_right_foot_profile.json')
-          }
-          $missing = @()
-          foreach ($p in $required) {
-            if (-not (Test-Path -LiteralPath $p)) { $missing += $p }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Host "Missing artifacts required by installer.nsi:"
-            $missing | ForEach-Object { Write-Host "  - $_" }
-            throw "NSIS input artifacts are not fully staged. The CMake build did not produce one or more required files."
-          }
-          Write-Host "All NSIS input artifacts present."
+        run: ./.github/scripts/Test-InstallerInputs.ps1
 
       - name: Install NSIS
         # No-op when the NSIS cache step above restored the install tree.
