@@ -92,6 +92,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Persist and self-correct roles, surface snap status (95e1be1)
 - **calibration:** Damp and cap the roll/pitch of the continuous calibration (821638d)
 - **facetracking:** Add analyze-face-replay dynamics subcommand (f1c1817)
+- **facetracking:** Prune old face replay recordings at recorder startup (f184c5c)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
