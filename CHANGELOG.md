@@ -331,6 +331,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Clarify mixed and/or grouping and drop a dead disjunct in ComputeIncremental (36d84f6)
 - **tests:** Keep the IPC fixture pipe instance alive across reconnects (8398b43)
 - **calibration:** Restore upstream sample windows, validity gate, and locked-branch parity (d3cb145)
+- **facetracking:** Order module version directories numerically (c8f6fcb)
 
 ---
 
