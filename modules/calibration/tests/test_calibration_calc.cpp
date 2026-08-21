@@ -210,7 +210,7 @@ TEST(CalibrationCalcTest, MixedFrameWindowPoisonsSolveUntilEvicted)
 // Samples built from MakeSamplePairs(C) are consistent with an identity
 // banked relative pose, so CalibrateByRelPose recovers C exactly.
 
-TEST(CalibrationCalcTest, LockedRelPoseBanksRelativePosCalibrated)
+TEST(CalibrationCalcTest, LockedRelPoseDoesNotBankRelativePosCalibrated)
 {
 	const Eigen::AffineCompact3d profile = MakeTransform(0.0, 0.0, 0.0, Eigen::Vector3d(0.20, 0.0, 0.0));
 
@@ -224,8 +224,9 @@ TEST(CalibrationCalcTest, LockedRelPoseBanksRelativePosCalibrated)
 
 	bool lerp = false;
 	ASSERT_TRUE(calc.ComputeIncremental(lerp, 1.5, 0.005, false));
-	EXPECT_TRUE(calc.isRelativeTransformationCalibrated())
-	    << "a sub-5mm locked accept must bank the relative pose, like the incremental path";
+	// Only the incremental full-solve accept banks the flag; a locked accept
+	// judged against the currently-banked pose must not widen its own band.
+	EXPECT_FALSE(calc.isRelativeTransformationCalibrated());
 }
 
 TEST(CalibrationCalcTest, EvictSamplesBeforeClearsStaleFrozenRotationBuffer)

@@ -119,11 +119,9 @@ static void MigrateProfile(int from_version, picojson::object& profile)
 		auto it = profile.find("calibration_speed");
 		if (it != profile.end() && it->second.is<double>()) {
 			const int raw = (int)it->second.get<double>();
-			const bool valid = raw >= CalibrationContext::FAST && raw <= CalibrationContext::AUTO;
-			const int oneShot = (!valid || raw == CalibrationContext::AUTO) ? CalibrationContext::FAST : raw;
-			const int continuous = (valid && (raw == CalibrationContext::SLOW || raw == CalibrationContext::VERY_SLOW))
-			                           ? raw
-			                           : CalibrationContext::AUTO;
+			const bool valid = raw >= CalibrationContext::FAST && raw <= CalibrationContext::VERY_SLOW;
+			const int oneShot = valid ? raw : CalibrationContext::FAST;
+			const int continuous = valid ? raw : CalibrationContext::SLOW;
 			if (profile.find("one_shot_calibration_speed") == profile.end()) {
 				double v = (double)oneShot;
 				profile["one_shot_calibration_speed"].set<double>(v);
@@ -581,30 +579,22 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.calibratedScale = 1.0;
 	}
 
-	auto readSpeed = [](const picojson::value& v, CalibrationContext::Speed fallback,
-	                    bool allowAuto) -> CalibrationContext::Speed {
+	// Out-of-range values (including the retired AUTO tier, stored as 3) fall
+	// back so old profiles keep loading.
+	auto readSpeed = [](const picojson::value& v, CalibrationContext::Speed fallback) -> CalibrationContext::Speed {
 		if (!v.is<double>()) return fallback;
 		const int raw = (int)v.get<double>();
-		if (raw < CalibrationContext::FAST || raw > CalibrationContext::AUTO) {
-			return fallback;
-		}
-		if (!allowAuto && raw == CalibrationContext::AUTO) {
+		if (raw < CalibrationContext::FAST || raw > CalibrationContext::VERY_SLOW) {
 			return fallback;
 		}
 		return (CalibrationContext::Speed)raw;
 	};
-	ctx.oneShotCalibrationSpeed = readSpeed(obj["one_shot_calibration_speed"], CalibrationContext::FAST,
-	                                        /*allowAuto=*/false);
-	ctx.continuousCalibrationSpeed = readSpeed(obj["continuous_calibration_speed"], CalibrationContext::AUTO,
-	                                           /*allowAuto=*/true);
+	ctx.oneShotCalibrationSpeed = readSpeed(obj["one_shot_calibration_speed"], CalibrationContext::FAST);
+	ctx.continuousCalibrationSpeed = readSpeed(obj["continuous_calibration_speed"], CalibrationContext::SLOW);
 	if (!obj["one_shot_calibration_speed"].is<double>() && !obj["continuous_calibration_speed"].is<double>() &&
 	    obj["calibration_speed"].is<double>()) {
-		const auto legacy = readSpeed(obj["calibration_speed"], CalibrationContext::AUTO,
-		                              /*allowAuto=*/true);
-		ctx.oneShotCalibrationSpeed = legacy == CalibrationContext::AUTO ? CalibrationContext::FAST : legacy;
-		ctx.continuousCalibrationSpeed = (legacy == CalibrationContext::SLOW || legacy == CalibrationContext::VERY_SLOW)
-		                                     ? legacy
-		                                     : CalibrationContext::AUTO;
+		ctx.oneShotCalibrationSpeed = readSpeed(obj["calibration_speed"], CalibrationContext::FAST);
+		ctx.continuousCalibrationSpeed = readSpeed(obj["calibration_speed"], CalibrationContext::SLOW);
 	}
 
 	// "view_mode" was a per-profile UI density preference (BASIC/GRAPH/ADVANCED).

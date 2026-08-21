@@ -208,23 +208,12 @@ void CCal_DrawSettings()
 
 				auto speed = CalCtx.continuousCalibrationSpeed;
 
-				ImGui::Columns(4, nullptr, false);
-				if (ImGui::RadioButton(" Auto          ", speed == CalibrationContext::AUTO)) {
-					SetContinuousSpeed(CalibrationContext::AUTO);
-				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("Pick the speed automatically from correction error and fresh-fit RMS.\n"
-					                  "Uses Fast while the current calibration is fixably off, then sizes\n"
-					                  "the buffer by the settled noise floor.\n"
-					                  "Recommended for continuous mode. (One-shot mode hides Auto because\n"
-					                  "it has no second chance to switch.)");
-				}
-				ImGui::NextColumn();
+				ImGui::Columns(3, nullptr, false);
 				if (ImGui::RadioButton(" Fast          ", speed == CalibrationContext::FAST)) {
 					SetContinuousSpeed(CalibrationContext::FAST);
 				}
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("30-sample buffer. Fastest convergence, most sensitive to noise.\n"
+					ImGui::SetTooltip("100-sample buffer. Fastest convergence, most sensitive to noise.\n"
 					                  "Good for clean lighthouse setups and tracker-on-HMD mounts.");
 				}
 				ImGui::NextColumn();
@@ -232,7 +221,7 @@ void CCal_DrawSettings()
 					SetContinuousSpeed(CalibrationContext::SLOW);
 				}
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("100-sample buffer. Smoother result at the cost of slower response.\n"
+					ImGui::SetTooltip("250-sample buffer. Smoother result at the cost of slower response.\n"
 					                  "Good for typical mixed setups.");
 				}
 				ImGui::NextColumn();
@@ -240,30 +229,10 @@ void CCal_DrawSettings()
 					SetContinuousSpeed(CalibrationContext::VERY_SLOW);
 				}
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("200-sample buffer. Maximum smoothing, slowest convergence.\n"
+					ImGui::SetTooltip("500-sample buffer. Maximum smoothing, slowest convergence.\n"
 					                  "For noisy / reflective rooms or drift-prone IMU trackers.");
 				}
 				ImGui::Columns(1);
-
-				// Show the resolved speed when AUTO is on so the user understands
-				// what the program decided. Faded text so it doesn't draw the eye.
-				if (speed == CalibrationContext::AUTO) {
-					namespace cs = spacecal::calibration_speed;
-					const auto decision = CalCtx.lastAutoSpeedDecision;
-					const char* resolvedName = cs::AutoSpeedBucketName(decision.bucket);
-					const bool haveFresh = cs::IsUsableFitRmsMm(decision.freshFitMm);
-					const bool haveCorrection = cs::IsUsableFitRmsMm(decision.correctionFitMm);
-					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-					if (haveFresh || haveCorrection) {
-						ImGui::Text("    %s (%s): fresh %.2f mm, reducible %.2f mm", resolvedName,
-						            cs::AutoSpeedPhaseName(decision.state.phase),
-						            haveFresh ? decision.freshFitMm : -1.0, decision.reducibleMm);
-					}
-					else {
-						ImGui::Text("    Currently resolved to: %s  (waiting for first fit)", resolvedName);
-					}
-					ImGui::PopStyleColor();
-				}
 
 				ImGui::EndGroupPanel();
 			}

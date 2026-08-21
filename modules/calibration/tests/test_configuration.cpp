@@ -229,7 +229,7 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
 	EXPECT_TRUE(dst.enableStaticRecalibration); // default true (flipped this session)
 	EXPECT_FLOAT_EQ(dst.jitterThreshold, 3.0f);
 	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::FAST);
-	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::AUTO);
+	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::SLOW);
 	EXPECT_EQ(dst.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
 	EXPECT_EQ(dst.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(dst.headMount.allowRawHmdFallback);
@@ -264,11 +264,11 @@ TEST(ConfigurationTest, RefusesProfileFromNewerSchema)
 TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly)
 {
 	// v0 had no schema_version key. Include the legacy auto-suppress key so
-	// we can verify the migration drops it. Add a SLOW calibration_speed so
-	// we can verify the v1->v2 step rewrites it to AUTO.
+	// we can verify the migration drops it. The v1->v2 step rewrote the old
+	// default SLOW to the retired AUTO tier, which now falls back to the
+	// current defaults on load.
 	std::string v0Json = MakeMinimalProfile(
 	    /*schemaVersion=*/0,
-	    // calibration_speed=1 -> SLOW. Migration rewrites to 3 (AUTO).
 	    "\"calibration_speed\":1,"
 	    "\"auto_suppress_on_external_tool\":true");
 
@@ -276,11 +276,8 @@ TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly)
 	std::stringstream io(v0Json);
 	ParseProfile(ctx, io);
 
-	// Migration v1->v2 rewrites legacy SLOW (=1) to AUTO (=3) since SLOW was
-	// the old default that most users never customised.
-	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST) << "legacy AUTO should become FAST for one-shot";
-	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO)
-	    << "v1->v2 migration should still land continuous mode on AUTO";
+	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST);
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::SLOW);
 
 	// Profile loaded; main fields populated.
 	EXPECT_EQ(ctx.referenceTrackingSystem, "lighthouse");
@@ -305,7 +302,7 @@ TEST(ConfigurationTest, MigrateV2ProfileLoadsWithEmptyExtras)
 	    << "v2 profile should load with no extras (additional_calibrations was added in v3)";
 }
 
-TEST(ConfigurationTest, MigrateV4FastSpeedKeepsOneShotFastAndContinuousAuto)
+TEST(ConfigurationTest, MigrateV4FastSpeedLandsOnBothSplitKeys)
 {
 	std::string v4Json = MakeMinimalProfile(
 	    /*schemaVersion=*/4, "\"calibration_speed\":0");
@@ -315,7 +312,7 @@ TEST(ConfigurationTest, MigrateV4FastSpeedKeepsOneShotFastAndContinuousAuto)
 	ParseProfile(ctx, io);
 
 	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST);
-	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO);
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::FAST);
 }
 
 TEST(ConfigurationTest, MigrateV4VerySlowSpeedPreservesSlowContinuousChoice)
@@ -400,17 +397,17 @@ TEST(ConfigurationTest, MissingLockedHeadsetRotationSmoothingDefaultsFromPositio
 	EXPECT_EQ(ctx.headMount.lockedHeadsetRotationSmoothing, 50u);
 }
 
-TEST(ConfigurationTest, ResolvedSpeedUsesContinuousSettingOnlyInContinuousMode)
+TEST(ConfigurationTest, ActiveSpeedUsesContinuousSettingOnlyInContinuousMode)
 {
 	CalibrationContext ctx;
 	ctx.oneShotCalibrationSpeed = CalibrationContext::FAST;
-	ctx.continuousCalibrationSpeed = CalibrationContext::AUTO;
+	ctx.continuousCalibrationSpeed = CalibrationContext::VERY_SLOW;
 
 	ctx.state = CalibrationState::None;
 	EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::FAST);
 
 	ctx.state = CalibrationState::Continuous;
-	EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::AUTO);
+	EXPECT_EQ(ctx.ActiveCalibrationSpeed(), CalibrationContext::VERY_SLOW);
 }
 
 TEST(ConfigurationTest, ContinuousSnapshotRestoresRelativePoseMetadata)
@@ -467,7 +464,7 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned)
 	EXPECT_FLOAT_EQ(ctx.continuousCalibrationThreshold, 1.5f);
 	EXPECT_FLOAT_EQ(ctx.maxRelativeErrorThreshold, 0.005f);
 	EXPECT_EQ(ctx.oneShotCalibrationSpeed, CalibrationContext::FAST) << "One-shot default speed is FAST.";
-	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::AUTO) << "Continuous default speed is AUTO.";
+	EXPECT_EQ(ctx.continuousCalibrationSpeed, CalibrationContext::SLOW) << "Continuous default speed is SLOW.";
 	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::OFF);
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback);

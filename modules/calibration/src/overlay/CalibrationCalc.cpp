@@ -496,9 +496,8 @@ double PositionJitterFor(const std::deque<Sample>& samples, PositionSelector sel
 const double CalibrationCalc::AxisVarianceThreshold = 0.001;
 void CalibrationCalc::PushSample(const Sample& sample)
 {
-	if (!sample.ref.trans.allFinite() || !sample.target.trans.allFinite() ||
-	    sample.ref.trans.cwiseAbs().maxCoeff() > 5.0 || sample.target.trans.cwiseAbs().maxCoeff() > 5.0) {
-		Metrics::WriteLogAnnotation("PushSample_dropped_oversize_or_nonfinite");
+	if (!sample.ref.trans.allFinite() || !sample.target.trans.allFinite()) {
+		Metrics::WriteLogAnnotation("PushSample_dropped_nonfinite");
 		return; // drop the sample
 	}
 	m_samples.push_back(sample);
@@ -1621,7 +1620,6 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			Metrics::lastRejectReason.clear();
 			m_isValid = true;
 			m_lastComputeUsedRelPose = true;
-			m_relativePosCalibrated = m_relativePosCalibrated || relPoseError < 0.005;
 			m_estimatedTransformation = byRelPose;
 			m_lastCandidateRetargetingErrorM = relPoseError;
 			return true;

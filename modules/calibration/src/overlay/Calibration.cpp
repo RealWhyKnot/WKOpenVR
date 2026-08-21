@@ -1,6 +1,5 @@
 #include "Calibration.h"
 #include "CalibrationProgress.h"
-#include "CalibrationAutoSpeed.h"
 #include "CalibrationOneShotDiagnostics.h"
 #include "CalibrationInternal.h"
 #include "CalibrationDevicePoseUtils.h"
@@ -241,46 +240,6 @@ void CalibrationContext::ResolveLockMode()
 	}
 }
 
-CalibrationContext::Speed CalibrationContext::ResolvedCalibrationSpeed() const
-{
-	const Speed requestedSpeed = ActiveCalibrationSpeed();
-	if (requestedSpeed != AUTO) {
-		return requestedSpeed;
-	}
-
-	// AUTO only re-evaluates meaningfully during continuous calibration --
-	// it watches drift evidence and slows the buffer down when conditions
-	// degrade. Outside continuous mode there's no second chance to switch,
-	// so AUTO would just gamble on the first fit sample. Default to FAST:
-	// the user can pick SLOW or VERY_SLOW explicitly if they want a larger
-	// buffer.
-	if (state != CalibrationState::Continuous && state != CalibrationState::ContinuousStandby) {
-		autoSpeedState = {};
-		lastAutoSpeedDecision = {};
-		return FAST;
-	}
-
-	namespace cs = spacecal::calibration_speed;
-	const cs::AutoSpeedPhase prevPhase = autoSpeedState.phase;
-	const double correctionFitRmsMm =
-	    cs::SelectObservedFitRmsMm(Metrics::error_currentCal.last(), Metrics::error_byRelPose.last());
-	const double freshFitRmsMm = Metrics::error_rawComputed.last();
-	const auto decision = cs::ResolveAutoSpeed(autoSpeedState, correctionFitRmsMm, freshFitRmsMm);
-	autoSpeedState = decision.state;
-	lastAutoSpeedDecision = decision;
-
-	if (decision.state.phase != prevPhase) {
-		Metrics::LogAnnotationf("auto_speed_phase: prev=%s now=%s reducible_mm=%.3f current_fit_mm=%.3f"
-		                        " fresh_fit_mm=%.3f dwell=%d",
-		                        cs::AutoSpeedPhaseName(prevPhase), cs::AutoSpeedPhaseName(decision.state.phase),
-		                        decision.reducibleMm, decision.correctionFitMm, decision.freshFitMm,
-		                        decision.state.settleTicks);
-	}
-
-	return decision.bucket == cs::AutoSpeedBucket::Fast   ? FAST
-	       : decision.bucket == cs::AutoSpeedBucket::Slow ? SLOW
-	                                                      : VERY_SLOW;
-}
 SCIPCClient Driver;
 protocol::DriverPoseShmem shmem;
 
@@ -382,8 +341,6 @@ void StartCalibration(const char* reason)
 	Metrics::error_currentCal.Clear();
 	Metrics::error_byRelPose.Clear();
 	Metrics::error_rawComputed.Clear();
-	CalCtx.autoSpeedState = {};
-	CalCtx.lastAutoSpeedDecision = {};
 	Metrics::jitterRef.Clear();
 	Metrics::jitterTarget.Clear();
 	Metrics::posOffset_currentCal.Clear();

@@ -483,38 +483,27 @@ bool CollectSample(const CalibrationContext& ctx)
 		checkMag(target, 1, "target");
 	}
 
-	// Validity gate. Previously this was `if (!poseIsValid && result != Running_OK)`,
-	// i.e. "fail only when BOTH signals say bad" -- permissive. The case the
-	// permissive form silently accepts is the one we care about: Quest Pro
-	// (and other inside-out drivers) regularly report `poseIsValid == false`
-	// for one tick during a relocalization while still claiming
-	// `result == Running_OK`. The pose for that single tick is genuinely
-	// invalid -- using it injects a phantom translation that the calibration
-	// math sees as legitimate motion and tries to fit. Tighten to `||`:
-	// reject if EITHER signal says bad.
-	//
-	// To watch the impact: every time this gate now rejects a sample that
-	// the old gate would have accepted, we annotate. If those annotations
-	// show up only in known-bad sessions, the change is a net win; if they
-	// show up at every tick of a healthy session, the gate is too tight and
-	// we revisit.
+	// Validity gate, upstream semantics: fail only when BOTH signals say bad.
+	// Inside-out drivers report `poseIsValid == false` with `Running_OK` for a
+	// tick around relocalizations; that single-signal case is annotated so
+	// sessions where it matters stay diagnosable.
 	bool ok = true;
 	const bool refSilentInvalid =
 	    !reference.poseIsValid && reference.result == vr::ETrackingResult::TrackingResult_Running_OK;
 	const bool tgtSilentInvalid =
 	    !target.poseIsValid && target.result == vr::ETrackingResult::TrackingResult_Running_OK;
-	if (!reference.poseIsValid || reference.result != vr::ETrackingResult::TrackingResult_Running_OK) {
+	if (!reference.poseIsValid && reference.result != vr::ETrackingResult::TrackingResult_Running_OK) {
 		CalCtx.Log("Reference device is not tracking\n");
 		ok = false;
 	}
-	if (!target.poseIsValid || target.result != vr::ETrackingResult::TrackingResult_Running_OK) {
+	if (!target.poseIsValid && target.result != vr::ETrackingResult::TrackingResult_Running_OK) {
 		CalCtx.Log("Target device is not tracking\n");
 		ok = false;
 	}
 	if (refSilentInvalid || tgtSilentInvalid) {
-		Metrics::WriteLogAnnotation(refSilentInvalid && tgtSilentInvalid ? "silent_invalid_pose_rejected: ref+tgt"
-		                            : refSilentInvalid                   ? "silent_invalid_pose_rejected: ref"
-		                                                                 : "silent_invalid_pose_rejected: tgt");
+		Metrics::WriteLogAnnotation(refSilentInvalid && tgtSilentInvalid ? "silent_invalid_pose_accepted: ref+tgt"
+		                            : refSilentInvalid                   ? "silent_invalid_pose_accepted: ref"
+		                                                                 : "silent_invalid_pose_accepted: tgt");
 	}
 	if (!ok) {
 		RecordRejectedReplaySampleDiagnostics(reference, target);

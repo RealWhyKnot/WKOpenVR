@@ -13,7 +13,6 @@
 
 #include "Protocol.h"
 #include "HeadMountDriverSynthConfig.h"
-#include "CalibrationAutoSpeed.h"
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -367,10 +366,6 @@ struct CalibrationContext
 		FAST = 0,
 		SLOW = 1,
 		VERY_SLOW = 2,
-		// Picks one of the above each tick based on observed reference+target jitter.
-		// Lets a casual user not have to think about it: the program watches its own
-		// noise floor and slows the calibration down when conditions are bad.
-		AUTO = 3,
 	};
 	static const char* SpeedName(Speed s)
 	{
@@ -381,18 +376,11 @@ struct CalibrationContext
 				return "slow";
 			case VERY_SLOW:
 				return "very_slow";
-			case AUTO:
-				return "auto";
 		}
 		return "?";
 	}
-	// One-shot defaults to FAST. Continuous defaults to AUTO so long-running
-	// sessions can adapt buffer size to observed jitter without making one-shot
-	// calibration wait on a sticky speed resolver.
 	Speed oneShotCalibrationSpeed = FAST;
-	Speed continuousCalibrationSpeed = AUTO;
-	mutable spacecal::calibration_speed::AutoSpeedState autoSpeedState;
-	mutable spacecal::calibration_speed::AutoSpeedDecision lastAutoSpeedDecision;
+	Speed continuousCalibrationSpeed = SLOW;
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
@@ -496,8 +484,6 @@ struct CalibrationContext
 		// a setting, not calibration data, and a user who deliberately set ON
 		// or OFF wants that to persist across profile clears.
 		lockRelativePosition = false;
-		autoSpeedState = {};
-		lastAutoSpeedDecision = {};
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
 		// user preference that spans profiles.
 		// No calibration was performed — relative pose is NOT calibrated. The
@@ -591,27 +577,17 @@ struct CalibrationContext
 		           : oneShotCalibrationSpeed;
 	}
 
-	// Resolve the user's selected speed to a concrete FAST/SLOW/VERY_SLOW. AUTO
-	// uses a two-phase policy: recover quickly while the current calibration is
-	// materially worse than the fresh fit, then size the buffer by the settled
-	// noise floor.
-	Speed ResolvedCalibrationSpeed() const;
-
 	size_t SampleCount()
 	{
-		switch (ResolvedCalibrationSpeed()) {
+		switch (ActiveCalibrationSpeed()) {
 			case FAST:
-				// 30 samples at ~18 Hz = ~1.7s buffer fill. The direct O(N) translation
-				// solve converges with N >= ~20 when the per-axis ranges are >= 10cm;
-				// the diversity gate already enforces that, so 30 is comfortably above
-				// the math floor.
-				return 30;
-			case SLOW:
 				return 100;
+			case SLOW:
+				return 250;
 			case VERY_SLOW:
-				return 200;
+				return 500;
 			default:
-				return 30;
+				return 100;
 		}
 	}
 
