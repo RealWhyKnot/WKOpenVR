@@ -22,6 +22,7 @@ await Run("analyzes episode ramps", AnalyzesEpisodeRamps);
 await Run("analyzes blinks and gaze", AnalyzesBlinksAndGaze);
 await Run("analyzes idle activity and jaw ratios", AnalyzesIdleActivityAndJawRatios);
 await Run("flags rounding against spreading", FlagsLipPostureConflicts);
+await Run("orders version directories numerically", OrdersVersionDirectoriesNumerically);
 
 if (failures.Count > 0)
 {
@@ -400,6 +401,39 @@ static Task AnalyzesBlinksAndGaze()
     Require(a.Gaze.SaccadeAmplitudeP50 is > 0.30 and < 0.45,
         $"saccade amplitude {a.Gaze.SaccadeAmplitudeP50:F3} != ~0.36");
     Require(a.Gaze.DwellMsP50 is > 1700 and < 2300, $"dwell {a.Gaze.DwellMsP50:F0}ms != ~2000");
+    return Task.CompletedTask;
+}
+
+// A lexicographic sort put "2026.8.4.0" above "2026.10.1.0" and would have kept loading the older
+// build forever once a month rolled past 9.
+static Task OrdersVersionDirectoriesNumerically()
+{
+    string[] dirs =
+    [
+        @"C:\m\2026.6.7.0-beta", @"C:\m\2026.8.21.0-4ED2", @"C:\m\2026.10.1.0", @"C:\m\2026.9.30.0",
+    ];
+
+    string newest = dirs
+        .OrderByDescending(SubprocessManager.VersionSortKey, StringComparer.Ordinal)
+        .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
+        .First();
+    Require(Path.GetFileName(newest) == "2026.10.1.0", $"picked {Path.GetFileName(newest)}");
+
+    // Non-numeric and short version names must not throw or win outright.
+    string[] mixed = [@"C:\m\1.4", @"C:\m\dev", @"C:\m\2026.8.21.0-4ED2"];
+    string pick = mixed
+        .OrderByDescending(SubprocessManager.VersionSortKey, StringComparer.Ordinal)
+        .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
+        .First();
+    Require(Path.GetFileName(pick) == "2026.8.21.0-4ED2", $"mixed picked {Path.GetFileName(pick)}");
+
+    // Same numeric core, differing build suffix: deterministic, never throws.
+    string[] tied = [@"C:\m\2026.8.21.0-AAAA", @"C:\m\2026.8.21.0-ZZZZ"];
+    string tie = tied
+        .OrderByDescending(SubprocessManager.VersionSortKey, StringComparer.Ordinal)
+        .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
+        .First();
+    Require(Path.GetFileName(tie) == "2026.8.21.0-ZZZZ", $"tie picked {Path.GetFileName(tie)}");
     return Task.CompletedTask;
 }
 

@@ -23,6 +23,9 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="WKOpenVR.FaceModuleHost.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="MeaMod.DNS" Version="1.0.71" />
     <PackageReference Include="System.Formats.Cbor" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />

@@ -191,6 +191,25 @@ public sealed class SubprocessManager : IDisposable
         }
     }
 
+    // Version directories must sort numerically, not lexicographically: "2026.10.1.0" is newer than
+    // "2026.8.4.0" but sorts below it as a string, which would silently keep loading the old build.
+    // Zero-pads each dotted component so an ordinal compare orders them correctly; the build/prerelease
+    // suffix is ignored here and broken by the caller's ordinal tiebreak.
+    internal static string VersionSortKey(string directoryPath)
+    {
+        string name = Path.GetFileName(directoryPath);
+        int dash = name.IndexOf('-');
+        string core = dash >= 0 ? name[..dash] : name;
+
+        var key = new StringBuilder();
+        foreach (string part in core.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            key.Append(int.TryParse(part, out int value) && value >= 0 ? value.ToString("D10") : "0000000000");
+        }
+
+        return key.ToString();
+    }
+
     public async Task<IReadOnlyList<DiscoveredModule>> LoadAllAsync()
     {
         SetPhase("discovering-modules");
@@ -206,7 +225,8 @@ public sealed class SubprocessManager : IDisposable
         foreach (string uuidDir in Directory.EnumerateDirectories(_opts.ModulesInstallDir))
         {
             string? versionDir = Directory.EnumerateDirectories(uuidDir)
-                .OrderDescending()
+                .OrderByDescending(VersionSortKey, StringComparer.Ordinal)
+                .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
                 .FirstOrDefault();
             if (versionDir is null)
             {
