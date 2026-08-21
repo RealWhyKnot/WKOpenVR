@@ -95,6 +95,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Prune old face replay recordings at recorder startup (f184c5c)
 - **phantom:** Auto-fill estimated waist and feet virtual trackers (87ce2d8)
 - **phantom:** Step synthesized feet with a walking gait (6b0d01b)
+- **calibration:** Adopt full 3-d rotation solve with conditioning and sample-admission gates (347ae60)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -169,6 +170,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Extract liveness, motion, solve and accept blocks from CalibrationTick (f38a42f)
 - **calibration:** Extract detector, telemetry and stall blocks from CalibrationTick (28176c3)
 - **calibration:** Move tick watchdog helpers to CalibrationWatchdogs.cpp (eb17863)
+- style(calibration): clang-format cleanup (24e8d1e)
+- **calibration:** Remove experimental weighting, fusion, accept gates, tilt damper, and master switch (4240e63)
+- **calibration:** Remove recovery, liveness, base-station drift, and auto-lock detector layers (7c38536)
+- **calibration:** Remove geometry-shift detector and quality-rejection breaker (c0c2978)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -324,6 +329,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **core:** Bound every overlay IPC operation with a deadline (90c4252)
 - **calibration:** Clarify mixed and/or grouping and drop a dead disjunct in ComputeIncremental (36d84f6)
 - **tests:** Keep the IPC fixture pipe instance alive across reconnects (8398b43)
+- **calibration:** Restore upstream sample windows, validity gate, and locked-branch parity (d3cb145)
 
 ---
 
