@@ -332,6 +332,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **tests:** Keep the IPC fixture pipe instance alive across reconnects (8398b43)
 - **calibration:** Restore upstream sample windows, validity gate, and locked-branch parity (d3cb145)
 - **facetracking:** Order module version directories numerically (c8f6fcb)
+- **facetracking:** List one installed version per module (5646150)
 
 ---
 
