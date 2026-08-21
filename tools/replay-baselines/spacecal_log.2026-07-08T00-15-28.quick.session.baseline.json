@@ -1,13 +1,13 @@
 {
   "rows": 8000.0,
-  "accepts": 391.0,
-  "applied_path_cm": 404.791,
-  "peak_step_cm": 279.726,
-  "net_drift_mag_cm": 281.888,
-  "wander_per_10min_cm": 37.416,
-  "max_unclassified_step_cm": 4.22665,
-  "rot_wander_per_10min_deg": 7.47759,
-  "max_unclassified_rot_step_deg": 0.806631,
-  "max_applied_tilt_deg": 1.58537,
-  "final_applied_tilt_deg": 1.02137
+  "accepts": 381.0,
+  "applied_path_cm": 860.259,
+  "peak_step_cm": 452.369,
+  "net_drift_mag_cm": 271.596,
+  "wander_per_10min_cm": 122.03,
+  "max_unclassified_step_cm": 258.481,
+  "rot_wander_per_10min_deg": 51.0563,
+  "max_unclassified_rot_step_deg": 135.071,
+  "max_applied_tilt_deg": 135.858,
+  "final_applied_tilt_deg": 0.667723
 }

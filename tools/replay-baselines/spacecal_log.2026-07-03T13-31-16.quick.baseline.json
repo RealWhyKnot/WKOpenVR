@@ -1,35 +1,35 @@
 {
   "baseline|w200": {
-    "FinalAppliedTiltDeg": 0.0,
-    "AppliedMagWanderCm": 1.88871,
-    "PerceptibleShifts": 3.0,
-    "Accepts": 5.0,
-    "PeakAppliedStepCm": 3.96788,
-    "TotalAppliedPathCm": 11.267,
-    "FinalErrorMm": 1.04705,
-    "NetDriftMagCm": 1.99726,
-    "MaxAppliedTiltDeg": 3.18055E-15
-  },
-  "relpose_uniform|w200": {
-    "FinalAppliedTiltDeg": 1.01155,
-    "AppliedMagWanderCm": 2.76017,
-    "PerceptibleShifts": 28.0,
-    "Accepts": 391.0,
-    "PeakAppliedStepCm": 0.798968,
-    "TotalAppliedPathCm": 72.7725,
-    "FinalErrorMm": 1.8855,
-    "NetDriftMagCm": 3.10222,
-    "MaxAppliedTiltDeg": 2.2432
+    "PeakAppliedStepCm": 7.72102,
+    "TotalAppliedPathCm": 17.7762,
+    "MaxAppliedTiltDeg": 2.43414,
+    "FinalErrorMm": 0.940793,
+    "Accepts": 4.0,
+    "AppliedMagWanderCm": 1.75646,
+    "NetDriftMagCm": 2.11744,
+    "PerceptibleShifts": 2.0,
+    "FinalAppliedTiltDeg": 0.453998
   },
   "seed_recorded_uniform|w200": {
-    "FinalAppliedTiltDeg": 1.01155,
-    "AppliedMagWanderCm": 46.0272,
-    "PerceptibleShifts": 29.0,
-    "Accepts": 391.0,
-    "PeakAppliedStepCm": 248.472,
-    "TotalAppliedPathCm": 321.245,
-    "FinalErrorMm": 1.8855,
-    "NetDriftMagCm": 250.807,
-    "MaxAppliedTiltDeg": 2.2432
+    "PeakAppliedStepCm": 212.745,
+    "TotalAppliedPathCm": 515.63,
+    "MaxAppliedTiltDeg": 49.6586,
+    "FinalErrorMm": 1.58885,
+    "Accepts": 383.0,
+    "AppliedMagWanderCm": 78.187,
+    "NetDriftMagCm": 250.599,
+    "PerceptibleShifts": 40.0,
+    "FinalAppliedTiltDeg": 1.0468
+  },
+  "relpose_uniform|w200": {
+    "PeakAppliedStepCm": 212.745,
+    "TotalAppliedPathCm": 414.215,
+    "MaxAppliedTiltDeg": 49.6586,
+    "FinalErrorMm": 1.58885,
+    "Accepts": 383.0,
+    "AppliedMagWanderCm": 78.187,
+    "NetDriftMagCm": 211.864,
+    "PerceptibleShifts": 40.0,
+    "FinalAppliedTiltDeg": 1.0468
   }
 }
