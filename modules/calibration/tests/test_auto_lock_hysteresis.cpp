@@ -577,7 +577,7 @@ TEST(AutoLockCommitGateTest, UnlockTimeoutBeatsStationaryInTag)
 TEST(AutoLockDetectorScopeTest, ExplicitModeComputesMadOnly)
 {
 	const auto scope = al::ScopeFor(/*modeIsLegacyAuto=*/false, /*calibratedHeadMountTarget=*/false);
-	EXPECT_TRUE(scope.computeMad) << "warm-restart validation reads the MAD floor in every mode";
+	EXPECT_TRUE(scope.computeMad) << "the MAD floor is read in every mode";
 	EXPECT_FALSE(scope.runDecisions) << "explicit ON/OFF never consumes the verdict";
 }
 

@@ -1,6 +1,5 @@
 #include "Calibration.h"
 #include "CalibrationAutoSpeed.h"
-#include "CalibrationExperimentFlags.h"
 #include "Configuration.h"
 #include "CalibrationMetrics.h"
 #include "Wizard.h"
@@ -19,10 +18,6 @@ void DrawVectorElement(const std::string id, const char* text, double* value, in
 // CalibrationInternal.h because that header pulls in <openvr_driver.h>, which
 // conflicts with the <openvr.h> this translation unit already includes.
 void SendFreezeAllTracking();
-
-// Forward decl (defined in CalibrationRecoveryTick.cpp); declared locally for
-// the same header-conflict reason as SendFreezeAllTracking above.
-void ResetCustomCheckState(CalibrationContext& ctx);
 
 static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max,
                             int flags = ImGuiSliderFlags_AlwaysClamp)
@@ -65,18 +60,6 @@ template <typename Fn> static void AddResetContextMenu(const char* popupId, Fn r
 	}
 }
 
-static void LogExperimentToggle(const char* optionName, bool enabled)
-{
-	const std::string annotation = spacecal::calibration_experiments::ToggleAnnotation(optionName, enabled);
-	Metrics::WriteLogAnnotation(annotation.c_str());
-}
-
-static bool ExperimentCheckbox(const char* optionName, const char* id, bool* value, const char* tooltip)
-{
-	if (!openvr_pair::overlay::ui::CheckboxWithTooltip(id, value, tooltip)) return false;
-	LogExperimentToggle(optionName, *value);
-	return true;
-}
 
 // Persist a continuous-speed radio choice with a log annotation; the setting
 // changes the solve window (and so the whole session's log shape), which made
@@ -191,22 +174,6 @@ void CCal_DrawSettings()
 			    "Drop sample pairs whose rotation axis disagrees with the consensus before the LS solve.\n"
 			    "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
 			    "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
-		}
-		if (ExperimentCheckbox("precision_weighted_relpose", "Weight samples by distance##precision_weighted_relpose",
-		                       &CalCtx.precisionWeightedRelPose,
-		                       "Weight each sample by how far the devices are from the playspace origin\n"
-		                       "(closer = more trustworthy) when the locked relative pose is averaged.\n"
-		                       "Keeps a far-from-origin playspace from slowly dragging the calibration.\n"
-		                       "Default on.  Turn off for the plain uniform average.")) {
-			SaveProfile(CalCtx);
-		}
-		if (ExperimentCheckbox("gravity_tilt_damping", "Damp calibration tilt##gravity_tilt_damping",
-		                       &CalCtx.gravityTiltDamping,
-		                       "Move the roll/pitch of the playspace calibration slowly (minutes) toward the\n"
-		                       "solver's answer and cap it at 4 degrees; yaw and position update at normal\n"
-		                       "speed.  Stops trackers from gradually leaning sideways over a session.\n"
-		                       "Default on.  Turn off for the unfiltered solve.")) {
-			SaveProfile(CalCtx);
 		}
 		ImGui::EndGroupPanel();
 		ImGui::Spacing();
@@ -472,39 +439,6 @@ void CCal_DrawSettings()
 			ImGui::EndGroupPanel();
 		}
 
-		{
-			ImGui::BeginGroupPanel("Experimental", panel_size);
-			openvr_pair::overlay::ui::DrawSettingTable(
-			    "##advanced_experimental_grid", 230.0f, [&](openvr_pair::overlay::ui::SettingTableScope& table) {
-				    openvr_pair::overlay::ui::SettingRow(table, "Enhanced tracking stability", [&] {
-					    if (ExperimentCheckbox(
-					            "enhanced_tracking_checks", "##experimental_enhanced_tracking_checks",
-					            &CalCtx.enhancedTrackingChecks,
-					            "Extra safeguards for continuous calibration: distance-aware sample weighting, "
-					            "automatic recovery after headset relocations and breaks, and stricter validation "
-					            "when a saved profile is restored. Off runs the classic calibration pipeline "
-					            "(matches the original OpenVR-SpaceCalibrator) -- try that first if tracking ever "
-					            "misbehaves. Takes effect immediately. Default off.")) {
-						    SaveProfile(CalCtx);
-						    ResetCustomCheckState(CalCtx);
-					    }
-				    });
-				    ImGui::BeginDisabled(!CalCtx.enhancedTrackingChecks);
-				    openvr_pair::overlay::ui::SettingRow(table, "Confidence-weighted calibration", [&] {
-					    if (ExperimentCheckbox(
-					            "confidence_weighted_calibration", "##head_mount_experimental_confidence_fusion",
-					            &CalCtx.headMount.experimentalConfidenceFusion,
-					            "Fuse each accepted continuous re-solve into a running estimate weighted by its "
-					            "geometry confidence, instead of overwriting the calibration outright (classic "
-					            "behaviour). Needs Enhanced tracking stability. Sample-level distance weighting is "
-					            "its own setting under Diagnostics. Experimental. Default off.")) {
-						    SaveProfile(CalCtx);
-					    }
-				    });
-				    ImGui::EndDisabled();
-			    });
-			ImGui::EndGroupPanel();
-		}
 	}
 
 	// Maintenance buttons grouped in their own panel so they don't read as

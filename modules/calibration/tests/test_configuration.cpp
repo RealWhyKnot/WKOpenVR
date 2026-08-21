@@ -26,8 +26,6 @@
 
 #include "Configuration.h"
 #include "Calibration.h"
-#include "CalibrationInternal.h" // ProfileTransform -- tilt computation for the load-clamp tests
-#include "GravityAlignment.h"
 #include "TrackingStyle.h"
 
 namespace {
@@ -180,134 +178,6 @@ TEST(ConfigurationTest, ProfileWithoutLockKeyGetsContinuousStyleDefaultOn)
 
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Continuous);
 	EXPECT_EQ(ctx.lockRelativePositionMode, CalibrationContext::LockMode::ON);
-}
-
-TEST(ConfigurationTest, PrecisionWeightedRelPoseDefaultsOnWhenKeyAbsent)
-{
-	// Profiles written before the weighting setting existed carry no key;
-	// those loads take the default (on) without migration.
-	std::string json = MakeMinimalProfile(/*schemaVersion=*/7, "\"tracking_style\":1");
-
-	CalibrationContext ctx;
-	std::stringstream io(json);
-	ParseProfile(ctx, io);
-
-	EXPECT_TRUE(ctx.precisionWeightedRelPose);
-}
-
-TEST(ConfigurationTest, PrecisionWeightedRelPoseRoundTrips)
-{
-	CalibrationContext src;
-	src.referenceTrackingSystem = "lighthouse";
-	src.targetTrackingSystem = "oculus";
-	src.validProfile = true;
-	ApplyTrackingStylePreset(src, TrackingStyle::Continuous);
-	src.precisionWeightedRelPose = false; // explicit off must survive
-
-	std::stringstream io;
-	WriteProfile(src, io);
-	EXPECT_NE(io.str().find("precision_weighted_relpose"), std::string::npos)
-	    << "always written: an absent key means the on-default";
-
-	CalibrationContext dst;
-	ParseProfile(dst, io);
-	EXPECT_FALSE(dst.precisionWeightedRelPose);
-}
-
-TEST(ConfigurationTest, GravityTiltDampingDefaultsOnWhenKeyAbsent)
-{
-	// Profiles written before tilt damping existed carry no key; those loads
-	// take the default (on) without migration.
-	std::string json = MakeMinimalProfile(/*schemaVersion=*/7, "\"tracking_style\":1");
-
-	CalibrationContext ctx;
-	std::stringstream io(json);
-	ParseProfile(ctx, io);
-
-	EXPECT_TRUE(ctx.gravityTiltDamping);
-}
-
-TEST(ConfigurationTest, GravityTiltDampingRoundTrips)
-{
-	CalibrationContext src;
-	src.referenceTrackingSystem = "lighthouse";
-	src.targetTrackingSystem = "oculus";
-	src.validProfile = true;
-	ApplyTrackingStylePreset(src, TrackingStyle::Continuous);
-	src.gravityTiltDamping = false; // explicit off must survive
-
-	std::stringstream io;
-	WriteProfile(src, io);
-	EXPECT_NE(io.str().find("gravity_tilt_damping"), std::string::npos)
-	    << "always written: an absent key means the on-default";
-
-	CalibrationContext dst;
-	ParseProfile(dst, io);
-	EXPECT_FALSE(dst.gravityTiltDamping);
-}
-
-namespace {
-double LoadedTiltDeg(const CalibrationContext& ctx)
-{
-	return spacecal::gravity::TiltAngleDeg(
-	    Eigen::Quaterniond(ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation()));
-}
-} // namespace
-
-// A banked tilt beyond the cap is clamped at load when damping is on -- and
-// only then. Under-cap tilt (a real floor alignment) is never touched.
-// (CalibrationContext is move-only, so each variant builds a fresh one.)
-TEST(ConfigurationTest, LoadClampsBankedTiltOnlyWhenDampingOn)
-{
-	const double capDeg = spacecal::gravity::kMaxTiltRad * 180.0 / EIGEN_PI;
-
-	auto fillSrc = [](CalibrationContext& src, double tiltDeg, bool damping) {
-		src.referenceTrackingSystem = "oculus";
-		src.targetTrackingSystem = "lighthouse";
-		src.validProfile = true;
-		ApplyTrackingStylePreset(src, TrackingStyle::Continuous);
-		src.calibratedTranslation = Eigen::Vector3d(120.0, 210.0, -230.0);
-		src.calibratedRotation = Eigen::Vector3d(tiltDeg, 45.0, 0.0);
-		src.gravityTiltDamping = damping;
-	};
-
-	// Damping on (default): load clamps to the cap, yaw survives.
-	{
-		CalibrationContext src;
-		fillSrc(src, 8.0, true);
-		// Pre-condition: the constructed profile really carries ~8 deg of tilt.
-		ASSERT_NEAR(LoadedTiltDeg(src), 8.0, 0.1);
-		std::stringstream io;
-		WriteProfile(src, io);
-		CalibrationContext dst;
-		ParseProfile(dst, io);
-		ASSERT_TRUE(dst.gravityTiltDamping);
-		EXPECT_NEAR(LoadedTiltDeg(dst), capDeg, 0.05);
-	}
-
-	// Damping off: the profile loads untouched.
-	{
-		CalibrationContext src;
-		fillSrc(src, 8.0, false);
-		std::stringstream io;
-		WriteProfile(src, io);
-		CalibrationContext dst;
-		ParseProfile(dst, io);
-		EXPECT_NEAR(LoadedTiltDeg(dst), 8.0, 0.1);
-	}
-
-	// Damping on, under-cap tilt: untouched (real floor tilt is preserved).
-	{
-		CalibrationContext src;
-		fillSrc(src, 1.5, true);
-		ASSERT_NEAR(LoadedTiltDeg(src), 1.5, 0.05);
-		std::stringstream io;
-		WriteProfile(src, io);
-		CalibrationContext dst;
-		ParseProfile(dst, io);
-		EXPECT_NEAR(LoadedTiltDeg(dst), 1.5, 0.05);
-		EXPECT_NEAR(dst.calibratedRotation.y(), 45.0, 1e-6) << "under-cap load must be byte-stable, not re-derived";
-	}
 }
 
 // v40 freeze-all-tracking: the "Include headset" preference persists; the active
@@ -793,8 +663,6 @@ TEST(ConfigurationTest, MigrateV3ProfileLoadsWithDisabledV4Sections)
 	EXPECT_FALSE(ctx.headMount.offsetWitnessAutoCaptured)
 	    << "profile without the key must default offsetWitnessAutoCaptured to false (manual offset)";
 	EXPECT_TRUE(ctx.headMount.autoCorrectOffset) << "v3 profile must default head_mount.autoCorrectOffset to true";
-	EXPECT_FALSE(ctx.headMount.experimentalConfidenceFusion)
-	    << "profile without the key must default confidence fusion to false";
 	EXPECT_TRUE(ctx.headMount.allowRawHmdFallback) << "v3 profile must default raw HMD fallback to true";
 	EXPECT_EQ(ctx.trackingStyle, TrackingStyle::Manual);
 	EXPECT_TRUE(wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming))
@@ -818,7 +686,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	src.headMount.offsetCalibrated = true;
 	src.headMount.offsetWitnessAutoCaptured = true;
 	src.headMount.autoCorrectOffset = false;
-	src.headMount.experimentalConfidenceFusion = true;
 	src.headMount.lockedHeadsetSmoothing = 65;
 	src.headMount.lockedHeadsetRotationSmoothing = 35;
 	src.headMount.driverSynthTiming.staleLimitMs = 120;
@@ -849,7 +716,6 @@ TEST(ConfigurationTest, V4SectionsRoundTrip)
 	EXPECT_TRUE(dst.headMount.offsetCalibrated);
 	EXPECT_TRUE(dst.headMount.offsetWitnessAutoCaptured);
 	EXPECT_FALSE(dst.headMount.autoCorrectOffset);
-	EXPECT_TRUE(dst.headMount.experimentalConfidenceFusion);
 	EXPECT_FALSE(dst.headMount.allowRawHmdFallback);
 	EXPECT_EQ(dst.headMount.lockedHeadsetSmoothing, 65);
 	EXPECT_EQ(dst.headMount.lockedHeadsetRotationSmoothing, 35);
@@ -910,29 +776,4 @@ TEST(ConfigurationTest, HeadMountAutoCorrectDisabledPersistsWhenOtherwiseDefault
 	EXPECT_EQ(dst.headMount.mode, HeadMountMode::Off);
 	EXPECT_TRUE(dst.headMount.trackerSerial.empty());
 	EXPECT_FALSE(dst.headMount.offsetCalibrated);
-}
-
-TEST(ConfigurationTest, HeadMountExperimentalFusionDefaultsOffAndPersistsWhenEnabled)
-{
-	CalibrationContext src;
-	src.referenceTrackingSystem = "lighthouse";
-	src.targetTrackingSystem = "oculus";
-	src.validProfile = true;
-
-	std::stringstream defaultOut;
-	WriteProfile(src, defaultOut);
-	EXPECT_EQ(defaultOut.str().find("experimental_confidence_fusion"), std::string::npos);
-
-	src.headMount.experimentalConfidenceFusion = true;
-	std::stringstream enabledOut;
-	WriteProfile(src, enabledOut);
-	const std::string json = enabledOut.str();
-	EXPECT_NE(json.find("\"head_mount\""), std::string::npos);
-	EXPECT_NE(json.find("\"experimental_confidence_fusion\""), std::string::npos);
-
-	CalibrationContext dst;
-	std::stringstream in(json);
-	ParseProfile(dst, in);
-	EXPECT_TRUE(dst.headMount.experimentalConfidenceFusion);
-	EXPECT_TRUE(dst.headMount.autoCorrectOffset);
 }

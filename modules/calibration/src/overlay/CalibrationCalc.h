@@ -9,9 +9,6 @@
 #include <iostream>
 #include <limits>
 
-#include "LeverArmCovariance.h"
-#include "RelPoseLockGate.h"
-
 struct Pose
 {
 	Eigen::Matrix3d rot;
@@ -244,100 +241,6 @@ public:
 		m_relativePosCalibrated = calibrated;
 	}
 
-	// Sample weighting for the relative-pose average (CalibrateByRelPose).
-	// Uniform is the classic upstream mean; ScalarLever is the isotropic
-	// 1/lever-arm^2 precision weight (replay A/B); Covariance is the full
-	// anisotropic lever-arm model (LeverArmCovariance.h) the live tick uses
-	// when the enhanced-tracking switch is on.
-	enum class RelPoseWeightMode
-	{
-		Uniform,
-		ScalarLever,
-		Covariance
-	};
-	void SetRelPoseWeightMode(RelPoseWeightMode mode) { m_relPoseWeightMode = mode; }
-
-	// Bool back-compat wrapper (replay A/B + existing tests): on maps to the
-	// scalar lever weight, off to the uniform mean.
-	void SetPrecisionWeightedRelPose(bool on)
-	{
-		m_relPoseWeightMode = on ? RelPoseWeightMode::ScalarLever : RelPoseWeightMode::Uniform;
-	}
-
-	// Noise model for the covariance weight (and the sequential validation
-	// residual). Clamped to the LeverArmCovariance.h knob ranges.
-	void SetLeverArmSigmas(double sigmaThetaRad, double sigmaJitM);
-
-	// Observability gate (ObservabilityGate.h): when on, candidate updates to
-	// a valid prior are projected onto the rotation-axis subspace the sample
-	// window has actually excited; unobserved components hold the prior.
-	// Follows the enhanced-tracking master switch live.
-	void SetV2Math(bool on) { m_useV2Math = on; }
-
-	// lambda_min of the last solve's excitation matrix (diagnostic; -1 until
-	// a gated solve has run).
-	double LastObservabilityLambdaMin() const { return m_lastObservabilityLambdaMin; }
-
-	// SE(3) residual of the latest valid sample against `applied`:
-	// Log(applied * estimate^-1) with estimate = R * S * T^-1, ordering
-	// [rho; phi] (Se3Log.h). Outputs the sample's ref/target translations so
-	// the caller can whiten with the lever-arm covariance. False when no
-	// valid sample or no locked relative pose is available.
-	bool LatestSe3Residual(const Eigen::AffineCompact3d& applied, Eigen::Matrix<double, 6, 1>* residual,
-	                       Eigen::Vector3d* refTrans, Eigen::Vector3d* tgtTrans) const;
-
-	// While set, the locked-relpose accept skips its step deadband/cap (the
-	// quality gates still apply). The live tick arms this during warm-restart
-	// grace and before the session's first accepted candidate, where a large
-	// intentional move is expected; replay mirrors the same windows.
-	void SetStepGateBypass(bool on) { m_stepGateBypass = on; }
-
-	// Locked-relpose accept gate (RelPoseLockGate.h: deadband, max-error,
-	// consensus escape, drift follower). Follows the enhanced-tracking master
-	// switch: off means every validated locked candidate is applied directly,
-	// the classic upstream behaviour.
-	void SetLockedAcceptGate(bool on) { m_useLockedAcceptGate = on; }
-
-	// Drops the locked-accept gate's rolling state (oversize-consensus streak,
-	// drift-follower ring). Called when the enhanced-tracking master switch
-	// flips at runtime so stale windows don't influence the first gated
-	// accepts after re-enable.
-	void ResetCustomGateState()
-	{
-		m_lockedOversizeConsensus = {};
-		m_lockedDriftFollower = {};
-	}
-
-	// True when the most recent accepted locked-relpose candidate landed via
-	// the oversize consensus escape (the frame moved with no observable
-	// event). Callers annotate/classify that step instead of counting it as
-	// wander.
-	bool LastAcceptWasConsensusStep() const { return m_lastAcceptWasConsensusStep; }
-
-	// True when the most recent accepted locked-relpose candidate landed via
-	// the in-band drift follower (the candidate-cluster median departed the
-	// held calibration). Bounded (<= kStepMaxCm) and deliberate; callers
-	// annotate/classify it like the consensus step.
-	bool LastAcceptWasDriftStep() const { return m_lastAcceptWasDriftStep; }
-
-	// Gravity-constrained relative-pose solve: project the solved calibration
-	// rotation to its yaw-about-gravity component. Replay-only A/B knob --
-	// corpus replay refuted it live (real floor tilt exists on some rigs and
-	// projection worsens fit). See GravityAlignment.h.
-	void SetGravityConstrainedRelPose(bool on) { m_useGravityConstrainedRelPose = on; }
-
-	// Tilt damping for the locked-relpose accept: yaw + translation follow
-	// each accepted candidate at full speed while the swing (roll/pitch)
-	// component is low-passed toward the candidate and capped. Suppresses the
-	// weak-observability tilt random walk without zeroing a real floor tilt.
-	// See GravityAlignment.h.
-	void SetTiltDamping(bool on) { m_useTiltDamping = on; }
-
-	// Mean of (|ref.trans|^2 + |target.trans|^2) over the current sample window
-	// (m^2) -- the squared lever arm that scales the relpose solve's translation
-	// uncertainty. Feeds the confidence weighting of the calibration over time.
-	double MeanSquaredLeverArmM2() const;
-
 	void SeedEstimatedTransformation(const Eigen::AffineCompact3d& transform, bool annotate = true);
 
 	void PushSample(const Sample& sample);
@@ -434,8 +337,7 @@ private:
 	// Cached priorCalibrationError from the most recent successful
 	// ValidateCalibration call inside ComputeIncremental, in metres.
 	// INFINITY when no successful compute has happened yet (or after a
-	// Clear). Exposed via LastPriorErrorM() for the common-mode
-	// coherence check.
+	// Clear). Exposed via LastPriorErrorM().
 	double m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 	double m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 	int m_shadowConsecutiveImprovingCandidates = 0;
@@ -446,40 +348,6 @@ private:
 	 * That is to say, it's given by transforming the target world pose by the inverse reference pose.
 	 */
 	Eigen::AffineCompact3d m_refToTargetPose = Eigen::AffineCompact3d::Identity();
-
-	// Sample-weighting mode for CalibrateByRelPose (see RelPoseWeightMode).
-	// The live tick selects Covariance whenever the enhanced-tracking switch
-	// plus the profile's precision_weighted_relpose setting (or the
-	// experimental confidence fusion) are active; the scalar mode survives
-	// for replay A/B.
-	RelPoseWeightMode m_relPoseWeightMode = RelPoseWeightMode::Uniform;
-	// Lever-arm noise model (LeverArmCovariance.h); config knobs live on the
-	// profile and are pushed by the tick.
-	double m_sigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;
-	double m_sigmaJitM = spacecal::levercov::kDefaultSigmaJitterM;
-	// Observability gate (SetV2Math) + last-solve lambda_min diagnostic.
-	bool m_useV2Math = false;
-	mutable double m_lastObservabilityLambdaMin = -1.0;
-	// Replay-only A/B knob; never set on the live path.
-	bool m_useGravityConstrainedRelPose = false;
-	// Tilt damping (SetTiltDamping) + timestamp of the last damped accept,
-	// used to derive the per-accept low-pass gain from elapsed time.
-	bool m_useTiltDamping = false;
-	double m_tiltLastAcceptTime = 0.0;
-
-	// Project `candidate`'s delta against `prior` onto the observed subspace
-	// of the current sample window (ObservabilityGate.h); returns the gated
-	// candidate. Identity pass-through when every direction is observed.
-	Eigen::AffineCompact3d ApplyObservabilityGate(const Eigen::AffineCompact3d& prior,
-	                                              const Eigen::AffineCompact3d& candidate) const;
-
-	// Locked-relpose accept gating (see RelPoseLockGate.h).
-	bool m_useLockedAcceptGate = true;
-	bool m_stepGateBypass = false;
-	bool m_lastAcceptWasConsensusStep = false;
-	bool m_lastAcceptWasDriftStep = false;
-	spacecal::relpose_lock::OversizeConsensusState m_lockedOversizeConsensus;
-	spacecal::relpose_lock::SmallStepDriftState m_lockedDriftFollower;
 
 	std::deque<Sample> m_samples;
 

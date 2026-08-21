@@ -117,21 +117,18 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			s_lastHeartbeatTime = time;
 			const auto& errSeries = Metrics::error_currentCal;
 			const double errLast = errSeries.size() > 0 ? errSeries.last() : 0.0;
-			char hbBuf[640];
+			char hbBuf[512];
 			snprintf(hbBuf, sizeof hbBuf,
 			         "[cal-heartbeat] state=%d trackingStyle=%d headMountMode=%d lockMode=%d lockRel=%d"
 			         " err_last_mm=%.2f err_samples=%d"
 			         " relPosCal=%d hmdStalls=%d"
-			         " head_mount_eff_mode=%d synth_fallbacks=%llu"
-			         " enhanced_checks=%d obs_lambda_min=%.2f tilt_deg=%.2f tilt_damping=%d",
+			         " head_mount_eff_mode=%d synth_fallbacks=%llu tilt_deg=%.2f",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
 			         (int)ctx.lockRelativePosition, errLast, errSeries.size(), (int)ctx.relativePosCalibrated,
 			         ctx.consecutiveHmdStalls, (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx),
-			         (unsigned long long)ctx.driverSynthFallbackTotal, (int)ctx.CustomChecksActive(),
-			         calibration.LastObservabilityLambdaMin(),
+			         (unsigned long long)ctx.driverSynthFallbackTotal,
 			         spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(
-			             ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation())),
-			         (int)ctx.gravityTiltDamping);
+			             ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation())));
 			Metrics::WriteLogAnnotation(hbBuf);
 		}
 	}
@@ -139,8 +136,7 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 
 // One-shot session-start config dump. Fires on the first non-skipped
 // CalibrationTick after the profile has been loaded, so the annotation
-// reflects the user's actual saved settings. Captures every experimental
-// toggle + the load-bearing tunables. Lets a session reader skip the
+// reflects the user's actual saved settings. Lets a session reader skip the
 // "what version of the math is running" reverse-derivation from code.
 void EmitSessionConfigDumpOnce(CalibrationContext& ctx)
 {
@@ -152,10 +148,10 @@ void EmitSessionConfigDumpOnce(CalibrationContext& ctx)
 			snprintf(dumpBuf, sizeof dumpBuf,
 			         "session_config_dump: ignore_outliers=%d static_recal=%d"
 			         " recalibrate_on_movement=%d one_shot_speed=%.2f continuous_speed=%.2f active_speed=%.2f "
-			         "jitter_threshold=%.2f gravity_tilt_damping=%d",
+			         "jitter_threshold=%.2f",
 			         (int)ctx.ignoreOutliers, (int)ctx.enableStaticRecalibration, (int)ctx.recalibrateOnMovement,
 			         (double)ctx.oneShotCalibrationSpeed, (double)ctx.continuousCalibrationSpeed,
-			         (double)ctx.ActiveCalibrationSpeed(), (double)ctx.jitterThreshold, (int)ctx.gravityTiltDamping);
+			         (double)ctx.ActiveCalibrationSpeed(), (double)ctx.jitterThreshold);
 			Metrics::WriteLogAnnotation(dumpBuf);
 		}
 	}

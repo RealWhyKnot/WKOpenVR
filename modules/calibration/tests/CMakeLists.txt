@@ -28,13 +28,6 @@ set(SPACECAL_SRC "${CMAKE_SOURCE_DIR}/modules/calibration/src")
 add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_controller_input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_calc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_relpose_lock_gate.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_lever_arm_covariance.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_custom_checks_gate.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_observability_gate.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_sprt_validation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_precision_weighted_relpose.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_continuous_precision_fusion.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_anchor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_auto_speed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_protocol.cpp
@@ -47,14 +40,10 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_device_filters.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_quash_pose_flags.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_auto_lock_hysteresis.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_warm_restart.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_pose_sampling.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_progress.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_snap_suppression.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_recovery_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reanchor_ramp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_gravity_alignment.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_tilt_damping.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_time_offset_xcorr.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_time_sync.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_driver_synth.cpp

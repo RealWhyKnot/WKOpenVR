@@ -4,12 +4,7 @@
 #include "Protocol.h"
 #include "CalibrationRejectReason.h"
 #include "RuntimeHealthSummary.h"
-#include "RotationMatrix3.h"           // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
-#include "ContinuousPrecisionFusion.h" // spacecal::precision::kLeverRegM2 -- geometry weight.
-#include "GravityAlignment.h"          // spacecal::gravity::ProjectRotationToYaw -- 4-DoF constraint.
-#include "LeverArmCovariance.h"        // spacecal::levercov -- anisotropic sample weighting.
-#include "ObservabilityGate.h"         // spacecal::observability -- unobserved-DoF hold.
-#include "Se3Log.h"                    // spacecal::se3 -- validation residual.
+#include "RotationMatrix3.h" // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
 
 #include <algorithm>
 #include <cmath>
@@ -525,11 +520,6 @@ void CalibrationCalc::Clear()
 	m_lastPriorRetargetingErrorM = std::numeric_limits<double>::infinity();
 	m_lastCandidateRetargetingErrorM = std::numeric_limits<double>::infinity();
 	m_shadowConsecutiveImprovingCandidates = 0;
-	m_lastAcceptWasConsensusStep = false;
-	m_lastAcceptWasDriftStep = false;
-	m_lockedOversizeConsensus = {};
-	m_lockedDriftFollower = {};
-	m_tiltLastAcceptTime = 0.0;
 }
 
 size_t CalibrationCalc::EvictSamplesBefore(double timestamp)
@@ -1439,11 +1429,6 @@ private:
 	Eigen::Matrix<double, 4, Eigen::Dynamic> quatAvg;
 	Eigen::Vector3d accum = Eigen::Vector3d::Zero();
 	int i = 0;
-	double weightSum = 0.0;
-	// Covariance-weighted accumulators (PushCovarianceWeighted).
-	Eigen::Matrix4d quatOuterSum = Eigen::Matrix4d::Zero();
-	Eigen::Matrix3d infoSum = Eigen::Matrix3d::Zero();
-	Eigen::Vector3d infoAccum = Eigen::Vector3d::Zero();
 
 public:
 	PoseAverager(size_t n_samples) { quatAvg.resize(4, n_samples); }
@@ -1495,115 +1480,6 @@ public:
 		return accum.Average();
 	}
 
-	// Precision-weighted variants: each sample contributes proportional to `w`.
-	// A per-sample C-estimate's translation error scales with the lever arm
-	// (distance of ref/target from their tracking origins) times angular jitter,
-	// so weighting by 1/lever-arm^2 is the Gauss-Markov-optimal fusion -- it
-	// down-weights far-from-origin (low-precision) samples instead of trusting
-	// them equally. Weighted quaternion mean: scale each column by sqrt(w) so
-	// quatAvg * quatAvg^T = sum(w * q q^T).
-	template <typename P> void PushWeighted(const P& pose, double w)
-	{
-		if (!(w > 0.0)) return;
-		const double sw = std::sqrt(w);
-		const Eigen::Quaterniond rot(pose.rotation());
-		quatAvg.col(i++) = sw * Eigen::Vector4d(rot.w(), rot.x(), rot.y(), rot.z());
-		accum += w * pose.translation();
-		weightSum += w;
-	}
-
-	Eigen::AffineCompact3d WeightedAverage()
-	{
-		Eigen::Matrix4d quatMul = quatAvg.leftCols(i) * quatAvg.leftCols(i).transpose();
-		Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
-		solver.compute(quatMul);
-
-		Eigen::Vector4d quatAvgV = solver.eigenvectors().col(3).real().normalized();
-		Eigen::Quaterniond avgQ(quatAvgV(0), quatAvgV(1), quatAvgV(2), quatAvgV(3));
-		avgQ.normalize();
-
-		Eigen::AffineCompact3d pose(avgQ);
-		pose.pretranslate(accum * (weightSum > 0.0 ? 1.0 / weightSum : 0.0));
-
-		return pose;
-	}
-
-	template <typename XS, typename F, typename W>
-	static Eigen::AffineCompact3d WeightedAverageFor(const XS& samples, const F& poseProvider, const W& weightProvider)
-	{
-		int sampleCount = 0;
-		for (auto& sample : samples) {
-			if (!sample.valid) continue;
-			sampleCount++;
-		}
-
-		PoseAverager accum(sampleCount);
-
-		for (auto& sample : samples) {
-			if (!sample.valid) continue;
-			accum.PushWeighted(poseProvider(sample), weightProvider(sample));
-		}
-
-		return accum.WeightedAverage();
-	}
-
-	// Covariance-weighted variant: the translation average consumes the full
-	// anisotropic information matrix W = Sigma^-1 (a far sample is distrusted
-	// only in the directions its lever arm actually corrupts), solved as
-	// (sum W_i)^-1 * (sum W_i * t_i). The quaternion mean has no matrix form,
-	// so it takes the isotropic scalar equivalent of the same covariance,
-	// accumulated directly as sum(w * q q^T) -- same eigen-mean as the column
-	// form above without staging the columns.
-	template <typename P> void PushCovarianceWeighted(const P& pose, const Eigen::Matrix3d& infoW, double scalarW)
-	{
-		if (!(scalarW > 0.0)) return;
-		const Eigen::Quaterniond rot(pose.rotation());
-		const Eigen::Vector4d q(rot.w(), rot.x(), rot.y(), rot.z());
-		quatOuterSum += scalarW * (q * q.transpose());
-		infoSum += infoW;
-		infoAccum += infoW * pose.translation();
-	}
-
-	Eigen::AffineCompact3d CovarianceWeightedAverage()
-	{
-		Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
-		solver.compute(quatOuterSum);
-
-		Eigen::Vector4d quatAvgV = solver.eigenvectors().col(3).real().normalized();
-		Eigen::Quaterniond avgQ(quatAvgV(0), quatAvgV(1), quatAvgV(2), quatAvgV(3));
-		avgQ.normalize();
-
-		Eigen::AffineCompact3d pose(avgQ);
-		// Fixed-size closed-form inverse; infoSum is a sum of SPD information
-		// matrices, each floored by the jitter term.
-		pose.pretranslate(Eigen::Vector3d(infoSum.inverse() * infoAccum));
-
-		return pose;
-	}
-
-	template <typename XS, typename F, typename W>
-	static Eigen::AffineCompact3d CovarianceWeightedAverageFor(const XS& samples, const F& poseProvider,
-	                                                           const W& covarianceProvider)
-	{
-		int sampleCount = 0;
-		for (auto& sample : samples) {
-			if (!sample.valid) continue;
-			sampleCount++;
-		}
-
-		PoseAverager accum(sampleCount);
-
-		for (auto& sample : samples) {
-			if (!sample.valid) continue;
-			const Eigen::Matrix3d sigma = covarianceProvider(sample);
-			// Fixed-size closed-form inverse; sigma is SPD with a jitter
-			// floor, so it is always well conditioned for it.
-			accum.PushCovarianceWeighted(poseProvider(sample), Eigen::Matrix3d(sigma.inverse()),
-			                             spacecal::levercov::ScalarPrecision(sigma));
-		}
-
-		return accum.CovarianceWeightedAverage();
-	}
 };
 } // namespace
 
@@ -1634,115 +1510,8 @@ bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d& out) const
 		return Eigen::AffineCompact3d(sample.ref.ToAffine() * m_refToTargetPose * sample.target.ToAffine().inverse());
 	};
 
-	switch (m_relPoseWeightMode) {
-		case RelPoseWeightMode::Covariance:
-			// Full lever-arm noise model (LeverArmCovariance.h): each sample's
-			// translation is weighted by the inverse of its anisotropic error
-			// covariance, so a far-from-origin reading is distrusted only in the
-			// directions its lever arm actually corrupts (perpendicular to the
-			// radius) instead of uniformly.
-			out = PoseAverager::CovarianceWeightedAverageFor(m_samples, estimateFor, [&](const auto& sample) {
-				return spacecal::levercov::SampleTranslationCovariance(sample.ref.trans, sample.target.trans,
-				                                                       m_sigmaThetaRad, m_sigmaJitM);
-			});
-			break;
-		case RelPoseWeightMode::ScalarLever:
-			// Each per-sample estimate's translation error scales with the lever arm
-			// -- the distance of the HMD/target from their tracking origins -- times
-			// the tracker's angular jitter. Weight by geometric precision so a
-			// far-from-origin reading (large lever arm, wildly uncertain) counts for
-			// almost nothing next to a near-origin one, instead of being trusted
-			// equally. This is why the same jitter is harmless near origin and blows
-			// the calibration up far from it. kLeverRegM2 is the positional/angular
-			// noise ratio (m^2): it caps the weight at origin so it stays finite.
-			out = PoseAverager::WeightedAverageFor(m_samples, estimateFor, [&](const auto& sample) {
-				return 1.0 / (spacecal::precision::kLeverRegM2 + sample.ref.trans.squaredNorm() +
-				              sample.target.trans.squaredNorm());
-			});
-			break;
-		case RelPoseWeightMode::Uniform:
-		default:
-			out = PoseAverager::AverageFor(m_samples, estimateFor);
-			break;
-	}
-	if (m_useGravityConstrainedRelPose) {
-		out = spacecal::gravity::ProjectRotationToYaw(out);
-	}
+	out = PoseAverager::AverageFor(m_samples, estimateFor);
 	return true;
-}
-
-void CalibrationCalc::SetLeverArmSigmas(double sigmaThetaRad, double sigmaJitM)
-{
-	m_sigmaThetaRad = spacecal::levercov::ClampSigmaTheta(sigmaThetaRad);
-	m_sigmaJitM = spacecal::levercov::ClampSigmaJitter(sigmaJitM);
-}
-
-Eigen::AffineCompact3d CalibrationCalc::ApplyObservabilityGate(const Eigen::AffineCompact3d& prior,
-                                                               const Eigen::AffineCompact3d& candidate) const
-{
-	namespace obs = spacecal::observability;
-	const obs::Excitation ex = obs::AccumulateExcitation(m_samples);
-	m_lastObservabilityLambdaMin = ex.LambdaMin();
-	if (!obs::HasWeakDirection(ex, obs::kLambdaMin)) {
-		return candidate;
-	}
-
-	const Eigen::Vector3d dT = candidate.translation() - prior.translation();
-	const Eigen::Vector3d dTProj = obs::ProjectToStrongSubspace(dT, ex, obs::kLambdaMin);
-
-	const Eigen::Matrix3d dR = candidate.rotation() * prior.rotation().transpose();
-	const Eigen::AngleAxisd aa(dR);
-	const Eigen::Vector3d phi = aa.angle() * aa.axis();
-	const Eigen::Vector3d phiProj = obs::ProjectToStrongSubspace(phi, ex, obs::kLambdaMin);
-
-	Eigen::AffineCompact3d out;
-	const double ang = phiProj.norm();
-	Eigen::Matrix3d rProj = Eigen::Matrix3d::Identity();
-	if (ang > 1e-12) rProj = Eigen::AngleAxisd(ang, phiProj / ang).toRotationMatrix();
-	out.linear() = rProj * prior.rotation();
-	out.translation() = prior.translation() + dTProj;
-
-	const double heldTransCm = (dT - dTProj).norm() * 100.0;
-	const double heldRotDeg = (phi - phiProj).norm() * 180.0 / EIGEN_PI;
-	if (heldTransCm > 0.01 || heldRotDeg > 0.01) {
-		static double s_lastHeldLog = -1e9;
-		if (Metrics::CurrentTime - s_lastHeldLog >= 5.0) {
-			s_lastHeldLog = Metrics::CurrentTime;
-			char buf[200];
-			snprintf(buf, sizeof buf,
-			         "[observability][held] lambda_min=%.2f deltas=%d held_trans_cm=%.2f held_rot_deg=%.2f",
-			         ex.LambdaMin(), ex.deltasCounted, heldTransCm, heldRotDeg);
-			Metrics::WriteLogAnnotation(buf);
-		}
-	}
-	return out;
-}
-
-bool CalibrationCalc::LatestSe3Residual(const Eigen::AffineCompact3d& applied, Eigen::Matrix<double, 6, 1>* residual,
-                                        Eigen::Vector3d* refTrans, Eigen::Vector3d* tgtTrans) const
-{
-	if (!m_relativePosCalibrated) return false;
-	for (auto it = m_samples.rbegin(); it != m_samples.rend(); ++it) {
-		if (!it->valid) continue;
-		const Eigen::AffineCompact3d estimate(it->ref.ToAffine() * m_refToTargetPose * it->target.ToAffine().inverse());
-		*residual = spacecal::se3::LogSE3(Eigen::AffineCompact3d(applied * estimate.inverse()));
-		*refTrans = it->ref.trans;
-		*tgtTrans = it->target.trans;
-		return true;
-	}
-	return false;
-}
-
-double CalibrationCalc::MeanSquaredLeverArmM2() const
-{
-	double sum = 0.0;
-	int n = 0;
-	for (const auto& sample : m_samples) {
-		if (!sample.valid) continue;
-		sum += sample.ref.trans.squaredNorm() + sample.target.trans.squaredNorm();
-		++n;
-	}
-	return n > 0 ? sum / n : 0.0;
 }
 
 namespace {
@@ -1849,77 +1618,7 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 				m_lastPriorRetargetingErrorM = lockedPriorError;
 			}
 
-			if (m_useLockedAcceptGate) {
-				spacecal::relpose_lock::LockedAcceptInputs gateIn;
-				gateIn.candidateErrorM = relPoseError;
-				gateIn.priorErrorM = lockedPriorError;
-				gateIn.havePrior = m_isValid;
-				gateIn.relPosCalibrated = m_relativePosCalibrated;
-				gateIn.notWorseRatio = threshold;
-				gateIn.maxErrorM = relPoseMaxError;
-				gateIn.stepCm = m_isValid
-				                    ? (byRelPose.translation() - m_estimatedTransformation.translation()).norm() * 100.0
-				                    : 0.0;
-				gateIn.stepGateBypassed = m_stepGateBypass || !m_isValid;
-				gateIn.heldCm = m_isValid ? Eigen::Vector3d(m_estimatedTransformation.translation() * 100.0)
-				                          : Eigen::Vector3d::Zero();
-				const auto gate = spacecal::relpose_lock::EvaluateLockedAccept(
-				    gateIn, byRelPose.translation() * 100.0, m_lockedOversizeConsensus, m_lockedDriftFollower);
-				if (gate.action == spacecal::relpose_lock::LockedAccept::HoldPrior) {
-					Metrics::lastRejectReason = gate.rejectTag;
-					return false;
-				}
-
-				m_lastAcceptWasConsensusStep = gate.action == spacecal::relpose_lock::LockedAccept::AcceptConsensusStep;
-				m_lastAcceptWasDriftStep = gate.action == spacecal::relpose_lock::LockedAccept::AcceptDriftStep;
-			}
-			else {
-				// Gate stood down (enhanced tracking off): apply every candidate
-				// that passed ValidateCalibration, as the pre-gate solve did.
-				m_lastAcceptWasConsensusStep = false;
-				m_lastAcceptWasDriftStep = false;
-			}
-
 			Metrics::lastRejectReason.clear();
-			// Observability gate: hold the components of the update the sample
-			// window cannot constrain. Skipped during step-gate bypass windows
-			// (session-first candidate, warm-restart re-acquire) where a large
-			// intentional move is expected.
-			if (m_useV2Math && m_isValid && !m_stepGateBypass) {
-				byRelPose = ApplyObservabilityGate(m_estimatedTransformation, byRelPose);
-			}
-			// Tilt damping sits after the gates and validation on purpose:
-			// they must judge the RAW candidate. The refuted hard projection
-			// (409a6ae9) sat inside CalibrateByRelPose and poisoned the fit
-			// metrics; this filter only shapes what gets applied.
-			if (m_useTiltDamping) {
-				// Clock = newest sample timestamp, not Metrics::CurrentTime:
-				// replay feeds recorded timestamps through PushSample, so the
-				// filter runs at the recorded cadence there and at session
-				// time live. The clamp bounds the first-accept / post-gap
-				// step (m_tiltLastAcceptTime starts at 0).
-				const double now = m_lastSampleTime;
-				const double dt = std::clamp(now - m_tiltLastAcceptTime, 0.0, 10.0);
-				m_tiltLastAcceptTime = now;
-				const double alpha = 1.0 - std::exp(-dt / spacecal::gravity::kTiltTimeConstantSec);
-				const double candTiltDeg = spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(byRelPose.rotation()));
-				byRelPose = hadCurrentAtStart ? spacecal::gravity::DampTilt(currentAtStart, byRelPose, alpha,
-				                                                            spacecal::gravity::kMaxTiltRad)
-				                              : spacecal::gravity::ClampTilt(byRelPose, spacecal::gravity::kMaxTiltRad);
-				const double appliedTiltDeg = spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(byRelPose.rotation()));
-				static double s_lastTiltFilterLogAt = -1e9;
-				if (Metrics::CurrentTime - s_lastTiltFilterLogAt >= 10.0) {
-					s_lastTiltFilterLogAt = Metrics::CurrentTime;
-					char tiltBuf[192];
-					snprintf(tiltBuf, sizeof tiltBuf,
-					         "[tilt-filter] cand_tilt_deg=%.2f applied_tilt_deg=%.2f alpha=%.4f"
-					         " dt_s=%.1f capped=%d",
-					         candTiltDeg, appliedTiltDeg, alpha, dt,
-					         (int)(candTiltDeg > appliedTiltDeg + 1e-3 &&
-					               appliedTiltDeg >= spacecal::gravity::kMaxTiltRad * 180.0 / EIGEN_PI - 1e-3));
-					Metrics::WriteLogAnnotation(tiltBuf);
-				}
-			}
 			m_isValid = true;
 			m_lastComputeUsedRelPose = true;
 			m_relativePosCalibrated = m_relativePosCalibrated || relPoseError < 0.005;
@@ -1928,8 +1627,6 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			return true;
 		}
 	}
-	m_lastAcceptWasConsensusStep = false;
-	m_lastAcceptWasDriftStep = false;
 
 	double priorCalibrationError = INFINITY;
 	Eigen::Vector3d priorPosOffset;
@@ -2053,11 +1750,6 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			CalCtx.Log("Applying temporary transformation...");
 		}
 
-		// Observability gate on the non-locked accept path: same hold as the
-		// locked branch when an update would overwrite a valid prior.
-		if (m_useV2Math && m_isValid && !m_stepGateBypass) {
-			calibration = ApplyObservabilityGate(m_estimatedTransformation, calibration);
-		}
 		m_isValid = true;
 		m_lastComputeUsedRelPose = usingRelPose;
 		m_estimatedTransformation = calibration;

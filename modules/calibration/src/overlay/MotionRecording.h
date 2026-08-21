@@ -227,32 +227,9 @@ struct ReplayOptions
 	std::size_t maxContinuousSamples = 200; // 0 keeps every sample; live continuous mode uses a bounded window.
 	std::size_t qualityReportInterval = 50; // 0 disables periodic shadow-quality snapshots.
 	bool includeHoldoutQuality = false;
-	// A/B for the far-from-origin fix. lockRelativePosition exercises the
-	// CalibrateByRelPose branch the live head-mount rig uses (the failing path;
-	// otherwise replay never touches it). precisionWeightedRelPose toggles the
-	// geometry-weighted solve so a recording can be replayed weighted vs uniform;
-	// it defaults off to match the live default (experimental fusion opt-in), so
-	// the harness baseline scenario replays the same path a defaults-off session
-	// runs.
+	// lockRelativePosition exercises the CalibrateByRelPose branch the live
+	// head-mount rig uses; otherwise replay never touches it.
 	bool lockRelativePosition = false;
-	bool precisionWeightedRelPose = false;
-	// Project the solved calibration rotation to yaw-about-gravity (see
-	// GravityAlignment.h). Replay-only A/B knob.
-	bool gravityConstrainedRelPose = false;
-	// Two-time-constant tilt damping of the locked accept (GravityAlignment.h).
-	// Defaults off in replay so pre-existing scenario goldens replay the same
-	// path; the live default is on.
-	bool tiltDamping = false;
-	// Mirror the enhanced-tracking master switch at the solver level: off
-	// applies every validated locked candidate ungated (the classic upstream
-	// behaviour). Weighting stays a separate knob above so existing A/B
-	// scenarios keep their meaning; the live tick forces it off with the
-	// switch.
-	bool customChecks = true;
-	// The switch's new math: covariance-weighted solve (and, on the session
-	// path, observability gating + sequential validation). Overrides the
-	// scalar weighting knob when set.
-	bool v2Math = false;
 	// Warm-start seeding (see ReplaySeedMode). Explicit mode reads the two seed
 	// fields; Recorded mode ignores them and uses rec.seedProfile when valid.
 	ReplaySeedMode seedMode = ReplaySeedMode::None;

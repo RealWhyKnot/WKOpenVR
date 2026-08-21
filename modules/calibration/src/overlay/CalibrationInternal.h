@@ -44,9 +44,3 @@ double ComputeHmdSpeedMps(const CalibrationContext& ctx);
 // freezeIncludeHmd) to the driver. Called on toggle, from the ~1 Hz heartbeat
 // while frozen, and on IPC reconnect so the driver's view stays in sync.
 void SendFreezeAllTracking();
-
-// Drop every piece of rolling state behind the enhanced-tracking master
-// switch. Called when the switch flips at runtime (UI toggle, profile load)
-// so no armed check fires after opt-out and no stale window influences the
-// first checks after re-enable.
-void ResetCustomCheckState(CalibrationContext& ctx);

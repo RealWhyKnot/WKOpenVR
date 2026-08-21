@@ -1,7 +1,6 @@
 #include "MotionRecording.h"
 
 #include "AutoLockHysteresis.h"        // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
-#include "ContinuousPrecisionFusion.h" // spacecal::precision -- confidence-weighted fusion (A/B).
 #include "GravityAlignment.h"          // spacecal::gravity::TiltAngleDeg -- applied-tilt metrics.
 
 #include <windows.h>
@@ -594,38 +593,21 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 	CalibrationCalc calc;
 	calc.enableStaticRecalibration = false;
 	calc.lockRelativePosition = opts.lockRelativePosition;
-	calc.SetPrecisionWeightedRelPose(opts.precisionWeightedRelPose);
-	calc.SetGravityConstrainedRelPose(opts.gravityConstrainedRelPose);
-	calc.SetTiltDamping(opts.tiltDamping);
-	calc.SetLockedAcceptGate(opts.customChecks);
-	calc.SetV2Math(opts.customChecks && opts.v2Math);
-	if (opts.customChecks && opts.v2Math) {
-		calc.SetRelPoseWeightMode(CalibrationCalc::RelPoseWeightMode::Covariance);
-	}
-	// Relative-pose MAD tracking (the AUTO-lock translMad analog) -- the headline
+	// Relative-pose MAD tracking (the translMad drift analog) -- the headline
 	// drift signal summarised as peak/median/final.
 	std::deque<Eigen::AffineCompact3d> relWindow;
 	std::vector<double> allMad;
 	// Applied-C trajectory (A/B). appliedC is the worldFromDriver translation the
-	// driver would show (cm); its session wander/step is the fly-off signal, which
-	// the precision-weighted solve should shrink.
+	// driver would show (cm); its session wander/step is the fly-off signal.
 	Eigen::Vector3d appliedC = Eigen::Vector3d::Zero();
 	Eigen::Vector3d prevAppliedC = Eigen::Vector3d::Zero();
 	bool hasAppliedC = false;
 	double minAppliedMag = 0.0, maxAppliedMag = 0.0;
-	// Confidence-weighted fusion state (mirrors the live accept path when
-	// precisionWeightedRelPose is on): running fused calibration + accumulated
-	// precision, so the applied-C trajectory reflects the fusion, not raw solves.
-	Eigen::AffineCompact3d appliedTransform = Eigen::AffineCompact3d::Identity();
-	double accumPrecision = 0.0;
-	int disagreeStreak = 0;
 
 	// Warm start. Mirrors StartContinuousCalibration with a valid profile: the
-	// solver estimate is seeded (so the improvement gate compares against it)
-	// and the fusion gets the banked-profile prior. The applied-C trajectory
-	// starts at the seed, so wander/steps measure movement AWAY from the stored
-	// profile -- the signal that distinguishes "fusion defends a bad seed" from
-	// "overwrite escapes it".
+	// solver estimate is seeded (so the improvement gate compares against it).
+	// The applied-C trajectory starts at the seed, so wander/steps measure
+	// movement AWAY from the stored profile.
 	{
 		bool seed = false;
 		Eigen::Vector3d seedTransCm, seedRotDeg;
@@ -642,8 +624,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 		if (seed) {
 			const Eigen::AffineCompact3d seedTransform = ReplayProfileTransform(seedRotDeg, seedTransCm);
 			calc.SeedEstimatedTransformation(seedTransform, /*annotate=*/false);
-			appliedTransform = seedTransform;
-			accumPrecision = spacecal::precision::kSeedPriorPrecision;
 			appliedC = seedTransform.translation() * 100.0;
 			prevAppliedC = appliedC;
 			minAppliedMag = maxAppliedMag = appliedC.norm();
@@ -789,41 +769,14 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 			}
 
 			bool lerp = false;
-			// Mirror the live tick: the step gate stands down until the first
-			// accepted candidate (a stale far seed must be correctable in one
-			// classified move, not held at the step cap) and under the fusion
-			// accept, which needs the full candidate stream.
-			calc.SetStepGateBypass(!hasAppliedC || opts.precisionWeightedRelPose);
 			const bool ok = calc.ComputeIncremental(lerp, opts.threshold, opts.maxRelError, opts.ignoreOutliers);
 			tick.accepted = ok;
 			if (ok) {
 				++res.accepts;
 				// Applied-C trajectory (the worldFromDriver the driver would show).
-				Eigen::Vector3d candidateC;
-				Eigen::Quaterniond appliedRotation = Eigen::Quaterniond::Identity();
-				if (opts.precisionWeightedRelPose) {
-					const double measPrec = spacecal::precision::MeasurementPrecision(calc.MeanSquaredLeverArmM2());
-					const double disagreeM =
-					    (calc.Transformation().translation() - appliedTransform.translation()).norm();
-					if (spacecal::precision::NoteSeedDisagreement(disagreeStreak, disagreeM)) {
-						appliedTransform = calc.Transformation();
-						accumPrecision = std::min(measPrec, spacecal::precision::kMaxConfidence);
-						tick.fusionGain = 1.0;
-					}
-					else {
-						const double gain = spacecal::precision::FusionGain(accumPrecision, measPrec);
-						appliedTransform = spacecal::precision::Fuse(appliedTransform, calc.Transformation(), gain);
-						accumPrecision = std::min(accumPrecision + measPrec, spacecal::precision::kMaxConfidence);
-						tick.fusionGain = gain;
-					}
-					candidateC = appliedTransform.translation() * 100.0;
-					appliedRotation = Eigen::Quaterniond(appliedTransform.rotation());
-				}
-				else {
-					candidateC = calc.Transformation().translation() * 100.0;
-					appliedRotation = Eigen::Quaterniond(calc.Transformation().rotation());
-					tick.fusionGain = 1.0;
-				}
+				const Eigen::Vector3d candidateC = calc.Transformation().translation() * 100.0;
+				const Eigen::Quaterniond appliedRotation(calc.Transformation().rotation());
+				tick.fusionGain = 1.0;
 				{
 					const double tiltDeg = spacecal::gravity::TiltAngleDeg(appliedRotation);
 					res.maxAppliedTiltDeg = std::max(res.maxAppliedTiltDeg, tiltDeg);
@@ -857,7 +810,6 @@ ReplayResult RunReplay(const LoadedRecording& rec, const ReplayOptions& opts)
 				prevAppliedC = appliedC;
 				tick.appliedCCm = appliedC;
 				tick.hasAppliedC = true;
-				tick.accumPrecision = accumPrecision;
 			}
 			else
 				++res.rejects;

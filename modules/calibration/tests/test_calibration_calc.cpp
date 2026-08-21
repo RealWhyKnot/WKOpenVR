@@ -207,95 +207,8 @@ TEST(CalibrationCalcTest, MixedFrameWindowPoisonsSolveUntilEvicted)
 	EXPECT_LT(RotationErrorDegrees(calc.Transformation(), after), 0.5);
 }
 
-// Locked-relpose accept gating (RelPoseLockGate.h). Samples built from
-// MakeSamplePairs(C) are consistent with an identity banked relative pose, so
-// CalibrateByRelPose recovers C exactly.
-
-TEST(CalibrationCalcTest, LockedRelPoseHoldsPriorOnOversizedStep)
-{
-	const Eigen::AffineCompact3d before = MakeTransform(0.0, 0.0, 0.0, Eigen::Vector3d(0.20, 0.0, 0.0));
-	Eigen::AffineCompact3d after = before;
-	after.translation().x() += 4.0; // silent 4 m frame re-anchor
-
-	CalibrationCalc calc;
-	calc.lockRelativePosition = true;
-	calc.setRelativeTransformation(Eigen::AffineCompact3d::Identity(), false);
-	calc.SeedEstimatedTransformation(before, false);
-	for (auto& s : MakeSamplePairs(after, kSampleCount)) {
-		calc.PushSample(s);
-	}
-
-	bool lerp = false;
-	EXPECT_FALSE(calc.ComputeIncremental(lerp, 1.5, 0.005, false)) << "an oversized step must hold the prior";
-	EXPECT_LT((calc.Transformation().translation() - before.translation()).norm(), 1e-9)
-	    << "the held calibration must not move";
-
-	// Consecutive agreeing candidates escape via consensus as ONE classified
-	// step; until then every solve holds.
-	int acceptedAt = -1;
-	for (int i = 2; i <= spacecal::relpose_lock::kOversizeConsensusCount + 1; ++i) {
-		if (calc.ComputeIncremental(lerp, 1.5, 0.005, false)) {
-			acceptedAt = i;
-			break;
-		}
-	}
-	EXPECT_EQ(acceptedAt, spacecal::relpose_lock::kOversizeConsensusCount);
-	EXPECT_TRUE(calc.LastAcceptWasConsensusStep());
-	EXPECT_LT((calc.Transformation().translation() - after.translation()).norm(), 5e-3)
-	    << "the consensus step must land in the moved frame";
-}
-
-TEST(CalibrationCalcTest, LockedRelPoseTracksSlowDriftAboveDeadband)
-{
-	const Eigen::AffineCompact3d before = MakeTransform(0.0, 0.0, 0.0, Eigen::Vector3d(0.20, 0.0, 0.0));
-	Eigen::AffineCompact3d drifted = before;
-	drifted.translation().x() += 0.03; // 3 cm: above the deadband, below the cap
-
-	CalibrationCalc calc;
-	calc.lockRelativePosition = true;
-	calc.setRelativeTransformation(Eigen::AffineCompact3d::Identity(), false);
-	calc.SeedEstimatedTransformation(before, false);
-	for (auto& s : MakeSamplePairs(drifted, kSampleCount)) {
-		calc.PushSample(s);
-	}
-
-	// One in-band candidate is not evidence of drift -- the follower waits
-	// for a full window of candidates agreeing that the cluster median has
-	// departed the held calibration, then lands the move as one classified
-	// drift step (a scattered stream never fires; see RelPoseLockGate tests).
-	bool accepted = false;
-	int solves = 0;
-	for (; solves < spacecal::relpose_lock::kDriftWindowCandidates + 5 && !accepted; ++solves) {
-		bool lerp = false;
-		accepted = calc.ComputeIncremental(lerp, 1.5, 0.005, false);
-	}
-	ASSERT_TRUE(accepted);
-	EXPECT_EQ(solves, spacecal::relpose_lock::kDriftWindowCandidates)
-	    << "the drift step must land exactly when the candidate window fills";
-	EXPECT_TRUE(calc.LastAcceptWasDriftStep());
-	EXPECT_FALSE(calc.LastAcceptWasConsensusStep());
-	EXPECT_LT((calc.Transformation().translation() - drifted.translation()).norm(), 5e-3);
-}
-
-TEST(CalibrationCalcTest, LockedRelPoseBypassAllowsOversizedStepDuringGrace)
-{
-	const Eigen::AffineCompact3d before = MakeTransform(0.0, 0.0, 0.0, Eigen::Vector3d(0.20, 0.0, 0.0));
-	Eigen::AffineCompact3d after = before;
-	after.translation().x() += 4.0;
-
-	CalibrationCalc calc;
-	calc.lockRelativePosition = true;
-	calc.setRelativeTransformation(Eigen::AffineCompact3d::Identity(), false);
-	calc.SeedEstimatedTransformation(before, false);
-	calc.SetStepGateBypass(true); // warm-restart grace / first candidate
-	for (auto& s : MakeSamplePairs(after, kSampleCount)) {
-		calc.PushSample(s);
-	}
-
-	bool lerp = false;
-	ASSERT_TRUE(calc.ComputeIncremental(lerp, 1.5, 0.005, false));
-	EXPECT_LT((calc.Transformation().translation() - after.translation()).norm(), 5e-3);
-}
+// Samples built from MakeSamplePairs(C) are consistent with an identity
+// banked relative pose, so CalibrateByRelPose recovers C exactly.
 
 TEST(CalibrationCalcTest, LockedRelPoseBanksRelativePosCalibrated)
 {
@@ -313,25 +226,6 @@ TEST(CalibrationCalcTest, LockedRelPoseBanksRelativePosCalibrated)
 	ASSERT_TRUE(calc.ComputeIncremental(lerp, 1.5, 0.005, false));
 	EXPECT_TRUE(calc.isRelativeTransformationCalibrated())
 	    << "a sub-5mm locked accept must bank the relative pose, like the incremental path";
-}
-
-TEST(CalibrationCalcTest, LockedRelPoseRejectSetsRejectReason)
-{
-	const Eigen::AffineCompact3d before = MakeTransform(0.0, 0.0, 0.0, Eigen::Vector3d(0.20, 0.0, 0.0));
-	Eigen::AffineCompact3d after = before;
-	after.translation().x() += 4.0;
-
-	CalibrationCalc calc;
-	calc.lockRelativePosition = true;
-	calc.setRelativeTransformation(Eigen::AffineCompact3d::Identity(), false);
-	calc.SeedEstimatedTransformation(before, false);
-	for (auto& s : MakeSamplePairs(after, kSampleCount)) {
-		calc.PushSample(s);
-	}
-
-	bool lerp = false;
-	ASSERT_FALSE(calc.ComputeIncremental(lerp, 1.5, 0.005, false));
-	EXPECT_EQ(Metrics::lastRejectReason, "relpose_step_oversized");
 }
 
 TEST(CalibrationCalcTest, EvictSamplesBeforeClearsStaleFrozenRotationBuffer)

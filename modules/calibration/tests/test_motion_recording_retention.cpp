@@ -382,44 +382,6 @@ void WriteSeedAnnotatedV5Recording(const std::filesystem::path& path, bool seedV
 	       "rot_deg=(0.000,0.000,0.000)\n";
 }
 
-// Programmatic recording whose rows all agree on calibration `cTrue` through
-// the relpose identity trick (target = cTrue^-1 * ref => the per-sample
-// estimate R * I * T^-1 is exactly cTrue). `originDistanceM` + `heightM` set
-// the lever arm: 3 m at head height models the head-mount rig far from
-// origin. Note even 0 m at head height (y~1.6) carries a ~5 m^2 squared
-// lever, which already throttles the fusion gain -- a truly near-origin
-// stream needs a small height too.
-replay::LoadedRecording MakeRelPoseRecording(const Eigen::AffineCompact3d& cTrue, double originDistanceM,
-                                             double heightM, int rowCount)
-{
-	replay::LoadedRecording rec;
-	rec.formatVersion = 5;
-	rec.rows.reserve(rowCount);
-	for (int i = 0; i < rowCount; ++i) {
-		const double yaw = 0.03 * static_cast<double>(i % 40);
-		const Eigen::Vector3d trans(originDistanceM + 0.05 * std::sin(0.7 * i), heightM + 0.05 * std::cos(0.5 * i),
-		                            0.05 * std::sin(0.3 * i));
-		Eigen::AffineCompact3d ref(Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY())));
-		ref.pretranslate(trans);
-		const Eigen::AffineCompact3d target = cTrue.inverse() * ref;
-
-		replay::ReplayRow row;
-		row.timestamp = static_cast<double>(i) / 90.0;
-		row.ref.rot = ref.rotation();
-		row.ref.trans = ref.translation();
-		row.target.rot = target.rotation();
-		row.target.trans = target.translation();
-		row.sample = Sample(row.ref, row.target, row.timestamp);
-		// Stationary HMD so applied steps count as perceptible shifts.
-		row.hasHmdPose = true;
-		row.hmd.rot.setIdentity();
-		row.hmd.trans = Eigen::Vector3d(0.0, 1.60, 0.0);
-		rec.rows.push_back(std::move(row));
-	}
-	rec.hasLockedSnapColumns = true;
-	return rec;
-}
-
 void WriteReplayTraceCsv(const std::filesystem::path& path, const replay::ReplayResult& result)
 {
 	std::ofstream out(path);
@@ -724,102 +686,6 @@ TEST(MotionRecordingReplayTest, SeedProfileSkippedFormDegradesToColdStart)
 	EXPECT_FALSE(result.seedApplied);
 }
 
-// Offline reproduction of the seeded-fusion behavior seen live: with the
-// confidence fusion on, a stored profile seed (kSeedPriorPrecision) dominates
-// far-from-origin candidates, so a BAD seed is defended instead of corrected
-// ("refusing to calibrate"); with fusion off the overwrite path escapes the
-// seed on the first accept. A genuinely near-origin stream carries enough
-// per-solve precision to correct the same bad seed through the fusion.
-TEST(MotionRecordingReplayTest, SeededReplayFusionDefendsBadSeedFarFromOrigin)
-{
-	Eigen::AffineCompact3d cTrue = Eigen::AffineCompact3d::Identity();
-	cTrue.translation() = Eigen::Vector3d(0.20, 0.0, 0.0); // truth: 20 cm
-	const Eigen::Vector3d seedTransCm(50.0, 0.0, 0.0);     // stored profile: 30 cm wrong
-
-	replay::ReplayOptions options;
-	options.lockRelativePosition = true;
-	options.maxContinuousSamples = 25;
-	options.qualityReportInterval = 0;
-	options.seedMode = replay::ReplaySeedMode::Explicit;
-	options.seedTransCm = seedTransCm;
-
-	const auto farRec = MakeRelPoseRecording(cTrue, /*originDistanceM=*/3.0, /*heightM=*/1.60, /*rowCount=*/300);
-
-	// Fusion ON, far from origin: candidates carry almost no geometric
-	// precision, so the applied calibration stays pinned to the bad seed.
-	options.precisionWeightedRelPose = true;
-	const auto farFused = replay::RunReplay(farRec, options);
-	ASSERT_TRUE(farFused.succeeded) << farFused.error;
-	ASSERT_TRUE(farFused.seedApplied);
-	EXPECT_GT(farFused.accepts, 10);
-	EXPECT_LT(farFused.appliedMagWanderCm, 5.0)
-	    << "fusion should defend the seed far from origin (the live bad-seed regression)";
-
-	// Fusion OFF, same recording: the overwrite path jumps to the solved truth
-	// (50 cm seed -> 20 cm truth = one 30 cm applied step). The HMD is
-	// stationary in this synthetic session, so that jump is a perceptible
-	// shift, and the net drift vector points from seed to truth.
-	options.precisionWeightedRelPose = false;
-	const auto farUniform = replay::RunReplay(farRec, options);
-	ASSERT_TRUE(farUniform.succeeded) << farUniform.error;
-	ASSERT_TRUE(farUniform.seedApplied);
-	// The locked-accept step deadband holds steady-state candidates on the
-	// overwrite path, so accepts are sparse now; the solver itself must stay
-	// alive across the session.
-	EXPECT_GE(farUniform.accepts, 1);
-	EXPECT_GT(farUniform.accepts + farUniform.rejects, 10);
-	EXPECT_GT(farUniform.appliedMagWanderCm, 25.0);
-	EXPECT_GT(farUniform.peakAppliedStepCm, 25.0);
-	EXPECT_GE(farUniform.largeAppliedSteps, 1);
-	EXPECT_GE(farUniform.perceptibleShiftCount, 1);
-	EXPECT_GT(farUniform.perceptibleShiftMaxMm, 250.0);
-	EXPECT_NEAR(farUniform.netDriftVectorCm.x(), -30.0, 2.0);
-	EXPECT_NEAR(farUniform.netDriftVectorCm.y(), 0.0, 2.0);
-	EXPECT_NEAR(farUniform.netDriftVectorCm.z(), 0.0, 2.0);
-
-	// Fusion ON, genuinely near origin (small height too): per-solve precision
-	// is high, so the same bad seed is corrected within the session. At head
-	// height the lever arm already throttles the gain -- that case behaves
-	// like `farFused`, which is exactly the live "refusing to calibrate"
-	// regression shape.
-	options.precisionWeightedRelPose = true;
-	const auto nearRec = MakeRelPoseRecording(cTrue, /*originDistanceM=*/0.0, /*heightM=*/0.10, /*rowCount=*/900);
-	const auto nearFused = replay::RunReplay(nearRec, options);
-	ASSERT_TRUE(nearFused.succeeded) << nearFused.error;
-	ASSERT_TRUE(nearFused.seedApplied);
-	EXPECT_GT(nearFused.appliedMagWanderCm, 25.0)
-	    << "near-origin precision should pull the applied calibration off the bad seed";
-}
-
-// A cross-session stale seed metres from the session's true calibration (the
-// target universe re-anchored between sessions). The seed prior must not pin
-// the fusion to it: the stale-seed breaker adopts the solver's answer after a
-// few consecutive metre-scale disagreements, matching the overwrite path's
-// escape instead of crawling all session.
-TEST(MotionRecordingReplayTest, SeededReplayFusionEscapesMetersWrongSeed)
-{
-	Eigen::AffineCompact3d cTrue = Eigen::AffineCompact3d::Identity();
-	cTrue.translation() = Eigen::Vector3d(0.20, 0.0, 0.0);
-	const Eigen::Vector3d seedTransCm(370.0, 0.0, 0.0); // stored profile: 3.5 m wrong
-
-	replay::ReplayOptions options;
-	options.lockRelativePosition = true;
-	options.maxContinuousSamples = 25;
-	options.qualityReportInterval = 0;
-	options.seedMode = replay::ReplaySeedMode::Explicit;
-	options.seedTransCm = seedTransCm;
-	options.precisionWeightedRelPose = true;
-
-	const auto farRec = MakeRelPoseRecording(cTrue, /*originDistanceM=*/3.0, /*heightM=*/1.60, /*rowCount=*/300);
-	const auto fused = replay::RunReplay(farRec, options);
-	ASSERT_TRUE(fused.succeeded) << fused.error;
-	ASSERT_TRUE(fused.seedApplied);
-	EXPECT_GT(fused.accepts, 10);
-	// The escape is the full seed-to-truth move, not a crawl.
-	EXPECT_GT(fused.appliedMagWanderCm, 300.0) << "fusion stayed pinned to a metres-wrong seed";
-	EXPECT_NEAR(fused.netDriftVectorCm.x(), -350.0, 10.0);
-}
-
 TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 {
 	const char* enabled = std::getenv("WKOPENVR_REPLAY_RECORDINGS");
@@ -836,16 +702,8 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 	baseOptions.continuous = true;
 	baseOptions.qualityReportInterval = EnvSize("WKOPENVR_REPLAY_QUALITY_INTERVAL", baseOptions.qualityReportInterval);
 	baseOptions.includeHoldoutQuality = EnvFlag("WKOPENVR_REPLAY_HOLDOUT", baseOptions.includeHoldoutQuality);
-	// Far-from-origin fix A/B: LOCK_REL exercises the CalibrateByRelPose branch the
-	// head-mount rig uses; PRECISION_WEIGHT toggles the geometry-weighted solve.
+	// LOCK_REL exercises the CalibrateByRelPose branch the head-mount rig uses.
 	baseOptions.lockRelativePosition = EnvFlag("WKOPENVR_REPLAY_LOCK_REL", baseOptions.lockRelativePosition);
-	baseOptions.precisionWeightedRelPose =
-	    EnvFlag("WKOPENVR_REPLAY_PRECISION_WEIGHT", baseOptions.precisionWeightedRelPose);
-	baseOptions.gravityConstrainedRelPose =
-	    EnvFlag("WKOPENVR_REPLAY_GRAVITY_4DOF", baseOptions.gravityConstrainedRelPose);
-	baseOptions.tiltDamping = EnvFlag("WKOPENVR_REPLAY_TILT_DAMPING", baseOptions.tiltDamping);
-	baseOptions.customChecks = EnvFlag("WKOPENVR_REPLAY_CUSTOM_CHECKS", baseOptions.customChecks);
-	baseOptions.v2Math = EnvFlag("WKOPENVR_REPLAY_V2_MATH", baseOptions.v2Math);
 	std::string seedName;
 	ApplySeedEnv(baseOptions, seedName);
 	const auto sampleWindows = ReplaySampleWindows();
@@ -895,10 +753,7 @@ TEST(MotionRecordingReplayTest, ReplayLocalRecordingsWhenRequested)
 			          << " peak_relpose_mad_mm=" << result.peakRelPoseMadMm
 			          << " median_relpose_mad_mm=" << result.medianRelPoseMadMm
 			          << " final_relpose_mad_mm=" << result.finalRelPoseMadMm
-			          << " lock_rel=" << (options.lockRelativePosition ? 1 : 0)
-			          << " precision_weight=" << (options.precisionWeightedRelPose ? 1 : 0)
-			          << " tilt_damping=" << (options.tiltDamping ? 1 : 0)
-			          << " custom_checks=" << (options.customChecks ? 1 : 0) << " seed=" << seedName
+			          << " lock_rel=" << (options.lockRelativePosition ? 1 : 0) << " seed=" << seedName
 			          << " seed_applied=" << (result.seedApplied ? 1 : 0) << " seed_mag_cm=" << result.seedMagCm
 			          << " peak_applied_mag_cm=" << result.peakAppliedMagCm
 			          << " applied_mag_wander_cm=" << result.appliedMagWanderCm

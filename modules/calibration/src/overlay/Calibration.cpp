@@ -1,7 +1,6 @@
 #include "Calibration.h"
 #include "CalibrationProgress.h"
 #include "CalibrationAutoSpeed.h"
-#include "CalibrationExperimentFlags.h"
 #include "CalibrationOneShotDiagnostics.h"
 #include "CalibrationInternal.h"
 #include "CalibrationDevicePoseUtils.h"
@@ -27,10 +26,7 @@
 #include "HeadMountTargetBinding.h"
 #include "TrackingStyle.h"
 #include "UserInterfaceHeadMount.h"
-#include "RotationMatrix3.h"           // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
-#include "AutoLockHysteresis.h"        // spacecal::autolock::VerdictWithHysteresis -- AUTO Lock
-#include "ContinuousPrecisionFusion.h" // spacecal::precision -- confidence-weighted continuous fusion
-                                       // hysteresis + stationary-gate constants and pure helpers.
+#include "RotationMatrix3.h" // AngleFromRotationMatrix3 / AxisFromRotationMatrix3 (clamped).
 
 #include <string>
 #include <vector>
@@ -406,12 +402,6 @@ void StartContinuousCalibration(const char* reason)
 	CalCtx.hasAppliedCalibrationResult = false;
 	CalCtx.continuousStartSnapshot = CalCtx.CaptureProfileSnapshot();
 	CalCtx.lastAcceptedContinuousSnapshot = {};
-	// Seed the fusion confidence: a persisted (banked) calibration starts trusted,
-	// so a far-from-origin session can't wipe it; a fresh start earns confidence
-	// from its first candidate.
-	CalCtx.continuousConfidencePrecision = CalCtx.validProfile ? spacecal::precision::kSeedPriorPrecision : 0.0;
-	CalCtx.lastFusionGain = 1.0;
-	CalCtx.continuousFusionDisagreeStreak = 0;
 	AssignTargets();
 	if (CalCtx.headMount.mode != HeadMountMode::Off || !CalCtx.headMount.trackerSerial.empty()) {
 		if (wkopenvr::headmount::BindHeadMountToContinuousTarget(CalCtx)) {
@@ -493,9 +483,6 @@ void EndContinuousCalibration()
 	}
 	CalCtx.continuousStartSnapshot = {};
 	CalCtx.lastAcceptedContinuousSnapshot = {};
-	CalCtx.continuousConfidencePrecision = 0.0;
-	CalCtx.lastFusionGain = 1.0;
-	CalCtx.continuousFusionDisagreeStreak = 0;
 	// The selected snapshot above already persisted the final offset, so no
 	// throttled save is still pending.
 	CalCtx.continuousSaveDirty = false;
@@ -532,36 +519,6 @@ void FlushPendingContinuousSave()
 	}
 	CalCtx.continuousSaveDirty = false;
 	Metrics::WriteLogAnnotation("[profile-save][flush] reason=continuous_pending_on_shutdown");
-}
-
-void ResetCustomCheckState(CalibrationContext& ctx)
-{
-	// Locked-accept gate windows (consensus streak + drift-follower ring).
-	calibration.ResetCustomGateState();
-	for (auto& extra : ctx.additionalCalibrations) {
-		if (extra.calc) extra.calc->ResetCustomGateState();
-	}
-
-	// Fusion confidence restarts from zero; the next accepted candidate
-	// re-seeds it from its own measurement precision.
-	ctx.continuousConfidencePrecision = 0.0;
-	ctx.lastFusionGain = 1.0;
-	ctx.continuousFusionDisagreeStreak = 0;
-}
-
-static void TickCustomCheckFlipDetector(CalibrationContext& ctx)
-{
-	// Detect the enhanced-tracking master switch flipping through any path
-	// (UI toggle, profile load, preset apply) and drop all rolling check
-	// state, so nothing armed before the flip fires after it and no stale
-	// window influences the first checks after a re-enable.
-	static bool s_lastCustomChecksActive = false;
-	if (s_lastCustomChecksActive != ctx.CustomChecksActive()) {
-		s_lastCustomChecksActive = ctx.CustomChecksActive();
-		ResetCustomCheckState(ctx);
-		Metrics::LogAnnotationf("enhanced_tracking_checks_changed: enabled=%d state_reset=1",
-		                        (int)ctx.CustomChecksActive());
-	}
 }
 
 static void TickDeviceRescan(CalibrationContext& ctx, double time)
@@ -941,16 +898,6 @@ static void TickAdditionalCalibrations(double time)
 
 		extra.calc->lockRelativePosition = extra.lockRelativePosition;
 		extra.calc->enableStaticRecalibration = CalCtx.enableStaticRecalibration;
-		extra.calc->SetStepGateBypass(!extra.valid);
-		const bool extraDistanceWeighted =
-		    CalCtx.CustomChecksActive() &&
-		    (CalCtx.precisionWeightedRelPose || CalCtx.headMount.experimentalConfidenceFusion);
-		extra.calc->SetRelPoseWeightMode(extraDistanceWeighted ? CalibrationCalc::RelPoseWeightMode::Covariance
-		                                                       : CalibrationCalc::RelPoseWeightMode::Uniform);
-		extra.calc->SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
-		extra.calc->SetLockedAcceptGate(CalCtx.CustomChecksActive());
-		extra.calc->SetV2Math(CalCtx.CustomChecksActive());
-		extra.calc->SetTiltDamping(CalCtx.gravityTiltDamping);
 
 		if (!CalCtx.calibrationPaused && extra.calc->SampleCount() >= CalCtx.SampleCount()) {
 			bool extraLerp = false;
@@ -1003,48 +950,8 @@ static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, 
 			Metrics::WriteLogAnnotation(firstBuf);
 		}
 
-		if (inContinuousState && ctx.CustomChecksActive() && ctx.headMount.experimentalConfidenceFusion) {
-			// Confidence-weighted fusion (experimental, opt-in): treat this candidate
-			// as a measurement of the constant calibration C, weighted by its
-			// geometry precision. A far-from-origin candidate (large lever arm ->
-			// low precision) barely moves a well-established calibration; a
-			// near-origin one refines it. Off (default) -> the else branch below
-			// overwrites the calibration with each accepted candidate (classic).
-			// See ContinuousPrecisionFusion.h.
-			const Eigen::AffineCompact3d currentC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
-			// Tilt damping (when enabled) already shaped this candidate inside
-			// ComputeIncremental; the fusion slerp below composes with it.
-			const Eigen::AffineCompact3d candidateC = calibration.Transformation();
-			const double measPrec = spacecal::precision::MeasurementPrecision(calibration.MeanSquaredLeverArmM2());
-			const double disagreeM = (candidateC.translation() - currentC.translation()).norm();
-			Eigen::AffineCompact3d fusedC;
-			if (spacecal::precision::NoteSeedDisagreement(ctx.continuousFusionDisagreeStreak, disagreeM)) {
-				// Stale-seed breaker: the estimate is metres from what the solver
-				// keeps producing, so the seed (or the rig) is wrong. Adopt the
-				// candidate and rebuild confidence from its own precision.
-				fusedC = candidateC;
-				ctx.continuousConfidencePrecision = std::min(measPrec, spacecal::precision::kMaxConfidence);
-				ctx.lastFusionGain = 1.0;
-				char breakBuf[160];
-				snprintf(breakBuf, sizeof breakBuf,
-				         "fusion_stale_seed_break: disagree_m=%.3f trips=%d meas_precision=%.4f", disagreeM,
-				         spacecal::precision::kStaleSeedTripCount, measPrec);
-				Metrics::WriteLogAnnotation(breakBuf);
-			}
-			else {
-				const double gain = spacecal::precision::FusionGain(ctx.continuousConfidencePrecision, measPrec);
-				fusedC = spacecal::precision::Fuse(currentC, candidateC, gain);
-				ctx.continuousConfidencePrecision =
-				    std::min(ctx.continuousConfidencePrecision + measPrec, spacecal::precision::kMaxConfidence);
-				ctx.lastFusionGain = gain;
-			}
-			ctx.calibratedRotation = fusedC.rotation().eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
-			ctx.calibratedTranslation = fusedC.translation() * 100.0;
-		}
-		else {
-			ctx.calibratedRotation = calibration.EulerRotation();
-			ctx.calibratedTranslation = candidateTranslationCm;
-		}
+		ctx.calibratedRotation = calibration.EulerRotation();
+		ctx.calibratedTranslation = candidateTranslationCm;
 		ctx.refToTargetPose = calibration.RelativeTransformation();
 		ctx.relativePosCalibrated = calibration.isRelativeTransformationCalibrated();
 		if (inContinuousState && ctx.relativePosCalibrated && ctx.headMountNeedsFreshRelativePose) {
@@ -1152,22 +1059,6 @@ static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, 
 			}
 		}
 
-		if (calibration.LastAcceptWasConsensusStep()) {
-			Metrics::LogAnnotationf(
-			    "relpose_locked_consensus_step: mag_cm=%.2f consensus=%d spread_cm=%.1f"
-			    " -- oversized move accepted after consecutive agreeing candidates (frame moved with no event)",
-			    ctx.calibratedTranslation.norm(), spacecal::relpose_lock::kOversizeConsensusCount,
-			    spacecal::relpose_lock::kOversizeConsensusSpreadCm);
-		}
-
-		if (calibration.LastAcceptWasDriftStep()) {
-			Metrics::LogAnnotationf(
-			    "relpose_locked_drift_step: mag_cm=%.2f window=%d min_step_cm=%.1f"
-			    " -- in-band move accepted; the candidate-cluster median departed the held calibration",
-			    ctx.calibratedTranslation.norm(), spacecal::relpose_lock::kDriftWindowCandidates,
-			    spacecal::relpose_lock::kDriftStepMinCm);
-		}
-
 		CalCtx.Log("Finished calibration, profile saved\n");
 	}
 	else {
@@ -1273,8 +1164,6 @@ void CalibrationTick(double time)
 		// reseat the IDs cleanly.
 		return;
 	}
-
-	TickCustomCheckFlipDetector(ctx);
 
 	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
 		ctx.ClearLogOnMessage();
@@ -1477,29 +1366,6 @@ void CalibrationTick(double time)
 		const bool blockStaleRelPose =
 		    CalCtx.headMountNeedsFreshRelativePose && CalCtx.lockRelativePosition && !CalCtx.relativePosCalibrated;
 		calibration.lockRelativePosition = CalCtx.lockRelativePosition && !blockStaleRelPose;
-		// Geometry-precision weighting of the relpose average (default on;
-		// Advanced toggle). The experimental confidence fusion implies it --
-		// the Kalman accept needs the weighted measurement. With the
-		// enhanced-tracking switch the live weight is the full lever-arm
-		// covariance model; off means the classic uniform average.
-		const bool distanceWeighted = CalCtx.CustomChecksActive() && (CalCtx.precisionWeightedRelPose ||
-		                                                              CalCtx.headMount.experimentalConfidenceFusion);
-		calibration.SetRelPoseWeightMode(distanceWeighted ? CalibrationCalc::RelPoseWeightMode::Covariance
-		                                                  : CalibrationCalc::RelPoseWeightMode::Uniform);
-		calibration.SetLeverArmSigmas(CalCtx.leverArmSigmaThetaRad, CalCtx.leverArmSigmaJitterM);
-		calibration.SetLockedAcceptGate(CalCtx.CustomChecksActive());
-		calibration.SetV2Math(CalCtx.CustomChecksActive());
-		// Deliberately NOT behind the enhanced-tracking switch: the tilt
-		// random walk lands in the default pipeline too, and the toggle
-		// itself is the parity escape hatch.
-		calibration.SetTiltDamping(CalCtx.gravityTiltDamping);
-		// Session-first candidates go through their own classification;
-		// everywhere else the locked accept keeps single steps bounded. The
-		// fusion accept is its own step absorber (gain-scaled blending +
-		// stale-seed breaker) and needs the full candidate stream, so the
-		// step gates stand down there -- the quality gates still apply.
-		calibration.SetStepGateBypass(!CalCtx.lastAcceptedContinuousSnapshot.captured ||
-		                              (CalCtx.CustomChecksActive() && CalCtx.headMount.experimentalConfidenceFusion));
 		if (blockStaleRelPose) {
 			static double s_lastHeadMountRelPoseGuardLog = -1e9;
 			if ((time - s_lastHeadMountRelPoseGuardLog) >= 1.0) {
@@ -1697,14 +1563,7 @@ void CalibrationTick(double time)
 
 		Metrics::SetTickLockedSnapInputs(lockedSnap);
 
-		uint32_t experimentalFlags = 0;
-		auto setExperimentFlag = [&](spacecal::calibration_experiments::ExperimentFlag flag, bool enabled) {
-			if (enabled) experimentalFlags |= static_cast<uint32_t>(flag);
-		};
-		setExperimentFlag(spacecal::calibration_experiments::ConfidenceFusion,
-		                  ctx.headMount.experimentalConfidenceFusion);
-		setExperimentFlag(spacecal::calibration_experiments::EnhancedTrackingChecks, ctx.enhancedTrackingChecks);
-		Metrics::SetTickExperimentalFlags(experimentalFlags);
+		Metrics::SetTickExperimentalFlags(0);
 	}
 
 	Metrics::WriteLogEntry();

@@ -99,8 +99,8 @@ TEST(QuashPoseTest, PreservesRotationVelocityAndValidity)
 }
 
 // Tracking result stays Running_OK rather than the old Calibrating_OutOfRange.
-// Important: downstream consumers (TrackerLiveness, phantom dropout ladder,
-// SteamVR's own disconnect timer) gate on `result != Running_OK` to decide
+// Important: downstream consumers (phantom dropout ladder, SteamVR's own
+// disconnect timer) gate on `result != Running_OK` to decide
 // the tracker is in trouble. The old sentinel triggered those gates; the new
 // design must NOT.
 TEST(QuashPoseTest, KeepsRunningOkSoNoDownstreamTimeoutFires)

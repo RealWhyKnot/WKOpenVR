@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Calibration.h"
-#include "SnapSuppression.h" // EffectiveHeadMountMode
 
 namespace wkopenvr::headmount {
 
@@ -16,14 +15,16 @@ inline bool WitnessPresent(const CalibrationContext& ctx)
 	return ctx.headMount.deviceID >= 0 && (uint32_t)ctx.headMount.deviceID < vr::k_unMaxTrackedDeviceCount;
 }
 
-// Effective head-mount mode for corroboration/recovery decisions: promotes to
-// at least Corroborate when a witness puck is present, without mutating the
-// persisted (style-derived) config mode. Use this -- not ctx.headMount.mode --
-// anywhere corroboration, the AUTO Lock witness gate, or snap classification is
-// decided, so the witness works in Continuous/Manual styles too.
+// Effective head-mount mode: promotes to at least Corroborate when a witness
+// puck is present, without mutating the persisted (style-derived) config mode.
+// Corroborate is a passive role (the witness is only read), so promotion is
+// safe in every style; a higher configured mode (DriverSynth) is preserved.
 inline HeadMountMode EffectiveHeadMountMode(const CalibrationContext& ctx)
 {
-	return spacecal::snap_suppression::EffectiveHeadMountMode(ctx.headMount.mode, WitnessPresent(ctx));
+	if (WitnessPresent(ctx) && ctx.headMount.mode < HeadMountMode::Corroborate) {
+		return HeadMountMode::Corroborate;
+	}
+	return ctx.headMount.mode;
 }
 
 inline bool IsContinuousHeadMountBindingState(CalibrationState state)

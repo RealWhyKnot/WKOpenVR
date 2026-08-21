@@ -134,59 +134,15 @@ function Get-ScenarioCatalog {
 	# binary; their scenarios and env names are gone with them.
 	$Catalog = @{}
 	$Catalog["baseline"] = New-Scenario "baseline" @{}
-	# Far-from-origin fix A/B: relpose-locked head-mount solve, uniform vs
-	# geometry-precision-weighted. Compare applied_mag_wander_cm across the pair.
+	# Relpose-locked head-mount solve -- the path a locked live session runs.
 	$Catalog["relpose_uniform"] = New-Scenario "relpose_uniform" @{
-		WKOPENVR_REPLAY_LOCK_REL         = "1"
-		WKOPENVR_REPLAY_PRECISION_WEIGHT = "0"
-	}
-	$Catalog["relpose_weighted"] = New-Scenario "relpose_weighted" @{
-		WKOPENVR_REPLAY_LOCK_REL         = "1"
-		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
-	}
-	# Gravity-constrained 4-DoF: same weighted solve with the calibration
-	# rotation projected to yaw-about-gravity. Compare net_drift_cm and
-	# final_error_mm against relpose_weighted. Not run by default -- request
-	# explicitly via -Scenario.
-	$Catalog["relpose_weighted_gravity"] = New-Scenario "relpose_weighted_gravity" @{
-		WKOPENVR_REPLAY_LOCK_REL         = "1"
-		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
-		WKOPENVR_REPLAY_GRAVITY_4DOF     = "1"
-	}
-	# Tilt-damped accept: same weighted solve with the swing (roll/pitch)
-	# component low-passed and capped (the live default). Compare
-	# max_applied_tilt_deg / rot wander against relpose_weighted; final_error_mm
-	# must not regress (the criterion the hard 4-DoF projection failed).
-	$Catalog["relpose_weighted_tilt_damped"] = New-Scenario "relpose_weighted_tilt_damped" @{
-		WKOPENVR_REPLAY_LOCK_REL         = "1"
-		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
-		WKOPENVR_REPLAY_TILT_DAMPING     = "1"
-	}
-	# Warm-start A/B: replay from the recording's own stored-profile seed. The
-	# fused variant reproduces the confidence-fusion bad-seed behavior offline;
-	# compare net_drift_mag_cm and perceptible_shifts across the pair.
-	$Catalog["seed_recorded_uniform"] = New-Scenario "seed_recorded_uniform" @{
-		WKOPENVR_REPLAY_LOCK_REL         = "1"
-		WKOPENVR_REPLAY_PRECISION_WEIGHT = "0"
-		WKOPENVR_REPLAY_SEED_PROFILE     = "recorded"
-	}
-	$Catalog["seed_recorded_fused"] = New-Scenario "seed_recorded_fused" @{
-		WKOPENVR_REPLAY_LOCK_REL         = "1"
-		WKOPENVR_REPLAY_PRECISION_WEIGHT = "1"
-		WKOPENVR_REPLAY_SEED_PROFILE     = "recorded"
-	}
-	# Classic upstream pipeline: locked relpose solve with the enhanced-tracking
-	# master switch off (no accept gates, uniform weighting). The behaviour a
-	# live session gets with the Enhanced tracking stability toggle off.
-	$Catalog["upstream_parity"] = New-Scenario "upstream_parity" @{
-		WKOPENVR_REPLAY_LOCK_REL      = "1"
-		WKOPENVR_REPLAY_CUSTOM_CHECKS = "0"
-	}
-	# Enhanced-tracking new math: covariance-weighted locked relpose solve.
-	# Compare applied_mag_wander_cm / final_error_mm against relpose_weighted.
-	$Catalog["v2_math"] = New-Scenario "v2_math" @{
 		WKOPENVR_REPLAY_LOCK_REL = "1"
-		WKOPENVR_REPLAY_V2_MATH  = "1"
+	}
+	# Warm-start: replay from the recording's own stored-profile seed. Compare
+	# net_drift_mag_cm and perceptible_shifts against relpose_uniform.
+	$Catalog["seed_recorded_uniform"] = New-Scenario "seed_recorded_uniform" @{
+		WKOPENVR_REPLAY_LOCK_REL     = "1"
+		WKOPENVR_REPLAY_SEED_PROFILE = "recorded"
 	}
 	return $Catalog
 }
@@ -306,11 +262,7 @@ if ($Scenario.Count -eq 0) {
 	$Scenario = @(
 		"baseline",
 		"relpose_uniform",
-		"relpose_weighted",
-		"seed_recorded_uniform",
-		"seed_recorded_fused",
-		"upstream_parity",
-		"v2_math"
+		"seed_recorded_uniform"
 	)
 }
 else {
@@ -365,24 +317,9 @@ $script:ReplayEnvNames = @(
 	"WKOPENVR_REPLAY_QUALITY_INTERVAL",
 	"WKOPENVR_REPLAY_HOLDOUT",
 	"WKOPENVR_REPLAY_LOCK_REL",
-	"WKOPENVR_REPLAY_PRECISION_WEIGHT",
-	"WKOPENVR_REPLAY_GRAVITY_4DOF",
-	"WKOPENVR_REPLAY_TILT_DAMPING",
-	"WKOPENVR_REPLAY_CUSTOM_CHECKS",
-	"WKOPENVR_REPLAY_V2_MATH",
 	"WKOPENVR_REPLAY_MAX_ROWS",
 	"WKOPENVR_REPLAY_SEED_PROFILE",
-	"WKOPENVR_REPLAY_TRACE_CSV",
-	"WKOPENVR_REPLAY_AUTOLOCK_SIM",
-	"WKOPENVR_REPLAY_AUTOLOCK_ENTER_MM",
-	"WKOPENVR_REPLAY_AUTOLOCK_LEAVE_MM",
-	"WKOPENVR_REPLAY_AUTOLOCK_SCALE",
-	"WKOPENVR_REPLAY_AUTOLOCK_PANIC_MM",
-	"WKOPENVR_REPLAY_AUTOLOCK_SETTLED_HOLD_SEC",
-	"WKOPENVR_REPLAY_AUTOLOCK_STATIONARY_MPS",
-	"WKOPENVR_REPLAY_AUTOLOCK_UNLOCK_WAIT_SEC",
-	"WKOPENVR_REPLAY_AUTOLOCK_FLOOR_WINDOW_SEC",
-	"WKOPENVR_REPLAY_AUTOLOCK_WINDOW"
+	"WKOPENVR_REPLAY_TRACE_CSV"
 )
 $script:OriginalEnv = @{}
 foreach ($Key in $script:ReplayEnvNames) {

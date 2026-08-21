@@ -3,11 +3,10 @@
 .SYNOPSIS
 Replays a recorded session through the session-replay layer and gates counters against a baseline.
 .DESCRIPTION
-Replays a recorded session through the full session-replay layer (solver +
-auto-lock + relocalization recovery, including recorded snap corroboration
-and warm-restart away-gap eviction) and gates the counters against a stored
-baseline. Complements Run-CalibrationReplayMatrix.ps1, which gates the
-solver-scenario metrics but never exercises the recovery layer.
+Replays a recorded session through the session-replay layer (solver + applied
+trajectory) and gates the wander/tilt counters against a stored baseline.
+Complements Run-CalibrationReplayMatrix.ps1, which gates the solver-scenario
+metrics.
 .EXAMPLE
 ./Run-SessionReplayGate.ps1 -Baseline -Quick
 #>
@@ -25,19 +24,12 @@ param(
 	# Write/overwrite the recording's session baseline from this run.
 	[switch]$UpdateBaseline,
 
-	# Replay scenario: "" (default, full recovery layer), "upstream_parity"
-	# (enhanced-tracking master switch off -- classic pipeline), or "v2_math"
-	# (master switch + covariance/observability/sequential-validation solve).
-	# Non-default scenarios gate against
-	# tools\replay-baselines\<recording>.<scenario>.session.baseline.json.
-	[string]$Scenario = "",
-
 	# Run the current test binary without rebuilding first.
 	[switch]$SkipBuild,
 
 	# Fast pre-flight gate: replay only the first -QuickRows rows. Metrics
 	# differ from a full replay, so -Baseline / -UpdateBaseline read/write
-	# quick-suffixed baselines (<recording>[.<scenario>].quick.session.baseline.json).
+	# quick-suffixed baselines (<recording>.quick.session.baseline.json).
 	[switch]$Quick,
 
 	# Row cap used by -Quick.
@@ -82,16 +74,6 @@ $env:WKOPENVR_REPLAY_PATHS = $RecordingPath
 if ($Quick) {
 	$env:WKOPENVR_REPLAY_MAX_ROWS = [string]$QuickRows
 }
-if ($Scenario -eq "upstream_parity") {
-	$env:WKOPENVR_REPLAY_CUSTOM_CHECKS = "0"
-}
-elseif ($Scenario -eq "v2_math") {
-	$env:WKOPENVR_REPLAY_CUSTOM_CHECKS = "1"
-	$env:WKOPENVR_REPLAY_V2_MATH = "1"
-}
-elseif (-not [string]::IsNullOrWhiteSpace($Scenario)) {
-	throw "Unknown -Scenario '$Scenario' (expected '', 'upstream_parity', or 'v2_math')."
-}
 try {
 	$OutputLines = & $TestExe --gtest_filter=SessionReplayTest.ReplaySessionsWhenRequested 2>&1 | ForEach-Object { "$_" }
 	if ($LASTEXITCODE -ne 0) { throw "spacecal_tests session replay failed (exit $LASTEXITCODE)" }
@@ -99,8 +81,6 @@ try {
 finally {
 	Remove-Item Env:WKOPENVR_REPLAY_SESSION -ErrorAction SilentlyContinue
 	Remove-Item Env:WKOPENVR_REPLAY_PATHS -ErrorAction SilentlyContinue
-	Remove-Item Env:WKOPENVR_REPLAY_CUSTOM_CHECKS -ErrorAction SilentlyContinue
-	Remove-Item Env:WKOPENVR_REPLAY_V2_MATH -ErrorAction SilentlyContinue
 	Remove-Item Env:WKOPENVR_REPLAY_MAX_ROWS -ErrorAction SilentlyContinue
 }
 
@@ -113,13 +93,12 @@ foreach ($m in [regex]::Matches($SummaryLine, '([A-Za-z_][A-Za-z_0-9]*)=([-0-9.e
 	$Metrics[$m.Groups[1].Value] = [double]$m.Groups[2].Value
 }
 
-# Recovery-layer decisions must be bit-stable run to run; continuous
-# trajectory metrics get a small tolerance for solver evolution.
-$ExactKeys = @("relocs", "snap_suppressed", "holds", "reanchors", "destructive_clears",
-	"samples_evicted", "warm_restart_snaps", "sub_threshold_relocs", "rows")
-$TolerantKeys = @("accepts", "applied_path_cm", "peak_step_cm", "net_drift_mag_cm", "sub_threshold_residual_cm",
+# Row counts must be bit-stable run to run; continuous trajectory metrics
+# get a small tolerance for solver evolution.
+$ExactKeys = @("rows")
+$TolerantKeys = @("accepts", "applied_path_cm", "peak_step_cm", "net_drift_mag_cm",
 	"wander_per_10min_cm", "max_unclassified_step_cm",
-	"rot_wander_per_10min_deg", "max_unclassified_rot_step_deg", "drift_steps", "drift_path_cm",
+	"rot_wander_per_10min_deg", "max_unclassified_rot_step_deg",
 	"max_applied_tilt_deg", "final_applied_tilt_deg")
 $TolerantFraction = 0.10
 
@@ -129,9 +108,6 @@ foreach ($k in $ExactKeys + $TolerantKeys) {
 
 $RecordingName = [System.IO.Path]::GetFileNameWithoutExtension($RecordingPath)
 $BaselineStem = $RecordingName
-if (-not [string]::IsNullOrWhiteSpace($Scenario)) {
-	$BaselineStem = "$RecordingName.$Scenario"
-}
 if ($Quick) {
 	$BaselineStem = "$BaselineStem.quick"
 }

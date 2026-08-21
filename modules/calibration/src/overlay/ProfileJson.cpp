@@ -309,8 +309,6 @@ static void LoadHeadMount(HeadMountConfig& hm, picojson::value& value)
 	if (obj["offset_witness_auto_captured"].is<bool>())
 		hm.offsetWitnessAutoCaptured = obj["offset_witness_auto_captured"].get<bool>();
 	if (obj["auto_correct_offset"].is<bool>()) hm.autoCorrectOffset = obj["auto_correct_offset"].get<bool>();
-	if (obj["experimental_confidence_fusion"].is<bool>())
-		hm.experimentalConfidenceFusion = obj["experimental_confidence_fusion"].get<bool>();
 	if (obj["allow_raw_hmd_fallback"].is<bool>()) hm.allowRawHmdFallback = obj["allow_raw_hmd_fallback"].get<bool>();
 	if (obj["locked_headset_smoothing"].is<double>()) {
 		double v = obj["locked_headset_smoothing"].get<double>();
@@ -385,13 +383,11 @@ static picojson::object SaveHeadMount(const HeadMountConfig& hm)
 	bool offcal = hm.offsetCalibrated;
 	bool offWitnessAuto = hm.offsetWitnessAutoCaptured;
 	bool autoCorrect = hm.autoCorrectOffset;
-	bool experimentalConfidenceFusion = hm.experimentalConfidenceFusion;
 	bool allowRawHmdFallback = hm.allowRawHmdFallback;
 	obj["hide_tracker"].set<bool>(hide);
 	obj["offset_calibrated"].set<bool>(offcal);
 	obj["offset_witness_auto_captured"].set<bool>(offWitnessAuto);
 	obj["auto_correct_offset"].set<bool>(autoCorrect);
-	obj["experimental_confidence_fusion"].set<bool>(experimentalConfidenceFusion);
 	obj["allow_raw_hmd_fallback"].set<bool>(allowRawHmdFallback);
 	double lockedSmoothing = (double)hm.lockedHeadsetSmoothing;
 	obj["locked_headset_smoothing"].set<double>(lockedSmoothing);
@@ -619,29 +615,6 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (obj["relative_pos_calibrated"].is<bool>()) {
 		ctx.relativePosCalibrated = obj["relative_pos_calibrated"].get<bool>();
 	}
-	// Absent key -> stays at the construction default (on): profiles written
-	// before the weighting existed get the better solve without migration.
-	if (obj["precision_weighted_relpose"].is<bool>()) {
-		ctx.precisionWeightedRelPose = obj["precision_weighted_relpose"].get<bool>();
-	}
-	// Absent key -> stays at the construction default (on): profiles written
-	// before tilt damping existed get the fix without migration.
-	if (obj["gravity_tilt_damping"].is<bool>()) {
-		ctx.gravityTiltDamping = obj["gravity_tilt_damping"].get<bool>();
-	}
-	// Absent key -> stays at the construction default (off = classic
-	// upstream pipeline).
-	if (obj["enhanced_tracking_checks"].is<bool>()) {
-		ctx.enhancedTrackingChecks = obj["enhanced_tracking_checks"].get<bool>();
-	}
-	// Lever-arm noise knobs (LeverArmCovariance.h); clamped so a hand-edited
-	// zero or runaway value cannot degenerate the weights.
-	if (obj["lever_arm_sigma_theta_rad"].is<double>()) {
-		ctx.leverArmSigmaThetaRad = spacecal::levercov::ClampSigmaTheta(obj["lever_arm_sigma_theta_rad"].get<double>());
-	}
-	if (obj["lever_arm_sigma_jitter_m"].is<double>()) {
-		ctx.leverArmSigmaJitterM = spacecal::levercov::ClampSigmaJitter(obj["lever_arm_sigma_jitter_m"].get<double>());
-	}
 	// Lock-mode remains loadable for old profiles, but AUTO is no longer an
 	// active user-facing behavior. New presets only write OFF or ON.
 	bool loadedLockMode = false;
@@ -758,37 +731,6 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 		ctx.relativePosCalibrated = false;
 	}
 
-	// Load-time tilt clamp (runs last: the flag and the rotation are both
-	// parsed above). A banked tilt beyond the cap is solver error, not floor
-	// alignment -- cap it, don't zero it. The on-disk profile is left as-is;
-	// it self-heals at the next natural save.
-	if (ctx.gravityTiltDamping) {
-		const Eigen::AffineCompact3d loadedC = ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation);
-		const double tiltRad = spacecal::gravity::TiltAngleRad(Eigen::Quaterniond(loadedC.rotation()));
-		if (tiltRad > spacecal::gravity::kMaxTiltRad) {
-			const Eigen::AffineCompact3d clamped =
-			    spacecal::gravity::ClampTilt(loadedC, spacecal::gravity::kMaxTiltRad);
-			ctx.calibratedRotation = Eigen::Matrix3d(clamped.rotation()).eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
-			const double capDeg = spacecal::gravity::kMaxTiltRad * 180.0 / EIGEN_PI;
-			const double tiltDeg = tiltRad * 180.0 / EIGEN_PI;
-			char clampBuf[160];
-			snprintf(clampBuf, sizeof clampBuf,
-			         "profile_load_tilt_clamped: tilt_deg=%.2f cap_deg=%.2f removed_deg=%.2f", tiltDeg, capDeg,
-			         tiltDeg - capDeg);
-			Metrics::WriteLogAnnotation(clampBuf);
-		}
-		for (auto& extra : ctx.additionalCalibrations) {
-			const Eigen::AffineCompact3d extraC =
-			    ProfileTransform(extra.calibratedRotation, extra.calibratedTranslation);
-			if (spacecal::gravity::TiltAngleRad(Eigen::Quaterniond(extraC.rotation())) >
-			    spacecal::gravity::kMaxTiltRad) {
-				const Eigen::AffineCompact3d clamped =
-				    spacecal::gravity::ClampTilt(extraC, spacecal::gravity::kMaxTiltRad);
-				extra.calibratedRotation = Eigen::Matrix3d(clamped.rotation()).eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
-			}
-		}
-	}
-
 	ctx.validProfile = true;
 }
 
@@ -889,8 +831,6 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	WRITE_IF_CHANGED_BOOL("freeze_include_hmd", freezeIncludeHmd);
 	WRITE_IF_CHANGED_DOUBLE("one_shot_calibration_speed", oneShotCalibrationSpeed);
 	WRITE_IF_CHANGED_DOUBLE("continuous_calibration_speed", continuousCalibrationSpeed);
-	WRITE_IF_CHANGED_DOUBLE("lever_arm_sigma_theta_rad", leverArmSigmaThetaRad);
-	WRITE_IF_CHANGED_DOUBLE("lever_arm_sigma_jitter_m", leverArmSigmaJitterM);
 
 	// finger_smoothing_* and tracker_smoothness moved out of SC profiles
 	// on 2026-05-11 (Protocol v12 migration). The Smoothing overlay owns
@@ -923,13 +863,6 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// so "key absent" is ambiguous and a load would fall back to the style
 	// preset instead of the user's choice.
 	profile["relative_pos_calibrated"].set<bool>(ctx.relativePosCalibrated);
-	// Always emit so an explicit user OFF survives loads (absent means "on").
-	bool weightedRelPose = ctx.precisionWeightedRelPose;
-	profile["precision_weighted_relpose"].set<bool>(weightedRelPose);
-	// Always emit so an explicit user OFF survives loads (absent means "on").
-	profile["gravity_tilt_damping"].set<bool>(ctx.gravityTiltDamping);
-	// Always emit so an explicit choice survives loads (absent means "off").
-	profile["enhanced_tracking_checks"].set<bool>(ctx.enhancedTrackingChecks);
 	const auto explicitLockMode = ctx.lockRelativePositionMode == CalibrationContext::LockMode::ON
 	                                  ? CalibrationContext::LockMode::ON
 	                                  : CalibrationContext::LockMode::OFF;
@@ -980,8 +913,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	// no-Quest setup remain identical to v3 except for the schema_version bump.
 	if (ctx.headMount.mode != HeadMountMode::Off || !ctx.headMount.trackerSerial.empty() ||
 	    ctx.headMount.offsetCalibrated || !ctx.headMount.autoCorrectOffset || !ctx.headMount.allowRawHmdFallback ||
-	    ctx.headMount.experimentalConfidenceFusion || ctx.headMount.lockedHeadsetSmoothing != 0 ||
-	    ctx.headMount.lockedHeadsetRotationSmoothing != 0 ||
+	    ctx.headMount.lockedHeadsetSmoothing != 0 || ctx.headMount.lockedHeadsetRotationSmoothing != 0 ||
 	    !wkopenvr::headmount::DriverSynthTimingIsDefault(ctx.headMount.driverSynthTiming)) {
 		profile["head_mount"].set<picojson::object>(SaveHeadMount(ctx.headMount));
 	}

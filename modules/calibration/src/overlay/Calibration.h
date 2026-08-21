@@ -159,12 +159,6 @@ struct HeadMountConfig
 	// auto-captures anymore, so new profiles only ever write false.
 	bool offsetWitnessAutoCaptured = false;
 	bool autoCorrectOffset = true;
-	// Experimental geometry-precision confidence fusion (default OFF). On: each
-	// continuous re-solve is weighted by its lever-arm precision and fused into a
-	// running estimate by accumulated confidence, so a far-from-origin reading
-	// cannot drag a good calibration around. Off: the classic behaviour -- each
-	// accepted candidate overwrites the calibration outright.
-	bool experimentalConfidenceFusion = false;
 	bool allowRawHmdFallback = true;
 	// Speed-adaptive low-pass on the synthesized HMD pose when locked to the
 	// head-mounted tracker (0..100, 0 = off). Tames lighthouse position jitter.
@@ -248,23 +242,6 @@ struct CalibrationContext
 	bool requireTriggerPressToApply = false;
 	bool wasWaitingForTriggers = false;
 	bool hasAppliedCalibrationResult = false;
-
-	// Master experimental switch for the fork's remaining custom checks: the
-	// locked-accept gates, geometry-precision sample weighting, and the
-	// covariance-weighted solve with observability gating. OFF (default) runs
-	// the classic upstream pipeline. Independent of this switch: the
-	// oversized-delta persist guard (ContinuousPersistDecision.h) and the
-	// first-candidate snap bound (MotionGate.h) run in both modes; they bound
-	// output plausibility, not tracking behaviour. Persisted; always written
-	// so an explicit choice survives reload.
-	bool enhancedTrackingChecks = false;
-	bool CustomChecksActive() const { return enhancedTrackingChecks; }
-
-	// Lever-arm noise model for the covariance-weighted solve (LeverArmCovariance.h;
-	// defaults measured from retained recordings). Persisted knobs for rigs whose
-	// trackers jitter differently; only read while the enhanced-tracking switch is on.
-	double leverArmSigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;
-	double leverArmSigmaJitterM = spacecal::levercov::kDefaultSigmaJitterM;
 
 	float xprev, yprev, zprev;
 	int consecutiveHmdStalls = 0;
@@ -419,27 +396,6 @@ struct CalibrationContext
 
 	CalibrationProfileSnapshot continuousStartSnapshot;
 	CalibrationProfileSnapshot lastAcceptedContinuousSnapshot;
-	// Geometry-precision weighting of the locked relpose average
-	// (1/lever-arm^2, CalibrateByRelPose): far-from-origin samples can't drag
-	// the calibration. On by default; separate from the experimental Kalman
-	// fusion accept below, which additionally blends accepted candidates.
-	bool precisionWeightedRelPose = true;
-	// Tilt damping of the locked relpose accept (GravityAlignment.h): the
-	// roll/pitch component of the calibration is low-passed and capped while
-	// yaw and translation track at full speed. On by default -- deliberately
-	// independent of the enhanced-tracking master switch, since the tilt
-	// random walk it suppresses lands in the default pipeline too; toggle off
-	// for exact upstream-parity behaviour.
-	bool gravityTiltDamping = true;
-	// Confidence-weighted continuous fusion (ContinuousPrecisionFusion.h).
-	// Accumulated precision of the running calibration; higher = more resistant
-	// to far-from-origin re-solves. Runtime-only, never persisted. lastFusionGain
-	// is the most recent fusion gain, surfaced in the heartbeat for diagnostics.
-	double continuousConfidencePrecision = 0.0;
-	double lastFusionGain = 1.0;
-	// Consecutive accepted candidates disagreeing with the fused estimate by
-	// >= kStaleSeedDisagreeM (stale-seed breaker input).
-	int continuousFusionDisagreeStreak = 0;
 
 	// Persistence throttle for continuous-mode offset writes. The in-memory
 	// calibration is updated on every accepted candidate, but the registry copy
@@ -512,13 +468,6 @@ struct CalibrationContext
 		// brief tracking glitches on rigid setups. The user can still flip it
 		// off in Advanced if they want pure incremental behaviour.
 		enableStaticRecalibration = true;
-
-		precisionWeightedRelPose = true;
-		gravityTiltDamping = true;
-
-		enhancedTrackingChecks = false;
-		leverArmSigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;
-		leverArmSigmaJitterM = spacecal::levercov::kDefaultSigmaJitterM;
 	}
 
 	void ClearLogOnMessage() { clearOnLog = true; }
@@ -565,9 +514,6 @@ struct CalibrationContext
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 		continuousStartSnapshot = {};
 		lastAcceptedContinuousSnapshot = {};
-		continuousConfidencePrecision = 0.0;
-		lastFusionGain = 1.0;
-		continuousFusionDisagreeStreak = 0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
 		anomalousPersistFirstSeen = 0.0;
@@ -595,9 +541,6 @@ struct CalibrationContext
 		calibratedTranslation = Eigen::Vector3d::Zero();
 		calibratedRotation = Eigen::Vector3d::Zero();
 		lastAcceptedContinuousSnapshot = {};
-		continuousConfidencePrecision = 0.0;
-		lastFusionGain = 1.0;
-		continuousFusionDisagreeStreak = 0;
 		lastContinuousSaveTime = -1e9;
 		lastPersistedContinuousTranslation = Eigen::Vector3d::Zero();
 		anomalousPersistFirstSeen = 0.0;
