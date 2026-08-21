@@ -4,6 +4,7 @@
 #include "JsonUtil.h"
 #include "Logging.h"
 #include "PowerShellCommand.h"
+#include "UpdateNoticeLogic.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -14,6 +15,7 @@
 #pragma comment(lib, "bcrypt.lib")
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -22,6 +24,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -231,6 +234,52 @@ bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModul
 
 // ---- disk scan ----------------------------------------------------------
 
+bool InstalledVersionIsNewer(const std::string& candidate, const std::string& incumbent)
+{
+	std::array<int, 4> c = {0, 0, 0, 0};
+	std::array<int, 4> i = {0, 0, 0, 0};
+	const bool cOk = openvr_pair::overlay::ParseVersionStamp(candidate, c);
+	const bool iOk = openvr_pair::overlay::ParseVersionStamp(incumbent, i);
+	if (cOk && iOk) {
+		for (size_t k = 0; k < c.size(); ++k) {
+			if (c[k] != i[k]) return c[k] > i[k];
+		}
+		// Same numeric core: fall through to the build-suffix tiebreak below.
+	}
+	else if (cOk != iOk) {
+		// A parseable stamp always beats one we cannot read (e.g. "1.4", "dev").
+		return cOk;
+	}
+
+	return _stricmp(candidate.c_str(), incumbent.c_str()) > 0;
+}
+
+// The host activates exactly one version per module (the newest), so surfacing every installed
+// version listed rows that can never load and gave them colliding ImGui widget IDs, since those
+// IDs are built from the module uuid alone.
+std::vector<InstalledModule> KeepNewestPerUuid(std::vector<InstalledModule> all)
+{
+	std::unordered_map<std::string, size_t> newest;
+	newest.reserve(all.size());
+	for (size_t i = 0; i < all.size(); ++i) {
+		auto it = newest.find(all[i].uuid);
+		if (it == newest.end()) {
+			newest.emplace(all[i].uuid, i);
+		}
+		else if (InstalledVersionIsNewer(all[i].version, all[it->second].version)) {
+			it->second = i;
+		}
+	}
+
+	std::vector<InstalledModule> kept;
+	kept.reserve(newest.size());
+	for (size_t i = 0; i < all.size(); ++i) {
+		auto it = newest.find(all[i].uuid);
+		if (it != newest.end() && it->second == i) kept.push_back(std::move(all[i]));
+	}
+	return kept;
+}
+
 std::vector<InstalledModule> ScanInstalledModules()
 {
 	std::wstring base = FtDataDir();
@@ -296,6 +345,8 @@ std::vector<InstalledModule> ScanInstalledModules()
 			result.push_back(std::move(mod));
 		}
 	}
+	result = KeepNewestPerUuid(std::move(result));
+
 	std::sort(result.begin(), result.end(), [](const InstalledModule& a, const InstalledModule& b) {
 		const int byName = _stricmp(a.name.c_str(), b.name.c_str());
 		if (byName != 0) return byName < 0;

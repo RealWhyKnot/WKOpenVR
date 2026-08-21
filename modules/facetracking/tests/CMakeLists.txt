@@ -40,6 +40,7 @@ target_include_directories(facetracking_tests
     PRIVATE ${CMAKE_SOURCE_DIR}/modules/facetracking/src/overlay
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
     PRIVATE ${CMAKE_SOURCE_DIR}/core/src/driver
+    PRIVATE ${CMAKE_SOURCE_DIR}/core/src/overlay
     PRIVATE ${CMAKE_SOURCE_DIR}/lib
     PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers
     PRIVATE ${CMAKE_SOURCE_DIR}/modules/oscrouter/src/driver

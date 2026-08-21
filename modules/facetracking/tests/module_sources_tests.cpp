@@ -168,3 +168,46 @@ TEST(ModuleSources, LoadsAvailablePrereleaseMetadata)
 	std::error_code ec;
 	std::filesystem::remove_all(temp, ec);
 }
+
+// Side-loading a build next to an existing one gave one uuid two rows, and the Modules tab derives
+// its ImGui widget ids from the uuid alone, so the duplicate row collided.
+TEST(ModuleSources, KeepsOnlyNewestVersionPerUuid)
+{
+	std::vector<facetracking::InstalledModule> all;
+	auto add = [&all](const char* uuid, const char* version) {
+		facetracking::InstalledModule m;
+		m.uuid = uuid;
+		m.version = version;
+		m.name = uuid;
+		all.push_back(std::move(m));
+	};
+	add("mod-a", "2026.6.7.0-beta");
+	add("mod-a", "2026.8.21.0-4ED2");
+	add("mod-b", "1.4");
+	add("mod-c", "2026.8.4.0");
+	add("mod-c", "2026.10.1.0");
+
+	const std::vector<facetracking::InstalledModule> kept = facetracking::KeepNewestPerUuid(std::move(all));
+
+	ASSERT_EQ(kept.size(), 3u);
+	auto versionOf = [&kept](const std::string& uuid) {
+		for (const auto& m : kept)
+			if (m.uuid == uuid) return m.version;
+		return std::string{"<missing>"};
+	};
+	EXPECT_EQ(versionOf("mod-a"), "2026.8.21.0-4ED2");
+	EXPECT_EQ(versionOf("mod-b"), "1.4");
+	// Month 10 must outrank month 8 even though it sorts lower as a string.
+	EXPECT_EQ(versionOf("mod-c"), "2026.10.1.0");
+}
+
+TEST(ModuleSources, ComparesVersionStampsNumericallyThenOrdinally)
+{
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.10.1.0", "2026.8.4.0"));
+	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("2026.8.4.0", "2026.10.1.0"));
+	// Same numeric core, differing build suffix: deterministic ordinal tiebreak.
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.8.21.0-ZZZZ", "2026.8.21.0-AAAA"));
+	// A parseable four-part stamp beats an unparseable one either way round.
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.8.21.0-4ED2", "dev"));
+	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("dev", "2026.8.21.0-4ED2"));
+}

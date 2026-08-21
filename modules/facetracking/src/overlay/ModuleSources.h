@@ -130,9 +130,16 @@ bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModul
 
 // ---- disk-scan ----------------------------------------------------------
 
-// Walk the modules dir and return all installed modules.  Does NOT require
-// the host to be running; reads manifest.json + optional source.json.
+// Walk the modules dir and return the newest installed version of each module.
+// Does NOT require the host to be running; reads manifest.json + optional source.json.
 std::vector<InstalledModule> ScanInstalledModules();
+
+// True when `candidate` is a later version stamp than `incumbent`. Numeric where both parse as
+// four-part stamps, ordinal otherwise.
+bool InstalledVersionIsNewer(const std::string& candidate, const std::string& incumbent);
+
+// Collapse a scan result to one entry per uuid, keeping the newest version of each.
+std::vector<InstalledModule> KeepNewestPerUuid(std::vector<InstalledModule> all);
 
 // Read cached registry module lists written by face-module-sync.ps1.
 std::vector<AvailableModule> LoadAvailableModules(const std::string& source_id = {});
