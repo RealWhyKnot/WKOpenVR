@@ -81,6 +81,17 @@ vr::HmdVector3d_t VRTranslationVec(Eigen::Vector3d transcm)
 	return vrTrans;
 }
 
+// Solve admission bounds: refuse an underdetermined or ill-conditioned
+// solve and keep the current calibration rather than accept a bad one.
+constexpr size_t kMinDeltaSampleCount = 200;
+constexpr double kRotationMinVariance = 0.15;
+constexpr double kTranslationMinMotionVariance = 0.01;
+constexpr double kTranslationMaxAmplifiedNoise = 2.5;
+
+// Accept-history sizing/expiry for the validation sample pool.
+constexpr size_t kSampleHistoryWindows = 5;
+constexpr double kSampleHistoryExpirySeconds = 60.0;
+
 DSample DeltaRotationSamples(Sample s1, Sample s2)
 {
 	// Difference in rotation between samples.
@@ -96,9 +107,9 @@ DSample DeltaRotationSamples(Sample s1, Sample s2)
 	// Reject samples that were too close to each other.
 	auto refA = AngleFromRotationMatrix3(dref);
 	auto targetA = AngleFromRotationMatrix3(dtarget);
-	ds.valid = refA > 0.4 && targetA > 0.4 && ds.ref.norm() > 0.01 && ds.target.norm() > 0.01;
+	ds.valid = refA > 0.4 && targetA > 0.4 && ds.ref.norm() > 0.1 && ds.target.norm() > 0.1;
 
-	// Only normalise when the magnitudes pass the gate above; a sub-1cm
+	// Only normalise when the magnitudes pass the gate above; a near-zero
 	// axis would otherwise be normalised to NaN/Inf entries, and any
 	// downstream consumer that forgets to check ds.valid would ingest
 	// the garbage.
@@ -500,10 +511,47 @@ void CalibrationCalc::PushSample(const Sample& sample)
 		Metrics::WriteLogAnnotation("PushSample_dropped_nonfinite");
 		return; // drop the sample
 	}
+	if (sample.valid && !IsSampleVariedEnough(sample)) {
+		return;
+	}
 	m_samples.push_back(sample);
 	if (sample.valid && sample.timestamp > m_lastSampleTime) {
 		m_lastSampleTime = sample.timestamp;
 	}
+}
+
+void CalibrationCalc::SetMinimumRotationVariance(bool enforce, size_t windowSampleCount)
+{
+	m_enforceMinimumRotationVariance = enforce;
+	m_windowSampleCount = std::max<size_t>(windowSampleCount, 1);
+	// Spread a fixed rotation-variance budget across the window: minimum
+	// pairwise angle = 14 deg / (1.2 * cbrt(N)).
+	const double rangeRad = 14.0 * (EIGEN_PI / 180.0);
+	const double minAngleRad = rangeRad / (1.2 * std::cbrt(static_cast<double>(m_windowSampleCount)));
+	m_rotationVarianceCosineThreshold = std::cos(minAngleRad / 2.0);
+}
+
+void CalibrationCalc::TrackSamplesForErrorTracking()
+{
+	if (m_samples.empty()) return;
+	m_sampleHistory.insert(m_sampleHistory.end(), m_samples.begin(), m_samples.end());
+	const size_t cap = kSampleHistoryWindows * m_windowSampleCount;
+	while (m_sampleHistory.size() > cap) {
+		m_sampleHistory.pop_front();
+	}
+}
+
+bool CalibrationCalc::IsSampleVariedEnough(const Sample& sample) const
+{
+	if (!m_enforceMinimumRotationVariance || m_samples.empty()) return true;
+
+	const Eigen::Quaterniond newRotation(sample.ref.rot);
+	for (const auto& existing : m_samples) {
+		if (std::abs(newRotation.dot(Eigen::Quaterniond(existing.ref.rot))) >= m_rotationVarianceCosineThreshold) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void CalibrationCalc::Clear()
@@ -513,6 +561,8 @@ void CalibrationCalc::Clear()
 	m_lastComputeUsedRelPose = false;
 	m_samples.clear();
 	m_rotationFrozen.clear();
+	m_sampleHistory.clear();
+	m_lastAcceptedSolveTime = 0.0;
 	m_axisVariance = 0.0;
 	m_refToTargetPose = Eigen::AffineCompact3d::Identity();
 	m_relativePosCalibrated = false;
@@ -533,6 +583,11 @@ size_t CalibrationCalc::EvictSamplesBefore(double timestamp)
 	if (!m_rotationFrozen.empty() && m_rotationFrozen.front().timestamp < timestamp) {
 		evicted += m_rotationFrozen.size();
 		m_rotationFrozen.clear();
+	}
+	// The validation history describes the same (now dead) frame.
+	while (!m_sampleHistory.empty() && m_sampleHistory.front().timestamp < timestamp) {
+		m_sampleHistory.pop_front();
+		++evicted;
 	}
 	return evicted;
 }
@@ -598,23 +653,12 @@ std::vector<bool> CalibrationCalc::DetectOutliers() const
 		return std::vector<bool>(m_samples.size(), true);
 	}
 
-	// Kabsch algorithm
+	// Kabsch on unit rotation axes: the axes are already centred, so no
+	// centroid subtraction (subtracting one skews the cross-covariance).
 	Eigen::MatrixXd refPoints(deltas.size(), 3), targetPoints(deltas.size(), 3);
-	Eigen::Vector3d refCentroid(0, 0, 0), targetCentroid(0, 0, 0);
-
 	for (size_t i = 0; i < deltas.size(); i++) {
 		refPoints.row(i) = deltas[i].ref;
-		refCentroid += deltas[i].ref;
 		targetPoints.row(i) = deltas[i].target;
-		targetCentroid += deltas[i].target;
-	}
-
-	refCentroid /= (double)deltas.size();
-	targetCentroid /= (double)deltas.size();
-
-	for (size_t i = 0; i < deltas.size(); i++) {
-		refPoints.row(i) -= refCentroid;
-		targetPoints.row(i) -= targetCentroid;
 	}
 
 	auto crossCV = refPoints.transpose() * targetPoints;
@@ -658,7 +702,7 @@ std::vector<bool> CalibrationCalc::DetectOutliers() const
 	return valids;
 }
 
-Eigen::Vector3d CalibrationCalc::CalibrateRotation(const bool ignoreOutliers) const
+Eigen::Quaterniond CalibrationCalc::CalibrateRotation(const bool ignoreOutliers) const
 {
 	std::vector<DSample> deltas;
 	std::vector<bool> valids = DetectOutliers();
@@ -674,48 +718,51 @@ Eigen::Vector3d CalibrationCalc::CalibrateRotation(const bool ignoreOutliers) co
 			}
 		}
 	}
-	// char buf[256];
-	// snprintf(buf, sizeof buf, "Got %zd samples with %zd delta samples\n", m_samples.size(), deltas.size());
-	// CalCtx.Log(buf);
 
-	if (deltas.empty()) {
-		return Eigen::Vector3d::Zero();
+	// A zero quaternion signals "no usable solve"; callers reject the
+	// candidate and keep the current calibration.
+	if (deltas.size() < kMinDeltaSampleCount) {
+		Metrics::lastRejectReason = "not_enough_rotation_deltas";
+		return Eigen::Quaterniond(0, 0, 0, 0);
 	}
 
-	// Kabsch algorithm, matching the upstream yaw-only solve.
-	Eigen::MatrixXd refPoints(deltas.size(), 2), targetPoints(deltas.size(), 2);
-	Eigen::Vector2d refCentroid(0, 0), targetCentroid(0, 0);
-
+	// Full SO(3) Kabsch on unit rotation axes: the axes are already centred,
+	// so no centroid subtraction (subtracting one skews the cross-covariance).
+	Eigen::MatrixXd refPoints(deltas.size(), 3), targetPoints(deltas.size(), 3);
 	for (size_t i = 0; i < deltas.size(); i++) {
-		refPoints.row(i) << deltas[i].ref[0], deltas[i].ref[2];
-		refCentroid += refPoints.row(i);
-
-		targetPoints.row(i) << deltas[i].target[0], deltas[i].target[2];
-		targetCentroid += targetPoints.row(i);
-	}
-
-	refCentroid /= (double)deltas.size();
-	targetCentroid /= (double)deltas.size();
-
-	for (size_t i = 0; i < deltas.size(); i++) {
-		refPoints.row(i) -= refCentroid;
-		targetPoints.row(i) -= targetCentroid;
+		refPoints.row(i) = deltas[i].ref;
+		targetPoints.row(i) = deltas[i].target;
 	}
 
 	auto crossCV = refPoints.transpose() * targetPoints;
 
-	Eigen::JacobiSVD<Eigen::MatrixXd> svd(crossCV, Eigen::ComputeThinU | Eigen::ComputeThinV);
+	Eigen::BDCSVD<Eigen::MatrixXd> bdcsvd;
+	auto svd = bdcsvd.compute(crossCV, Eigen::ComputeThinU | Eigen::ComputeThinV);
+	if (svd.info() != Eigen::Success) {
+		Metrics::lastRejectReason = "rotation_svd_failed";
+		return Eigen::Quaterniond(0, 0, 0, 0);
+	}
 
-	Eigen::Matrix2d i = Eigen::Matrix2d::Identity();
-	Eigen::Matrix2d rot = svd.matrixV() * i * svd.matrixU().transpose();
+	// The middle-to-largest singular-value ratio measures how varied the
+	// rotation axes were; a near-planar set has no unique solution.
+	const Eigen::Vector3d singularValues = svd.singularValues();
+	const double conditionNumber = singularValues(1) / singularValues(0);
+	if (conditionNumber < kRotationMinVariance) {
+		Metrics::lastRejectReason = "not_enough_rotational_variance";
+		return Eigen::Quaterniond(0, 0, 0, 0);
+	}
 
-	double yaw = std::atan2(rot(1, 0), rot(0, 0));
+	Eigen::Matrix3d i = Eigen::Matrix3d::Identity();
+	if ((svd.matrixU() * svd.matrixV().transpose()).determinant() < 0) {
+		i(2, 2) = -1;
+	}
 
-	Eigen::Vector3d euler(0.0, yaw * 180.0 / EIGEN_PI, 0.0);
+	Eigen::Matrix3d rot = svd.matrixV() * i * svd.matrixU().transpose();
+	rot.transposeInPlace();
 
-	// snprintf(buf, sizeof buf, "Calibrated rotation: yaw=%.2f pitch=%.2f roll=%.2f\n", euler[1], euler[2], euler[0]);
-	// CalCtx.Log(buf);
-	return euler;
+	Eigen::Quaterniond rotQuat(rot);
+	rotQuat.normalize();
+	return rotQuat;
 }
 
 Eigen::Vector3d CalibrationCalc::CalibrateTranslation(const Eigen::Matrix3d& rotation) const
@@ -746,8 +793,14 @@ Eigen::Vector3d CalibrationCalc::CalibrateTranslation(const Eigen::Matrix3d& rot
 		}
 	}
 
+	const auto rejected = [] {
+		const double nan = std::numeric_limits<double>::quiet_NaN();
+		return Eigen::Vector3d(nan, nan, nan);
+	};
+
 	if (deltas.empty()) {
-		return Eigen::Vector3d::Zero();
+		Metrics::lastRejectReason = "not_enough_translation_deltas";
+		return rejected();
 	}
 
 	Eigen::VectorXd constants(deltas.size() * 3);
@@ -760,14 +813,27 @@ Eigen::Vector3d CalibrationCalc::CalibrateTranslation(const Eigen::Matrix3d& rot
 		}
 	}
 
-	Eigen::Vector3d trans = coefficients.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(constants);
-	auto transcm = trans * 100.0;
-	(void)transcm;
+	Eigen::BDCSVD<Eigen::MatrixXd> bdcsvd;
+	auto svd = bdcsvd.compute(coefficients, Eigen::ComputeThinU | Eigen::ComputeThinV);
+	if (svd.info() != Eigen::Success) {
+		Metrics::lastRejectReason = "translation_svd_failed";
+		return rejected();
+	}
 
-	// char buf[256];
-	// snprintf(buf, sizeof buf, "Calibrated translation x=%.2f y=%.2f z=%.2f\n", transcm[0], transcm[1], transcm[2]);
-	// CalCtx.Log(buf);
-	return trans;
+	// Only accept well-conditioned solutions: the smallest singular value is
+	// the motion variance, the max/min ratio the amplified-noise factor.
+	const Eigen::Vector3d singularValues = svd.singularValues();
+	const double motionVariance = singularValues(2);
+	if (motionVariance < kTranslationMinMotionVariance) {
+		Metrics::lastRejectReason = "not_enough_translation_variance";
+		return rejected();
+	}
+	if (singularValues(0) / motionVariance > kTranslationMaxAmplifiedNoise) {
+		Metrics::lastRejectReason = "translation_noise_amplified";
+		return rejected();
+	}
+
+	return svd.solve(constants);
 }
 
 namespace {
@@ -790,9 +856,16 @@ Pose ApplyTransform(const Pose& originalPose, const Eigen::Vector3d& vrTrans, co
 
 Eigen::AffineCompact3d CalibrationCalc::ComputeCalibration(const bool ignoreOutliers) const
 {
-	Eigen::Vector3d rotation = CalibrateRotation(ignoreOutliers);
-	Eigen::Matrix3d rotationMat = quaternionRotateMatrix(VRRotationQuat(rotation));
-	Eigen::Vector3d translation = CalibrateTranslation(rotationMat);
+	const Eigen::Quaterniond rotation = CalibrateRotation(ignoreOutliers);
+	if (rotation.squaredNorm() < 1e-6) {
+		// Rotation solve refused (reason already recorded); poison the result
+		// so every finiteness check downstream rejects the candidate.
+		const double nan = std::numeric_limits<double>::quiet_NaN();
+		return Eigen::Translation3d(nan, nan, nan) * Eigen::AffineCompact3d::Identity();
+	}
+
+	const Eigen::Matrix3d rotationMat = rotation.toRotationMatrix();
+	const Eigen::Vector3d translation = CalibrateTranslation(rotationMat);
 
 	Eigen::AffineCompact3d rot(rotationMat);
 	Eigen::Translation3d trans(translation);
@@ -806,19 +879,21 @@ double CalibrationCalc::RetargetingErrorRMS(const Eigen::Vector3d& hmdToTargetPo
 	double errorAccum = 0;
 	int sampleCount = 0;
 
-	for (auto& sample : m_samples) {
-		if (!sample.valid) continue;
+	// Validate against the accumulated accept history plus the live window:
+	// several windows' worth of samples makes the error term trustworthy
+	// where one window would track its own fit.
+	const auto accumulate = [&](const std::deque<Sample>& samples) {
+		for (auto& sample : samples) {
+			if (!sample.valid) continue;
 
-		// Apply transformation
-		const auto updatedPose = ApplyTransform(sample.target, calibration);
-
-		const Eigen::Vector3d hmdPoseSpace = sample.ref.rot * hmdToTargetPos + sample.ref.trans;
-
-		// Compute error term
-		double error = (updatedPose.trans - hmdPoseSpace).squaredNorm();
-		errorAccum += error;
-		sampleCount++;
-	}
+			const auto updatedPose = ApplyTransform(sample.target, calibration);
+			const Eigen::Vector3d hmdPoseSpace = sample.ref.rot * hmdToTargetPos + sample.ref.trans;
+			errorAccum += (updatedPose.trans - hmdPoseSpace).squaredNorm();
+			sampleCount++;
+		}
+	};
+	accumulate(m_sampleHistory);
+	accumulate(m_samples);
 
 	if (sampleCount == 0) return std::numeric_limits<double>::infinity();
 	return sqrt(errorAccum / sampleCount);
@@ -923,19 +998,20 @@ Eigen::Vector3d CalibrationCalc::ComputeRefToTargetOffset(const Eigen::AffineCom
 	Eigen::Vector3d accum = Eigen::Vector3d::Zero();
 	int sampleCount = 0;
 
-	for (auto& sample : m_samples) {
-		if (!sample.valid) continue;
+	// Same accept-history + live-window pool as RetargetingErrorRMS, so the
+	// offset and the error term describe the same sample set.
+	const auto accumulate = [&](const std::deque<Sample>& samples) {
+		for (auto& sample : samples) {
+			if (!sample.valid) continue;
 
-		// Apply transformation
-		const auto updatedPose = ApplyTransform(sample.target, calibration);
-
-		// Now move the transform from world to HMD space
-		const auto hmdOriginPos = updatedPose.trans - sample.ref.trans;
-		const auto hmdSpace = sample.ref.rot.inverse() * hmdOriginPos;
-
-		accum += hmdSpace;
-		sampleCount++;
-	}
+			const auto updatedPose = ApplyTransform(sample.target, calibration);
+			const auto hmdOriginPos = updatedPose.trans - sample.ref.trans;
+			accum += sample.ref.rot.inverse() * hmdOriginPos;
+			sampleCount++;
+		}
+	};
+	accumulate(m_sampleHistory);
+	accumulate(m_samples);
 
 	if (sampleCount == 0) return Eigen::Vector3d::Zero();
 	accum /= sampleCount;
@@ -995,6 +1071,12 @@ Eigen::Vector4d CalibrationCalc::ComputeAxisVariance(const Eigen::AffineCompact3
 [[nodiscard]] bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d& calibration, double* error,
                                                         Eigen::Vector3d* posOffsetV)
 {
+	// A refused solve arrives as a non-finite transform; NaN also defeats the
+	// RMS threshold comparison below, so reject explicitly.
+	if (!calibration.matrix().allFinite()) {
+		return false;
+	}
+
 	bool ok = true;
 
 	const auto posOffset = ComputeRefToTargetOffset(calibration);
@@ -1308,6 +1390,9 @@ CalibrationQualityReport CalibrationCalc::EvaluateCalibrationQuality(const Eigen
 				train.PushSample(*validSamples[i]);
 			}
 			const Eigen::AffineCompact3d foldCalibration = train.ComputeCalibration(ignoreOutliers);
+			// A refused fold solve (underdetermined training split) carries no
+			// holdout information; skip the fold instead of pushing NaNs.
+			if (!foldCalibration.matrix().allFinite()) continue;
 			const Eigen::Vector3d foldOffset = train.ComputeRefToTargetOffset(foldCalibration);
 			for (size_t i = begin; i < end; ++i) {
 				const Sample& sample = *validSamples[i];
@@ -1584,6 +1669,14 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
                                          const bool ignoreOutliers)
 {
 	Metrics::RecordTimestamp();
+	// A long stretch without an accepted solve usually means the reference
+	// frame moved (headset re-anchor while away); the accept history then
+	// describes a dead frame and would poison validation until it ages out.
+	if (m_lastAcceptedSolveTime > 0.0 && !m_sampleHistory.empty() &&
+	    m_lastSampleTime - m_lastAcceptedSolveTime > kSampleHistoryExpirySeconds) {
+		m_sampleHistory.clear();
+		Metrics::WriteLogAnnotation("sample_history_expired: no_accept_for_60s");
+	}
 	m_lastComputeUsedRelPose = false;
 	const bool hadCurrentAtStart = m_isValid;
 	const Eigen::AffineCompact3d currentAtStart = m_estimatedTransformation;
@@ -1622,6 +1715,8 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 			m_lastComputeUsedRelPose = true;
 			m_estimatedTransformation = byRelPose;
 			m_lastCandidateRetargetingErrorM = relPoseError;
+			m_lastAcceptedSolveTime = m_lastSampleTime;
+			TrackSamplesForErrorTracking();
 			return true;
 		}
 	}
@@ -1759,6 +1854,8 @@ bool CalibrationCalc::ComputeIncremental(bool& lerp, double threshold, double re
 
 		Metrics::calibrationApplied.Push(!usingRelPose);
 		m_lastCandidateRetargetingErrorM = newError;
+		m_lastAcceptedSolveTime = m_lastSampleTime;
+		TrackSamplesForErrorTracking();
 		return true;
 	}
 	else {

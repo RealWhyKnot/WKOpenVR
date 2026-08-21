@@ -56,17 +56,23 @@ replay::LoadedRecording MakeSessionRecording(const SessionSpec& spec)
 	rec.hasLockedSnapColumns = true;
 	rec.rows.reserve(spec.rows);
 	for (int i = 0; i < spec.rows; ++i) {
-		const double yaw = 0.03 * static_cast<double>(i % 40);
+		// Multi-axis rotation sweep: the full-solve conditioning gate refuses
+		// single-axis motion, so the synthetic session must vary yaw and pitch.
+		const double yaw = 0.8 * std::sin(2.0 * EIGEN_PI * i / 41.0);
+		const double pitch = 0.6 * std::sin(2.0 * EIGEN_PI * i / 57.0 + 1.0);
 		const Eigen::Vector3d trans(0.05 * std::sin(0.7 * i), 1.60 + 0.05 * std::cos(0.5 * i),
 		                            0.05 * std::sin(0.3 * i));
-		Eigen::AffineCompact3d ref(Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY())));
+		Eigen::AffineCompact3d ref(Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY()) *
+		                                              Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitX())));
 		ref.pretranslate(trans);
 		Eigen::AffineCompact3d cRow = cTrue;
 		if (spec.calShiftRow >= 0 && i >= spec.calShiftRow) cRow.translation().x() += spec.calShiftM;
 		const Eigen::AffineCompact3d target = cRow.inverse() * ref;
 
 		replay::ReplayRow row;
-		row.timestamp = static_cast<double>(i) / 90.0;
+		// 10 Hz cadence so a multi-minute session fits in a small row count;
+		// the frame-jump test must outlive the 60 s validation-history expiry.
+		row.timestamp = static_cast<double>(i) / 10.0;
 		row.ref.rot = ref.rotation();
 		row.ref.trans = ref.translation();
 		row.target.rot = target.rotation();
@@ -138,12 +144,12 @@ TEST(SessionReplayTest, WanderMetricExcludesClassifiedReanchorSteps)
 }
 
 // A mid-session frame re-anchor with no observable event (the asleep-HMD
-// shape) surfaces as one giant unclassified applied step -- the metric that
-// gates this incident class.
+// shape) surfaces as one giant unclassified applied step once the stale
+// validation history expires -- the metric that gates this incident class.
 TEST(SessionReplayTest, UnclassifiedFrameJumpRaisesMaxStep)
 {
 	SessionSpec spec;
-	spec.rows = 900;
+	spec.rows = 1200; // 120 s at 10 Hz: jump at 30 s, history expiry at 90 s
 	spec.calShiftRow = 300;
 	spec.calShiftM = 4.0;
 	const auto rec = MakeSessionRecording(spec);

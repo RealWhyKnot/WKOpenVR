@@ -478,6 +478,50 @@ void FlushPendingContinuousSave()
 	Metrics::WriteLogAnnotation("[profile-save][flush] reason=continuous_pending_on_shutdown");
 }
 
+static void TickVrEventSampleInvalidation(CalibrationContext& ctx)
+{
+	// A chaperone/universe change, standby transition, or wireless drop can
+	// move a device's reference frame; samples collected before it then
+	// describe a dead frame and poison every solve until they age out. Drop
+	// the buffers (the applied calibration and banked relpose stay).
+	auto* vrSystem = vr::VRSystem();
+	if (!vrSystem) return;
+	vr::VREvent_t ev{};
+	while (vrSystem->PollNextEvent(&ev, sizeof(ev))) {
+		bool invalidate = false;
+		switch (ev.eventType) {
+			case vr::VREvent_ChaperoneDataHasChanged:
+			case vr::VREvent_ChaperoneUniverseHasChanged:
+			case vr::VREvent_ChaperoneTempDataHasChanged:
+			case vr::VREvent_ChaperoneSettingsHaveChanged:
+			case vr::VREvent_SeatedZeroPoseReset:
+			case vr::VREvent_ChaperoneFlushCache:
+			case vr::VREvent_ChaperoneRoomSetupStarting:
+			case vr::VREvent_ChaperoneRoomSetupFinished:
+			case vr::VREvent_StandingZeroPoseReset:
+			case vr::VREvent_EnterStandbyMode:
+			case vr::VREvent_LeaveStandbyMode:
+			case vr::VREvent_WirelessDisconnect:
+			case vr::VREvent_WirelessReconnect:
+				invalidate = true;
+				break;
+			default:
+				break;
+		}
+		if (!invalidate) continue;
+
+		const double cutoff = glfwGetTime();
+		size_t dropped = calibration.EvictSamplesBefore(cutoff);
+		for (auto& extra : ctx.additionalCalibrations) {
+			if (extra.calc) dropped += extra.calc->EvictSamplesBefore(cutoff);
+		}
+		if (dropped > 0) {
+			Metrics::LogAnnotationf("samples_invalidated: reason=vr_event event_type=%d dropped=%zu",
+			                        (int)ev.eventType, dropped);
+		}
+	}
+}
+
 static void TickDeviceRescan(CalibrationContext& ctx, double time)
 {
 	// Device rescan: runs in every state at 1 Hz. AssignTargets is the only
@@ -835,6 +879,7 @@ static void TickAdditionalCalibrations(double time)
 		if (refPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
 		if (tgtPose.result != vr::ETrackingResult::TrackingResult_Running_OK) continue;
 
+		extra.calc->SetMinimumRotationVariance(CalCtx.enforceMinimumRotationVariance, CalCtx.SampleCount());
 		Sample s(ConvertPose(refPose), ConvertPose(tgtPose), glfwGetTime());
 		extra.calc->PushSample(s);
 		while (extra.calc->SampleCount() > CalCtx.SampleCount())
@@ -1128,6 +1173,8 @@ void CalibrationTick(double time)
 
 	TickDeviceRescan(ctx, time);
 
+	TickVrEventSampleInvalidation(ctx);
+
 	// External smoothing-tool detection moved to the Smoothing overlay's
 	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second
 	// cadence and surfaces the banner inside its Prediction sub-tab.
@@ -1286,6 +1333,10 @@ void CalibrationTick(double time)
 
 	TickHeadMountSourceTransitionGuard(ctx, time);
 	TickHeadMountShadowOffsetEstimator(ctx, time);
+
+	// Push the sample-admission config before this tick's CollectSample so a
+	// runtime toggle or speed change takes effect on the next sample.
+	calibration.SetMinimumRotationVariance(ctx.enforceMinimumRotationVariance, ctx.SampleCount());
 
 	if (!CollectSample(ctx)) {
 		return;

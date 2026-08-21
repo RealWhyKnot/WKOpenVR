@@ -4,9 +4,13 @@
 #include <algorithm>
 #include <cmath>
 
+// Rotation vector axis*angle. The old skew-symmetric form (2*sin(angle)*axis)
+// collapses toward zero approaching 180 degrees and flips sign past it; the
+// exact form keeps the magnitude monotonic in the rotation angle.
 inline Eigen::Vector3d AxisFromRotationMatrix3(const Eigen::Matrix3d& rot)
 {
-	return Eigen::Vector3d(rot(2, 1) - rot(1, 2), rot(0, 2) - rot(2, 0), rot(1, 0) - rot(0, 1));
+	const Eigen::AngleAxisd aa(rot);
+	return aa.axis() * aa.angle();
 }
 
 inline double AngleFromRotationMatrix3(const Eigen::Matrix3d& rot)

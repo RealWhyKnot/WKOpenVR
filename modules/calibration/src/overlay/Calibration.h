@@ -235,6 +235,12 @@ struct CalibrationContext
 	// filter is a no-op when consensus is uniform) and the failure mode for
 	// noisy data (one bad sample skewing the fit) is exactly what it prevents.
 	bool ignoreOutliers = true;
+	// Default ON: only admit a sample whose reference orientation differs
+	// enough from every buffered sample, so a stationary stretch cannot fill
+	// the window with duplicates and produce an underdetermined solve. The
+	// buffer (and therefore the calibration update) simply waits for varied
+	// motion instead.
+	bool enforceMinimumRotationVariance = true;
 	double wantedUpdateInterval = 1.0;
 	float jitterThreshold = 3.0f;
 
@@ -446,6 +452,7 @@ struct CalibrationContext
 		continuousCalibrationThreshold = 1.5f;
 		maxRelativeErrorThreshold = 0.005f;
 		jitterThreshold = 3.0f;
+		enforceMinimumRotationVariance = true;
 
 		continuousCalibrationOffset = Eigen::Vector3d::Zero();
 

@@ -246,6 +246,13 @@ public:
 	void PushSample(const Sample& sample);
 	void Clear();
 
+	// Per-sample admission gate: when enforcing, a new sample is only pushed
+	// if its reference orientation differs from every stored sample by at
+	// least a minimum angle scaled to the window size, so the buffer cannot
+	// fill up with near-identical orientations that leave the rotation solve
+	// underdetermined. `windowSampleCount` is the active window size.
+	void SetMinimumRotationVariance(bool enforce, size_t windowSampleCount);
+
 	double ReferenceJitter() const;
 	double TargetJitter() const;
 
@@ -349,7 +356,25 @@ private:
 	 */
 	Eigen::AffineCompact3d m_refToTargetPose = Eigen::AffineCompact3d::Identity();
 
+	// Sample-admission gate (SetMinimumRotationVariance). The cosine threshold
+	// is cos(minAngle/2) with minAngle scaled to the window size, compared
+	// against the quaternion dot of the new vs each stored reference rotation.
+	bool m_enforceMinimumRotationVariance = false;
+	double m_rotationVarianceCosineThreshold = 1.0;
+	size_t m_windowSampleCount = 200;
+
+	bool IsSampleVariedEnough(const Sample& sample) const;
+
 	std::deque<Sample> m_samples;
+
+	// Accept history: several windows' worth of samples appended after each
+	// successful incremental accept. The validation error/offset terms pool
+	// it with the live window so they cannot merely track the current fit.
+	// Cleared with the calibration and when no accept has landed for a
+	// minute (a long-invalid stretch means the frame likely moved).
+	std::deque<Sample> m_sampleHistory;
+	double m_lastAcceptedSolveTime = 0.0;
+	void TrackSamplesForErrorTracking();
 
 	// Frozen rotation-phase samples (see FreezeRotationPhaseSamples comment in
 	// the public section). Empty during continuous calibration and during the
@@ -358,7 +383,7 @@ private:
 	std::deque<Sample> m_rotationFrozen;
 
 	std::vector<bool> DetectOutliers() const;
-	Eigen::Vector3d CalibrateRotation(const bool ignoreOutliers) const;
+	Eigen::Quaterniond CalibrateRotation(const bool ignoreOutliers) const;
 	Eigen::Vector3d CalibrateTranslation(const Eigen::Matrix3d& rotation) const;
 
 	Eigen::AffineCompact3d ComputeCalibration(const bool ignoreOutliers) const;

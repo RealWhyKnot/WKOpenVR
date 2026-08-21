@@ -175,6 +175,14 @@ void CCal_DrawSettings()
 			    "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
 			    "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
 		}
+		if (openvr_pair::overlay::ui::CheckboxWithTooltip(
+		        "Require varied motion##enforce_minimum_rotation_variance", &CalCtx.enforceMinimumRotationVariance,
+		        "Only collect a sample when your head orientation differs enough from the samples\n"
+		        "already in the buffer. Standing still then stops feeding the solver duplicates, so\n"
+		        "the calibration waits for varied motion instead of updating from an ambiguous fit.\n"
+		        "Default on.  Turn off to collect every sample regardless of motion.")) {
+			SaveProfile(CalCtx);
+		}
 		ImGui::EndGroupPanel();
 		ImGui::Spacing();
 	}

@@ -522,6 +522,8 @@ void ParseProfile(CalibrationContext& ctx, std::istream& stream)
 	if (obj["require_trigger_press_to_apply"].is<bool>())
 		ctx.requireTriggerPressToApply = obj["require_trigger_press_to_apply"].get<bool>();
 	if (obj["ignore_outliers"].is<bool>()) ctx.ignoreOutliers = obj["ignore_outliers"].get<bool>();
+	if (obj["enforce_minimum_rotation_variance"].is<bool>())
+		ctx.enforceMinimumRotationVariance = obj["enforce_minimum_rotation_variance"].get<bool>();
 	ctx.continuousCalibrationOffset(0) = obj["continuous_calibration_target_offset_x"].get<double>();
 	ctx.continuousCalibrationOffset(1) = obj["continuous_calibration_target_offset_y"].get<double>();
 	ctx.continuousCalibrationOffset(2) = obj["continuous_calibration_target_offset_z"].get<double>();
@@ -814,6 +816,7 @@ void WriteProfile(CalibrationContext& ctx, std::ostream& out)
 	WRITE_IF_CHANGED_BOOL("quash_target_in_continuous", quashTargetInContinuous);
 	WRITE_IF_CHANGED_BOOL("require_trigger_press_to_apply", requireTriggerPressToApply);
 	WRITE_IF_CHANGED_BOOL("ignore_outliers", ignoreOutliers);
+	WRITE_IF_CHANGED_BOOL("enforce_minimum_rotation_variance", enforceMinimumRotationVariance);
 	WRITE_IF_CHANGED_BOOL("static_calibration", enableStaticRecalibration);
 	WRITE_IF_CHANGED_DOUBLE("jitter_threshold", jitterThreshold);
 	WRITE_IF_CHANGED_DOUBLE("max_relative_error_threshold", maxRelativeErrorThreshold);
