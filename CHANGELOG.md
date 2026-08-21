@@ -97,6 +97,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Step synthesized feet with a walking gait (6b0d01b)
 - **calibration:** Adopt full 3-d rotation solve with conditioning and sample-admission gates (347ae60)
 - **facetracking:** Report rounding-vs-stretch lip posture conflicts in replay analysis (a2bd8e2)
+- **facetracking:** Edit module settings from the Modules tab (e699658)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -175,6 +176,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Remove experimental weighting, fusion, accept gates, tilt damper, and master switch (4240e63)
 - **calibration:** Remove recovery, liveness, base-station drift, and auto-lock detector layers (7c38536)
 - **calibration:** Remove geometry-shift detector and quality-rejection breaker (c0c2978)
+- **facetracking:** Let callers supply the OSC transport (cb7bade)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
