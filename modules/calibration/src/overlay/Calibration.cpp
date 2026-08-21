@@ -17,9 +17,7 @@
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
 #include "VRState.h"
-#include "GeometryShiftDetector.h" // IsCurrentErrorSpike, ShouldFireGeometryShiftRecovery
 #include "GravityAlignment.h"      // spacecal::gravity::TiltAngleDeg -- seed/heartbeat tilt diagnostics
-#include "CommonModeCoherence.h"   // spacecal::coherence::ComputeCoherenceScore
 #include "SnapSuppression.h"       // spacecal::snap_suppression::EffectiveSpeedMps
 #include "MotionGate.h"            // ShouldBlendCycle -- auto-recovery snap decision
 #include "ControllerInput.h"
@@ -228,20 +226,11 @@ bool g_reanchorNextProfileApply = false;
 // AutoLockHysteresis.h so they can be unit-tested without instantiating
 // CalibrationContext. See that header for the why behind the threshold pair.
 
-// Diagnostic snapshot of the most recent AUTO Lock detector readings and
-// the geometry-shift detector accumulator state. The AUTO Lock pair is
+// Diagnostic snapshot of the most recent AUTO Lock detector readings,
 // written by UpdateAutoLockDetector each time the rigidity verdict is
-// recomputed; the geometry-shift pair is owned by the detector block in
-// CalibrationTick (promoted from function-block static so the [cal-
-// heartbeat] log emitter, which runs earlier in the same tick, can see
-// the latest values from the previous tick).
-//
-// These are diagnostics only -- no consumer reads them for control flow.
-// Their job is to make the next session log self-describing without
-// requiring an instrumentation pass.
+// recomputed. Diagnostics only -- no consumer reads them for control flow.
 double g_lastAutoLockTranslMad = 0.0;
 double g_lastAutoLockRotMad = 0.0;
-int g_geomShiftConsecutiveBadTicks = 0;
 
 // Wall-time stage marks for the [cal-tick-slow] breakdown. Reset at the top
 // of each full tick pass; the diagnostic only fires at the end of a full
@@ -256,11 +245,6 @@ static double QpcMsBetween(const LARGE_INTEGER& from, const LARGE_INTEGER& to)
 	QueryPerformanceFrequency(&freq);
 	if (freq.QuadPart <= 0) return 0.0;
 	return (to.QuadPart - from.QuadPart) * 1000.0 / (double)freq.QuadPart;
-}
-
-void ResetGeometryShiftDetectorState()
-{
-	g_geomShiftConsecutiveBadTicks = 0;
 }
 
 double ComputeHmdSpeedMps(const CalibrationContext& ctx);
@@ -717,15 +701,10 @@ void StartCalibration(const char* reason)
 		extra.autoLockGateHeldWarned = false;
 	}
 
-	// Arm the geometry-shift grace window; see kGraceSeconds/InGraceWindow in
-	// GeometryShiftDetector.h for the settling rationale and the epoch
-	// contract (this stamp and the tick's `time` are both glfwGetTime()).
-	CalCtx.geometryShiftGraceUntil = glfwGetTime() + spacecal::geometry_shift::kGraceSeconds;
 	char resetBuf[240];
 	snprintf(resetBuf, sizeof resetBuf,
-	         "StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1"
-	         " geometry_shift_grace_until=%.3f",
-	         (reason && reason[0]) ? reason : "unknown", CalCtx.geometryShiftGraceUntil);
+	         "StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1",
+	         (reason && reason[0]) ? reason : "unknown");
 	Metrics::WriteLogAnnotation(resetBuf);
 }
 
@@ -914,267 +893,6 @@ static void TickDeviceRescan(CalibrationContext& ctx, double time)
 	if ((time - ctx.timeLastAssign) >= 1.0) {
 		ctx.timeLastAssign = time;
 		AssignTargets();
-	}
-}
-
-static void TickGeometryShiftWatchdog(CalibrationContext& ctx, double time)
-{
-	// Sudden-tracking-shift watchdog. The 50-rejection watchdog inside CalibrationCalc
-	// only fires after ~25s of consistent rejection; that's appropriate for genuinely
-	// degraded calibration but too slow for catastrophic geometry shifts (a lighthouse
-	// gets bumped, a tracker goes through a portal, etc.). Here we look at the recent
-	// error_currentCal time series: when the last error sample is more than 5x the
-	// 30-tick rolling median for 3 consecutive ticks, the calibration is almost
-	// certainly invalid even if CalibrationCalc still considers it valid. We force a
-	// Clear() and demote to ContinuousStandby so the next AssignTargets cycle starts a
-	// fresh calibration. Done from the overlay side (not CalibrationCalc) so we don't
-	// touch shared math code.
-	if (ctx.CustomChecksActive()) {
-		// Detector accumulator state lives at file scope
-		// (g_geomShiftConsecutiveBadTicks) so the [cal-heartbeat] emitter
-		// further up in this tick can include it in its periodic dump.
-		// Throttle timestamps stay block-local -- they're only consulted
-		// from inside this block.
-		static double s_lastErrorTs = 0.0;
-		static double s_lastSpikeLogTime = -1e9; // throttle per-tick spike-candidate logging to ~1/s
-		static double s_lastGraceLogTime = -1e9; // throttle the grace-active log to ~1/s
-
-		// Grace window: while a recent cal restart is still settling, skip
-		// the detector entirely. The deadline is set at StartCalibration and
-		// naturally expires; see InGraceWindow for the epoch contract.
-		const bool inGeometryShiftGrace = spacecal::geometry_shift::InGraceWindow(time, ctx.geometryShiftGraceUntil);
-		if (inGeometryShiftGrace) {
-			g_geomShiftConsecutiveBadTicks = 0;
-			if ((time - s_lastGraceLogTime) >= 1.0) {
-				s_lastGraceLogTime = time;
-				char gBuf[200];
-				snprintf(gBuf, sizeof gBuf, "[geometry-shift][grace-active] grace_until=%.3f now=%.3f remaining=%.3fs",
-				         ctx.geometryShiftGraceUntil, time, ctx.geometryShiftGraceUntil - time);
-				Metrics::WriteLogAnnotation(gBuf);
-			}
-		}
-		else {
-			const auto& errSeries = Metrics::error_currentCal;
-			const int N = errSeries.size();
-			if (N >= 5 && calibration.isValid()) {
-				// Only count an excursion once per new error sample (the time series is
-				// shared and may not advance every tick).
-				double thisTs = errSeries[N - 1].first;
-				if (thisTs > s_lastErrorTs) {
-					s_lastErrorTs = thisTs;
-					const int window = std::min(30, N);
-					std::vector<double> tail;
-					tail.reserve(window);
-					for (int i = N - window; i < N; i++)
-						tail.push_back(errSeries[i].second);
-					std::sort(tail.begin(), tail.end());
-					double median = tail[tail.size() / 2];
-					double current = errSeries[N - 1].second;
-					const double ratio = (median > spacecal::geometry_shift::kMedianFloor) ? current / median : 0.0;
-
-					const bool isSpike = spacecal::geometry_shift::IsCurrentErrorSpike(current, median);
-					if (isSpike) {
-						g_geomShiftConsecutiveBadTicks++;
-					}
-					else {
-						g_geomShiftConsecutiveBadTicks = 0;
-					}
-					bool fire =
-					    spacecal::geometry_shift::ShouldFireGeometryShiftRecovery(g_geomShiftConsecutiveBadTicks);
-
-					// Common-mode coherence check. The primary detector above
-					// votes from the primary HMD<->target pair's residual
-					// stream alone. If a vote-to-fire actually reflects a
-					// shared-frame event (runtime relocalization or base-station
-					// perturbation), then the
-					// active multi-system extras should be showing the same
-					// spike with the same shape. Score that explicitly and
-					// suppress the fire when the spike is coherent across
-					// pairs -- pair-local geometry shifts only spike one
-					// pair's residual, not all of them.
-					if (fire) {
-						std::vector<double> extraRatios;
-						extraRatios.reserve(ctx.additionalCalibrations.size());
-						for (const auto& extra : ctx.additionalCalibrations) {
-							if (!extra.enabled || !extra.valid) continue;
-							if (extra.recentErrorsMm.size() < 5) continue;
-							std::vector<double> tail(extra.recentErrorsMm.begin(), extra.recentErrorsMm.end());
-							std::sort(tail.begin(), tail.end());
-							const double xMedian = tail[tail.size() / 2];
-							const double xCurrent = extra.recentErrorsMm.back();
-							if (xMedian <= spacecal::geometry_shift::kMedianFloor) continue;
-							extraRatios.push_back(xCurrent / xMedian);
-						}
-						const int extrasCount = static_cast<int>(extraRatios.size());
-						const double coherence = spacecal::coherence::ComputeCoherenceScore(ratio, extraRatios);
-						if (spacecal::coherence::ShouldSuppressFire(coherence, extrasCount)) {
-							char csBuf[320];
-							snprintf(csBuf, sizeof csBuf,
-							         "[geometry-shift][coherence-suppressed] coherence=%.3f"
-							         " primary_ratio=%.2fx extras_count=%d threshold=%.2f"
-							         " current_mm=%.3f median_mm=%.3f",
-							         coherence, ratio, extrasCount, spacecal::coherence::kSuppressThreshold, current,
-							         median);
-							Metrics::WriteLogAnnotation(csBuf);
-							// Wipe the accumulator that drove the fire so a
-							// subsequent pair-local spike can re-accumulate
-							// cleanly without inheriting this suppressed
-							// evidence.
-							fire = false;
-							g_geomShiftConsecutiveBadTicks = 0;
-						}
-						else if (extrasCount >= spacecal::coherence::kMinExtrasForCoherence) {
-							// Multi-extra session with a fire that the coherence
-							// check let through: log the score so the next session
-							// log shows the discriminator did its work rather
-							// than being dead code. Throttled with the existing
-							// spike-candidate-log throttle so it cannot run away.
-							if ((time - s_lastSpikeLogTime) >= 1.0) {
-								s_lastSpikeLogTime = time;
-								char clBuf[280];
-								snprintf(clBuf, sizeof clBuf,
-								         "[geometry-shift][coherence-check] coherence=%.3f"
-								         " primary_ratio=%.2fx extras_count=%d threshold=%.2f"
-								         " verdict=pair_local",
-								         coherence, ratio, extrasCount, spacecal::coherence::kSuppressThreshold);
-								Metrics::WriteLogAnnotation(clBuf);
-							}
-						}
-					}
-
-					// Diagnostic: per-tick spike candidate trace. Throttled to ~1/s
-					// so a sustained spike storm produces a readable trail rather
-					// than a per-tick flood.
-					if (isSpike && (time - s_lastSpikeLogTime) >= 1.0) {
-						s_lastSpikeLogTime = time;
-						char spikeBuf[320];
-						snprintf(spikeBuf, sizeof spikeBuf,
-						         "[geometry-shift][spike-candidate] current_mm=%.3f median_mm=%.3f"
-						         " ratio=%.2fx sustained=%d/%d",
-						         current, median, ratio, g_geomShiftConsecutiveBadTicks,
-						         spacecal::geometry_shift::kMinSustainedSpikes);
-						Metrics::WriteLogAnnotation(spikeBuf);
-					}
-
-					// Cooldown gate: after a previous fire, suppress further fires
-					// for kPostFireCooldownSeconds. Real geometry shifts happen
-					// rarely; a burst of fires inside the cooldown window is noise
-					// (the 2026-05-21 session showed 52 fires in 2.2 h, one every
-					// ~2.4 min on Quest+Lighthouse cross-system pose noise). When
-					// suppressed, log the inputs that would have fired and reset
-					// the accumulators so the post-cooldown decision starts fresh.
-					if (fire &&
-					    spacecal::geometry_shift::ShouldSuppressForCooldown(time, ctx.geometryShiftCooldownUntil)) {
-						char cdBuf[280];
-						snprintf(cdBuf, sizeof cdBuf,
-						         "[geometry-shift][suppressed-by-cooldown] current_mm=%.3f"
-						         " median_mm=%.3f ratio=%.2fx"
-						         " cooldown_remaining_sec=%.1f",
-						         current, median, ratio, ctx.geometryShiftCooldownUntil - time);
-						Metrics::WriteLogAnnotation(cdBuf);
-						fire = false;
-						g_geomShiftConsecutiveBadTicks = 0;
-					}
-
-					if (fire && ctx.state == CalibrationState::Continuous &&
-					    !ctx.lastAcceptedContinuousSnapshot.captured &&
-					    spacecal::reject_reason::IsMotionQualityGate(Metrics::lastRejectReason.c_str()) &&
-					    !spacecal::geometry_shift::IsCurrentErrorSpike(current, median)) {
-						char mqBuf[360];
-						snprintf(mqBuf, sizeof mqBuf,
-						         "[geometry-shift][suppressed-by-motion-quality] current_mm=%.3f"
-						         " median_mm=%.3f ratio=%.2fx"
-						         " reject_reason=%s hasAccepted=0",
-						         current, median, ratio,
-						         Metrics::lastRejectReason.empty() ? "unknown" : Metrics::lastRejectReason.c_str());
-						Metrics::WriteLogAnnotation(mqBuf);
-						fire = false;
-						g_geomShiftConsecutiveBadTicks = 0;
-					}
-
-					if (fire) {
-						// Diagnostic: fire annotation. The user-facing CalCtx.Log
-						// below goes to the UI message buffer, not the spacecal log.
-						// Without this annotation, every geometry-shift demote
-						// (which is the proximate cause of every
-						// continuous_standby_transition restart) is invisible to
-						// post-session triage. Dump the inputs that triggered the
-						// fire + a short tail of the error history so a reader can
-						// see the buildup, not just the conclusion.
-						std::string tailStr;
-						tailStr.reserve(160);
-						const int tailLen = std::min<int>(10, N);
-						for (int i = N - tailLen; i < N; ++i) {
-							char tbuf[24];
-							snprintf(tbuf, sizeof tbuf, "%.2f%s", errSeries[i].second, (i + 1 < N) ? "," : "");
-							tailStr += tbuf;
-						}
-						// errTail slope (mm per sample, linear-fit over the tail).
-						// Discriminates a sudden single-tick spike (slope near 0
-						// with one outlier) from a sustained drift (positive
-						// slope). Computed against the tail-window index because
-						// the time series's per-sample dt is not exposed here.
-						double slopeMmPerSample = 0.0;
-						if (tailLen >= 2) {
-							const double n = (double)tailLen;
-							double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXX = 0.0;
-							for (int i = 0; i < tailLen; ++i) {
-								const double x = (double)i;
-								const double y = errSeries[N - tailLen + i].second;
-								sumX += x;
-								sumY += y;
-								sumXY += x * y;
-								sumXX += x * x;
-							}
-							const double denom = n * sumXX - sumX * sumX;
-							if (std::abs(denom) > 1e-12) {
-								slopeMmPerSample = (n * sumXY - sumX * sumY) / denom;
-							}
-						}
-						const double cooldownStarts = time + spacecal::geometry_shift::kPostFireCooldownSeconds;
-						// g_geomShiftConsecutiveBadTicks is still at its pre-reset
-						// value here (the reset happens further below).
-						const int sustainedAtFire = g_geomShiftConsecutiveBadTicks;
-						// Diagnostic only. Field logs showed a fire -> Clear ->
-						// ContinuousStandby -> restart chain tripping on ordinary
-						// inter-system error spikes 38-179x a session, with every
-						// restart's first accepted candidate snapping the world
-						// 4-5 cm, so the fire never restarts anything: the detector
-						// logs (and keeps its cooldown so it doesn't refire every
-						// tick) while the session keeps its calibration.
-						char fireBuf[800];
-						snprintf(fireBuf, sizeof fireBuf,
-						         "[geometry-shift][fire] current_mm=%.3f median_mm=%.3f"
-						         " ratio=%.2fx sustained=%d"
-						         " lockRelativePosition=%d lockMode=%d"
-						         " errTail_slope_mm_per_sample=%.3f errTail=[%s]"
-						         " cooldown_until=%.3f",
-						         current, median, ratio, sustainedAtFire, (int)ctx.lockRelativePosition,
-						         (int)ctx.lockRelativePositionMode, slopeMmPerSample, tailStr.c_str(), cooldownStarts);
-						Metrics::WriteLogAnnotation(fireBuf);
-
-						// Intentionally NOT clearing ctx.relativePosCalibrated here.
-						// Previously this path set it false, which wiped the
-						// relative-pose constraint that AUTO Lock would have used
-						// against the next cycle's noise. Log analysis showed
-						// every restart killed the constraint permanently: only
-						// the session-opening cal ever reached relPosCal=1. With
-						// the constraint preserved, AUTO Lock can re-engage
-						// quickly post-restart instead of waiting another full
-						// convergence (and another ~290 s blackout). If a true
-						// geometry shift occurred, the next cal cycle's solver
-						// will overwrite refToTargetPose against fresh samples
-						// anyway -- the value flowing back from CalibrationCalc
-						// becomes the new "trusted" relative pose.
-						ctx.geometryShiftCooldownUntil = time + spacecal::geometry_shift::kPostFireCooldownSeconds;
-						g_geomShiftConsecutiveBadTicks = 0;
-					}
-				}
-			}
-			else {
-				g_geomShiftConsecutiveBadTicks = 0;
-			}
-		} // close `if (inGeometryShiftGrace) ... else { ...`
 	}
 }
 
@@ -1939,18 +1657,6 @@ static void TickAdditionalCalibrations(double time, double hmdSpeedMps)
 					extra.valid = true;
 				}
 			}
-			// Track this extra's recent priorCalibrationError values
-			// for the geometry-shift common-mode coherence check.
-			// LastPriorErrorM is INFINITY until a validated compute
-			// has happened; skip pushes until then so the rolling
-			// median is built from real readings, not sentinels.
-			const double extraErrM = extra.calc->LastPriorErrorM();
-			if (std::isfinite(extraErrM)) {
-				extra.recentErrorsMm.push_back(extraErrM * 1000.0);
-				while (extra.recentErrorsMm.size() > 30) {
-					extra.recentErrorsMm.pop_front();
-				}
-			}
 		}
 	}
 }
@@ -1961,35 +1667,7 @@ static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, 
 	const bool inContinuousState = ctx.state == CalibrationState::Continuous;
 	const bool hasPublishableCandidate = solveProducedCandidate && calibration.isValid();
 
-	// Sustained quality-rejection breaker (QualityRejectionBreaker.h): fold
-	// any new verdict from this tick's solve into the streak, then hold the
-	// output side while engaged. Solver, sampling, recovery, and the periodic
-	// re-apply of the held offset keep running. Enhanced-checks only -- the
-	// default pipeline stays upstream-classic.
-	if (inContinuousState && ctx.CustomChecksActive()) {
-		const QualityVerdictObservation verdictObs = calibration.LastQualityVerdictObservation();
-		if (verdictObs.seq != ctx.qualityBreakerLastVerdictSeq) {
-			ctx.qualityBreakerLastVerdictSeq = verdictObs.seq;
-			const bool wasEngaged = ctx.qualityBreakerState.engaged;
-			ctx.qualityBreakerState =
-			    spacecal::quality_breaker::Next(ctx.qualityBreakerState, verdictObs.wouldAccept, time);
-			if (!wasEngaged && ctx.qualityBreakerState.engaged) {
-				Metrics::LogAnnotationf("[cal-quality-breaker][engaged] consecutive_rejects=%d sustain_sec=%.0f"
-				                        " -- holding accept/persist/apply until a verdict passes",
-				                        ctx.qualityBreakerState.consecutiveRejects,
-				                        time - ctx.qualityBreakerState.firstRejectSec);
-			}
-			else if (wasEngaged && !ctx.qualityBreakerState.engaged) {
-				Metrics::WriteLogAnnotation("[cal-quality-breaker][released] reason=verdict_accepted");
-			}
-		}
-	}
-	else if (ctx.qualityBreakerState.consecutiveRejects != 0 || ctx.qualityBreakerState.engaged) {
-		ctx.qualityBreakerState = {};
-	}
-	const bool suppressCandidateForQuality = inContinuousState && ctx.qualityBreakerState.engaged;
-
-	if (hasPublishableCandidate && !suppressCandidateForQuality) {
+	if (hasPublishableCandidate) {
 		const Eigen::Vector3d candidateTranslationCm = calibration.Transformation().translation() * 100.0;
 		const bool firstContinuousCandidate = inContinuousState && !ctx.lastAcceptedContinuousSnapshot.captured;
 		const bool hasContinuousStartBaseline =
@@ -2185,17 +1863,6 @@ static void TickCandidateAcceptAndPersist(CalibrationContext& ctx, double time, 
 
 		CalCtx.Log("Finished calibration, profile saved\n");
 	}
-	else if (hasPublishableCandidate) {
-		// Breaker is holding: the candidate stays unapplied and unpersisted.
-		// The 1 Hz profile scan keeps republishing the held offset.
-		static double s_lastBreakerHoldLog = -1e9;
-		if (time - s_lastBreakerHoldLog >= 5.0) {
-			s_lastBreakerHoldLog = time;
-			Metrics::LogAnnotationf("[cal-quality-breaker][holding] candidate_mag_cm=%.2f consecutive_rejects=%d",
-			                        calibration.Transformation().translation().norm() * 100.0,
-			                        ctx.qualityBreakerState.consecutiveRejects);
-		}
-	}
 	else {
 		if (!inContinuousState || (solveAttempted && !calibration.isValid())) {
 			CalCtx.Log("Calibration failed.\n");
@@ -2309,8 +1976,6 @@ void CalibrationTick(double time)
 	}
 
 	TickDeviceRescan(ctx, time);
-
-	TickGeometryShiftWatchdog(ctx, time);
 
 	// External smoothing-tool detection moved to the Smoothing overlay's
 	// Tick (Protocol v12, 2026-05-11); its plugin scans on its own 5-second

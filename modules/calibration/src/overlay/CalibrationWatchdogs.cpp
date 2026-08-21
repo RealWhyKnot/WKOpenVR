@@ -1,10 +1,9 @@
 #include "CalibrationWatchdogs.h"
 
-#include "CalibrationInternal.h" // calibration solver + shared auto-lock/geometry-shift counters
+#include "CalibrationInternal.h" // calibration solver + shared auto-lock counters
 #include "CalibrationMetrics.h"
 #include "CalibrationRecoveryTick.h" // ArmReanchorToProfile / EvictDeadFrameSamples / LastWitnessHealth
 #include "AutoLockHysteresis.h"      // spacecal::autolock::IsSettled / EnterThresholdFor
-#include "GeometryShiftDetector.h"   // spacecal::geometry_shift::kMinSustainedSpikes
 #include "GravityAlignment.h"        // spacecal::gravity::TiltAngleDeg -- heartbeat tilt field
 #include "HeadMountTargetBinding.h"  // wkopenvr::headmount::EffectiveHeadMountMode
 #include "TrackingStyle.h"           // HmdPoseEventRecoveryEligible
@@ -259,13 +258,6 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			s_lastHeartbeatTime = time;
 			const auto& errSeries = Metrics::error_currentCal;
 			const double errLast = errSeries.size() > 0 ? errSeries.last() : 0.0;
-			// Geometry-shift cooldown remaining (0 when no active cooldown).
-			// The deadline ctx.geometryShiftCooldownUntil is wall-clock-style
-			// time matching CalibrationTick's `time` argument; the heartbeat
-			// log shows seconds until expiry so a reader doesn't have to
-			// subtract the session time themselves.
-			const double cooldownRemaining =
-			    (ctx.geometryShiftCooldownUntil > time) ? (ctx.geometryShiftCooldownUntil - time) : 0.0;
 			const double translMadMm = g_lastAutoLockTranslMad * 1000.0;
 			const double rotMadDeg = g_lastAutoLockRotMad * 180.0 / EIGEN_PI;
 			// Pending-flip held duration. Zero when no flip is queued so a
@@ -341,9 +333,6 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			         " mad_floor_mm=%.3f enter_threshold_mm=%.3f"
 			         " settled=%s settled_since_sec=%.1f"
 			         " err_last_mm=%.2f err_samples=%d"
-			         " grace_until=%.3f"
-			         " geom_sustain=%d/%d"
-			         " geom_cooldown_remaining_sec=%.1f"
 			         " relPosCal=%d hmdStalls=%d"
 			         " wr_active=%d wr_grace_remaining=%d"
 			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
@@ -356,8 +345,7 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
 			         spacecal::autolock::kSamplesNeeded, translMadMm, rotMadDeg, madFloorMm, enterMm,
 			         settled ? "yes" : "no", settled ? secsSinceLastFlip : 0.0, errLast, errSeries.size(),
-			         ctx.geometryShiftGraceUntil, g_geomShiftConsecutiveBadTicks,
-			         spacecal::geometry_shift::kMinSustainedSpikes, cooldownRemaining, (int)ctx.relativePosCalibrated,
+			         (int)ctx.relativePosCalibrated,
 			         ctx.consecutiveHmdStalls, (int)warmRestartActive, ctx.warmRestartGraceSamples, postSnapBiasMm,
 			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb,
 			         (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx), (int)g_reanchorNextProfileApply,

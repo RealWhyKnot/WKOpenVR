@@ -16,7 +16,6 @@
 #include "CalibrationAutoSpeed.h"
 #include "WarmRestart.h" // ValidationOutcome enum
 #include "SprtValidation.h"
-#include "QualityRejectionBreaker.h"
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -116,16 +115,6 @@ struct AdditionalCalibration
 	// the wizard finishes calibrating the entry; cleared when the user
 	// removes the entry.
 	bool enabled = true;
-
-	// Rolling history of this extra's `priorCalibrationError * 1000` (mm)
-	// readings, one push per successful ComputeIncremental. Window is
-	// capped at 30 entries to match the primary's geometry-shift
-	// rolling-median window. Read at the geometry-shift fire site to
-	// compute the extra's spike ratio (latest / median) for the
-	// common-mode coherence check; a coherent ratio across all extras
-	// implies the primary spike was global (worldFromDriver reanchor,
-	// runtime relocalization) rather than pair-local.
-	std::deque<double> recentErrorsMm;
 
 	// Defaulted in-class because CalibrationCalc is a complete type at this
 	// point (we included its header above), so unique_ptr's destructor is
@@ -432,27 +421,6 @@ struct CalibrationContext
 	double recoveryWaitingSince = 0.0;    // Metrics::CurrentTime basis
 	double recoveryHmdDeltaAtStart = 0.0; // metres of the originating jump
 
-	// Geometry-shift detector grace deadline. Set by StartCalibration to
-	// `now + kGeometryShiftGraceSeconds` so the detector is skipped while the
-	// cal converges from zero samples after a restart. Without the grace,
-	// the first 5-10 samples can spike error_currentCal as the solver
-	// settles -- the detector then sees that as a "5x median" excursion and
-	// fires another restart, producing the back-to-back-fire pattern that
-	// errTail wrap-around already aggravates. Zero means no active grace.
-	double geometryShiftGraceUntil = 0.0;
-
-	// Geometry-shift post-fire cooldown deadline. Set whenever a recovery
-	// action commits; while CalibrationTick's `time` is less than this,
-	// subsequent fires are suppressed and the accumulators reset (so noise
-	// from the cooldown window doesn't immediately re-fire when the gate
-	// releases). The 2026-05-21 session log had 52 fires in 2.2 h on
-	// Quest+Lighthouse cross-system noise -- the cooldown drops the
-	// false-fire cadence without affecting response time on a real shift
-	// (which fires at full sensitivity once the deadline passes). Zero
-	// means no active cooldown. See GeometryShiftDetector.h::
-	// kPostFireCooldownSeconds for the duration.
-	double geometryShiftCooldownUntil = 0.0;
-
 	// Warm-restart detection. The user takes off the HMD, comes back later,
 	// puts it on -- without intervention the solver re-validates the saved
 	// profile from an empty sample buffer, which takes 4-7 minutes under
@@ -708,10 +676,6 @@ struct CalibrationContext
 	int anomalousPersistAgreeCount = 0;
 	Eigen::Vector3d anomalousPersistLastAttempt = Eigen::Vector3d::Zero();
 
-	// Sustained quality-rejection breaker (QualityRejectionBreaker.h) and the
-	// verdict sequence number last folded into it. Enhanced-checks only.
-	spacecal::quality_breaker::State qualityBreakerState{};
-	uint64_t qualityBreakerLastVerdictSeq = 0;
 	bool continuousSaveDirty = false;
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
@@ -822,8 +786,6 @@ struct CalibrationContext
 		autoLockLastFlipTime = 0.0;
 		recoveryWaitingSince = 0.0;
 		recoveryHmdDeltaAtStart = 0.0;
-		geometryShiftGraceUntil = 0.0;
-		geometryShiftCooldownUntil = 0.0;
 		// Warm-restart state: a Clear means the saved profile is gone, so
 		// any pending grace must go too. Default lastUserPresent back to
 		// true so the next proximity-false reading produces a clean edge.
@@ -867,7 +829,6 @@ struct CalibrationContext
 		anomalousPersistFirstSeen = 0.0;
 		anomalousPersistAgreeCount = 0;
 		anomalousPersistLastAttempt = Eigen::Vector3d::Zero();
-		qualityBreakerState = {};
 		continuousSaveDirty = false;
 		headMountSourceFingerprintValid = false;
 		headMountLastSampleSource = HeadMountSampleSource::Unknown;
@@ -898,7 +859,6 @@ struct CalibrationContext
 		anomalousPersistFirstSeen = 0.0;
 		anomalousPersistAgreeCount = 0;
 		anomalousPersistLastAttempt = Eigen::Vector3d::Zero();
-		qualityBreakerState = {};
 		continuousSaveDirty = false;
 		headMountNeedsFreshRelativePose = false;
 	}

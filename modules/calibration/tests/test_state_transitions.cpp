@@ -112,15 +112,12 @@ TEST(StateTransitionsTest, ContinuousStandby_ToContinuousLegal)
 }
 
 // ---------------------------------------------------------------------------
-// Continuous -> ContinuousStandby. The geometry-shift detector at
-// Calibration.cpp:2152 demotes on sustained anomaly. THIS IS THE ONLY
-// fork-only "demote" path remaining post-revert of 9d0ba0b's HMD-stall demote.
-// Pinned so a future re-introduction of the HMD-stall demote forces an
-// explicit table update + test change.
+// Continuous -> ContinuousStandby. Demote stays legal (device loss in
+// AssignTargets); no other active state may demote. Pinned so a future
+// demote path forces an explicit table update + test change.
 // ---------------------------------------------------------------------------
-TEST(StateTransitionsTest, Regression_GeometryShiftDemoteOnly)
+TEST(StateTransitionsTest, Regression_ContinuousDemoteOnly)
 {
-	// Demote IS legal — the geometry-shift detector uses it.
 	EXPECT_TRUE(IsLegalTransition(S::Continuous, S::ContinuousStandby));
 	// No analogous "demote" path from any other active state. Calibration.cpp's
 	// one-shot states are designed to bail to None on failure, not demote.
