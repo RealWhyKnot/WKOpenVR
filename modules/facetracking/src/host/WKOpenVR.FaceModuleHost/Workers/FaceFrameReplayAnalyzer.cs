@@ -141,6 +141,16 @@ public static class FaceFrameReplayAnalyzer
         public int SpeakingFrames { get; init; }
     }
 
+    public sealed class LipPostureSummary
+    {
+        /// <summary>Fraction of frames holding two or more of funnel/pucker/stretch above the active threshold.</summary>
+        public double ConflictFraction { get; init; }
+        public double FunnelActive { get; init; }
+        public double PuckerActive { get; init; }
+        public double StretchActive { get; init; }
+        public int ConflictFrames { get; init; }
+    }
+
     public sealed class IdleShapeSummary
     {
         public string Name { get; init; } = string.Empty;
@@ -172,6 +182,7 @@ public static class FaceFrameReplayAnalyzer
         public PupilSummary Pupil { get; init; } = new();
         public SpeechSmileSummary SpeechSmile { get; init; } = new();
         public JawRatioSummary JawRatios { get; init; } = new();
+        public LipPostureSummary LipPostures { get; init; } = new();
         public IdleSummary Idle { get; init; } = new();
     }
 
@@ -235,6 +246,7 @@ public static class FaceFrameReplayAnalyzer
             Pupil = SummarizePupil(frames),
             SpeechSmile = SummarizeSpeechSmile(rec, jaw, options),
             JawRatios = SummarizeJawRatios(rec, jaw, options),
+            LipPostures = SummarizeLipPostures(rec, options),
             Idle = SummarizeIdle(rec, jaw, minutes, options),
         };
     }
@@ -661,6 +673,87 @@ public static class FaceFrameReplayAnalyzer
         };
     }
 
+    // Rounding (funnel/pucker) and spreading (stretch) never co-occur in hardware recordings, so a
+    // non-trivial conflict fraction means the source is blending postures a real face cannot hold.
+    private static LipPostureSummary SummarizeLipPostures(FaceFrameReplayPlayer.Recording rec, Options options)
+    {
+        int[] funnel =
+        [
+            FindShape(rec, "LipFunnelUpperLeft"), FindShape(rec, "LipFunnelUpperRight"),
+            FindShape(rec, "LipFunnelLowerLeft"), FindShape(rec, "LipFunnelLowerRight"),
+        ];
+        int[] pucker =
+        [
+            FindShape(rec, "LipPuckerUpperLeft"), FindShape(rec, "LipPuckerUpperRight"),
+            FindShape(rec, "LipPuckerLowerLeft"), FindShape(rec, "LipPuckerLowerRight"),
+        ];
+        int[] stretch = [FindShape(rec, "MouthStretchLeft"), FindShape(rec, "MouthStretchRight")];
+
+        int conflicts = 0;
+        int funnelActive = 0;
+        int puckerActive = 0;
+        int stretchActive = 0;
+        int n = 0;
+        foreach (FaceFrameReplayPlayer.Frame frame in rec.Frames)
+        {
+            n++;
+            bool f = Mean(frame.Expressions, funnel) > options.ActiveThreshold;
+            bool p = Mean(frame.Expressions, pucker) > options.ActiveThreshold;
+            bool s = Mean(frame.Expressions, stretch) > options.ActiveThreshold;
+            if (f)
+            {
+                funnelActive++;
+            }
+
+            if (p)
+            {
+                puckerActive++;
+            }
+
+            if (s)
+            {
+                stretchActive++;
+            }
+
+            // Funnel and pucker are a rounding pair and co-occur legitimately; only rounding
+            // against spreading is impossible.
+            if ((f || p) && s)
+            {
+                conflicts++;
+            }
+        }
+
+        if (n == 0)
+        {
+            return new LipPostureSummary();
+        }
+
+        return new LipPostureSummary
+        {
+            ConflictFraction = (double)conflicts / n,
+            ConflictFrames = conflicts,
+            FunnelActive = (double)funnelActive / n,
+            PuckerActive = (double)puckerActive / n,
+            StretchActive = (double)stretchActive / n,
+        };
+    }
+
+    private static double Mean(float[] expressions, int[] indices)
+    {
+        double sum = 0.0;
+        int n = 0;
+        foreach (int i in indices)
+        {
+            if (i >= 0 && i < expressions.Length)
+            {
+                sum += expressions[i];
+                n++;
+            }
+        }
+
+        return n == 0 ? 0.0 : sum / n;
+    }
+
     private static JawRatioSummary SummarizeJawRatios(
         FaceFrameReplayPlayer.Recording rec, int jaw, Options options)
     {
@@ -889,6 +982,11 @@ public static class FaceFrameReplayAnalyzer
         sb.AppendLine(
             $"  jaw-linked ratios (n={a.JawRatios.SpeakingFrames}): lowerDown/jaw={a.JawRatios.LowerDownOverJaw:F2} " +
             $"upperUp/jaw={a.JawRatios.UpperUpOverJaw:F2}");
+        sb.AppendLine(
+            $"  lip postures: rounding-vs-stretch conflict={a.LipPostures.ConflictFraction * 100.0:F2}% " +
+            $"({a.LipPostures.ConflictFrames} frames) active funnel/pucker/stretch=" +
+            $"{a.LipPostures.FunnelActive * 100.0:F2}%/{a.LipPostures.PuckerActive * 100.0:F2}%/" +
+            $"{a.LipPostures.StretchActive * 100.0:F2}%");
         sb.AppendLine(
             $"  idle: fraction={a.Idle.IdleFraction * 100.0:F1}% segments={a.Idle.SegmentCount}");
         foreach (IdleShapeSummary s in a.Idle.Shapes)

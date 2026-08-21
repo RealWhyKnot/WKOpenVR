@@ -21,6 +21,7 @@ await Run("compares face replay recordings", ComparesFaceReplayRecordings);
 await Run("analyzes episode ramps", AnalyzesEpisodeRamps);
 await Run("analyzes blinks and gaze", AnalyzesBlinksAndGaze);
 await Run("analyzes idle activity and jaw ratios", AnalyzesIdleActivityAndJawRatios);
+await Run("flags rounding against spreading", FlagsLipPostureConflicts);
 
 if (failures.Count > 0)
 {
@@ -399,6 +400,41 @@ static Task AnalyzesBlinksAndGaze()
     Require(a.Gaze.SaccadeAmplitudeP50 is > 0.30 and < 0.45,
         $"saccade amplitude {a.Gaze.SaccadeAmplitudeP50:F3} != ~0.36");
     Require(a.Gaze.DwellMsP50 is > 1700 and < 2300, $"dwell {a.Gaze.DwellMsP50:F0}ms != ~2000");
+    return Task.CompletedTask;
+}
+
+static Task FlagsLipPostureConflicts()
+{
+    const double dt = 25.0;
+    string[] names =
+    [
+        "LipFunnelUpperLeft", "LipPuckerUpperLeft", "MouthStretchLeft", "JawOpen",
+    ];
+
+    // First second rounds and spreads at once (impossible); the rest alternates cleanly.
+    var frames = new List<AnalyzerFrame>();
+    for (double t = 0.0; t < 4000.0; t += dt)
+    {
+        bool both = t < 1000.0;
+        bool rounding = !both && t < 2500.0;
+        frames.Add(new AnalyzerFrame(
+            t,
+            [
+                both || rounding ? 0.4f : 0.0f,
+                both || rounding ? 0.3f : 0.0f,
+                both || !rounding ? 0.4f : 0.0f,
+                0.5f,
+            ],
+            0.9f,
+            0.0f,
+            0.0f));
+    }
+
+    FaceFrameReplayAnalyzer.Analysis a = AnalyzeFrames(names, frames);
+    Require(
+        Math.Abs(a.LipPostures.ConflictFraction - 0.25) < 0.02,
+        $"conflict fraction {a.LipPostures.ConflictFraction:F3} != ~0.25");
+    Require(a.LipPostures.ConflictFrames == 40, $"expected 40 conflict frames, got {a.LipPostures.ConflictFrames}");
     return Task.CompletedTask;
 }
 
