@@ -44,6 +44,14 @@ struct OscCounts
 static thread_local const FaceOscAddressFilter* t_addressFilter = nullptr;
 static thread_local std::unordered_set<std::string>* t_filteredDestinations = nullptr;
 static thread_local std::vector<std::string>* t_manifestSink = nullptr;
+static thread_local FaceOscSink t_sink = nullptr;
+static thread_local void* t_sinkUserData = nullptr;
+
+static inline bool SendOsc(const char* address, const char* typetag, const void* args, size_t arg_len)
+{
+	if (t_sink) return t_sink(address, typetag, args, arg_len, t_sinkUserData);
+	return pairdriver::oscrouter::PublishOsc("facetracking", address, typetag, args, arg_len);
+}
 
 static inline void OscPublishFloat(OscCounts& counts, const char* address, float value)
 {
@@ -72,7 +80,7 @@ static inline void OscPublishFloat(OscCounts& counts, const char* address, float
 	    static_cast<uint8_t>(bits >> 8),
 	    static_cast<uint8_t>(bits),
 	};
-	if (pairdriver::oscrouter::PublishOsc("facetracking", address, ",f", arg_bytes, 4)) {
+	if (SendOsc(address, ",f", arg_bytes, 4)) {
 		++counts.sent;
 	}
 	else {
@@ -656,15 +664,20 @@ static OscCounts PublishCurrentVrcft(const protocol::FaceTrackingFrameBody& fram
 } // namespace
 
 FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& frame,
-                                         const FaceOscAddressFilter* filter, std::vector<std::string>* manifest)
+                                         const FaceOscAddressFilter* filter, std::vector<std::string>* manifest,
+                                         FaceOscSink sink, void* sink_user_data)
 {
 	const FaceOscAddressFilter* previousFilter = t_addressFilter;
 	std::unordered_set<std::string> filteredDestinations;
 	std::unordered_set<std::string>* previousFilteredDestinations = t_filteredDestinations;
 	std::vector<std::string>* previousManifestSink = t_manifestSink;
+	FaceOscSink previousSink = t_sink;
+	void* previousSinkUserData = t_sinkUserData;
 	t_addressFilter = filter;
 	t_filteredDestinations = (filter && filter->Active()) ? &filteredDestinations : nullptr;
 	t_manifestSink = manifest;
+	t_sink = sink;
+	t_sinkUserData = sink_user_data;
 
 	FaceOscPublishCounts counts;
 	if ((frame.flags & 0x1u) != 0) counts.Add(PublishEye(frame).Public());
@@ -682,6 +695,8 @@ FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& 
 	t_filteredDestinations = previousFilteredDestinations;
 	t_addressFilter = previousFilter;
 	t_manifestSink = previousManifestSink;
+	t_sink = previousSink;
+	t_sinkUserData = previousSinkUserData;
 	return counts;
 }
 

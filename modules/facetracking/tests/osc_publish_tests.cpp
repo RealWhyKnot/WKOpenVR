@@ -571,3 +571,75 @@ TEST(OscPortMigration, RouterAlreadyConfiguredNotClobbered)
 	ParseMockFtJson(ftJson, sentinel, port);
 	EXPECT_TRUE(sentinel);
 }
+
+// The desktop path has no OSC router, so publishing must be able to run through a
+// caller-supplied transport instead. The router must see nothing when a sink is given.
+TEST(FaceOscPublisher, InjectedSinkReplacesRouter)
+{
+	struct Captured
+	{
+		std::vector<std::string> addresses;
+		size_t bad_typetag = 0;
+	};
+	Captured captured;
+
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x2u;
+	frame.expressions[26] = 0.5f; // JawOpen
+	frame.upstream_expressions[22] = 0.5f;
+
+	PublishedOscFloats().clear();
+
+	const facetracking::FaceOscPublishCounts counts = facetracking::PublishFaceFrameOsc(
+	    frame, nullptr, nullptr,
+	    [](const char* address, const char* typetag, const void* args, size_t arg_len, void* user) -> bool {
+		    auto* c = static_cast<Captured*>(user);
+		    if (!typetag || std::strcmp(typetag, ",f") != 0 || !args || arg_len != 4) ++c->bad_typetag;
+		    c->addresses.push_back(address ? address : "");
+		    return true;
+	    },
+	    &captured);
+
+	EXPECT_GT(counts.sent, 0u);
+	EXPECT_EQ(counts.dropped, 0u);
+	EXPECT_EQ(captured.bad_typetag, 0u);
+	EXPECT_EQ(captured.addresses.size(), counts.sent);
+	// Nothing may reach the router while a sink is installed.
+	EXPECT_TRUE(PublishedOscFloats().empty());
+}
+
+// A sink that refuses every message must be reported as drops, not silent success.
+TEST(FaceOscPublisher, FailingSinkCountsAsDropped)
+{
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x2u;
+	frame.expressions[26] = 0.25f;
+
+	PublishedOscFloats().clear();
+
+	const facetracking::FaceOscPublishCounts counts = facetracking::PublishFaceFrameOsc(
+	    frame, nullptr, nullptr, [](const char*, const char*, const void*, size_t, void*) -> bool { return false; },
+	    nullptr);
+
+	EXPECT_EQ(counts.sent, 0u);
+	EXPECT_GT(counts.dropped, 0u);
+	EXPECT_TRUE(PublishedOscFloats().empty());
+}
+
+// After a sink-based publish the router path must be restored for the next caller.
+TEST(FaceOscPublisher, SinkDoesNotLeakToNextPublish)
+{
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x2u;
+	frame.expressions[26] = 0.75f;
+
+	PublishedOscFloats().clear();
+	facetracking::PublishFaceFrameOsc(
+	    frame, nullptr, nullptr, [](const char*, const char*, const void*, size_t, void*) -> bool { return true; },
+	    nullptr);
+	EXPECT_TRUE(PublishedOscFloats().empty());
+
+	const facetracking::FaceOscPublishCounts counts = facetracking::PublishFaceFrameOsc(frame);
+	EXPECT_GT(counts.sent, 0u);
+	EXPECT_FALSE(PublishedOscFloats().empty());
+}

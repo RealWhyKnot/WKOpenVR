@@ -66,13 +66,21 @@ private:
 	std::unordered_map<std::string, std::string> compatible_;
 };
 
-// Publishes one already-filtered face frame through the OSC router. Eye data
-// and expression data are gated by FaceTrackingFrameBody::flags. When `manifest`
-// is non-null, every emitted (final, post-filter) address is appended to it --
-// a one-shot diagnostic for seeing exactly which OSC parameters are sent.
+// Transport for one OSC message. Returns false when the message could not be sent.
+// The driver routes through the OSC router; the desktop path sends UDP directly,
+// because the router only exists inside a running SteamVR driver.
+using FaceOscSink = bool (*)(const char* address, const char* typetag, const void* args, size_t arg_len,
+                             void* user_data);
+
+// Publishes one already-filtered face frame. Eye data and expression data are
+// gated by FaceTrackingFrameBody::flags. When `manifest` is non-null, every
+// emitted (final, post-filter) address is appended to it -- a one-shot
+// diagnostic for seeing exactly which OSC parameters are sent. With no `sink`
+// the frame goes through the OSC router, which requires the driver to be loaded.
 FaceOscPublishCounts PublishFaceFrameOsc(const protocol::FaceTrackingFrameBody& frame,
                                          const FaceOscAddressFilter* filter = nullptr,
-                                         std::vector<std::string>* manifest = nullptr);
+                                         std::vector<std::string>* manifest = nullptr, FaceOscSink sink = nullptr,
+                                         void* sink_user_data = nullptr);
 
 const char* FaceExpressionOscName(uint32_t index);
 
