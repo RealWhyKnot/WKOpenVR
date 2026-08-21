@@ -96,6 +96,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **phantom:** Auto-fill estimated waist and feet virtual trackers (87ce2d8)
 - **phantom:** Step synthesized feet with a walking gait (6b0d01b)
 - **calibration:** Adopt full 3-d rotation solve with conditioning and sample-admission gates (347ae60)
+- **facetracking:** Report rounding-vs-stretch lip posture conflicts in replay analysis (a2bd8e2)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
