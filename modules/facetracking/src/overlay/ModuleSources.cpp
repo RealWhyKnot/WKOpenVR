@@ -234,6 +234,128 @@ bool ShouldShowAvailableModule(const SourcesCatalogue& cat, const AvailableModul
 
 // ---- disk scan ----------------------------------------------------------
 
+namespace {
+
+std::string ReadTextFile(const fs::path& path)
+{
+	std::ifstream f(path.wstring());
+	if (!f.is_open()) return {};
+	std::stringstream ss;
+	ss << f.rdbuf();
+	return ss.str();
+}
+
+} // namespace
+
+ModuleSettingsSchema LoadModuleSettingsSchema(const std::string& manifest_path)
+{
+	ModuleSettingsSchema schema;
+	if (manifest_path.empty()) return schema;
+
+	std::error_code ec;
+	fs::path descriptor =
+	    fs::path(openvr_pair::common::Utf8ToWide(manifest_path)).parent_path() / L"settings_descriptor.json";
+	if (!fs::exists(descriptor, ec)) return schema;
+
+	picojson::value root;
+	if (!openvr_pair::common::json::Parse(root, ReadTextFile(descriptor))) return schema;
+
+	schema.values_file = openvr_pair::common::json::StringAt(root, "file");
+	const picojson::array* items = openvr_pair::common::json::ArrayAt(root, "settings");
+	if (!items) return schema;
+
+	for (const picojson::value& item : *items) {
+		ModuleSettingSpec spec;
+		spec.key = openvr_pair::common::json::StringAt(item, "key");
+		spec.type = openvr_pair::common::json::StringAt(item, "type");
+		spec.label = openvr_pair::common::json::StringAt(item, "label", spec.key);
+		if (spec.key.empty() || spec.type.empty()) continue;
+
+		if (const picojson::value* min = openvr_pair::common::json::ValueAt(item, "min")) {
+			if (const picojson::value* max = openvr_pair::common::json::ValueAt(item, "max")) {
+				if (min->is<double>() && max->is<double>()) {
+					spec.min = min->get<double>();
+					spec.max = max->get<double>();
+					spec.has_range = spec.max > spec.min;
+				}
+			}
+		}
+
+		if (const picojson::array* options = openvr_pair::common::json::ArrayAt(item, "options")) {
+			for (const picojson::value& opt : *options)
+				if (opt.is<std::string>()) spec.options.push_back(opt.get<std::string>());
+		}
+
+		if (const picojson::value* def = openvr_pair::common::json::ValueAt(item, "default")) {
+			if (def->is<bool>()) spec.default_bool = def->get<bool>();
+			if (def->is<double>()) spec.default_number = def->get<double>();
+			if (def->is<std::string>()) spec.default_string = def->get<std::string>();
+		}
+
+		schema.settings.push_back(std::move(spec));
+	}
+
+	schema.loaded = !schema.settings.empty();
+	return schema;
+}
+
+std::string ModuleSettingsValuesPath(const std::string& values_file)
+{
+	// Bare file name only: the descriptor must not be able to redirect writes elsewhere.
+	if (values_file.empty()) return {};
+	if (values_file.find('/') != std::string::npos || values_file.find('\\') != std::string::npos) return {};
+	if (values_file == "." || values_file == "..") return {};
+
+	const std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"profiles", true);
+	if (dir.empty()) return {};
+	fs::path full = fs::path(dir) / openvr_pair::common::Utf8ToWide(values_file);
+	return openvr_pair::common::WideToUtf8(full.wstring());
+}
+
+bool ReadModuleSettingsValues(const std::string& path, picojson::object& out)
+{
+	out.clear();
+	if (path.empty()) return false;
+
+	std::error_code ec;
+	fs::path p = openvr_pair::common::Utf8ToWide(path);
+	if (!fs::exists(p, ec)) return true; // absent is fine: every value falls back to its default
+
+	picojson::value root;
+	if (!openvr_pair::common::json::Parse(root, ReadTextFile(p))) return false;
+	if (!root.is<picojson::object>()) return false;
+
+	out = root.get<picojson::object>();
+	return true;
+}
+
+bool WriteModuleSettingsValues(const std::string& path, const picojson::object& values)
+{
+	if (path.empty()) return false;
+
+	fs::path p = openvr_pair::common::Utf8ToWide(path);
+	std::error_code ec;
+	fs::create_directories(p.parent_path(), ec);
+
+	// Write via a temp file so a crash mid-write cannot leave the module with
+	// truncated settings; the module hot-reloads whatever it finds here.
+	fs::path tmp = p;
+	tmp += L".tmp";
+	{
+		std::ofstream f(tmp.wstring(), std::ios::binary | std::ios::trunc);
+		if (!f.is_open()) return false;
+		f << picojson::value(values).serialize(true);
+		if (!f.good()) return false;
+	}
+
+	fs::rename(tmp, p, ec);
+	if (ec) {
+		fs::remove(tmp, ec);
+		return false;
+	}
+	return true;
+}
+
 bool InstalledVersionIsNewer(const std::string& candidate, const std::string& incumbent)
 {
 	std::array<int, 4> c = {0, 0, 0, 0};
@@ -341,6 +463,8 @@ std::vector<InstalledModule> ScanInstalledModules()
 					}
 				}
 			}
+
+			mod.has_settings = fs::exists(verEntry.path() / L"settings_descriptor.json", ec);
 
 			result.push_back(std::move(mod));
 		}

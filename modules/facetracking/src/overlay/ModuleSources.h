@@ -13,6 +13,8 @@
 #endif
 #include <windows.h>
 
+#include "picojson.h"
+
 #include <chrono>
 #include <functional>
 #include <optional>
@@ -65,6 +67,8 @@ struct InstalledModule
 	std::string source_kind_str; // "registry" | "folder" | "github" | ""
 	bool sha_verified = false;
 	std::string release_tag; // github only
+	// Resolved during the scan so the UI never stats the descriptor per frame.
+	bool has_settings = false;
 };
 
 struct AvailableModule
@@ -140,6 +144,43 @@ bool InstalledVersionIsNewer(const std::string& candidate, const std::string& in
 
 // Collapse a scan result to one entry per uuid, keeping the newest version of each.
 std::vector<InstalledModule> KeepNewestPerUuid(std::vector<InstalledModule> all);
+
+// ---- module settings (SDK settings_descriptor.json) ----------------------
+
+// One user-editable setting a module declares in its settings_descriptor.json.
+struct ModuleSettingSpec
+{
+	std::string key;
+	std::string type; // bool | int | float | string | enum
+	std::string label;
+	std::vector<std::string> options; // enum only
+	double min = 0.0;
+	double max = 0.0;
+	bool has_range = false;
+	// Declared default, used when the values file has no entry for this key.
+	bool default_bool = false;
+	double default_number = 0.0;
+	std::string default_string;
+};
+
+struct ModuleSettingsSchema
+{
+	bool loaded = false;
+	std::string values_file; // file name only, e.g. "synthetic_face.json"
+	std::vector<ModuleSettingSpec> settings;
+};
+
+// Read the descriptor sitting beside a module's manifest.json. Returns an unloaded
+// schema when the module ships none or the file is unreadable.
+ModuleSettingsSchema LoadModuleSettingsSchema(const std::string& manifest_path);
+
+// Absolute path of the values file a schema writes to, under the shared profiles dir.
+// Empty when `values_file` is missing or is not a bare file name.
+std::string ModuleSettingsValuesPath(const std::string& values_file);
+
+// Read/write the values file. Read returns an empty object when the file is absent.
+bool ReadModuleSettingsValues(const std::string& path, picojson::object& out);
+bool WriteModuleSettingsValues(const std::string& path, const picojson::object& values);
 
 // Read cached registry module lists written by face-module-sync.ps1.
 std::vector<AvailableModule> LoadAvailableModules(const std::string& source_id = {});
