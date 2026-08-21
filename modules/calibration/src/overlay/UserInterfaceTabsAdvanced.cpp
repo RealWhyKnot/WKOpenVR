@@ -60,7 +60,6 @@ template <typename Fn> static void AddResetContextMenu(const char* popupId, Fn r
 	}
 }
 
-
 // Persist a continuous-speed radio choice with a log annotation; the setting
 // changes the solve window (and so the whole session's log shape), which made
 // unannotated changes a blind spot when reading incident logs.
@@ -415,7 +414,6 @@ void CCal_DrawSettings()
 			ImGui::Unindent();
 			ImGui::EndGroupPanel();
 		}
-
 	}
 
 	// Maintenance buttons grouped in their own panel so they don't read as

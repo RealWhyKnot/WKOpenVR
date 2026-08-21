@@ -1,7 +1,7 @@
 #include "MotionRecording.h"
 
-#include "AutoLockHysteresis.h"        // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
-#include "GravityAlignment.h"          // spacecal::gravity::TiltAngleDeg -- applied-tilt metrics.
+#include "AutoLockHysteresis.h" // spacecal::autolock::RobustTranslDeviation -- relative-pose MAD.
+#include "GravityAlignment.h"   // spacecal::gravity::TiltAngleDeg -- applied-tilt metrics.
 
 #include <windows.h>
 #include <shlobj_core.h>

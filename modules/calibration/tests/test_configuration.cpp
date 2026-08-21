@@ -268,9 +268,8 @@ TEST(ConfigurationTest, MigrateV0ProfileLoadsCleanly)
 	// default SLOW to the retired AUTO tier, which now falls back to the
 	// current defaults on load.
 	std::string v0Json = MakeMinimalProfile(
-	    /*schemaVersion=*/0,
-	    "\"calibration_speed\":1,"
-	    "\"auto_suppress_on_external_tool\":true");
+	    /*schemaVersion=*/0, "\"calibration_speed\":1,"
+	                         "\"auto_suppress_on_external_tool\":true");
 
 	CalibrationContext ctx;
 	std::stringstream io(v0Json);

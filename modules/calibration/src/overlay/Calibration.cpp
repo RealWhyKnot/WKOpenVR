@@ -14,8 +14,8 @@
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
 #include "VRState.h"
-#include "GravityAlignment.h"      // spacecal::gravity::TiltAngleDeg -- seed/heartbeat tilt diagnostics
-#include "MotionGate.h"            // ShouldBlendCycle -- profile-apply snap decision
+#include "GravityAlignment.h" // spacecal::gravity::TiltAngleDeg -- seed/heartbeat tilt diagnostics
+#include "MotionGate.h"       // ShouldBlendCycle -- profile-apply snap decision
 #include "ControllerInput.h"
 #include "HeadFromTrackerSolve.h"
 #include "HeadMountOffsetModal.h" // wkopenvr::headmount::FeedSolverTick -- offset modal solver feed.
@@ -348,9 +348,10 @@ void StartCalibration(const char* reason)
 	Metrics::posOffset_rawComputed.Clear();
 
 	char resetBuf[240];
-	snprintf(resetBuf, sizeof resetBuf,
-	         "StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1",
-	         (reason && reason[0]) ? reason : "unknown");
+	snprintf(
+	    resetBuf, sizeof resetBuf,
+	    "StartCalibration_state_reset: reason=%s pairedMotionPrevRefPos pairedMotionPrevTgtPos errSeries_cleared=1",
+	    (reason && reason[0]) ? reason : "unknown");
 	Metrics::WriteLogAnnotation(resetBuf);
 }
 
@@ -516,8 +517,8 @@ static void TickVrEventSampleInvalidation(CalibrationContext& ctx)
 			if (extra.calc) dropped += extra.calc->EvictSamplesBefore(cutoff);
 		}
 		if (dropped > 0) {
-			Metrics::LogAnnotationf("samples_invalidated: reason=vr_event event_type=%d dropped=%zu",
-			                        (int)ev.eventType, dropped);
+			Metrics::LogAnnotationf("samples_invalidated: reason=vr_event event_type=%d dropped=%zu", (int)ev.eventType,
+			                        dropped);
 		}
 	}
 }

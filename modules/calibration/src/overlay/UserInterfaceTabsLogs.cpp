@@ -179,6 +179,5 @@ void CCal_DrawDevToolsPanel()
 	if (ImGui::IsItemHovered()) {
 		ImGui::SetTooltip("Write per-tick calibration rows that can be replayed locally.");
 	}
-
 }
 #endif

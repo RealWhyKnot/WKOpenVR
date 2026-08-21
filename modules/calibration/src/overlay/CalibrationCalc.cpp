@@ -1563,7 +1563,6 @@ public:
 
 		return accum.Average();
 	}
-
 };
 } // namespace
 
