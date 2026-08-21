@@ -361,23 +361,15 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 	char* buffer = buffer_array.get();
 	ctx.enabled = ctx.validProfile;
 
-	// Auto-recovery snap (option-3 bundle, 2026-05-04). RecoverFromWedgedCalibration
-	// sets g_snapNextProfileApply=true so the very next profile-apply cycle sends
-	// every per-ID payload with lerp=false (driver snaps transform := target rather
+	// One-shot snap: g_snapNextProfileApply=true makes this cycle send every
+	// per-ID payload with lerp=false (driver snaps transform := target rather
 	// than smoothly interpolating). Fallback payloads have no lerp field so they
-	// can't snap directly -- but in practice every device that needs the cal has a
-	// per-ID slot by the time recovery fires, so per-ID snap covers the user-visible
-	// case. Captured at the top of the function and consumed at the end so all
-	// per-ID sends in this cycle see the same value.
-	const bool recoverySnapThisCycle = g_snapNextProfileApply;
-	const bool snapThisCycle = recoverySnapThisCycle || forceSnapThisCycle;
+	// can't snap directly. Captured at the top of the function and consumed at
+	// the end so all per-ID sends in this cycle see the same value.
+	const bool requestedSnapThisCycle = g_snapNextProfileApply;
+	const bool snapThisCycle = requestedSnapThisCycle || forceSnapThisCycle;
 	const char* snapReason =
-	    recoverySnapThisCycle ? "recovery" : ((forceSnapReason && forceSnapReason[0]) ? forceSnapReason : "forced");
-
-	// One-shot re-anchor: send reanchor=true (with lerp=true) so the driver ramps
-	// to the profile at constant velocity. A snap this cycle takes precedence
-	// (the driver clears the ramp on lerp=false), so they never conflict.
-	const bool reanchorThisCycle = g_reanchorNextProfileApply && !snapThisCycle;
+	    requestedSnapThisCycle ? "requested" : ((forceSnapReason && forceSnapReason[0]) ? forceSnapReason : "forced");
 
 	// Snapshot of which IDs got adopted this scan and what serial/model they had.
 	// Compared against g_lastAdoptedTrackers below to log new-adoption / disconnect events.
@@ -603,9 +595,7 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		    /*inContinuousState=*/CalCtx.state == CalibrationState::Continuous,
 		    /*isFreshlyAdopted=*/isFreshlyAdopted,
 		    /*snapThisCycle=*/snapThisCycle);
-		// Re-anchor ramp request rides alongside lerp=true; the driver moves to
-		// the target at a constant velocity instead of the proportional blend.
-		payload.reanchor = reanchorThisCycle;
+		payload.reanchor = false;
 		// Hide intent: the continuous-target toggle hides the active target
 		// during continuous calibration. The head-mounted tracker toggle is
 		// serial-based so the same physical tracker remains hidden through
@@ -692,26 +682,17 @@ void ScanAndApplyProfile(CalibrationContext& ctx, bool forceSnapThisCycle, const
 		}
 	}
 
-	// Consume the one-shot auto-recovery snap flag -- only after every per-ID
-	// payload in this cycle has been sent, so the snap reaches all devices.
-	// Subsequent cycles return to normal lerp behaviour.
+	// Consume the one-shot snap flag -- only after every per-ID payload in this
+	// cycle has been sent, so the snap reaches all devices. Subsequent cycles
+	// return to normal lerp behaviour.
 	if (snapThisCycle) {
-		if (recoverySnapThisCycle) {
+		if (requestedSnapThisCycle) {
 			g_snapNextProfileApply = false;
 		}
 		char snapBuf[220];
 		snprintf(snapBuf, sizeof snapBuf, "profile_apply_snap_cycle_consumed: reason=%s payloadSent=%d", snapReason,
 		         scanPayloadSent);
 		Metrics::WriteLogAnnotation(snapBuf);
-	}
-
-	// Consume the one-shot re-anchor flag after all per-ID payloads are sent, so
-	// every calibrated device starts its ramp on the same cycle.
-	if (reanchorThisCycle) {
-		g_reanchorNextProfileApply = false;
-		char rbuf[160];
-		snprintf(rbuf, sizeof rbuf, "profile_apply_reanchor_cycle_consumed: payloadSent=%d", scanPayloadSent);
-		Metrics::WriteLogAnnotation(rbuf);
 	}
 
 	const double totalMs = MsSince(applyStart);

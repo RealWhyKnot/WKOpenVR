@@ -14,8 +14,6 @@
 #include "Protocol.h"
 #include "HeadMountDriverSynthConfig.h"
 #include "CalibrationAutoSpeed.h"
-#include "WarmRestart.h" // ValidationOutcome enum
-#include "SprtValidation.h"
 // We hold a unique_ptr<CalibrationCalc> in AdditionalCalibration. unique_ptr's
 // implicit destructor needs the pointee type complete at the destructor's
 // site, including in any TU that destroys an instance (test/replay stubs that
@@ -83,22 +81,10 @@ struct AdditionalCalibration
 
 	// Per-extra lock + relative-pose state. Same semantics as the primary's
 	// lockRelativePositionMode and friends.
-	int lockMode = 0; // 0=OFF, 1=ON, 2=legacy AUTO. int instead of LockMode to keep
-	                  // the forward-decl situation simple here.
+	int lockMode = 0; // 0=OFF, 1=ON, 2=legacy AUTO (treated as OFF). int instead of
+	                  // LockMode to keep the forward-decl situation simple here.
 	Eigen::AffineCompact3d refToTargetPose = Eigen::AffineCompact3d::Identity();
 	bool relativePosCalibrated = false;
-	std::deque<Eigen::AffineCompact3d> autoLockHistory;
-	bool autoLockEffectivelyLocked = false;
-
-	// Per-extra pending-flip queue. Mirrors CalibrationContext's primary
-	// fields (autoLockHasPendingFlip / autoLockPendingFlipTo /
-	// autoLockPendingFlipFirstSeen / autoLockGateHeldWarned); see
-	// UpdateAutoLockDetector and CommitPendingAutoLockFlipIfStationary in
-	// Calibration.cpp for the rationale.
-	bool autoLockHasPendingFlip = false;
-	bool autoLockPendingFlipTo = false;
-	double autoLockPendingFlipFirstSeen = 0.0;
-	bool autoLockGateHeldWarned = false;
 
 	// Resolved (effective) lock state -- ResolveLockMode mirror for extras.
 	bool lockRelativePosition = false;
@@ -263,52 +249,22 @@ struct CalibrationContext
 	bool wasWaitingForTriggers = false;
 	bool hasAppliedCalibrationResult = false;
 
-	// One-shot mode: detect SteamVR universe shifts (chaperone reset, seated
-	// zero pose reset, etc.) by watching the poses of TrackingReference
-	// devices (Lighthouse base stations). When a uniform rigid delta moves
-	// every base station in the same tracking system between two consecutive
-	// ticks, that's a universe re-origin -- apply the inverse to the stored
-	// calibration so body trackers stay aligned with the user's physical
-	// position. AUTO (true): runs when ≥2 TrackingReference devices are
-	// detected for the relevant system; otherwise no-ops. OFF (false): never
-	// runs. Default AUTO. No effect in continuous mode -- continuous already
-	// updates each tick and would converge through the shift anyway.
-	bool baseStationDriftCorrectionEnabled = true;
-
-	// Master experimental switch for every tracking check this fork adds on
-	// top of the original OpenVR-SpaceCalibrator pipeline: the recovery layer
-	// (relocalization detector, snap suppression, warm restart, base-station
-	// drift correction), the locked-accept/liveness gates, geometry-precision
-	// sample weighting, and the covariance-weighted solve with observability
-	// gating and sequential profile validation. OFF (default) runs the
-	// classic upstream pipeline -- the fallback when tracking misbehaves.
-	// Independent of this switch: the oversized-delta persist guard
-	// (ContinuousPersistDecision.h) and the first-candidate snap bound
-	// (MotionGate.h) run in both modes; they bound output plausibility, not
-	// tracking behaviour. Persisted; always written so an explicit choice
-	// survives reload.
+	// Master experimental switch for the fork's remaining custom checks: the
+	// locked-accept gates, geometry-precision sample weighting, and the
+	// covariance-weighted solve with observability gating. OFF (default) runs
+	// the classic upstream pipeline. Independent of this switch: the
+	// oversized-delta persist guard (ContinuousPersistDecision.h) and the
+	// first-candidate snap bound (MotionGate.h) run in both modes; they bound
+	// output plausibility, not tracking behaviour. Persisted; always written
+	// so an explicit choice survives reload.
 	bool enhancedTrackingChecks = false;
 	bool CustomChecksActive() const { return enhancedTrackingChecks; }
 
-	// Lever-arm noise model for the covariance-weighted solve and the
-	// sequential profile validation (LeverArmCovariance.h; defaults measured
-	// from retained recordings). Persisted knobs for rigs whose trackers
-	// jitter differently; only read while the enhanced-tracking switch is on.
+	// Lever-arm noise model for the covariance-weighted solve (LeverArmCovariance.h;
+	// defaults measured from retained recordings). Persisted knobs for rigs whose
+	// trackers jitter differently; only read while the enhanced-tracking switch is on.
 	double leverArmSigmaThetaRad = spacecal::levercov::kDefaultSigmaThetaRad;
 	double leverArmSigmaJitterM = spacecal::levercov::kDefaultSigmaJitterM;
-
-	// Relocalization-detector runtime state. Armed by the HMD reloc detector;
-	// relocDetectedThisTick is recorded per tick (spacecal_log reloc_detected
-	// column). Not persisted; reset in Clear().
-	double lastRelocDetectedTime = -1e9;
-	bool relocDetectedThisTick = false;
-
-	// Target-stability back-off (always on, conservative). Rolling EWMA of the
-	// fraction of recent continuous-cal ticks whose target tracker was not
-	// reporting a valid pose; when it climbs past the defer threshold the full
-	// solve is skipped until the link steadies (see TargetStabilityGate.h).
-	// Runtime only -- reset in Clear(), not persisted.
-	double targetInvalidEwma = 0.0;
 
 	float xprev, yprev, zprev;
 	int consecutiveHmdStalls = 0;
@@ -361,172 +317,6 @@ struct CalibrationContext
 	// untouched while the user-facing knob becomes a tristate.
 	bool lockRelativePosition = false;
 
-	// Auto-lock detector state.  Tracks the most recent relative-pose samples
-	// (ref^-1 * target) on a sliding window.  When their variance stays below
-	// the rigidity thresholds (see AutoLockHysteresis.h) for the full window,
-	// autoLockEffectivelyLocked flips true.  Cleared on profile reload /
-	// Clear() so a fresh calibration starts unlocked.
-	std::deque<Eigen::AffineCompact3d> autoLockHistory;
-	bool autoLockEffectivelyLocked = false;
-
-	// Rolling MAD floor for adaptive enter threshold. The detector tracks
-	// the minimum robust-translation-deviation reading across a sliding
-	// window of recent samples; EnterThresholdFor() scales this up to
-	// produce a per-rig enter threshold so a noisy pair (e.g. Quest+
-	// Lighthouse cross-system MAD floor ~4 mm) can still engage AUTO Lock
-	// instead of waiting forever for MAD to drop below the 3 mm hard floor.
-	// History is a deque of (time, mad) pairs trimmed to
-	// kFloorWindowSec of age. Floor is recomputed each push as the min of
-	// the in-window readings; zero means "no observations yet, use hard
-	// floor". Reset on Clear().
-	std::deque<std::pair<double, double>> autoLockMadHistory;
-	double autoLockMadFloor = 0.0;
-
-	// Wall-clock time of the most recent AUTO Lock flip commit. Used by
-	// the heartbeat's `settled=` field via IsSettled, which requires the
-	// lock to have held for kSettledMinHoldSec before reporting settled.
-	// Zero means no flip has happened this session. Reset on Clear().
-	double autoLockLastFlipTime = 0.0;
-
-	// AUTO lock-mode pending-flip queue. The detector produces a target value
-	// (`autoLockPendingFlipTo`) when the hysteresis verdict changes; the flip
-	// is held until the next CalibrationTick observes the HMD nearly still
-	// (kAutoLockStationaryHmdMps). This hides the visible calibration jump
-	// that accompanies a locked<->unlocked regime change inside the user's
-	// next stillness window. `autoLockHasPendingFlip` is false when the
-	// detector and effective state agree.
-	bool autoLockHasPendingFlip = false;
-	bool autoLockPendingFlipTo = false;
-
-	// Time the current pending AUTO Lock flip was first observed. Used by
-	// CommitPendingAutoLockFlipIfStationary to compute how long the commit
-	// gate has held a target verdict, so a chronic block becomes visible in
-	// the log via [autolock][gate-held]. Zero means no pending flip is
-	// currently being tracked. Reset along with the rest of the AUTO Lock
-	// state in Clear() and whenever the pending flip is committed or
-	// abandoned.
-	double autoLockPendingFlipFirstSeen = 0.0;
-
-	// Has the held-too-long warning for the current pending flip already
-	// fired? Prevents a per-tick flood while the gate continues to block
-	// the same target verdict. Cleared whenever a new pending flip starts.
-	bool autoLockGateHeldWarned = false;
-
-	// Recovery-convergence watch: set by RecoverFromWedgedCalibration to the
-	// recovery timestamp + recorded hmdDelta. The first post-recovery
-	// usingRelPose_fired emits a `[recovery][converged]` line carrying the
-	// convergence duration and first relPoseError; this lets a reader tie
-	// the physical jump severity to the time it took the cal to recover a
-	// usable relative-pose constraint. Both fields zero out after emission.
-	double recoveryWaitingSince = 0.0;    // Metrics::CurrentTime basis
-	double recoveryHmdDeltaAtStart = 0.0; // metres of the originating jump
-
-	// Warm-restart detection. The user takes off the HMD, comes back later,
-	// puts it on -- without intervention the solver re-validates the saved
-	// profile from an empty sample buffer, which takes 4-7 minutes under
-	// any tracking noise (Lighthouse base-station noise, Quest cross-system
-	// latency, etc.). During those minutes the user sees their avatar
-	// "fly away and fly back" as the candidate solver flips between two
-	// minima per tick. The warm-restart snap path detects the HMD's
-	// proximity sensor going false -> true after a sustained absence and
-	// re-applies the saved profile transform immediately, then tracks a
-	// validation grace window. If a real geometry shift fires during the
-	// grace window (e.g. the user actually moved a base station while away),
-	// grace drops to zero and the normal continuous-cal recovery takes over.
-	//
-	// `lastUserPresent` defaults to true so a session that starts with
-	// the user already wearing the HMD sees no rising edge -- the snap
-	// path is mid-session-warm-restart only.
-	//
-	// `userAwaySince` is the timestamp at which proximity went false;
-	// the rising edge only counts as a warm restart if proximity stayed
-	// false for at least kWarmRestartMinAwaySeconds (filters
-	// proximity-sensor blips that some HMD runtimes emit on radio
-	// hiccups).
-	//
-	// `warmRestartGraceSamples` is a downcounter ticked by
-	// CalibrationTick after each ComputeIncremental.
-	bool lastUserPresent = true;
-	double userAwaySince = 0.0;
-	int warmRestartGraceSamples = 0;
-
-	// Session-level continuous-cal tick counter for the cold-start safety
-	// gate. Incremented once per CalibrationTick that processes the warm-
-	// restart polling block; compared against
-	// spacecal::warm_restart::kColdStartGraceTicks to suppress engages
-	// during the first ~30 s of a session (when a startup-then-put-on-HMD
-	// sequence would otherwise look like a warm restart with no profile to
-	// restore from). Reset on Clear() so a fresh profile starts the gate
-	// over.
-	int warmRestartTickId = 0;
-
-	// HMD world-position captured on the proximity-falling edge (user
-	// took the HMD off). On the rising edge, the displacement from this
-	// stored position to the current HMD position is the
-	// awayPositionDeltaM input to ShouldEngage; large jumps fast-path the
-	// engage decision (see WarmRestart.h::kPositionJumpFastPathM) for
-	// HMDs whose activity-level signal is unreliable. Zero vector when
-	// no falling-edge position has been captured yet.
-	Eigen::Vector3d hmdLastKnownPosWhenAway = Eigen::Vector3d::Zero();
-	bool hmdLastKnownPosValid = false;
-
-	// MAD-floor reading captured at the moment a warm-restart snap fired.
-	// Used by the validation phase as the baseline against which post-snap
-	// MAD convergence is judged. NaN until a snap fires.
-	double warmRestartMadAtSnap = 0.0;
-
-	// Validation outcome of the most recent warm-restart snap. Set
-	// Inconclusive when the snap fires; transitions to Settled or Failed
-	// when the validation gate trips (see WarmRestart.h::EvaluateValidation).
-	// Reset on Clear().
-	spacecal::warm_restart::ValidationOutcome warmRestartValidationState =
-	    spacecal::warm_restart::ValidationOutcome::Inconclusive;
-
-	// Post-snap retargeting-error accumulator for the warm-restart
-	// validation phase. The validator's MAD floor (`autoLockMadFloor`)
-	// is a 60 s rolling minimum that includes pre-snap history, so a
-	// snap can inherit a quiet pre-snap floor and pass the dispersion
-	// check while landing on a stale profile. The bias accumulator only
-	// integrates `Metrics::error_currentCal` samples whose push timestamp
-	// post-dates `warmRestartLastConsumedErrTs` -- i.e. samples produced
-	// strictly after the snap fire. Reset at snap fire and on Clear().
-	// `postSnapErrorSumMm` is in millimetres to match the units already
-	// stored in `error_currentCal`; the mean is converted to metres at
-	// the call site before being passed to EvaluateValidation.
-	double postSnapErrorSumMm = 0.0;
-	int postSnapErrorSampleCount = 0;
-	double warmRestartLastConsumedErrTs = 0.0;
-
-	// Bounded re-anchor retries within one warm-restart episode. When a
-	// witness puck is present, a failed validation re-anchors to the saved
-	// profile and re-arms the grace window rather than destructively clearing;
-	// this counter caps those retries (see RecoveryPolicy.h). Reset to 0 at a
-	// fresh warm-restart engage/snap, on Settled, and on Clear().
-	int warmRestartReanchorCount = 0;
-
-	// True when the current warm-restart episode began with a witnessed
-	// world-frame move (corroborated SLAM snap, reloc re-anchor, or an
-	// away gap long enough for an inside-out headset to re-anchor). A
-	// validation failure then holds the re-solved frame instead of
-	// re-applying the saved profile, which describes the old frame
-	// (RecoveryPolicy.h::ChooseWarmRestartFailureAction).
-	bool warmRestartFrameMoved = false;
-
-	// Snap wall-time and source-of-floor tracking. `warmRestartSnapTime`
-	// is `Metrics::CurrentTime` at snap fire; `autoLockMadFloorTs` is the
-	// timestamp of the sample that produced the current floor value.
-	// When `autoLockMadFloorTs < warmRestartSnapTime`, the floor came
-	// from pre-snap history; the heartbeat surfaces this distinction via
-	// `mad_floor_source` so a "Settled by stale floor" verdict is
-	// distinguishable from a "Settled by post-snap convergence" one.
-	double warmRestartSnapTime = 0.0;
-	double autoLockMadFloorTs = 0.0;
-
-	// Sequential-validation accumulator for the current warm-restart episode
-	// (SprtValidation.h). Runtime-only; reset at every ArmReanchorToProfile,
-	// on Clear(), and when the enhanced-tracking switch flips.
-	spacecal::sprt::SprtState warmRestartSprt;
-
 	// Multi-ecosystem extras: each entry aligns an additional non-HMD tracking
 	// system to the HMD's tracking system. Empty for the typical 1-or-2-system
 	// case. The wizard appends entries here as it walks the user through each
@@ -538,12 +328,6 @@ struct CalibrationContext
 	// the wizard the first time. The user can re-launch from a button in
 	// Advanced.
 	bool wizardCompleted = false;
-
-	// Push a fresh ref+target world pose into the auto-lock detector.
-	// Computes the relative pose (ref^-1 * target), appends it to the
-	// history, and re-evaluates rigidity.  Called from the calibration tick
-	// each time a new sample is collected.
-	void UpdateAutoLockDetector(const Eigen::AffineCompact3d& refWorld, const Eigen::AffineCompact3d& targetWorld);
 
 	// Resolve `lockRelativePosition` from `lockRelativePositionMode` + the
 	// auto-lock detector.  Cheap; safe to call every tick.  Math code reads
@@ -729,10 +513,6 @@ struct CalibrationContext
 		// off in Advanced if they want pure incremental behaviour.
 		enableStaticRecalibration = true;
 
-		// Default AUTO. Failure mode is benign: with no base stations
-		// detected, the detector simply doesn't fire.
-		baseStationDriftCorrectionEnabled = true;
-
 		precisionWeightedRelPose = true;
 		gravityTiltDamping = true;
 
@@ -763,48 +543,12 @@ struct CalibrationContext
 		// Default this back ON when clearing — it's the safer setting and
 		// matches the construction-time default.
 		recalibrateOnMovement = true;
-		// Auto-lock detector resets to "no observations yet". The user's lock
-		// preference (mode) is intentionally NOT reset -- it's a setting, not
-		// calibration data, and a user who deliberately set ON or OFF wants
-		// that to persist across profile clears.
+		// The user's lock preference (mode) is intentionally NOT reset -- it's
+		// a setting, not calibration data, and a user who deliberately set ON
+		// or OFF wants that to persist across profile clears.
 		lockRelativePosition = false;
-		// Experimental drift-guard runtime state (the toggles themselves are
-		// settings and intentionally NOT reset here -- only the runaway state).
-		lastRelocDetectedTime = -1e9;
-		relocDetectedThisTick = false;
-		targetInvalidEwma = 0.0;
 		autoSpeedState = {};
 		lastAutoSpeedDecision = {};
-		autoLockHistory.clear();
-		autoLockEffectivelyLocked = false;
-		autoLockHasPendingFlip = false;
-		autoLockPendingFlipTo = false;
-		autoLockPendingFlipFirstSeen = 0.0;
-		autoLockGateHeldWarned = false;
-		autoLockMadHistory.clear();
-		autoLockMadFloor = 0.0;
-		autoLockLastFlipTime = 0.0;
-		recoveryWaitingSince = 0.0;
-		recoveryHmdDeltaAtStart = 0.0;
-		// Warm-restart state: a Clear means the saved profile is gone, so
-		// any pending grace must go too. Default lastUserPresent back to
-		// true so the next proximity-false reading produces a clean edge.
-		lastUserPresent = true;
-		userAwaySince = 0.0;
-		warmRestartGraceSamples = 0;
-		warmRestartTickId = 0;
-		hmdLastKnownPosWhenAway = Eigen::Vector3d::Zero();
-		hmdLastKnownPosValid = false;
-		warmRestartMadAtSnap = 0.0;
-		warmRestartValidationState = spacecal::warm_restart::ValidationOutcome::Inconclusive;
-		postSnapErrorSumMm = 0.0;
-		postSnapErrorSampleCount = 0;
-		warmRestartLastConsumedErrTs = 0.0;
-		warmRestartReanchorCount = 0;
-		warmRestartFrameMoved = false;
-		warmRestartSnapTime = 0.0;
-		autoLockMadFloorTs = 0.0;
-		warmRestartSprt = {};
 		// Note: showAdvancedSettings is intentionally NOT reset -- it's a
 		// user preference that spans profiles.
 		// No calibration was performed — relative pose is NOT calibrated. The
@@ -987,13 +731,6 @@ struct CalibrationContext
 
 extern CalibrationContext CalCtx;
 
-// Commits a queued AUTO-Lock-mode flip (held by UpdateAutoLockDetector to
-// hide visible jumps) when the HMD is nearly still. No-op when the queue is
-// empty or the user is currently moving.
-// Called once per CalibrationTick in continuous-cal mode. Public so unit
-// tests can drive it directly.
-bool CommitPendingAutoLockFlipIfStationary(CalibrationContext& ctx, double hmdSpeedMps, double now);
-
 void InitCalibrator();
 void CalibrationTick(double time);
 
@@ -1004,10 +741,9 @@ void CalibrationTick(double time);
 // of seconds stale on disk.
 void FlushPendingContinuousSave();
 
-// `reason` is a short tag (e.g. "ui_start_button", "continuous_standby",
-// "tracker_liveness_reconnect", "auto_recovery_snap") that lands in the
-// StartCalibration_state_reset log annotation. Lets a post-session grep
-// distinguish the few documented entry points; a default of "unknown"
+// `reason` is a short tag (e.g. "ui_start_button", "continuous_standby") that
+// lands in the StartCalibration_state_reset log annotation. Lets a post-session
+// grep distinguish the few documented entry points; a default of "unknown"
 // catches any caller that hasn't been updated yet so the build stays green.
 void StartCalibration(const char* reason = "unknown");
 void StartContinuousCalibration(const char* reason = "unknown");
@@ -1016,36 +752,6 @@ void EndContinuousCalibration();
 
 void ShowCalibrationDebug(int r, int c);
 void DebugApplyRandomOffset();
-
-// Dump relocalization state to the structured log. Called from the Logs tab's
-// "Dump drift state" button.
-void DumpDriftSubsystemState();
-
-// Most recent HMD-relocalization detection event. Returns true if any event
-// has been logged this session and populates out parameters with the time
-// since the event (seconds), the translation magnitude (meters), and the
-// rotation magnitude (degrees). Returns false if the detector hasn't fired
-// at all this session.
-bool LastDetectedRelocalization(double& outAgeSeconds, double& outDeltaMeters, double& outDeltaDegrees);
-
-// Recent auto-recovery info: returns true if auto-recovery clobbered the
-// calibration in the last 60 seconds AND the user hasn't dismissed the
-// banner. Populates outAge (seconds since recovery fired) and outDeltaMeters
-// (the HMD jump magnitude that triggered the recovery). Used by the UI to
-// render a sticky banner with Undo + Dismiss buttons.
-bool LastAutoRecoveryActive(double& outAge, double& outDeltaMeters);
-
-// Restore the pre-recovery refToTargetPose / relativePosCalibrated /
-// hasAppliedCalibrationResult, taking the user back to the calibration
-// state that was in effect before the auto-recovery cleared it. Returns
-// true if the snapshot existed and was restored, false if no recovery
-// has happened yet or undo was already applied. Idempotent: a second
-// click is a no-op.
-bool UndoLastAutoRecovery();
-
-// Hide the recovery banner without undoing. The recovered calibration
-// continues; only the UI banner disappears.
-void DismissAutoRecoveryBanner();
 
 // Re-open the driver pose shared-memory segment. The IPC client invokes this
 // after a successful reconnect to vrserver: when vrserver crashes and respawns,

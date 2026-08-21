@@ -189,33 +189,6 @@ static void BuildMainWindowContents(bool runningInOverlay_)
 	// banner is the more transient state.
 	spacecal::ui::DrawVRWaitingBanner();
 
-	// Auto-recovery banner (audit UX #3). Sticky for 60 s after the auto-
-	// recover fires so the user actually notices that their calibration was
-	// just clobbered, with Undo + Dismiss buttons. Without this the only
-	// signal was a single line in CalCtx.messages, swept on the next
-	// messages.clear(), invisible on tabs other than Basic. The 2026-05-02
-	// false-positive recoveries that destroyed working cals would have been
-	// caught here -- the user could have hit Undo within seconds.
-	{
-		double recoveryAge = 0.0, recoveryDelta = 0.0;
-		if (LastAutoRecoveryActive(recoveryAge, recoveryDelta)) {
-			ImGui::PushStyleColor(ImGuiCol_Text,
-			                      openvr_pair::overlay::ui::StatusColor(openvr_pair::overlay::ui::StatusTone::Warn));
-			ImGui::TextWrapped(
-			    "Auto-recovery cleared calibration %.0fs ago (~%.0f cm HMD jump). Recalibrating from scratch.",
-			    recoveryAge, recoveryDelta * 100.0);
-			ImGui::PopStyleColor();
-			if (ImGui::SmallButton("Undo (restore prior calibration)")) {
-				UndoLastAutoRecovery();
-			}
-			ImGui::SameLine();
-			if (ImGui::SmallButton("Dismiss")) {
-				DismissAutoRecoveryBanner();
-			}
-			ImGui::Separator();
-		}
-	}
-
 	// First-run auto-open of the setup wizard. Defer until VR is ready --
 	// the wizard's first step depends on enumerating tracking systems via
 	// VRState::Load, which is empty without a live OpenVR connection. If
@@ -465,20 +438,6 @@ static void OneShot_DrawSettings()
 			            "##oneshot_ignore_outliers", &CalCtx.ignoreOutliers,
 			            "Drop sample pairs whose rotation axis disagrees with the consensus before\n"
 			            "the LS solve. Helps with intermittent USB glitches or brief tracking loss.")) {
-				    SaveProfile(CalCtx);
-			    }
-		    });
-		    openvr_pair::overlay::ui::SettingRow(table, "Auto-correct universe shifts", [&] {
-			    if (openvr_pair::overlay::ui::CheckboxWithTooltip(
-			            "##oneshot_base_station_drift", &CalCtx.baseStationDriftCorrectionEnabled,
-			            "AUTO (on): when Lighthouse base stations are detected, watch for\n"
-			            "uniform pose shifts across all of them between ticks -- a SteamVR\n"
-			            "universe re-origin (chaperone reset, seated zero pose reset, etc.) --\n"
-			            "and apply the inverse to the stored calibration so body trackers stay\n"
-			            "aligned with your physical position. No-op if no base stations are\n"
-			            "present (Quest-only setups, etc.). Math is honest: requires actual\n"
-			            "evidence of a universe shift, not a heuristic guess.\n\n"
-			            "OFF: never adjust the calibration based on base station poses.")) {
 				    SaveProfile(CalCtx);
 			    }
 		    });

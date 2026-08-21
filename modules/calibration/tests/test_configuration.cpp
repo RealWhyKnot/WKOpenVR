@@ -95,7 +95,6 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	src.calibratedRotation = Eigen::Vector3d(0.0, 45.0, 0.0);
 	src.jitterThreshold = 5.5f;
 	src.recalibrateOnMovement = false;
-	src.baseStationDriftCorrectionEnabled = false;
 	src.ignoreOutliers = false; // non-default; must be written
 	src.continuousCalibrationThreshold = 2.5f;
 	src.oneShotCalibrationSpeed = CalibrationContext::SLOW; // non-default; must round-trip
@@ -117,7 +116,6 @@ TEST(ConfigurationTest, RoundTripPreservesCustomFields)
 	EXPECT_DOUBLE_EQ(dst.calibratedRotation.y(), 45.0);
 	EXPECT_FLOAT_EQ(dst.jitterThreshold, 5.5f);
 	EXPECT_FALSE(dst.recalibrateOnMovement);
-	EXPECT_FALSE(dst.baseStationDriftCorrectionEnabled);
 	EXPECT_FALSE(dst.ignoreOutliers);
 	EXPECT_FLOAT_EQ(dst.continuousCalibrationThreshold, 2.5f);
 	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::SLOW);
@@ -343,23 +341,6 @@ TEST(ConfigurationTest, FreezeIncludeHmdPersistsButActiveFreezeDoesNot)
 // carry every field; missing keys reload as the in-code defaults, which
 // matches the in-code defaults baked into CalibrationContext.
 // ---------------------------------------------------------------------------
-// Clear() should reset the AUTO-Lock pending-flip queue along with the
-// detector state, so a profile-reload doesn't carry a stale committed-flip
-// intention across the boundary.
-TEST(ConfigurationTest, ClearResetsAutoLockPendingFlip)
-{
-	CalibrationContext ctx;
-	ctx.autoLockEffectivelyLocked = true;
-	ctx.autoLockHasPendingFlip = true;
-	ctx.autoLockPendingFlipTo = false;
-
-	ctx.Clear();
-
-	EXPECT_FALSE(ctx.autoLockEffectivelyLocked);
-	EXPECT_FALSE(ctx.autoLockHasPendingFlip);
-	EXPECT_FALSE(ctx.autoLockPendingFlipTo);
-}
-
 TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
 {
 	CalibrationContext src; // fresh defaults
@@ -374,9 +355,8 @@ TEST(ConfigurationTest, DefaultFieldsRoundTripAsDefaults)
 	ParseProfile(dst, io);
 
 	// The in-code defaults survive a no-customization round-trip.
-	EXPECT_TRUE(dst.recalibrateOnMovement);             // default true
-	EXPECT_TRUE(dst.enableStaticRecalibration);         // default true (flipped this session)
-	EXPECT_TRUE(dst.baseStationDriftCorrectionEnabled); // default AUTO (no-op without base stations)
+	EXPECT_TRUE(dst.recalibrateOnMovement);     // default true
+	EXPECT_TRUE(dst.enableStaticRecalibration); // default true (flipped this session)
 	EXPECT_FLOAT_EQ(dst.jitterThreshold, 3.0f);
 	EXPECT_EQ(dst.oneShotCalibrationSpeed, CalibrationContext::FAST);
 	EXPECT_EQ(dst.continuousCalibrationSpeed, CalibrationContext::AUTO);
@@ -607,9 +587,6 @@ TEST(ConfigurationTest, InCodeDefaultsArePinned)
 	EXPECT_TRUE(ctx.recalibrateOnMovement) << "recalibrateOnMovement default is ON: prevents phantom drift while still";
 	EXPECT_TRUE(ctx.enableStaticRecalibration) << "enableStaticRecalibration default is ON: no-op when not locked, "
 	                                              "accelerates rigid-attachment recovery; flipped on this fork";
-	EXPECT_TRUE(ctx.baseStationDriftCorrectionEnabled) << "baseStationDriftCorrectionEnabled default is AUTO (true): "
-	                                                      "no-op when no base stations are detected (e.g. Quest-only "
-	                                                      "setups), corrects on detected universe shifts otherwise";
 	EXPECT_FALSE(ctx.requireTriggerPressToApply);
 	EXPECT_TRUE(ctx.ignoreOutliers) << "ignoreOutliers default is now true: the filter is a no-op when "
 	                                   "consensus is uniform and prevents one bad sample from skewing "
@@ -723,8 +700,6 @@ TEST(ConfigurationTest, WriteProfile_SkipsDefaultTunables)
 
 	// recalibrateOnMovement defaults to true â†’ skip
 	EXPECT_EQ(json.find("recalibrate_on_movement"), std::string::npos) << "default-true bool must be skipped on save";
-	// baseStationDriftCorrectionEnabled defaults to true â†’ skip
-	EXPECT_EQ(json.find("base_station_drift_correction"), std::string::npos);
 	// ignoreOutliers defaults to true -> skip
 	EXPECT_EQ(json.find("ignore_outliers"), std::string::npos);
 	// jitterThreshold defaults to 3.0f -> skip
@@ -740,10 +715,9 @@ TEST(ConfigurationTest, WriteProfile_StampsNonDefaultTunables)
 	ctx.referenceTrackingSystem = "lighthouse";
 	ctx.targetTrackingSystem = "oculus";
 	ctx.validProfile = true;
-	ctx.recalibrateOnMovement = false;             // flipped from default true
-	ctx.ignoreOutliers = false;                    // flipped from default true
-	ctx.jitterThreshold = 5.5f;                    // flipped from default 3.0
-	ctx.baseStationDriftCorrectionEnabled = false; // flipped from default true
+	ctx.recalibrateOnMovement = false; // flipped from default true
+	ctx.ignoreOutliers = false;        // flipped from default true
+	ctx.jitterThreshold = 5.5f;        // flipped from default 3.0
 
 	std::stringstream io;
 	WriteProfile(ctx, io);
@@ -752,7 +726,6 @@ TEST(ConfigurationTest, WriteProfile_StampsNonDefaultTunables)
 	EXPECT_NE(json.find("recalibrate_on_movement"), std::string::npos);
 	EXPECT_NE(json.find("ignore_outliers"), std::string::npos);
 	EXPECT_NE(json.find("jitter_threshold"), std::string::npos);
-	EXPECT_NE(json.find("base_station_drift_correction"), std::string::npos);
 }
 
 TEST(ConfigurationTest, WriteProfile_InvalidProfileWritesNothing)

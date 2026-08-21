@@ -2,154 +2,13 @@
 
 #include "CalibrationInternal.h" // calibration solver + shared auto-lock counters
 #include "CalibrationMetrics.h"
-#include "CalibrationRecoveryTick.h" // ArmReanchorToProfile / EvictDeadFrameSamples / LastWitnessHealth
-#include "AutoLockHysteresis.h"      // spacecal::autolock::IsSettled / EnterThresholdFor
-#include "GravityAlignment.h"        // spacecal::gravity::TiltAngleDeg -- heartbeat tilt field
-#include "HeadMountTargetBinding.h"  // wkopenvr::headmount::EffectiveHeadMountMode
-#include "TrackingStyle.h"           // HmdPoseEventRecoveryEligible
-#include "WarmRestart.h"             // spacecal::warm_restart::ShouldEngage + tunables
-#include "WitnessHealth.h"           // spacecal::witness_health::ValidPct / LastValidSec
+#include "GravityAlignment.h"       // spacecal::gravity::TiltAngleDeg -- heartbeat tilt field
+#include "HeadMountTargetBinding.h" // wkopenvr::headmount::EffectiveHeadMountMode
 
 #include <cmath>
 #include <cstdio>
 
 #include <Eigen/Dense>
-
-// Warm-restart detection. In plain Continuous mode, the user takes the
-// HMD off (activity level falls to Standby), comes back later, puts it
-// on (activity level snaps back to UserInteraction). If the away duration
-// cleared the threshold and the saved profile is valid, snap the driver
-// to the saved transform and grant a validation grace window.
-//
-// GetTrackedDeviceActivityLevel is preferred over Prop_UserPresent_Bool
-// here because the activity-level path is driven by both the proximity
-// sensor AND motion -- so an HMD with no working proximity sensor
-// (some Quest variants over Link) still produces a usable signal as
-// long as the IMU sees the HMD sitting still long enough for the
-// runtime to transition to Standby (>= 5 s of stillness, configurable
-// in SteamVR Power Management).
-//
-// k_EDeviceActivityLevel_Unknown returns for devices that aren't
-// reporting yet (e.g. a fresh HMD that hasn't woken up); we treat
-// Unknown as "not present" so no spurious edges fire during startup.
-void TickWarmRestartDetection(CalibrationContext& ctx, double time)
-{
-	{
-		auto* vrSystem = vr::VRSystem();
-		const vr::EDeviceActivityLevel activity =
-		    vrSystem ? vrSystem->GetTrackedDeviceActivityLevel(vr::k_unTrackedDeviceIndex_Hmd)
-		             : vr::k_EDeviceActivityLevel_UserInteraction;
-		const bool nowPresent = (activity == vr::k_EDeviceActivityLevel_UserInteraction) ||
-		                        (activity == vr::k_EDeviceActivityLevel_UserInteraction_Timeout);
-		// activity != Unknown is the "we have a signal at all" gate;
-		// without this, a freshly-launched session before the HMD has
-		// reported anything would look like a "false" reading and
-		// immediately start the away timer at session start.
-		if (activity != vr::k_EDeviceActivityLevel_Unknown) {
-			// Session-level tick counter for the cold-start safety gate
-			// in ShouldEngage. Incremented every poll-cycle (the outer
-			// {} guards on Continuous/ContinuousStandby state, which is
-			// where warm-restart can meaningfully fire). See
-			// WarmRestart.h::kColdStartGraceTicks for the threshold.
-			++ctx.warmRestartTickId;
-
-			// Current HMD position from the latest device pose, used for
-			// the pose-jump fallback signal. DriverPose_t carries position
-			// in vecPosition[3]; same field other code paths in this file
-			// read for HMD position (e.g. line 1583).
-			const auto& hmdPose = ctx.devicePoses[vr::k_unTrackedDeviceIndex_Hmd];
-			const Eigen::Vector3d hmdPosNow(hmdPose.vecPosition[0], hmdPose.vecPosition[1], hmdPose.vecPosition[2]);
-			const bool hmdPoseValid =
-			    hmdPose.poseIsValid && hmdPose.result == vr::ETrackingResult::TrackingResult_Running_OK;
-
-			const bool wasPresent = ctx.lastUserPresent;
-			if (wasPresent && !nowPresent) {
-				ctx.userAwaySince = time;
-				// Capture the HMD's position at the moment of falling
-				// edge so the rising edge can compute displacement and
-				// fast-path the engage decision on large jumps (HMD
-				// physically moved while away, regardless of how briefly).
-				if (hmdPoseValid) {
-					ctx.hmdLastKnownPosWhenAway = hmdPosNow;
-					ctx.hmdLastKnownPosValid = true;
-				}
-			}
-			else if (!wasPresent && nowPresent) {
-				const double awayFor = (ctx.userAwaySince > 0.0) ? (time - ctx.userAwaySince) : 0.0;
-				const double awayPosDelta =
-				    (ctx.hmdLastKnownPosValid && hmdPoseValid) ? (hmdPosNow - ctx.hmdLastKnownPosWhenAway).norm() : 0.0;
-				const bool hmdEventRecoveryEligible = HmdPoseEventRecoveryEligible(ctx.state, ctx.trackingStyle);
-				const spacecal::warm_restart::EngageInput engageIn = {
-				    wasPresent,
-				    nowPresent,
-				    awayFor,
-				    ctx.validProfile,
-				    hmdEventRecoveryEligible,
-				    awayPosDelta,
-				    ctx.warmRestartTickId,
-				};
-				const bool engaged = ctx.CustomChecksActive() && spacecal::warm_restart::ShouldEngage(engageIn);
-
-				// Diagnostic: max-away ceiling. When the proximity path
-				// would have engaged but awayFor crossed the ceiling, log
-				// it explicitly so a session that "went to sleep then woke
-				// to cold cal" leaves a paper trail rather than being
-				// invisible. Only logs when this is the suppress reason
-				// (not when pose-jump fast-path took over).
-				if (!engaged && ctx.CustomChecksActive() && ctx.validProfile && hmdEventRecoveryEligible &&
-				    ctx.warmRestartTickId >= spacecal::warm_restart::kColdStartGraceTicks &&
-				    awayFor > spacecal::warm_restart::kMaxAwaySeconds &&
-				    awayPosDelta < spacecal::warm_restart::kPositionJumpFastPathM) {
-					char cbuf[200];
-					snprintf(cbuf, sizeof cbuf,
-					         "[warm-restart][ceiling-suppressed] away_for_s=%.1f"
-					         " max_away_s=%.0f pos_delta_m=%.3f",
-					         awayFor, spacecal::warm_restart::kMaxAwaySeconds, awayPosDelta);
-					Metrics::WriteLogAnnotation(cbuf);
-				}
-
-				if (engaged) {
-					// Put-headset-back-on re-anchor: arm grace and ramp to the
-					// saved profile at constant velocity (ArmReanchorToProfile)
-					// rather than snapping. Resets the post-snap bias accumulator
-					// and pins the last-consumed err timestamp so pre-snap
-					// retargeting errors don't feed the post-snap mean.
-					ctx.warmRestartReanchorCount = 0; // fresh warm-restart episode
-					// A long off-head gap is long enough for an inside-out
-					// headset to re-anchor its world frame; samples from
-					// before the gap would then poison the solve window until
-					// they age out. Short breaks keep their samples.
-					if (awayFor >= spacecal::warm_restart::kSampleEvictionAwayGapSeconds) {
-						EvictDeadFrameSamples(ctx, "away_gap");
-					}
-					// An eviction-length gap is long enough for an inside-out
-					// headset to have re-anchored its frame while off-head;
-					// that provenance decides the validation-failure action.
-					ArmReanchorToProfile(ctx,
-					                     /*frameMoved=*/awayFor >=
-					                         spacecal::warm_restart::kSampleEvictionAwayGapSeconds);
-					const double mag = std::sqrt(ctx.calibratedTranslation.x() * ctx.calibratedTranslation.x() +
-					                             ctx.calibratedTranslation.y() * ctx.calibratedTranslation.y() +
-					                             ctx.calibratedTranslation.z() * ctx.calibratedTranslation.z());
-					const bool fastPath = awayPosDelta >= spacecal::warm_restart::kPositionJumpFastPathM &&
-					                      awayFor < spacecal::warm_restart::kMinAwaySeconds;
-					char wbuf[260];
-					snprintf(wbuf, sizeof wbuf,
-					         "[warm-restart][snap] away_for_s=%.1f state=%d"
-					         " grace_samples=%d profile_magnitude_cm=%.2f"
-					         " pos_delta_m=%.3f mad_at_snap_mm=%.3f path=%s",
-					         awayFor, (int)ctx.state, ctx.warmRestartGraceSamples, mag, awayPosDelta,
-					         ctx.warmRestartMadAtSnap * 1000.0,
-					         fastPath ? "pose_jump_fast_path" : "proximity_and_time");
-					Metrics::WriteLogAnnotation(wbuf);
-				}
-				ctx.userAwaySince = 0.0;
-				ctx.hmdLastKnownPosValid = false;
-			}
-			ctx.lastUserPresent = nowPresent;
-		}
-	}
-}
 
 // Diagnostic: trace relPose-cal validity flips. The flag is set/cleared
 // from several call sites and is currently only externally visible inside
@@ -258,100 +117,17 @@ void EmitCalHeartbeat(CalibrationContext& ctx, double time)
 			s_lastHeartbeatTime = time;
 			const auto& errSeries = Metrics::error_currentCal;
 			const double errLast = errSeries.size() > 0 ? errSeries.last() : 0.0;
-			const double translMadMm = g_lastAutoLockTranslMad * 1000.0;
-			const double rotMadDeg = g_lastAutoLockRotMad * 180.0 / EIGEN_PI;
-			// Pending-flip held duration. Zero when no flip is queued so a
-			// reader can distinguish a stable autoLockEff from one that is
-			// about to commit a transition. autoLockPendingFlipFirstSeen
-			// is set the first tick a pending flip appears and reset on
-			// commit / abandon, so a non-zero value during pending means
-			// the held-duration is meaningful.
-			const double autoLockHeldSec = (ctx.autoLockHasPendingFlip && ctx.autoLockPendingFlipFirstSeen > 0.0)
-			                                   ? (time - ctx.autoLockPendingFlipFirstSeen)
-			                                   : 0.0;
-			// Settled signal: see AutoLockHysteresis.h::IsSettled. The settled
-			// rate over a session is the headline success metric for the
-			// 2026-05-25 settling fix -- a healthy run should sit at
-			// settled=yes for the majority of heartbeats once initial motion
-			// has finished. settledSinceSec is the elapsed time since the
-			// last AUTO Lock flip when settled, zero otherwise; lets a
-			// reader scrub the timeline of stable lock windows.
-			const double secsSinceLastFlip = (ctx.autoLockLastFlipTime > 0.0) ? (time - ctx.autoLockLastFlipTime) : 0.0;
-			// With an explicit lock mode the detector's effective-lock output is
-			// idle; the pinned lockRelativePosition is the truthful lock state
-			// for the settled metric.
-			const bool effectiveLock = ctx.lockRelativePositionMode == CalibrationContext::LockMode::AUTO
-			                               ? ctx.autoLockEffectivelyLocked
-			                               : ctx.lockRelativePosition;
-			const bool settled = spacecal::autolock::IsSettled(effectiveLock, g_lastAutoLockTranslMad,
-			                                                   ctx.autoLockMadFloor, secsSinceLastFlip);
-			const double madFloorMm = ctx.autoLockMadFloor * 1000.0;
-			const double enterMm = spacecal::autolock::EnterThresholdFor(ctx.autoLockMadFloor) * 1000.0;
-			// Warm-restart heartbeat fields: the post-snap bias mean and
-			// the mad-floor source distinguish "Settled by post-snap
-			// convergence" from "Settled by inherited pre-snap quiet
-			// floor". post_snap_bias_mm is the validator's correctness
-			// signal; mad_floor_source is its provenance label. Both are
-			// emitted regardless of whether the grace window is active --
-			// outside the window they read as zero / "n/a" so a triage
-			// reader can grep one line per heartbeat for the relevant
-			// state.
-			const bool warmRestartActive = (ctx.warmRestartGraceSamples > 0);
-			const double postSnapBiasMm =
-			    (ctx.postSnapErrorSampleCount > 0)
-			        ? (ctx.postSnapErrorSumMm / static_cast<double>(ctx.postSnapErrorSampleCount))
-			        : 0.0;
-			const char* madFloorSourceHb;
-			if (!warmRestartActive) {
-				madFloorSourceHb = "n/a";
-			}
-			else if (ctx.warmRestartSnapTime > 0.0 && ctx.autoLockMadFloorTs > 0.0 &&
-			         ctx.autoLockMadFloorTs >= ctx.warmRestartSnapTime) {
-				madFloorSourceHb = "postSnap";
-			}
-			else {
-				madFloorSourceHb = "preSnap";
-			}
-			const char* validationStateHb;
-			switch (ctx.warmRestartValidationState) {
-				case spacecal::warm_restart::ValidationOutcome::Settled:
-					validationStateHb = "settled";
-					break;
-				case spacecal::warm_restart::ValidationOutcome::Failed:
-					validationStateHb = "failed";
-					break;
-				default:
-					validationStateHb = "inconclusive";
-					break;
-			}
-			const auto& wh = LastWitnessHealth();
-			char hbBuf[1152];
+			char hbBuf[640];
 			snprintf(hbBuf, sizeof hbBuf,
-			         "[cal-heartbeat] state=%d trackingStyle=%d headMountMode=%d lockMode=%d lockRel=%d autoLockEff=%d"
-			         " autoLockPending=%d autoLockPendingTo=%d autoLockHeldSec=%.2f"
-			         " autoLockHistory=%zu/%zu translMad_mm=%.3f rotMad_deg=%.3f"
-			         " mad_floor_mm=%.3f enter_threshold_mm=%.3f"
-			         " settled=%s settled_since_sec=%.1f"
+			         "[cal-heartbeat] state=%d trackingStyle=%d headMountMode=%d lockMode=%d lockRel=%d"
 			         " err_last_mm=%.2f err_samples=%d"
 			         " relPosCal=%d hmdStalls=%d"
-			         " wr_active=%d wr_grace_remaining=%d"
-			         " post_snap_bias_mm=%.3f post_snap_samples=%d"
-			         " mad_floor_source=%s wr_validation=%s"
-			         " witness_eff_mode=%d reanchor_pending=%d wr_reanchors=%d synth_fallbacks=%llu"
-			         " witness_valid_pct=%.1f witness_last_valid_sec=%.1f subthreshold_relocs=%llu"
+			         " head_mount_eff_mode=%d synth_fallbacks=%llu"
 			         " enhanced_checks=%d obs_lambda_min=%.2f tilt_deg=%.2f tilt_damping=%d",
 			         (int)ctx.state, (int)ctx.trackingStyle, (int)ctx.headMount.mode, (int)ctx.lockRelativePositionMode,
-			         (int)ctx.lockRelativePosition, (int)ctx.autoLockEffectivelyLocked, (int)ctx.autoLockHasPendingFlip,
-			         (int)ctx.autoLockPendingFlipTo, autoLockHeldSec, ctx.autoLockHistory.size(),
-			         spacecal::autolock::kSamplesNeeded, translMadMm, rotMadDeg, madFloorMm, enterMm,
-			         settled ? "yes" : "no", settled ? secsSinceLastFlip : 0.0, errLast, errSeries.size(),
-			         (int)ctx.relativePosCalibrated,
-			         ctx.consecutiveHmdStalls, (int)warmRestartActive, ctx.warmRestartGraceSamples, postSnapBiasMm,
-			         ctx.postSnapErrorSampleCount, madFloorSourceHb, validationStateHb,
-			         (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx), (int)g_reanchorNextProfileApply,
-			         ctx.warmRestartReanchorCount, (unsigned long long)ctx.driverSynthFallbackTotal,
-			         spacecal::witness_health::ValidPct(wh), spacecal::witness_health::LastValidSec(wh, time),
-			         (unsigned long long)wh.subthresholdRelocs, (int)ctx.CustomChecksActive(),
+			         (int)ctx.lockRelativePosition, errLast, errSeries.size(), (int)ctx.relativePosCalibrated,
+			         ctx.consecutiveHmdStalls, (int)wkopenvr::headmount::EffectiveHeadMountMode(ctx),
+			         (unsigned long long)ctx.driverSynthFallbackTotal, (int)ctx.CustomChecksActive(),
 			         calibration.LastObservabilityLambdaMin(),
 			         spacecal::gravity::TiltAngleDeg(Eigen::Quaterniond(
 			             ProfileTransform(ctx.calibratedRotation, ctx.calibratedTranslation).rotation())),

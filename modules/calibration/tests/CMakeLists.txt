@@ -41,8 +41,6 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_configuration.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tracking_style.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_stall_decisions.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_tracker_liveness.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_watchdog_decisions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_state_transitions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_motion_gate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_common_helpers.cpp
@@ -50,14 +48,11 @@ add_executable(spacecal_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test_quash_pose_flags.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_auto_lock_hysteresis.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_warm_restart.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_common_mode_coherence.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_target_stability_gate.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_pose_sampling.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_calibration_progress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_snap_suppression.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_recovery_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_reanchor_ramp.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_witness_health.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_gravity_alignment.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tilt_damping.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test_time_offset_xcorr.cpp

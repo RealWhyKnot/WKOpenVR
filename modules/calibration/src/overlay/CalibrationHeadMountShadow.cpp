@@ -185,12 +185,6 @@ static void ClearHeadMountContinuousSourceState(CalibrationContext& ctx, const c
 	ctx.pairedMotionMismatchCount = 0;
 	ctx.pairedMotionPrevRefPos = Eigen::Vector3d::Zero();
 	ctx.pairedMotionPrevTgtPos = Eigen::Vector3d::Zero();
-	ctx.autoLockHistory.clear();
-	ctx.autoLockEffectivelyLocked = false;
-	ctx.autoLockHasPendingFlip = false;
-	ctx.autoLockPendingFlipTo = false;
-	ctx.autoLockPendingFlipFirstSeen = 0.0;
-	ctx.autoLockGateHeldWarned = false;
 	ctx.headMountNeedsFreshRelativePose = true;
 	ctx.headMountLastSourceResetTime = time;
 	ctx.lastAcceptedContinuousSnapshot = {};

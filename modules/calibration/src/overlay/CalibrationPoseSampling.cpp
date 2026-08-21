@@ -1,12 +1,10 @@
 #include "CalibrationPoseSampling.h"
 
-#include "AutoLockHysteresis.h"
 #include "CalibrationInternal.h"
 #include "CalibrationMetrics.h"
 #include "ControllerInput.h"
 #include "HeadMountPoseSampling.h"
 #include "RuntimeHealthSummary.h"
-#include "TargetStabilityGate.h" // spacecal::target_stability -- continuous-solve back-off.
 #include "RotationMatrix3.h"
 #include "VRState.h"
 
@@ -513,15 +511,6 @@ bool CollectSample(const CalibrationContext& ctx)
 		CalCtx.Log("Target device is not tracking\n");
 		ok = false;
 	}
-	// Feed this tick's target validity into the rolling EWMA the continuous solve
-	// gate reads (TargetStabilityGate.h). Updated for both valid and invalid ticks
-	// so it reflects the true recent dropout rate of an intermittent target link.
-	if (inContinuousFamily) {
-		const bool targetInvalidThisTick =
-		    !target.poseIsValid || target.result != vr::ETrackingResult::TrackingResult_Running_OK;
-		CalCtx.targetInvalidEwma = spacecal::target_stability::UpdateInvalidEwma(
-		    CalCtx.targetInvalidEwma, targetInvalidThisTick, spacecal::target_stability::kSolveDeferEwmaAlpha);
-	}
 	if (refSilentInvalid || tgtSilentInvalid) {
 		Metrics::WriteLogAnnotation(refSilentInvalid && tgtSilentInvalid ? "silent_invalid_pose_rejected: ref+tgt"
 		                            : refSilentInvalid                   ? "silent_invalid_pose_rejected: ref"
@@ -667,13 +656,6 @@ bool CollectSample(const CalibrationContext& ctx)
 	runtimeHealth.refTrackingResult = static_cast<int>(reference.result);
 	runtimeHealth.targetTrackingResult = static_cast<int>(target.result);
 	openvr_pair::common::RecordRuntimePoseHealth(runtimeHealth);
-
-	// Feed the auto-lock detector with the same sample. We use the world
-	// poses directly (not the post-calibration relative pose) so the
-	// rigidity check is independent of the math's current solution --
-	// the detector measures whether the two devices physically move
-	// together, not whether the calibration thinks they do.
-	const_cast<CalibrationContext&>(ctx).UpdateAutoLockDetector(refWorld, tgtWorld);
 
 	// Push motion-coverage metrics for the live sample buffer. The Calibration
 	// Progress popup reads these via Metrics:: and renders progress bars so

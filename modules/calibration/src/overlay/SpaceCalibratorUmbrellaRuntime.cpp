@@ -121,9 +121,9 @@ void CCal_UmbrellaTick()
 	}
 
 	if (g_vrReady) {
-		// glfwGetTime() is the calibration module's clock: samples, the
-		// recovery tick, and tracker liveness already stamp with it. Passing
-		// the same epoch here keeps every deadline and stamp comparable.
+		// glfwGetTime() is the calibration module's clock: samples already
+		// stamp with it, so passing the same epoch here keeps every deadline
+		// and stamp comparable.
 		CalibrationTick(glfwGetTime());
 
 		std::vector<openvr_pair::overlay::CalibrationDeviceLock> locks;

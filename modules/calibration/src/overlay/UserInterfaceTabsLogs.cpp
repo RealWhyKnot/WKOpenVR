@@ -180,14 +180,5 @@ void CCal_DrawDevToolsPanel()
 		ImGui::SetTooltip("Write per-tick calibration rows that can be replayed locally.");
 	}
 
-	ImGui::Spacing();
-	ui::DrawSectionHeading("Diagnostics");
-	if (ImGui::Button("Dump drift state")) {
-		DumpDriftSubsystemState();
-	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Write a one-shot snapshot of the relocalization state\n"
-		                  "to the current debug log. Greppable by [drift][state-dump].");
-	}
 }
 #endif
