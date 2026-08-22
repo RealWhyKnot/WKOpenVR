@@ -1,11 +1,22 @@
 #pragma once
 
 #include <cstdio>
+#include <ctime>
 
 namespace openvr_pair::common {
 
 void SetLowLatencyLogMode(FILE* file);
 bool FlushLogFileToDisk(FILE* file);
+
+// Opens a module's timestamped log under %LocalAppDataLow%\WKOpenVR\Logs, or
+// returns nullptr while debug logging is off. On failure it falls back to
+// fallbackFileName in the working directory, then to stderr, so a diagnostic
+// line is never dropped silently.
+FILE* OpenModuleLogFile(const wchar_t* timestampedPrefix, const char* fallbackFileName);
+
+// Local wall clock, broken down for the "[hh:mm:ss] " prefix every module log
+// writes.
+tm LocalTimeForLog();
 
 // Deferred-flush policy for the diagnostic log. The logger keeps the file in
 // low-latency mode so each fwrite reaches the OS page cache immediately (so an

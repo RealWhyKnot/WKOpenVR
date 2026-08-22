@@ -16,15 +16,6 @@ namespace {
 std::mutex g_logMutex;
 FILE* g_logFile = nullptr;
 
-tm LocalTimeForLog()
-{
-	auto now = std::chrono::system_clock::now();
-	auto nowTime = std::chrono::system_clock::to_time_t(now);
-	tm value{};
-	localtime_s(&value, &nowTime);
-	return value;
-}
-
 void FlushDiagnosticsFile();
 
 bool EnsureDiagnosticsLogOpen()

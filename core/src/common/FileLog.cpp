@@ -1,7 +1,13 @@
+#define _CRT_SECURE_NO_DEPRECATE
 #include "FileLog.h"
 
+#include "DebugLogging.h"
+#include "LogPaths.h"
+
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -36,6 +42,34 @@ bool FlushLogFileToDisk(FILE* file)
 #else
 	return true;
 #endif
+}
+
+FILE* OpenModuleLogFile(const wchar_t* timestampedPrefix, const char* fallbackFileName)
+{
+	if (!IsDebugLoggingEnabled()) return nullptr;
+
+	// _wfopen so a user name with non-ASCII characters resolves correctly.
+	const std::wstring path = TimestampedLogPath(timestampedPrefix);
+	if (!path.empty()) {
+		if (FILE* file = _wfopen(path.c_str(), L"a")) {
+			SetLowLatencyLogMode(file);
+			return file;
+		}
+	}
+
+	FILE* file = fopen(fallbackFileName, "a");
+	if (!file) file = stderr;
+	SetLowLatencyLogMode(file);
+	return file;
+}
+
+tm LocalTimeForLog()
+{
+	const auto now = std::chrono::system_clock::now();
+	const auto nowTime = std::chrono::system_clock::to_time_t(now);
+	tm value{};
+	localtime_s(&value, &nowTime);
+	return value;
 }
 
 } // namespace openvr_pair::common
