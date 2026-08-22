@@ -34,6 +34,8 @@ add_library(openvr_pair_feature_facetracking_overlay STATIC
 	Logging.h
 	LogsSection.cpp
 	LogsSection.h
+	ModuleSettingsTab.cpp
+	ModuleSettingsTab.h
 	ModuleSources.cpp
 	ModuleSources.h
 	ModulesTab.cpp

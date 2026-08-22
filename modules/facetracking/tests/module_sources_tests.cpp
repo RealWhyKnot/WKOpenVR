@@ -211,3 +211,11 @@ TEST(ModuleSources, ComparesVersionStampsNumericallyThenOrdinally)
 	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.8.21.0-4ED2", "dev"));
 	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("dev", "2026.8.21.0-4ED2"));
 }
+
+TEST(ModuleSources, ShortensModuleTabLabel)
+{
+	EXPECT_EQ(facetracking::ModuleTabLabel("WKOpenVR Synthetic Face Module"), "Synthetic Face");
+	EXPECT_EQ(facetracking::ModuleTabLabel("Acme Eyes"), "Acme Eyes");
+	// Stripping both parts would leave nothing; keep the name as declared.
+	EXPECT_EQ(facetracking::ModuleTabLabel("WKOpenVR  Module"), "WKOpenVR  Module");
+}

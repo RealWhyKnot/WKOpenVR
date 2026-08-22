@@ -481,6 +481,26 @@ std::vector<InstalledModule> ScanInstalledModules()
 	return result;
 }
 
+const std::vector<InstalledModule>& InstalledModulesCached()
+{
+	static std::vector<InstalledModule> cache;
+	static uint64_t last_tick = 0;
+	const uint64_t now = GetTickCount64();
+	if (last_tick == 0 || now - last_tick >= 1000) {
+		cache = ScanInstalledModules();
+		last_tick = now;
+	}
+	return cache;
+}
+
+std::string ModuleTabLabel(const std::string& name)
+{
+	std::string label = name;
+	if (label.rfind("WKOpenVR ", 0) == 0) label.erase(0, 9);
+	if (label.size() >= 7 && label.compare(label.size() - 7, 7, " Module") == 0) label.erase(label.size() - 7);
+	return label.empty() ? name : label;
+}
+
 std::vector<AvailableModule> LoadAvailableModules(const std::string& source_id)
 {
 	std::wstring base = FtDataDir();

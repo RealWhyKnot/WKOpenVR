@@ -5,6 +5,7 @@
 #include "IPCClient.h"
 #include "Logging.h"
 #include "LogsSection.h"
+#include "ModuleSettingsTab.h"
 #include "ModuleSources.h"
 #include "ModulesTab.h"
 #include "Profiles.h"
@@ -710,6 +711,7 @@ void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext& ctx)
 		openvr_pair::overlay::ui::DrawTabItem("Settings", [&] { facetracking::ui::DrawSettingsTab(*this); });
 		openvr_pair::overlay::ui::DrawTabItem("Tuning", [&] { facetracking::ui::DrawTuningTab(*this); });
 		openvr_pair::overlay::ui::DrawTabItem("Modules", [&] { facetracking::ui::DrawModulesTab(*this); });
+		facetracking::ui::DrawModuleSettingsTabs();
 		openvr_pair::overlay::ui::DrawTabItem("Advanced", [&] { facetracking::ui::DrawAdvancedTab(*this); });
 		// Logs appear in the umbrella's global Logs tab via DrawLogsSection.
 	}

@@ -145,6 +145,12 @@ bool InstalledVersionIsNewer(const std::string& candidate, const std::string& in
 // Collapse a scan result to one entry per uuid, keeping the newest version of each.
 std::vector<InstalledModule> KeepNewestPerUuid(std::vector<InstalledModule> all);
 
+// Installed modules as of the last scan; rescans the modules directory at most once a second.
+const std::vector<InstalledModule>& InstalledModulesCached();
+
+// Tab label for a module: its manifest name without the "WKOpenVR " prefix and " Module" suffix.
+std::string ModuleTabLabel(const std::string& name);
+
 // ---- module settings (SDK settings_descriptor.json) ----------------------
 
 // One user-editable setting a module declares in its settings_descriptor.json.
