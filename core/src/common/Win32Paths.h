@@ -16,6 +16,8 @@ std::wstring WkOpenVrRootPath(bool create = true);
 std::wstring WkOpenVrSubdirectoryPath(std::wstring_view relative, bool create = true);
 std::wstring WkOpenVrLogsPath(bool create = true);
 int64_t FileLastWriteTime(const std::wstring& path);
+// True only for an existing non-directory entry; an empty path is never a file.
+bool FileExists(const std::wstring& path);
 // Writes path.tmp then renames over path; the previous file survives any failure.
 bool WriteFileAtomic(const std::wstring& path, std::string_view body, bool writeThrough = false);
 

@@ -1,5 +1,7 @@
 #include "ShellSettings.h"
 
+#include "StringUtil.h"
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -16,20 +18,7 @@ std::wstring ShellSettingsPath(const std::wstring& profileRoot)
 	return profileRoot + L"\\shell.txt";
 }
 
-std::string TrimAscii(std::string value)
-{
-	size_t begin = 0;
-	while (begin < value.size() &&
-	       (value[begin] == ' ' || value[begin] == '\t' || value[begin] == '\r' || value[begin] == '\n')) {
-		++begin;
-	}
-	size_t end = value.size();
-	while (end > begin &&
-	       (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\r' || value[end - 1] == '\n')) {
-		--end;
-	}
-	return value.substr(begin, end - begin);
-}
+using openvr_pair::common::TrimAscii;
 
 std::map<std::string, std::string> ReadShellSettings(const std::wstring& profileRoot)
 {

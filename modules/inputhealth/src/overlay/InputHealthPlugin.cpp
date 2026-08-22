@@ -13,6 +13,7 @@
 #include "ShellContext.h"
 #include "ShellFooter.h"
 #include "SnapshotReader.h"
+#include "StringUtil.h"
 #include "UiHelpers.h"
 
 #include <imgui/imgui.h>
@@ -26,10 +27,7 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-bool StartsWith(const std::string& value, const char* prefix)
-{
-	return prefix && value.rfind(prefix, 0) == 0;
-}
+using openvr_pair::common::StartsWith;
 
 bool IsDriverWaitError(const std::string& error)
 {

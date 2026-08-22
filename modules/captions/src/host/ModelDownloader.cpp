@@ -22,14 +22,7 @@ std::string ModelDownloader::DefaultModelDir()
 	return openvr_pair::common::WideToUtf8(root);
 }
 
-static std::wstring Utf8ToWide(const std::string& s)
-{
-	int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-	if (n <= 0) return {};
-	std::wstring w(n, L'\0');
-	MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
-	return w;
-}
+using openvr_pair::common::Utf8ToWide;
 
 bool ModelDownloader::Download(const std::string& url, const std::string& dest_path, ProgressCallback progress_cb,
                                std::string* error_out)

@@ -5,6 +5,7 @@
 #include "DiagnosticsLog.h"
 #include "ModulePerf.h"
 #include "Win32CommandLine.h"
+#include "Win32Text.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -47,16 +48,6 @@ std::string LowerAscii(const wchar_t* w)
 			out.push_back(ch);
 		}
 	}
-	return out;
-}
-
-std::wstring WidenUtf8(const std::string& value)
-{
-	if (value.empty()) return {};
-	int needed = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), nullptr, 0);
-	if (needed <= 0) return {};
-	std::wstring out(static_cast<size_t>(needed), L'\0');
-	MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), out.data(), needed);
 	return out;
 }
 
@@ -258,7 +249,7 @@ void HostSupervisorBase::AppendOwnerLivenessArgs(std::wstring& commandLine) cons
 	std::swprintf(nonce, sizeof(nonce) / sizeof(nonce[0]), L"%016llX",
 	              static_cast<unsigned long long>(owner_lease_->Nonce()));
 	commandLine += L" --owner-liveness ";
-	commandLine += QuoteCommandLineArg(WidenUtf8(owner_lease_->Name()));
+	commandLine += QuoteCommandLineArg(Utf8ToWide(owner_lease_->Name()));
 	commandLine += L" --owner-liveness-nonce ";
 	commandLine += nonce;
 }
@@ -358,7 +349,7 @@ bool HostSupervisorBase::SendBytesOverControlPipe(const void* data, size_t len)
 
 uint64_t HostSupervisorBase::QueryExeWriteTime() const
 {
-	std::wstring w = WidenUtf8(host_exe_path_);
+	std::wstring w = Utf8ToWide(host_exe_path_);
 	if (w.empty()) return 0;
 	WIN32_FILE_ATTRIBUTE_DATA a{};
 	if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return 0;

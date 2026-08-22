@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include "MockPoseSource.h" // for MockOpenVRRuntime
+#include "Win32Text.h"
 
 #include <chrono>
 #include <stdexcept>
@@ -19,14 +20,7 @@ namespace {
 
 using HmdDriverFactoryFn = void* (*)(const char*, int*);
 
-std::wstring Widen(const std::string& s)
-{
-	if (s.empty()) return {};
-	const int wlen = ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
-	std::wstring w(wlen, L'\0');
-	::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), w.data(), wlen);
-	return w;
-}
+using openvr_pair::common::Utf8ToWide;
 
 std::string DescribeWin32Error(DWORD err)
 {

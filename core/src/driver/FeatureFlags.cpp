@@ -8,6 +8,7 @@
 #include "Logging.h"
 #include "ModuleRegistry.h"
 #include "ModuleSafety.h"
+#include "Win32Paths.h"
 
 #include <string>
 
@@ -19,9 +20,7 @@ namespace module_registry = openvr_pair::common::modules;
 
 bool FlagFileExists(const std::wstring& resourcesDir, const wchar_t* flagName)
 {
-	std::wstring path = resourcesDir + L"\\" + flagName;
-	DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+	return openvr_pair::common::FileExists(resourcesDir + L"\\" + flagName);
 }
 
 bool ModuleFlagFileExists(const std::wstring& resourcesDir, const module_registry::ModuleInfo& module)

@@ -41,20 +41,6 @@ struct DSample
 	Eigen::Vector3d ref, target;
 };
 
-bool StartsWith(const std::string& str, const std::string& prefix)
-{
-	if (str.length() < prefix.length()) return false;
-
-	return str.compare(0, prefix.length(), prefix) == 0;
-}
-
-bool EndsWith(const std::string& str, const std::string& suffix)
-{
-	if (str.length() < suffix.length()) return false;
-
-	return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
-}
-
 vr::HmdQuaternion_t VRRotationQuat(Eigen::Vector3d eulerdeg)
 {
 	auto euler = eulerdeg * EIGEN_PI / 180.0;

@@ -12,6 +12,7 @@
 #include "SettingsTab.h"
 #include "ShellContext.h"
 #include "ShellFooter.h"
+#include "StringUtil.h"
 #include "TuningTab.h"
 #include "UiHelpers.h"
 #include "BuildStamp.h"
@@ -33,27 +34,8 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-bool StartsWith(const std::string& value, const char* prefix)
-{
-	return prefix && value.rfind(prefix, 0) == 0;
-}
-
-bool IsAsciiSpace(char c)
-{
-	return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
-std::string TrimAsciiCopy(std::string value)
-{
-	size_t first = 0;
-	while (first < value.size() && IsAsciiSpace(value[first]))
-		++first;
-	size_t last = value.size();
-	while (last > first && IsAsciiSpace(value[last - 1]))
-		--last;
-	if (first > 0 || last < value.size()) value = value.substr(first, last - first);
-	return value;
-}
+using openvr_pair::common::StartsWith;
+using openvr_pair::common::TrimAscii;
 
 bool IsDriverWaitError(const std::string& error)
 {
@@ -63,8 +45,8 @@ bool IsDriverWaitError(const std::string& error)
 
 bool IsMetadataEmpty(const AvatarShapeTuningMetadata& metadata)
 {
-	return TrimAsciiCopy(metadata.custom_name).empty() && TrimAsciiCopy(metadata.auto_name).empty() &&
-	       TrimAsciiCopy(metadata.last_used_utc).empty() && TrimAsciiCopy(metadata.config_path).empty();
+	return TrimAscii(metadata.custom_name).empty() && TrimAscii(metadata.auto_name).empty() &&
+	       TrimAscii(metadata.last_used_utc).empty() && TrimAscii(metadata.config_path).empty();
 }
 
 uint32_t CountShapeOverrides(const FaceShapeScaleArray& values)
@@ -228,17 +210,17 @@ bool FacetrackingPlugin::UpdateAvatarMetadataFromState()
 	AvatarShapeTuningMetadata& metadata = MetadataForAvatar(profile_.current, key);
 	bool changed = false;
 
-	const std::string autoName = TrimAsciiCopy(avatar.avatar_name);
+	const std::string autoName = TrimAscii(avatar.avatar_name);
 	if (!autoName.empty() && metadata.auto_name != autoName) {
 		metadata.auto_name = autoName;
 		changed = true;
 	}
-	const std::string lastUsed = TrimAsciiCopy(avatar.updated_at_utc);
+	const std::string lastUsed = TrimAscii(avatar.updated_at_utc);
 	if (!lastUsed.empty() && metadata.last_used_utc != lastUsed) {
 		metadata.last_used_utc = lastUsed;
 		changed = true;
 	}
-	const std::string configPath = TrimAsciiCopy(avatar.config_path);
+	const std::string configPath = TrimAscii(avatar.config_path);
 	if (!configPath.empty() && metadata.config_path != configPath) {
 		metadata.config_path = configPath;
 		changed = true;
@@ -415,7 +397,7 @@ void FacetrackingPlugin::RenameAvatarTuningKey(const std::string& key, const std
 {
 	const std::string normalized = NormalizeAvatarShapeTuningKey(key);
 	AvatarShapeTuningMetadata& metadata = MetadataForAvatar(profile_.current, normalized);
-	metadata.custom_name = TrimAsciiCopy(name);
+	metadata.custom_name = TrimAscii(name);
 	if (IsMetadataEmpty(metadata)) {
 		profile_.current.avatar_shape_metadata.erase(normalized);
 	}

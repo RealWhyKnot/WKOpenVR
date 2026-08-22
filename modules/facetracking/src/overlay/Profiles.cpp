@@ -3,6 +3,7 @@
 
 #include "JsonUtil.h"
 #include "Logging.h"
+#include "StringUtil.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 #include "facetracking/ExpressionNames.h"
@@ -24,22 +25,7 @@ std::wstring ProfilePath()
 	return dir.empty() ? std::wstring() : dir + L"\\facetracking.json";
 }
 
-bool IsAsciiSpace(char c)
-{
-	return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
-std::string TrimAsciiCopy(std::string value)
-{
-	size_t first = 0;
-	while (first < value.size() && IsAsciiSpace(value[first]))
-		++first;
-	size_t last = value.size();
-	while (last > first && IsAsciiSpace(value[last - 1]))
-		--last;
-	if (first > 0 || last < value.size()) value = value.substr(first, last - first);
-	return value;
-}
+using openvr_pair::common::TrimAscii;
 
 int ClampShapeTuningPercent(int value)
 {
@@ -169,11 +155,10 @@ void DecodeAvatarShapeMetadata(const picojson::object& obj, FacetrackingProfile&
 		if (!avatarEntry.second.is<picojson::object>()) continue;
 
 		AvatarShapeTuningMetadata metadata;
-		metadata.custom_name = TrimAsciiCopy(openvr_pair::common::json::StringAt(avatarEntry.second, "custom_name"));
-		metadata.auto_name = TrimAsciiCopy(openvr_pair::common::json::StringAt(avatarEntry.second, "auto_name"));
-		metadata.last_used_utc =
-		    TrimAsciiCopy(openvr_pair::common::json::StringAt(avatarEntry.second, "last_used_utc"));
-		metadata.config_path = TrimAsciiCopy(openvr_pair::common::json::StringAt(avatarEntry.second, "config_path"));
+		metadata.custom_name = TrimAscii(openvr_pair::common::json::StringAt(avatarEntry.second, "custom_name"));
+		metadata.auto_name = TrimAscii(openvr_pair::common::json::StringAt(avatarEntry.second, "auto_name"));
+		metadata.last_used_utc = TrimAscii(openvr_pair::common::json::StringAt(avatarEntry.second, "last_used_utc"));
+		metadata.config_path = TrimAscii(openvr_pair::common::json::StringAt(avatarEntry.second, "config_path"));
 
 		if (!metadata.custom_name.empty() || !metadata.auto_name.empty() || !metadata.last_used_utc.empty() ||
 		    !metadata.config_path.empty()) {
@@ -298,10 +283,10 @@ std::string Encode(const FacetrackingProfile& p)
 		picojson::object metadataRoot;
 		for (const auto& entry : p.avatar_shape_metadata) {
 			picojson::object metadataObj;
-			const std::string custom = TrimAsciiCopy(entry.second.custom_name);
-			const std::string automatic = TrimAsciiCopy(entry.second.auto_name);
-			const std::string lastUsed = TrimAsciiCopy(entry.second.last_used_utc);
-			const std::string configPath = TrimAsciiCopy(entry.second.config_path);
+			const std::string custom = TrimAscii(entry.second.custom_name);
+			const std::string automatic = TrimAscii(entry.second.auto_name);
+			const std::string lastUsed = TrimAscii(entry.second.last_used_utc);
+			const std::string configPath = TrimAscii(entry.second.config_path);
 			if (!custom.empty()) metadataObj["custom_name"] = picojson::value(custom);
 			if (!automatic.empty()) metadataObj["auto_name"] = picojson::value(automatic);
 			if (!lastUsed.empty()) metadataObj["last_used_utc"] = picojson::value(lastUsed);
@@ -348,7 +333,7 @@ bool IsDefaultFaceShapeTuningValue(const FaceShapeTuningValue& value)
 
 std::string NormalizeAvatarShapeTuningKey(std::string key)
 {
-	key = TrimAsciiCopy(std::move(key));
+	key = TrimAscii(std::move(key));
 	return key.empty() ? std::string(kDefaultAvatarShapeTuningKey) : key;
 }
 
@@ -414,9 +399,9 @@ const AvatarShapeTuningMetadata* FindMetadataForAvatar(const FacetrackingProfile
 std::string AvatarDisplayName(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata)
 {
 	if (metadata) {
-		std::string custom = TrimAsciiCopy(metadata->custom_name);
+		std::string custom = TrimAscii(metadata->custom_name);
 		if (!custom.empty()) return custom;
-		std::string automatic = TrimAsciiCopy(metadata->auto_name);
+		std::string automatic = TrimAscii(metadata->auto_name);
 		if (!automatic.empty()) return automatic;
 	}
 
@@ -434,8 +419,8 @@ std::string AvatarDisplayName(const std::string& avatarKey, const AvatarShapeTun
 std::string AvatarDisplaySourceLabel(const std::string& avatarKey, const AvatarShapeTuningMetadata* metadata)
 {
 	if (metadata) {
-		if (!TrimAsciiCopy(metadata->custom_name).empty()) return "Alias";
-		if (!TrimAsciiCopy(metadata->auto_name).empty()) return "OSC";
+		if (!TrimAscii(metadata->custom_name).empty()) return "Alias";
+		if (!TrimAscii(metadata->auto_name).empty()) return "OSC";
 	}
 
 	const std::string key = NormalizeAvatarShapeTuningKey(avatarKey);

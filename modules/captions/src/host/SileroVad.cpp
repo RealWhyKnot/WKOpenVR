@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #include "SileroVad.h"
 #include "Logging.h"
+#include "Win32Text.h"
 
 #include <cstring>
 #include <stdexcept>
@@ -105,11 +106,7 @@ bool SileroVad::Load(const std::string& model_path)
 	ort_api_->SetInterOpNumThreads(opts, 1);
 	ort_api_->SetSessionGraphOptimizationLevel(opts, ORT_ENABLE_BASIC);
 
-	// Convert UTF-8 path to wide for CreateSession on Windows.
-	int wlen = MultiByteToWideChar(CP_UTF8, 0, model_path.c_str(), -1, nullptr, 0);
-	std::wstring wpath(wlen, L'\0');
-	MultiByteToWideChar(CP_UTF8, 0, model_path.c_str(), -1, wpath.data(), wlen);
-
+	const std::wstring wpath = openvr_pair::common::Utf8ToWide(model_path);
 	status = ort_api_->CreateSession(env_, wpath.c_str(), opts, &session_);
 	ort_api_->ReleaseSessionOptions(opts);
 	if (status) {

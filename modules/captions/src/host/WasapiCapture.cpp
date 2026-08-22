@@ -10,6 +10,7 @@
 #include "WasapiCapture.h"
 #include "AudioLevel.h"
 #include "Logging.h"
+#include "Win32Text.h"
 
 #include <algorithm>
 #include <chrono>
@@ -93,13 +94,7 @@ std::vector<std::string> WasapiCapture::EnumerateDevices()
 		PROPVARIANT pv;
 		PropVariantInit(&pv);
 		if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR && pv.pwszVal) {
-			int n = WideCharToMultiByte(CP_UTF8, 0, pv.pwszVal, -1, nullptr, 0, nullptr, nullptr);
-			if (n > 0) {
-				std::string s(n, '\0');
-				WideCharToMultiByte(CP_UTF8, 0, pv.pwszVal, -1, s.data(), n, nullptr, nullptr);
-				s.resize(s.size() - 1); // drop NUL
-				names.push_back(std::move(s));
-			}
+			names.push_back(openvr_pair::common::WideToUtf8(pv.pwszVal));
 		}
 		PropVariantClear(&pv);
 	}
@@ -279,11 +274,8 @@ bool WasapiCapture::OpenSelectedDevice()
 	ComPtr<IMMDevice> device;
 	bool fell_back_to_default = false;
 	if (!wantId.empty()) {
-		int wn = MultiByteToWideChar(CP_UTF8, 0, wantId.c_str(), -1, nullptr, 0);
-		if (wn > 0) {
-			std::wstring idW(wn, L'\0');
-			MultiByteToWideChar(CP_UTF8, 0, wantId.c_str(), -1, idW.data(), wn);
-			idW.resize(idW.size() - 1); // drop NUL
+		const std::wstring idW = openvr_pair::common::Utf8ToWide(wantId);
+		if (!idW.empty()) {
 			hr = enumerator_->GetDevice(idW.c_str(), &device);
 			if (FAILED(hr) || !device.Get()) {
 				TH_LOG("[wasapi] selected device unavailable (id='%s'); falling back to system default",
@@ -306,14 +298,9 @@ bool WasapiCapture::OpenSelectedDevice()
 			PROPVARIANT pv;
 			PropVariantInit(&pv);
 			if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR && pv.pwszVal) {
-				int n = WideCharToMultiByte(CP_UTF8, 0, pv.pwszVal, -1, nullptr, 0, nullptr, nullptr);
-				if (n > 0) {
-					std::string s(n, '\0');
-					WideCharToMultiByte(CP_UTF8, 0, pv.pwszVal, -1, s.data(), n, nullptr, nullptr);
-					s.resize(s.size() - 1);
-					std::lock_guard<std::mutex> lk(name_mutex_);
-					device_name_ = std::move(s);
-				}
+				std::string s = openvr_pair::common::WideToUtf8(pv.pwszVal);
+				std::lock_guard<std::mutex> lk(name_mutex_);
+				device_name_ = std::move(s);
 			}
 			PropVariantClear(&pv);
 		}

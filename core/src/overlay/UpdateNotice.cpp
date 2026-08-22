@@ -84,11 +84,7 @@ struct PendingFile
 	std::string sha256;
 };
 
-bool FileExists(const std::wstring& path)
-{
-	const DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-}
+using openvr_pair::common::FileExists;
 
 int64_t FileSizeBytes(const std::wstring& path)
 {

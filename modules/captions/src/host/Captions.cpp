@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_DEPRECATE
 #include "Captions.h"
 #include "Logging.h"
+#include "StringUtil.h"
 
 #include <sstream>
 #include <stdexcept>
@@ -38,16 +39,7 @@ static std::string JoinModelPath(const std::string& dir, const char* leaf)
 	return dir + "\\" + leaf;
 }
 
-static std::string TrimAscii(std::string text)
-{
-	const auto not_space = [](unsigned char ch) {
-		return ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n';
-	};
-	const auto first = std::find_if(text.begin(), text.end(), not_space);
-	if (first == text.end()) return {};
-	const auto last = std::find_if(text.rbegin(), text.rend(), not_space).base();
-	return std::string(first, last);
-}
+using openvr_pair::common::TrimAscii;
 
 Captions::Captions() : impl_(std::make_unique<Impl>()) {}
 

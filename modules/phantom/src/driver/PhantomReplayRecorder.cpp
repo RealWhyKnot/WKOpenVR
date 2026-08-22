@@ -44,8 +44,7 @@ bool FullRateFlagFileExists()
 		path.push_back(L'\\');
 	}
 	path += kFullRateFlagFileName;
-	const DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+	return openvr_pair::common::FileExists(path);
 }
 
 const char* DeviceClassKey(vr::ETrackedDeviceClass c)

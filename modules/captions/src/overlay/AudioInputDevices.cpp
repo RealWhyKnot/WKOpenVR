@@ -1,5 +1,7 @@
 #include "AudioInputDevices.h"
 
+#include "Win32Text.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -21,16 +23,7 @@ namespace {
 const PROPERTYKEY kPkeyDeviceFriendlyName = {
     {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14};
 
-std::string WideToUtf8(const wchar_t* w)
-{
-	if (!w) return {};
-	int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-	if (n <= 0) return {};
-	std::string s(n, '\0');
-	WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
-	s.resize(s.size() - 1); // drop NUL
-	return s;
-}
+using openvr_pair::common::WideToUtf8;
 
 } // namespace
 
@@ -78,7 +71,7 @@ std::vector<AudioInputDevice> EnumerateCaptureDevices()
 		if (SUCCEEDED(device->OpenPropertyStore(STGM_READ, &props))) {
 			PROPVARIANT pv;
 			PropVariantInit(&pv);
-			if (SUCCEEDED(props->GetValue(kPkeyDeviceFriendlyName, &pv)) && pv.vt == VT_LPWSTR) {
+			if (SUCCEEDED(props->GetValue(kPkeyDeviceFriendlyName, &pv)) && pv.vt == VT_LPWSTR && pv.pwszVal) {
 				entry.name = WideToUtf8(pv.pwszVal);
 			}
 			PropVariantClear(&pv);

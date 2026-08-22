@@ -1,5 +1,7 @@
 #include "FaceOscPublisher.h"
 
+#include "StringUtil.h"
+
 #include <Windows.h>
 
 #include <algorithm>
@@ -75,11 +77,7 @@ static std::string TrimAddressLine(const std::string& line)
 	return line.substr(first, last - first);
 }
 
-static bool StartsWith(const std::string& value, const char* prefix)
-{
-	const size_t prefixLen = std::strlen(prefix);
-	return value.size() >= prefixLen && std::memcmp(value.data(), prefix, prefixLen) == 0;
-}
+using openvr_pair::common::StartsWith;
 
 static std::string CompatibleKey(const std::string& address)
 {

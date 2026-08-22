@@ -76,9 +76,7 @@ ss::CandidateKind ReadCandidateFromFlags()
 	if (root.empty()) return ss::CandidateKind::Strong;
 	if (root.back() != L'\\' && root.back() != L'/') root.push_back(L'\\');
 	auto present = [&](const wchar_t* name) -> bool {
-		const std::wstring path = root + name;
-		const DWORD attr = GetFileAttributesW(path.c_str());
-		return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+		return openvr_pair::common::FileExists(root + name);
 	};
 	if (present(L"smart_shadow.match")) return ss::CandidateKind::Match;
 	if (present(L"smart_shadow.responsive")) return ss::CandidateKind::Responsive;

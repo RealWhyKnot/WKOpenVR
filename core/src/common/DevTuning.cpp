@@ -1,6 +1,7 @@
 #include "DevTuning.h"
 
 #include "BuildChannel.h"
+#include "StringUtil.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -32,14 +33,6 @@ std::shared_ptr<const Map> g_snapshot = std::make_shared<const Map>();
 uint64_t g_lastWrite = 0; // FILETIME of the file at the last successful read
 bool g_hadFile = false;   // whether the file existed at the last check
 
-std::string Trim(const std::string& s)
-{
-	size_t b = s.find_first_not_of(" \t\r\n");
-	if (b == std::string::npos) return {};
-	size_t e = s.find_last_not_of(" \t\r\n");
-	return s.substr(b, e - b + 1);
-}
-
 std::shared_ptr<const Map> Parse(const std::string& text)
 {
 	auto map = std::make_shared<Map>();
@@ -51,8 +44,8 @@ std::shared_ptr<const Map> Parse(const std::string& text)
 		if (hash != std::string::npos) line.resize(hash);
 		size_t eq = line.find('=');
 		if (eq == std::string::npos) continue;
-		std::string key = Trim(line.substr(0, eq));
-		std::string val = Trim(line.substr(eq + 1));
+		std::string key = TrimAscii(line.substr(0, eq));
+		std::string val = TrimAscii(line.substr(eq + 1));
 		if (key.empty() || val.empty()) continue;
 		char* end = nullptr;
 		double parsed = std::strtod(val.c_str(), &end);

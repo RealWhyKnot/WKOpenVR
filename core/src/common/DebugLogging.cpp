@@ -32,10 +32,7 @@ bool EqualAsciiIgnoreCase(std::string_view left, std::string_view right)
 
 bool DebugFlagExists()
 {
-	std::wstring path = DebugLoggingFlagPath(false);
-	if (path.empty()) return false;
-	DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+	return FileExists(DebugLoggingFlagPath(false));
 }
 
 void UpdateCache(bool enabled)

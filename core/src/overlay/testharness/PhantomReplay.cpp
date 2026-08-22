@@ -2,6 +2,8 @@
 
 #if WKOPENVR_BUILD_IS_DEV
 
+#include "StringUtil.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -16,16 +18,7 @@ namespace openvr_pair::overlay::testharness {
 
 namespace {
 
-std::string Trim(std::string_view v)
-{
-	while (!v.empty() && (v.front() == ' ' || v.front() == '\t' || v.front() == '\r' || v.front() == '\n')) {
-		v.remove_prefix(1);
-	}
-	while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r' || v.back() == '\n')) {
-		v.remove_suffix(1);
-	}
-	return std::string(v);
-}
+using openvr_pair::common::TrimAscii;
 
 std::vector<std::string> SplitSimple(const std::string& line)
 {
@@ -33,20 +26,20 @@ std::vector<std::string> SplitSimple(const std::string& line)
 	std::string cur;
 	for (char ch : line) {
 		if (ch == ',') {
-			out.push_back(Trim(cur));
+			out.push_back(TrimAscii(cur));
 			cur.clear();
 		}
 		else {
 			cur.push_back(ch);
 		}
 	}
-	out.push_back(Trim(cur));
+	out.push_back(TrimAscii(cur));
 	return out;
 }
 
 bool ParseDouble(const std::string& s, double& out)
 {
-	const std::string t = Trim(s);
+	const std::string t = TrimAscii(s);
 	if (t.empty()) return false;
 	char* end = nullptr;
 	out = std::strtod(t.c_str(), &end);
@@ -55,7 +48,7 @@ bool ParseDouble(const std::string& s, double& out)
 
 bool ParseU32(const std::string& s, uint32_t& out)
 {
-	const std::string t = Trim(s);
+	const std::string t = TrimAscii(s);
 	if (t.empty()) return false;
 	uint64_t value = 0;
 	const auto* begin = t.data();
@@ -68,13 +61,13 @@ bool ParseU32(const std::string& s, uint32_t& out)
 
 bool ParseBool(const std::string& s)
 {
-	const std::string t = Trim(s);
+	const std::string t = TrimAscii(s);
 	return t == "1" || t == "true" || t == "TRUE" || t == "yes" || t == "on";
 }
 
 vr::ETrackedDeviceClass ParseDeviceClass(const std::string& s)
 {
-	const std::string t = Trim(s);
+	const std::string t = TrimAscii(s);
 	if (t == "hmd" || t == "HMD") return vr::TrackedDeviceClass_HMD;
 	if (t == "controller" || t == "Controller") return vr::TrackedDeviceClass_Controller;
 	if (t == "tracker" || t == "generic_tracker" || t == "GenericTracker") {
@@ -86,7 +79,7 @@ vr::ETrackedDeviceClass ParseDeviceClass(const std::string& s)
 
 vr::ETrackedControllerRole ParseControllerRole(const std::string& s)
 {
-	const std::string t = Trim(s);
+	const std::string t = TrimAscii(s);
 	if (t == "left_hand" || t == "left") return vr::TrackedControllerRole_LeftHand;
 	if (t == "right_hand" || t == "right") return vr::TrackedControllerRole_RightHand;
 	if (t == "opt_out" || t == "tracker") return vr::TrackedControllerRole_OptOut;
@@ -95,7 +88,7 @@ vr::ETrackedControllerRole ParseControllerRole(const std::string& s)
 
 vr::ETrackingResult ParseTrackingResult(const std::string& s)
 {
-	const std::string t = Trim(s);
+	const std::string t = TrimAscii(s);
 	if (t == "ok" || t == "running_ok" || t == "Running_OK") return vr::TrackingResult_Running_OK;
 	if (t == "out_of_range" || t == "Running_OutOfRange") return vr::TrackingResult_Running_OutOfRange;
 	uint32_t value = 0;
@@ -155,7 +148,7 @@ PhantomReplayLoadResult ParsePhantomReplayV1(const std::vector<std::string>& lin
 
 	size_t header_line = SIZE_MAX;
 	for (size_t i = 0; i < lines.size(); ++i) {
-		const auto t = Trim(lines[i]);
+		const auto t = TrimAscii(lines[i]);
 		if (t.empty() || t[0] == '#') continue;
 		header_line = i;
 		break;
@@ -176,7 +169,7 @@ PhantomReplayLoadResult ParsePhantomReplayV1(const std::vector<std::string>& lin
 
 	std::unordered_map<uint32_t, size_t> device_index;
 	for (size_t i = header_line + 1; i < lines.size(); ++i) {
-		const auto t = Trim(lines[i]);
+		const auto t = TrimAscii(lines[i]);
 		if (t.empty() || t[0] == '#') continue;
 		const auto row = SplitSimple(t);
 
@@ -308,7 +301,7 @@ PhantomReplayLoadResult ParseSpacecalV4(const std::vector<std::string>& lines)
 	bool have_first = false;
 
 	for (size_t i = header_line + 1; i < lines.size(); ++i) {
-		const auto t = Trim(lines[i]);
+		const auto t = TrimAscii(lines[i]);
 		if (t.empty() || t[0] == '#') continue;
 		const auto row = SplitSimple(t);
 		double timestamp_s = 0.0;
@@ -354,7 +347,7 @@ PhantomReplayLoadResult LoadPhantomReplay(const std::filesystem::path& path)
 		lines.push_back(line);
 	}
 	for (const auto& raw : lines) {
-		const auto t = Trim(raw);
+		const auto t = TrimAscii(raw);
 		if (t.empty()) continue;
 		// v2 shares the v1 column set; only the pose-space semantics differ
 		// (v2 is world-space, v1 raw driver-local).

@@ -39,13 +39,6 @@ std::wstring JoinPath(const std::wstring& left, std::wstring_view right)
 	return out;
 }
 
-bool FileExists(const std::wstring& path)
-{
-	if (path.empty()) return false;
-	DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-}
-
 bool DeleteFileIfPresent(const std::wstring& path)
 {
 	if (path.empty()) return false;

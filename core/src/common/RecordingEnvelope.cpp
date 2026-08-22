@@ -4,6 +4,7 @@
 #include "DiagnosticsLog.h"
 #include "FileLog.h"
 #include "Win32Paths.h"
+#include "Win32Text.h"
 
 #include <fcntl.h>
 #include <io.h>
@@ -83,11 +84,7 @@ std::vector<RecordingFileEntry> ListRecordings(std::wstring_view prefix, std::ws
 		if (find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
 
 		RecordingFileEntry entry;
-		const int n = WideCharToMultiByte(CP_UTF8, 0, find.cFileName, -1, nullptr, 0, nullptr, nullptr);
-		if (n > 1) {
-			entry.nameUtf8.resize(static_cast<size_t>(n) - 1);
-			WideCharToMultiByte(CP_UTF8, 0, find.cFileName, -1, entry.nameUtf8.data(), n, nullptr, nullptr);
-		}
+		entry.nameUtf8 = WideToUtf8(find.cFileName);
 		entry.fullPath = WithTrailingSlash(dir) + find.cFileName;
 		entry.sizeBytes = (static_cast<uint64_t>(find.nFileSizeHigh) << 32) | static_cast<uint64_t>(find.nFileSizeLow);
 		entry.mtimeFileTime = (static_cast<uint64_t>(find.ftLastWriteTime.dwHighDateTime) << 32) |

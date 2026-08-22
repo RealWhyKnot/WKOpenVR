@@ -6,6 +6,7 @@
 #include "PowerShellCommand.h"
 #include "ShellSettings.h"
 #include "ShellUiLogic.h"
+#include "StringUtil.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -168,26 +169,13 @@ std::wstring DiscoverSteamVRRoot()
 	return root; // may be empty
 }
 
-std::string TrimAscii(std::string value)
-{
-	size_t begin = 0;
-	while (begin < value.size() &&
-	       (value[begin] == ' ' || value[begin] == '\t' || value[begin] == '\r' || value[begin] == '\n')) {
-		++begin;
-	}
-	size_t end = value.size();
-	while (end > begin &&
-	       (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\r' || value[end - 1] == '\n')) {
-		--end;
-	}
-	return value.substr(begin, end - begin);
-}
+using openvr_pair::common::TrimAscii;
 
 bool IsValidModuleFlagFileName(const std::string& value)
 {
-	if (value.rfind("enable_", 0) != 0) return false;
-	const std::string suffix = ".flag";
-	if (value.size() <= suffix.size() || value.compare(value.size() - suffix.size(), suffix.size(), suffix) != 0) {
+	const std::string_view suffix = ".flag";
+	if (!openvr_pair::common::StartsWith(value, "enable_")) return false;
+	if (value.size() <= suffix.size() || !openvr_pair::common::EndsWith(value, suffix)) {
 		return false;
 	}
 	for (const char ch : value) {
@@ -200,7 +188,7 @@ bool IsValidModuleFlagFileName(const std::string& value)
 
 std::string NormalizeDesktopDefaultModuleFlag(std::string value)
 {
-	value = TrimAscii(std::move(value));
+	value = TrimAscii(value);
 	return IsValidModuleFlagFileName(value) ? value : FallbackDesktopDefaultModule();
 }
 
@@ -318,8 +306,7 @@ bool ShellContext::IsFlagPresent(const char* flagFileName) const
 		std::wstring flag = openvr_pair::common::Utf8ToWide(flagFileName);
 		if (flag.empty()) continue;
 		path += flag;
-		DWORD attr = GetFileAttributesW(path.c_str());
-		if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) return true;
+		if (openvr_pair::common::FileExists(path)) return true;
 	}
 	return false;
 }

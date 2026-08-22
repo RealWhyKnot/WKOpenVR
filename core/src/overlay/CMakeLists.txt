@@ -54,6 +54,11 @@ target_include_directories(openvr_pair_overlay_ui PUBLIC
 	${CMAKE_SOURCE_DIR}/lib
 	${CMAKE_SOURCE_DIR}/lib/imgui)
 
+# Header-only helpers from core/src/common (StringUtil). No link dependency:
+# this lib still links only pair_imgui.
+target_include_directories(openvr_pair_overlay_ui PRIVATE
+	${CMAKE_SOURCE_DIR}/core/src/common)
+
 target_link_libraries(openvr_pair_overlay_ui PUBLIC
 	pair_imgui)
 

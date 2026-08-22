@@ -31,12 +31,7 @@ std::wstring WidenAscii(const std::string& value)
 	return std::wstring(value.begin(), value.end());
 }
 
-bool FileExists(const std::wstring& path)
-{
-	if (path.empty()) return false;
-	DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
-}
+using openvr_pair::common::FileExists;
 
 // Write the chosen capture endpoint id to the host-readable audio_input.txt in
 // the shared captions dir. Atomic tmp+rename so the host never reads a partial

@@ -36,30 +36,6 @@ std::string ResolveAdbPath()
 	return candidate.string();
 }
 
-// Convert a narrow UTF-8 string to a wide string for Win32 APIs.
-std::wstring ToWide(const std::string& s)
-{
-	if (s.empty()) return {};
-	int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-	if (n <= 0) return {};
-	std::wstring out(n, L'\0');
-	MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
-	if (!out.empty() && out.back() == L'\0') out.pop_back();
-	return out;
-}
-
-// Convert a wide string back to UTF-8 narrow.
-std::string ToNarrow(const std::wstring& w)
-{
-	if (w.empty()) return {};
-	int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-	if (n <= 0) return {};
-	std::string out(n, '\0');
-	WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, out.data(), n, nullptr, nullptr);
-	if (!out.empty() && out.back() == '\0') out.pop_back();
-	return out;
-}
-
 std::string RedactAdbText(std::string text)
 {
 	if (text.empty()) return text;
@@ -254,8 +230,8 @@ AdbController::Result AdbController::Run(const std::vector<std::string>& args, s
 	const std::string commandForLog = ArgsForLog(args);
 	openvr_pair::common::DiagnosticLog("adb", "run_start command='%s' timeout_ms=%lld", commandForLog.c_str(),
 	                                   static_cast<long long>(timeout.count()));
-	std::wstring cmdLine = ToWide(cmdNarrow);
-	std::wstring exePath = ToWide(m_adbPath);
+	std::wstring cmdLine = openvr_pair::common::Utf8ToWide(cmdNarrow);
+	std::wstring exePath = openvr_pair::common::Utf8ToWide(m_adbPath);
 
 	// Pipe handles: stdout and stderr are each an anonymous pipe.
 	// The write ends are inherited by the child; the read ends stay in this process.

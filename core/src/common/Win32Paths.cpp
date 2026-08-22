@@ -162,6 +162,13 @@ int64_t FileLastWriteTime(const std::wstring& path)
 	return static_cast<int64_t>(stamp.QuadPart);
 }
 
+bool FileExists(const std::wstring& path)
+{
+	if (path.empty()) return false;
+	const DWORD attr = GetFileAttributesW(path.c_str());
+	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 bool WriteFileAtomic(const std::wstring& path, std::string_view body, bool writeThrough)
 {
 	const std::wstring tmp = path + L".tmp";

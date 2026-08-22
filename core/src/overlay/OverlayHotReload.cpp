@@ -2,6 +2,7 @@
 
 #include "BuildChannel.h"
 #include "DiagnosticsLog.h"
+#include "Win32Paths.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,12 +23,7 @@ std::wstring SelfExePath()
 	return std::wstring(buf, len);
 }
 
-bool FileExists(const std::wstring& path)
-{
-	if (path.empty()) return false;
-	DWORD attr = GetFileAttributesW(path.c_str());
-	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-}
+using openvr_pair::common::FileExists;
 
 bool FileLooksLikeExecutable(const std::wstring& path)
 {
