@@ -188,6 +188,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **common:** Share the module log-file opener and timestamp helper (726ea51)
 - **common:** Share ASCII string, file-exists, and UTF-8 helpers (43c5b28)
 - **common:** Add WriteFileAtomic and migrate hand-rolled temp-rename writers (aec5c45)
+- **driver:** Drive desktop hosting from one module table (af40a69)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
@@ -347,6 +348,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Order module version directories numerically (c8f6fcb)
 - **facetracking:** List one installed version per module (5646150)
 - **facetracking:** Print gaze_len=none when no valid gaze frame was seen (65958a7)
+- **app:** Keep the desktop backend in step with the enabled modules (5b5bd8d)
+- **facetracking:** Order module versions the way the host picks them (c56418a)
 
 ---
 
