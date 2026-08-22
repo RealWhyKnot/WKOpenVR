@@ -98,6 +98,8 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Adopt full 3-d rotation solve with conditioning and sample-admission gates (347ae60)
 - **facetracking:** Report rounding-vs-stretch lip posture conflicts in replay analysis (a2bd8e2)
 - **facetracking:** Edit module settings from the Modules tab (e699658)
+- **facetracking:** Report per-shape slew in replay analysis (c717d7c)
+- **facetracking:** Give each installed module its own settings tab (62413c9)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -335,6 +337,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Restore upstream sample windows, validity gate, and locked-branch parity (d3cb145)
 - **facetracking:** Order module version directories numerically (c8f6fcb)
 - **facetracking:** List one installed version per module (5646150)
+- **facetracking:** Print gaze_len=none when no valid gaze frame was seen (65958a7)
 
 ---
 
