@@ -1398,3 +1398,27 @@ TEST(DesktopHost, StartIgnoresModulesTheRegistryKeepsInVr)
 	EXPECT_EQ(active, pairdriver::kFeatureOscRouter);
 	host.Stop();
 }
+
+// The app rebuilds the host whenever the Modules tab changes the wanted set, so ActiveMask has to
+// be accurate across a stop, not just after the first start.
+TEST(DesktopHost, ReportsItsActiveMaskAcrossARestart)
+{
+	DesktopDriverHost host;
+	ASSERT_EQ(host.Start(pairdriver::kFeatureOscRouter, {}), pairdriver::kFeatureOscRouter);
+	EXPECT_EQ(host.ActiveMask(), pairdriver::kFeatureOscRouter);
+
+	host.Stop();
+	EXPECT_EQ(host.ActiveMask(), 0u);
+
+	ASSERT_EQ(host.Start(pairdriver::kFeatureOscRouter, {}), pairdriver::kFeatureOscRouter);
+	EXPECT_EQ(host.ActiveMask(), pairdriver::kFeatureOscRouter);
+	host.Stop();
+}
+
+TEST(DesktopHost, StaysDownWhenNothingAskedForIsHostable)
+{
+	DesktopDriverHost host;
+	EXPECT_EQ(host.Start(pairdriver::kFeatureCalibration, {}), 0u);
+	EXPECT_FALSE(host.Running());
+	EXPECT_EQ(host.ActiveMask(), 0u);
+}

@@ -100,6 +100,9 @@ target_include_directories(openvr_pair_driver_host
 	PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers
 	PRIVATE ${CMAKE_SOURCE_DIR}/lib)
 
+# One line per module in DesktopDriverHost.cpp's kDesktopFactories. Kept narrow on purpose: the
+# modules that need vrserver would drag MinHook and the hook injector into the app. Getting this
+# out of step with the registry's supports_desktop set fails DesktopHost.HostableMaskMatchesTheRegistry.
 target_link_libraries(openvr_pair_driver_host
 	PUBLIC openvr_pair_common
 	PRIVATE $<TARGET_NAME_IF_EXISTS:openvr_pair_feature_oscrouter_driver>

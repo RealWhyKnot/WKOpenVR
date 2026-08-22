@@ -24,18 +24,40 @@ uint32_t DesktopFeatureMask()
 	return mask;
 }
 
+namespace {
+
+struct DesktopFactory
+{
+	uint32_t mask;
+	std::unique_ptr<DriverModule> (*create)();
+};
+
+// The one list of what this build can host outside SteamVR: both the advertised mask and the
+// construction order come from it, so the two cannot drift apart. OscRouter is first because the
+// others publish through it during Init. Adding a module here without marking it supports_desktop
+// in the registry (or the reverse) fails DesktopHost.HostableMaskMatchesTheRegistry.
+constexpr DesktopFactory kDesktopFactories[] = {
+#if OPENVR_PAIR_HAS_OSCROUTER_DRIVER
+    {pairdriver::kFeatureOscRouter, &oscrouter::CreateDriverModule},
+#endif
+#if OPENVR_PAIR_HAS_FACETRACKING_DRIVER
+    {pairdriver::kFeatureFaceTracking, &facetracking::CreateDriverModule},
+#endif
+#if OPENVR_PAIR_HAS_CAPTIONS_DRIVER
+    {pairdriver::kFeatureCaptions, &captions::CreateDriverModule},
+#endif
+    // A release build can gate every desktop module out, and a zero-length array is ill-formed.
+    {0u, nullptr},
+};
+
+} // namespace
+
 uint32_t DesktopHostableMask()
 {
 	uint32_t mask = 0;
-#if OPENVR_PAIR_HAS_OSCROUTER_DRIVER
-	mask |= pairdriver::kFeatureOscRouter;
-#endif
-#if OPENVR_PAIR_HAS_FACETRACKING_DRIVER
-	mask |= pairdriver::kFeatureFaceTracking;
-#endif
-#if OPENVR_PAIR_HAS_CAPTIONS_DRIVER
-	mask |= pairdriver::kFeatureCaptions;
-#endif
+	for (const DesktopFactory& factory : kDesktopFactories) {
+		if (factory.create) mask |= factory.mask;
+	}
 	return mask;
 }
 
@@ -93,16 +115,9 @@ uint32_t DesktopDriverHost::Impl::Start(uint32_t featureMask, const std::wstring
 		hosted.push_back({std::move(module), nullptr});
 	};
 
-	// OscRouter first: the other modules publish through it during Init.
-#if OPENVR_PAIR_HAS_OSCROUTER_DRIVER
-	activate(oscrouter::CreateDriverModule());
-#endif
-#if OPENVR_PAIR_HAS_FACETRACKING_DRIVER
-	activate(facetracking::CreateDriverModule());
-#endif
-#if OPENVR_PAIR_HAS_CAPTIONS_DRIVER
-	activate(captions::CreateDriverModule());
-#endif
+	for (const DesktopFactory& factory : kDesktopFactories) {
+		if (factory.create) activate(factory.create());
+	}
 
 	for (Hosted& entry : hosted) {
 		const char* pipe = entry.module->PipeName();

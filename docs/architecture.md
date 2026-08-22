@@ -110,6 +110,58 @@ Two gates control what actually runs:
   `core/src/common/` is the single table mapping slugs to flag files, display
   names, and pipe names.
 
+## Desktop backend
+
+Some modules do not need SteamVR for anything. Face tracking reads a microphone
+or a hardware tracker and publishes OSC; the OSC router forwards packets;
+captions transcribe audio. All three used to be unreachable without a headset,
+because they lived inside `driver_wkopenvr.dll` and only `vrserver.exe` loads
+that.
+
+`core/src/driver/DesktopDriverHost.{h,cpp}` runs those same module objects
+inside `WKOpenVR.exe` instead, behind the same pipe names and the same
+protocol, so overlay plugins cannot tell which side is answering. The app polls
+for `vrserver.exe` once a second and starts the host while it is absent. It
+stands down on the process rather than on the VR session, because vrserver
+appears seconds before `VR_Init` starts succeeding and that gap is the handoff
+window. Overlapping pipe instances are legal, so a brief double-bind during the
+switch is harmless.
+
+The SteamVR path is unchanged. `ServerTrackedDeviceProvider` still constructs
+every module the same way; `IPCServer` talks to an `IpcRequestSink` that the
+provider and the desktop host each implement.
+
+To make another module desktop-capable:
+
+1. Set `supports_desktop` on its row in `core/src/common/ModuleRegistry.cpp`.
+2. Add a row to `kDesktopFactories` in `DesktopDriverHost.cpp`. Order matters:
+   the OSC router is constructed first because the others publish through it
+   during `Init`.
+3. Link its driver library in `core/src/driver/CMakeLists.txt`, in the
+   `openvr_pair_driver_host` block. That list stays narrow deliberately, since
+   the modules that need vrserver would drag MinHook and the hook injector into
+   the app.
+
+Miss step 2 or 3 and `DesktopHost.HostableMaskMatchesTheRegistry` fails.
+`tests/driver/test_module_registry.cpp` also pins the expected set, so the
+change has to be deliberate.
+
+Two constraints shape anything built here:
+
+- The driver's `Logging.cpp` cannot link into the app. It defines the global
+  `LogFile`/`OpenLogFile` that the inputhealth and smoothing overlays already
+  own there. `LOG` therefore routes through `void LogLine(const char*, ...)`,
+  defined once per host binary.
+- `openvr.h` and `openvr_driver.h` cannot share a translation unit.
+  `Protocol.h` pulls in `openvr_driver.h`, so any app-side header reaching into
+  `core/src/driver` needs the PIMPL treatment `DesktopDriverHost.h` uses: its
+  public header includes nothing but `<cstdint>`, `<memory>` and `<string>`.
+
+One gap is worth knowing about. The desktop host writes no `module_safety`
+markers, because those are read by the SteamVR driver at its next launch and an
+app crash would auto-disable a module for VR. A module fault takes the app down
+instead of being detached and disabled.
+
 ## Pose data flow
 
 Poses stay inside `vrserver.exe`. Device pose updates from hardware drivers
