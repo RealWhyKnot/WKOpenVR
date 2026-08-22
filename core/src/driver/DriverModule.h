@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -16,6 +17,10 @@ struct DriverModuleContext
 	ServerTrackedDeviceProvider* provider = nullptr;
 	vr::IVRDriverContext* driverContext = nullptr;
 	uint32_t featureFlags = 0;
+	// <driver_root>\resources. Modules that spawn a staged sidecar resolve
+	// its path from here; the host process cannot derive it from its own
+	// module path the way the driver DLL can.
+	std::wstring resourcesDir;
 };
 
 class DriverModule

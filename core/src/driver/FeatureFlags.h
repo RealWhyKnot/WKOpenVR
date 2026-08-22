@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ModuleRegistry.h"
+
 #include <cstdint>
 #include <string>
 
@@ -48,6 +50,29 @@ constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool in
 	if (captions) flags |= kFeatureCaptions;
 	if (phantom) flags |= kFeaturePhantom;
 	return flags;
+}
+
+constexpr uint32_t FeatureMaskForModule(openvr_pair::common::modules::ModuleId id)
+{
+	using openvr_pair::common::modules::ModuleId;
+	switch (id) {
+		case ModuleId::Calibration:
+			return kFeatureCalibration;
+		case ModuleId::Smoothing:
+			return kFeatureSmoothing;
+		case ModuleId::InputHealth:
+			return kFeatureInputHealth;
+		case ModuleId::FaceTracking:
+			return kFeatureFaceTracking;
+		case ModuleId::OscRouter:
+			return kFeatureOscRouter;
+		case ModuleId::Captions:
+			return kFeatureCaptions;
+		case ModuleId::Phantom:
+			return kFeaturePhantom;
+		default:
+			return 0;
+	}
 }
 
 // Returns the bitwise OR of detected feature flags. Logs the path it scanned

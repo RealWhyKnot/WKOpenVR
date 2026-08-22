@@ -21,6 +21,7 @@ constexpr ModuleInfo kModules[] = {
         OPENVR_PAIRDRIVER_CALIBRATION_PIPE_NAME,
         false,
         true,
+        false,
     },
     {
         ModuleId::Smoothing,
@@ -35,6 +36,7 @@ constexpr ModuleInfo kModules[] = {
         OPENVR_PAIRDRIVER_SMOOTHING_PIPE_NAME,
         false,
         true,
+        false,
     },
     {
         ModuleId::InputHealth,
@@ -49,6 +51,7 @@ constexpr ModuleInfo kModules[] = {
         OPENVR_PAIRDRIVER_INPUTHEALTH_PIPE_NAME,
         false,
         true,
+        false,
     },
     {
         ModuleId::FaceTracking,
@@ -61,6 +64,7 @@ constexpr ModuleInfo kModules[] = {
         L"Face Tracking",
         L"--launch=facetracking",
         OPENVR_PAIRDRIVER_FACETRACKING_PIPE_NAME,
+        true,
         true,
         true,
     },
@@ -77,6 +81,7 @@ constexpr ModuleInfo kModules[] = {
         OPENVR_PAIRDRIVER_OSCROUTER_PIPE_NAME,
         false,
         true,
+        true,
     },
     {
         ModuleId::Captions,
@@ -89,6 +94,7 @@ constexpr ModuleInfo kModules[] = {
         L"Captions",
         L"--launch=captions",
         OPENVR_PAIRDRIVER_CAPTIONS_PIPE_NAME,
+        true,
         true,
         true,
     },
@@ -105,6 +111,7 @@ constexpr ModuleInfo kModules[] = {
         OPENVR_PAIRDRIVER_PHANTOM_PIPE_NAME,
         false,
         true,
+        false,
     },
     {
         ModuleId::QuestApp,
@@ -119,6 +126,7 @@ constexpr ModuleInfo kModules[] = {
         "",
         false,
         false,
+        true,
     },
     {
         ModuleId::DynamicResolution,
@@ -131,6 +139,7 @@ constexpr ModuleInfo kModules[] = {
         L"Dynamic Resolution",
         L"--launch=dynamicres",
         "",
+        false,
         false,
         false,
     },
@@ -253,6 +262,11 @@ bool RequiresOscRouter(ModuleId id)
 bool ParticipatesInDriverSafety(ModuleId id)
 {
 	return Get(id).participates_in_driver_safety;
+}
+
+bool SupportsDesktop(ModuleId id)
+{
+	return Get(id).supports_desktop;
 }
 
 } // namespace openvr_pair::common::modules

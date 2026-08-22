@@ -33,6 +33,7 @@ struct ModuleInfo
 	const char* pipe_name;
 	bool requires_osc_router;
 	bool participates_in_driver_safety;
+	bool supports_desktop;
 };
 
 const ModuleInfo* All(size_t* count = nullptr);
@@ -52,5 +53,6 @@ const wchar_t* ShortcutArgument(ModuleId id);
 const char* PipeName(ModuleId id);
 bool RequiresOscRouter(ModuleId id);
 bool ParticipatesInDriverSafety(ModuleId id);
+bool SupportsDesktop(ModuleId id);
 
 } // namespace openvr_pair::common::modules

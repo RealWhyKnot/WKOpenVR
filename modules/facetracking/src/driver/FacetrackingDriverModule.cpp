@@ -16,6 +16,7 @@
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
 #include "Win32Paths.h"
+#include "Win32Text.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -166,49 +167,14 @@ static std::string FixedString(const char* value, size_t capacity)
 // Host-exe path resolution
 // -----------------------------------------------------------------------
 
-// Resolve the path to the C# host relative to the driver resources directory.
-// SteamVR exposes the driver path via IVRProperties on the driver context; we
-// fall back to a search-order heuristic if the property isn't available yet.
-std::string ResolveHostExePath(vr::IVRDriverContext* driverContext)
+// Resolve the C# host inside the driver's resources directory. The path is
+// passed in rather than derived from this module's own on-disk location: the
+// desktop backend hosts the same module from WKOpenVR.exe, which sits
+// nowhere near the driver tree.
+std::string ResolveHostExePath(const std::wstring& resourcesDir)
 {
-	// Attempt to get the install directory from SteamVR.
-	char buf[MAX_PATH] = {};
-	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-	vr::CVRPropertyHelpers* props = vr::VRProperties();
-	if (props) {
-		vr::PropertyContainerHandle_t systemContainer =
-		    props->TrackedDeviceToPropertyContainer(vr::k_unTrackedDeviceIndex_Hmd);
-		(void)systemContainer; // unused if the driver context isn't initialised yet
-	}
-
-	// Use the driver's own module path as the anchor.
-	// GetModuleFileNameA on our DLL gives us the driver DLL path; strip to the
-	// containing directory and navigate to resources/facetracking/host/.
-	HMODULE hSelf = nullptr;
-	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-	                   reinterpret_cast<LPCSTR>(&ResolveHostExePath), &hSelf);
-
-	if (hSelf) {
-		char dllPath[MAX_PATH] = {};
-		GetModuleFileNameA(hSelf, dllPath, MAX_PATH);
-		std::string path(dllPath);
-		// Walk up to the driver root. DLL lives at
-		//   <driver_root>/bin/win64/driver_wkopenvr.dll
-		// so we pop the filename, then "win64", then "bin" -- three pops -- to
-		// reach <driver_root>, and then append resources/facetracking/host/.
-		// The original code popped only twice and landed at <driver_root>/bin,
-		// producing a phantom <driver_root>/bin/resources/... path that does
-		// not exist on disk; CreateProcessW returned err=3 (PATH_NOT_FOUND)
-		// and the host never spawned.
-		for (int up = 0; up < 3; ++up) {
-			auto sep = path.find_last_of("/\\");
-			if (sep == std::string::npos) break;
-			path = path.substr(0, sep);
-		}
-		path += "\\resources\\facetracking\\host\\WKOpenVR.FaceModuleHost.exe";
-		return path;
-	}
-	return {};
+	if (resourcesDir.empty()) return {};
+	return openvr_pair::common::WideToUtf8(resourcesDir + LR"(\facetracking\host\WKOpenVR.FaceModuleHost.exe)");
 }
 
 class FacetrackingDriverModule final : public DriverModule
@@ -227,7 +193,6 @@ public:
 		FT_LOG_DRV("[module] Init()", 0);
 
 		provider_ = context.provider;
-		driver_context_ = context.driverContext;
 
 		// Resolve the telemetry output path once at init. CreateDirectory is
 		// idempotent so this is safe to call even if the dir already exists.
@@ -256,7 +221,7 @@ public:
 		FT_LOG_DRV("[module] native SteamVR sink tracker registration skipped; OSC output is the default path", 0);
 
 		// Build host path and start supervisor.
-		std::string host_path = ResolveHostExePath(driver_context_);
+		std::string host_path = ResolveHostExePath(context.resourcesDir);
 		FT_LOG_DRV("[module] host exe: %s", host_path.c_str());
 		supervisor_ = std::make_unique<HostSupervisor>(host_path);
 		// Pre-spawn sweep: if a prior SteamVR session left a wedged host
@@ -290,7 +255,6 @@ public:
 		device_.reset();
 
 		provider_ = nullptr;
-		driver_context_ = nullptr;
 
 		FT_LOG_DRV("[module] shutdown complete", 0);
 	}
@@ -392,7 +356,6 @@ public:
 
 private:
 	ServerTrackedDeviceProvider* provider_ = nullptr;
-	vr::IVRDriverContext* driver_context_ = nullptr;
 
 	FaceFrameReader reader_;
 

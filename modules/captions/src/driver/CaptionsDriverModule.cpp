@@ -9,6 +9,7 @@
 #include "Protocol.h"
 #include "ServerTrackedDeviceProvider.h"
 #include "Win32Paths.h"
+#include "Win32Text.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -25,33 +26,14 @@
 namespace captions {
 namespace {
 
-// Resolve the captions host exe path relative to the driver DLL.
-// driver_wkopenvr.dll lives at <root>\bin\win64\; the host is at
-// <root>\resources\captions\host\WKOpenVR.CaptionsHost.exe.
-std::string ResolveHostExePath()
+// Resolve the captions host inside the driver's resources directory. The path
+// is passed in rather than derived from this module's own on-disk location:
+// the desktop backend hosts the same module from WKOpenVR.exe, which sits
+// nowhere near the driver tree.
+std::string ResolveHostExePath(const std::wstring& resourcesDir)
 {
-	HMODULE hSelf = nullptr;
-	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-	                   reinterpret_cast<LPCSTR>(&ResolveHostExePath), &hSelf);
-
-	if (!hSelf) return {};
-
-	char dllPath[MAX_PATH] = {};
-	GetModuleFileNameA(hSelf, dllPath, MAX_PATH);
-	std::string path(dllPath);
-	// DLL lives at <root>/bin/win64/driver_wkopenvr.dll. Pop the filename,
-	// then "win64", then "bin" -- three pops -- to reach <root>, then
-	// append resources/captions/host/. The original two-pop landed at
-	// <root>/bin and produced a phantom <root>/bin/resources/... path
-	// that does not exist; CreateProcessW returned err=3 PATH_NOT_FOUND.
-	// Same bug class the facetracking driver had; fixed there in 68fd11d.
-	for (int up = 0; up < 3; ++up) {
-		auto sep = path.find_last_of("/\\");
-		if (sep == std::string::npos) break;
-		path = path.substr(0, sep);
-	}
-	path += "\\resources\\captions\\host\\WKOpenVR.CaptionsHost.exe";
-	return path;
+	if (resourcesDir.empty()) return {};
+	return openvr_pair::common::WideToUtf8(resourcesDir + LR"(\captions\host\WKOpenVR.CaptionsHost.exe)");
 }
 
 bool ReadSavedSidecarEnabled()
@@ -90,12 +72,12 @@ public:
 		return openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::Captions);
 	}
 
-	bool Init(DriverModuleContext&) override
+	bool Init(DriverModuleContext& context) override
 	{
 		TrDrvOpenLogFile();
 		TR_LOG_DRV("[captions] driver module Init() entered");
 
-		std::string host_path = ResolveHostExePath();
+		std::string host_path = ResolveHostExePath(context.resourcesDir);
 		TR_LOG_DRV("[captions] resolved host exe path: %s", host_path.c_str());
 
 		// Verify the exe exists on disk before handing off to HostSupervisor.

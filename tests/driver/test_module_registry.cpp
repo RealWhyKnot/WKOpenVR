@@ -106,3 +106,19 @@ TEST(ModuleRegistry, ModuleSafetyDelegatesToDriverSafetyEntries)
 	ASSERT_NE(phantom, nullptr);
 	EXPECT_EQ(module_safety::FindByFlagFileName("enable_phantom.flag"), phantom);
 }
+
+TEST(ModuleRegistry, DesktopCapableModulesAreExactlyTheHostableSet)
+{
+	size_t count = 0;
+	const module_registry::ModuleInfo* modules = module_registry::All(&count);
+	ASSERT_NE(modules, nullptr);
+
+	for (size_t i = 0; i < count; ++i) {
+		const bool expected = modules[i].id == module_registry::ModuleId::FaceTracking ||
+		                      modules[i].id == module_registry::ModuleId::OscRouter ||
+		                      modules[i].id == module_registry::ModuleId::Captions ||
+		                      modules[i].id == module_registry::ModuleId::QuestApp;
+		EXPECT_EQ(modules[i].supports_desktop, expected) << modules[i].slug;
+		EXPECT_EQ(module_registry::SupportsDesktop(modules[i].id), expected) << modules[i].slug;
+	}
+}

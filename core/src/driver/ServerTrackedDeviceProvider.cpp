@@ -102,28 +102,6 @@ const module_safety::ModuleSpec* SafetySpecForFeatureMask(uint32_t featureMask)
 	}
 }
 
-uint32_t FeatureMaskForModuleId(module_registry::ModuleId id)
-{
-	switch (id) {
-		case module_registry::ModuleId::Calibration:
-			return pairdriver::kFeatureCalibration;
-		case module_registry::ModuleId::Smoothing:
-			return pairdriver::kFeatureSmoothing;
-		case module_registry::ModuleId::InputHealth:
-			return pairdriver::kFeatureInputHealth;
-		case module_registry::ModuleId::FaceTracking:
-			return pairdriver::kFeatureFaceTracking;
-		case module_registry::ModuleId::OscRouter:
-			return pairdriver::kFeatureOscRouter;
-		case module_registry::ModuleId::Captions:
-			return pairdriver::kFeatureCaptions;
-		case module_registry::ModuleId::Phantom:
-			return pairdriver::kFeaturePhantom;
-		default:
-			return 0;
-	}
-}
-
 // Maps one sampled interval onto the wire layout. A slot reads active when
 // the module measured any work this session OR its feature flag survived
 // Init, so enabled-but-idle modules still get a row in the overlay.
@@ -158,7 +136,7 @@ void FillPerfStatsBlocks(const openvr_pair::common::moduleperf::PerfSampleResult
 		const moduleperf::ModuleSample& m = perf.modules[slot];
 		protocol::PerfStatsModuleSlot& out = slots[slot];
 		out = protocol::PerfStatsModuleSlot{};
-		out.active = (m.active || (featureFlags & FeatureMaskForModuleId(infos[i].id)) != 0) ? 1 : 0;
+		out.active = (m.active || (featureFlags & pairdriver::FeatureMaskForModule(infos[i].id)) != 0) ? 1 : 0;
 		out.hasSidecar = m.sidecarValid ? 1 : 0;
 		out.threadCount = m.threadCount;
 		out.sectionCpuPctOneCore = static_cast<float>(m.sectionCpuPctOneCore);
@@ -241,7 +219,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
 		std::lock_guard<std::mutex> activeLock(activeModulesMutex);
 		activeModules.clear();
 	}
-	DriverModuleContext moduleContext{this, pDriverContext, featureFlags};
+	DriverModuleContext moduleContext{this, pDriverContext, featureFlags, pairdriver::GetDriverResourcesDir()};
 	const char* calibrationPipe = module_registry::PipeName(module_registry::ModuleId::Calibration);
 	const char* smoothingPipe = module_registry::PipeName(module_registry::ModuleId::Smoothing);
 	const char* inputHealthPipe = module_registry::PipeName(module_registry::ModuleId::InputHealth);
