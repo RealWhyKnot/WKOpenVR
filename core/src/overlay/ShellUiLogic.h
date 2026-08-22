@@ -27,6 +27,15 @@ inline bool ShouldSelectDesktopDefaultTab(bool vrConnected, const char* pluginFl
 	return appliedFlagFileName != desktopDefaultFlagFileName && desktopDefaultFlagFileName == pluginFlagFileName;
 }
 
+// A VR-only module keeps its tab on the desktop -- the plugin body explains
+// what it is waiting for -- but the strip says so up front.
+inline std::string ShellTabLabel(const char* name, bool vrConnected, bool supportsDesktop)
+{
+	std::string label = name ? name : "";
+	if (!vrConnected && !supportsDesktop) label += " (VR)";
+	return label;
+}
+
 inline bool IsDefaultLogsPanelPlugin(const char* pluginFlagFileName)
 {
 	return pluginFlagFileName && std::string_view(pluginFlagFileName) == kDefaultLogsPanelPluginFlag;

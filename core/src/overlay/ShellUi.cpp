@@ -425,9 +425,10 @@ enum class ShellBuiltInTab
 struct ShellTabEntry
 {
 	std::string key;
-	const char* label = nullptr;
+	std::string label;
 	FeaturePlugin* plugin = nullptr;
 	ShellBuiltInTab builtIn = ShellBuiltInTab::None;
+	bool vrOnly = false;
 };
 
 constexpr std::string_view kModuleTabPrefix = "module:";
@@ -521,13 +522,19 @@ void MoveShellTabSelection(const std::vector<ShellTabEntry>& entries, std::strin
 	selectedKey = entries[static_cast<size_t>(target)].key;
 }
 
-std::vector<ShellTabEntry> BuildShellTabEntries(const std::vector<FeaturePlugin*>& installedPlugins)
+std::vector<ShellTabEntry> BuildShellTabEntries(const std::vector<FeaturePlugin*>& installedPlugins,
+                                                const ShellContext& context)
 {
 	std::vector<ShellTabEntry> entries;
 	entries.reserve(installedPlugins.size() + 3);
 	for (FeaturePlugin* plugin : installedPlugins) {
 		if (!plugin) continue;
-		entries.push_back({FeatureTabKey(*plugin), plugin->Name(), plugin, ShellBuiltInTab::None});
+		const char* flag = plugin->FlagFileName();
+		const auto* info = module_registry::FindByFlagFileName(flag ? flag : "");
+		// The dev plugin has no registry row and nothing it needs from SteamVR.
+		const bool supportsDesktop = !info || info->supports_desktop;
+		entries.push_back({FeatureTabKey(*plugin), ShellTabLabel(plugin->Name(), context.vrConnected, supportsDesktop),
+		                   plugin, ShellBuiltInTab::None, !supportsDesktop && !context.vrConnected});
 	}
 	entries.push_back({kLogsTabKey, "Logs", nullptr, ShellBuiltInTab::Logs});
 	entries.push_back({kModulesTabKey, "Modules", nullptr, ShellBuiltInTab::Modules});
@@ -645,10 +652,15 @@ void DrawShellTabStrip(const std::vector<ShellTabEntry>& entries, std::string& s
 					if (!pendingTabJumpKey.empty() && entry.key == pendingTabJumpKey) {
 						flags |= ImGuiTabItemFlags_SetSelected;
 					}
-					ui::TabItemScope tab(entry.label, nullptr, flags);
+					if (entry.vrOnly) {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+					}
+					ui::TabItemScope tab(entry.label.c_str(), nullptr, flags);
+					if (entry.vrOnly) ImGui::PopStyleColor();
 					if (tab) {
 						selectedShellTabKey = entry.key;
 					}
+					if (entry.vrOnly) ui::TooltipOnHover("Needs SteamVR running.");
 				}
 			}
 		}
@@ -764,7 +776,7 @@ void DrawShellWindow(ShellContext& context, std::vector<std::unique_ptr<FeatureP
 		}
 		installedPlugins = OrderPluginsByModuleTabOrder(installedPlugins, context.ModuleTabOrder());
 		const std::vector<std::string_view> installedFlags = ModuleFlagsFromPlugins(installedPlugins);
-		const std::vector<ShellTabEntry> entries = BuildShellTabEntries(installedPlugins);
+		const std::vector<ShellTabEntry> entries = BuildShellTabEntries(installedPlugins, context);
 		ResolveShellTabSelection(context, entries, installedFlags, selectedShellTabKey, desktopDefaultTabAppliedFor,
 		                         pendingTabJumpKey);
 		DrawUpdatePrompt(context, installedFlags);

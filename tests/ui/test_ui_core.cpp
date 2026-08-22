@@ -427,3 +427,12 @@ TEST(UpdateNoticeLogic, DetectsDevVersionStamps)
 	EXPECT_TRUE(openvr_pair::overlay::IsDevVersionStamp("2026.6.21.0-DEV"));
 	EXPECT_FALSE(openvr_pair::overlay::IsDevVersionStamp("2026.6.21.0"));
 }
+
+TEST(ShellUi, MarksVrOnlyTabsWhileSteamVrIsDown)
+{
+	using openvr_pair::overlay::ShellTabLabel;
+	EXPECT_EQ(ShellTabLabel("Space Calibrator", false, false), "Space Calibrator (VR)");
+	EXPECT_EQ(ShellTabLabel("Space Calibrator", true, false), "Space Calibrator");
+	EXPECT_EQ(ShellTabLabel("Face Tracking", false, true), "Face Tracking");
+	EXPECT_EQ(ShellTabLabel(nullptr, false, false), " (VR)");
+}
