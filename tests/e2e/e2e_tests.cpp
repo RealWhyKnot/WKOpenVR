@@ -5,10 +5,14 @@
 
 #include <gtest/gtest.h>
 
+#include "DesktopDriverHost.h"
 #include "DriverModule.h"
 #include "FaceFrameReader.h"
 #include "FaceOscPublisher.h"
 #include "FaceSignalProcessor.h"
+#include "FeatureFlags.h"
+#include "IpcClientBase.h"
+#include "ModuleRegistry.h"
 #include "OscRouter.h"
 #include "OscWire.h"
 #include "Protocol.h"
@@ -22,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -1326,4 +1331,70 @@ TEST(E2E, FaceHostResolvesLegacyBridgeManifestWithoutAdapterAssembly)
 	ASSERT_TRUE(SendFaceHostMessage(pipeName, EncodeFaceHostMessage("Shutdown")));
 	ASSERT_TRUE(host.Wait(10000)) << "face host did not shut down. log: " << ReadFileUtf8(logPath);
 	EXPECT_EQ(host.ExitCode(), 0u);
+}
+
+// The desktop backend hosts the same driver modules from the app while SteamVR
+// is down. These pin the two properties an overlay plugin depends on: the pipe
+// answers the same protocol, and it goes away again on Stop.
+namespace {
+
+class DesktopHostClient final : public openvr_pair::overlay::IpcClientBase
+{
+};
+
+// IPCServer::Run creates the pipe on its own thread, so a client that connects
+// the instant Start() returns can beat it there. Each attempt needs its own
+// client: a failed Connect arms a one-second backoff on that instance.
+std::unique_ptr<DesktopHostClient> ConnectWithRetry(const char* pipeName)
+{
+	for (int attempt = 0; attempt < 40; ++attempt) {
+		auto client = std::make_unique<DesktopHostClient>();
+		try {
+			client->Connect(pipeName);
+			return client;
+		}
+		catch (const std::exception&) {
+			std::this_thread::sleep_for(50ms);
+		}
+	}
+	return nullptr;
+}
+
+} // namespace
+
+TEST(DesktopHost, HostableMaskMatchesTheRegistry)
+{
+	EXPECT_EQ(DesktopHostableMask(), DesktopFeatureMask());
+}
+
+TEST(DesktopHost, RouterMaskServesItsPipe)
+{
+	DesktopDriverHost host;
+	ASSERT_EQ(host.Start(pairdriver::kFeatureOscRouter, {}), pairdriver::kFeatureOscRouter);
+	EXPECT_TRUE(host.Running());
+
+	const char* pipe = openvr_pair::common::modules::PipeName(openvr_pair::common::modules::ModuleId::OscRouter);
+	{
+		std::unique_ptr<DesktopHostClient> client = ConnectWithRetry(pipe);
+		ASSERT_NE(client, nullptr) << "desktop host never opened the router pipe";
+
+		protocol::Request request(protocol::RequestOscGetStats);
+		protocol::Response response = client->SendBlocking(request);
+		EXPECT_EQ(response.type, protocol::ResponseOscRouterStats);
+	}
+
+	host.Stop();
+	EXPECT_FALSE(host.Running());
+
+	DesktopHostClient afterStop;
+	EXPECT_ANY_THROW(afterStop.Connect(pipe));
+}
+
+TEST(DesktopHost, StartIgnoresModulesTheRegistryKeepsInVr)
+{
+	DesktopDriverHost host;
+	const uint32_t active =
+	    host.Start(pairdriver::kFeatureOscRouter | pairdriver::kFeatureCalibration | pairdriver::kFeaturePhantom, {});
+	EXPECT_EQ(active, pairdriver::kFeatureOscRouter);
+	host.Stop();
 }

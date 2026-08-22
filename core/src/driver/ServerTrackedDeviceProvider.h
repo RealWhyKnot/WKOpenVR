@@ -29,7 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
-class ServerTrackedDeviceProvider : public vr::IServerTrackedDeviceProvider
+class ServerTrackedDeviceProvider : public vr::IServerTrackedDeviceProvider, public IpcRequestSink
 {
 public:
 	////// Start vr::IServerTrackedDeviceProvider functions
@@ -75,7 +75,8 @@ public:
 	// v25: head-mount tracker config from the overlay. Caches state used by
 	// the DriverSynth branch in HandleDevicePoseUpdated.
 	void SetHeadMountConfig(const protocol::SetHeadMountConfig& cfg);
-	bool HandleIpcRequest(uint32_t featureMask, const protocol::Request& request, protocol::Response& response);
+	bool HandleIpcRequest(uint32_t featureMask, const protocol::Request& request,
+	                      protocol::Response& response) override;
 	void OnGetGenericInterface(const char* pchInterface, void* iface);
 
 	// Finger-smoothing config cache. Written by IPCServer when the overlay

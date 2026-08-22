@@ -25,11 +25,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Cross-module tests launch staged sidecar executables and verify packets at a
 # fake VRChat UDP endpoint. Unit tests stay in modules/<name>/tests.
 add_executable(e2e_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_tests.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_tests.cpp
+    ${CMAKE_SOURCE_DIR}/core/src/overlay/IpcClientBase.cpp)
 
 target_include_directories(e2e_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/core/src/common
     ${CMAKE_SOURCE_DIR}/core/src/driver
+    ${CMAKE_SOURCE_DIR}/core/src/overlay
     ${CMAKE_SOURCE_DIR}/modules/facetracking/src/driver
     ${CMAKE_SOURCE_DIR}/modules/oscrouter/src/driver
     ${CMAKE_SOURCE_DIR}/lib
@@ -38,6 +40,7 @@ target_include_directories(e2e_tests PRIVATE
 target_link_libraries(e2e_tests PRIVATE
     GTest::gtest_main
     openvr_pair_common
+    openvr_pair_driver_host
     openvr_pair_feature_oscrouter_driver
     openvr_pair_feature_facetracking_driver
     Ws2_32)

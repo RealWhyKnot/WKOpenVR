@@ -13,9 +13,16 @@
 #endif
 #include <windows.h>
 
-class ServerTrackedDeviceProvider;
+// Whoever hosts the driver modules: the SteamVR provider under vrserver, the
+// in-app DesktopDriverHost otherwise. The pipe server is transport only.
+struct IpcRequestSink
+{
+	virtual ~IpcRequestSink() = default;
+	virtual bool HandleIpcRequest(uint32_t featureMask, const protocol::Request& request,
+	                              protocol::Response& response) = 0;
+};
 
-// Single named-pipe IPC server. The driver creates one instance per active
+// Single named-pipe IPC server. The host creates one instance per active
 // feature, each bound to its own pipe name and a feature mask that decides
 // which protocol::RequestType values it will accept. Out-of-feature requests
 // are logged and answered with ResponseInvalid so a misconfigured overlay
@@ -23,8 +30,8 @@ class ServerTrackedDeviceProvider;
 class IPCServer
 {
 public:
-	IPCServer(ServerTrackedDeviceProvider* driver, const char* pipeName, uint32_t featureMask)
-	    : driver(driver), pipeName(pipeName), featureMask(featureMask)
+	IPCServer(IpcRequestSink* sink, const char* pipeName, uint32_t featureMask)
+	    : sink(sink), pipeName(pipeName), featureMask(featureMask)
 	{
 	}
 	~IPCServer();
@@ -71,7 +78,7 @@ private:
 	// doesn't leak across driver reload.
 	HANDLE connectEvent = nullptr;
 
-	ServerTrackedDeviceProvider* driver;
+	IpcRequestSink* sink;
 	std::string pipeName;
 	uint32_t featureMask;
 };

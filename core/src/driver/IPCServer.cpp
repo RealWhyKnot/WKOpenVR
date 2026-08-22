@@ -3,7 +3,6 @@
 #include "Logging.h"
 #include "ModulePerf.h"
 #include "ModuleRegistry.h"
-#include "ServerTrackedDeviceProvider.h"
 
 #include <exception>
 #include <optional>
@@ -48,7 +47,7 @@ bool ModuleIdForFeatureMask(uint32_t featureMask, openvr_pair::common::modules::
 
 void IPCServer::HandleRequest(const protocol::Request& request, protocol::Response& response)
 {
-	if (!driver->HandleIpcRequest(featureMask, request, response)) {
+	if (!sink->HandleIpcRequest(featureMask, request, response)) {
 		LOG("IPC[%s]: invalid request type %d", pipeName.c_str(), request.type);
 		response.type = protocol::ResponseInvalid;
 	}

@@ -7,6 +7,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstdarg>
 
 FILE* LogFile = nullptr;
 
@@ -75,6 +76,22 @@ tm TimeForLog()
 void LogFlush()
 {
 	if (LogFile) openvr_pair::common::FlushLogFileToDisk(LogFile);
+}
+
+void LogLine(const char* fmt, ...)
+{
+	if (!EnsureLogFileOpen()) return;
+	// Format first so the timestamp and the message reach the file in one
+	// call; two writers interleaving mid-line makes the log unreadable.
+	char line[4096];
+	va_list args;
+	va_start(args, fmt);
+	const int written = vsnprintf(line, sizeof line, fmt, args);
+	va_end(args);
+	if (written < 0) return;
+	tm logNow = TimeForLog();
+	fprintf(LogFile, "[%02d:%02d:%02d] %s\n", logNow.tm_hour, logNow.tm_min, logNow.tm_sec, line);
+	LogFlush();
 }
 
 void CloseLogFile()

@@ -74,12 +74,42 @@ wkopenvr_add_driver_module(phantom)
 file(GLOB_RECURSE SOURCES_DRIVER ${CMAKE_SOURCE_DIR}/core/src/driver "*.c" "*.h" "*.hpp" "*.cpp")
 file(GLOB_RECURSE SOURCES_COMMON ${CMAKE_SOURCE_DIR}/core/src/common "*.h" "*.hpp")
 
+# The desktop host is the app's side of the same modules. It carries its own
+# LogLine definition, which would clash with Logging.cpp inside the DLL.
+list(REMOVE_ITEM SOURCES_DRIVER "${CMAKE_CURRENT_SOURCE_DIR}/DesktopDriverHost.cpp")
+
 foreach(SOURCE IN ITEMS ${SOURCES_DRIVER})
 	get_filename_component(SOURCE_PATH "${SOURCE}" PATH)
 	string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}" "" GROUP_PATH "${SOURCE_PATH}")
 	string(REPLACE "/" "\\" GROUP_PATH "${GROUP_PATH}")
 	source_group("${GROUP_PATH}" FILES "${SOURCE}")
 endforeach()
+
+# Hosts the desktop-capable modules inside WKOpenVR.exe while SteamVR is down:
+# the same module sources behind the same pipes, without the pose hooks and
+# device plumbing that only vrserver can provide.
+add_library(openvr_pair_driver_host STATIC
+	${CMAKE_CURRENT_SOURCE_DIR}/DesktopDriverHost.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/DesktopDriverHost.h
+	${CMAKE_CURRENT_SOURCE_DIR}/IPCServer.cpp)
+
+target_include_directories(openvr_pair_driver_host
+	PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+	PRIVATE ${CMAKE_SOURCE_DIR}
+	PRIVATE ${CMAKE_SOURCE_DIR}/core/src/common
+	PRIVATE ${CMAKE_SOURCE_DIR}/lib/openvr/headers
+	PRIVATE ${CMAKE_SOURCE_DIR}/lib)
+
+target_link_libraries(openvr_pair_driver_host
+	PUBLIC openvr_pair_common
+	PRIVATE $<TARGET_NAME_IF_EXISTS:openvr_pair_feature_oscrouter_driver>
+	PRIVATE $<TARGET_NAME_IF_EXISTS:openvr_pair_feature_facetracking_driver>
+	PRIVATE $<TARGET_NAME_IF_EXISTS:openvr_pair_feature_captions_driver>)
+
+target_compile_definitions(openvr_pair_driver_host
+	PRIVATE NOMINMAX
+	PRIVATE UNICODE
+	PRIVATE ${OPENVR_PAIR_FEATURE_DEFINES})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_BINARY_DIR}/${DRIVER_NAME}/bin/${ARCH_TARGET}>)
 

@@ -11,16 +11,13 @@ tm TimeForLog();
 void LogFlush();
 void CloseLogFile();
 
+// Emits one timestamped line. Defined per host binary: the driver DLL
+// writes the driver log, the in-app desktop host writes the shared
+// diagnostics log, so shared driver sources can log from either.
+void LogLine(const char* fmt, ...);
+
 #ifndef LOG
-#define LOG(fmt, ...)                                                                                                  \
-	do {                                                                                                               \
-		if (EnsureLogFileOpen()) {                                                                                     \
-			tm logNow = TimeForLog();                                                                                  \
-			fprintf(LogFile, "[%02d:%02d:%02d] " fmt "\n", logNow.tm_hour, logNow.tm_min, logNow.tm_sec,               \
-			        ##__VA_ARGS__);                                                                                    \
-			LogFlush();                                                                                                \
-		}                                                                                                              \
-	} while (0)
+#define LOG(fmt, ...) LogLine(fmt, ##__VA_ARGS__)
 #endif
 
 #ifndef TRACE
