@@ -22,6 +22,7 @@ await Run("analyzes episode ramps", AnalyzesEpisodeRamps);
 await Run("analyzes blinks and gaze", AnalyzesBlinksAndGaze);
 await Run("analyzes idle activity and jaw ratios", AnalyzesIdleActivityAndJawRatios);
 await Run("flags rounding against spreading", FlagsLipPostureConflicts);
+await Run("analyzes shape slew", AnalyzesShapeSlew);
 await Run("orders version directories numerically", OrdersVersionDirectoriesNumerically);
 
 if (failures.Count > 0)
@@ -508,6 +509,22 @@ static Task AnalyzesIdleActivityAndJawRatios()
     FaceFrameReplayAnalyzer.IdleShapeSummary brow = a.Idle.Shapes.Single(s => s.Name == "BrowInnerUpLeft");
     Require(brow.EventsPerMinute is > 30 and < 50, $"brow events/min {brow.EventsPerMinute:F1} != ~40");
     Require(brow.AmplitudeP90 < 0.16, "brow idle amplitude p90 too high");
+    return Task.CompletedTask;
+}
+
+static Task AnalyzesShapeSlew()
+{
+    // 0.1 over 50 ms is 2.0/s twice; the 300 ms gap exceeds MaxFrameGapMs and must be ignored.
+    List<AnalyzerFrame> frames =
+    [
+        new(0.0, [0.0f], 0.9f, 0.0f, 0.0f),
+        new(50.0, [0.1f], 0.9f, 0.0f, 0.0f),
+        new(100.0, [0.0f], 0.9f, 0.0f, 0.0f),
+        new(400.0, [1.0f], 0.9f, 0.0f, 0.0f),
+    ];
+    FaceFrameReplayAnalyzer.ShapeSummary s = AnalyzeFrames(["JawOpen"], frames).Shapes.Single();
+    Require(Math.Abs(s.SlewMaxPerSecond - 2.0) < 1e-3, $"slew max {s.SlewMaxPerSecond:F3} != 2.0");
+    Require(Math.Abs(s.SlewP99PerSecond - 2.0) < 1e-3, $"slew p99 {s.SlewP99PerSecond:F3} != 2.0");
     return Task.CompletedTask;
 }
 

@@ -62,6 +62,8 @@ public static class FaceFrameReplayAnalyzer
         public double Max { get; init; }
         public double ActiveFraction { get; init; }
         public double StrongFraction { get; init; }
+        public double SlewP99PerSecond { get; init; }
+        public double SlewMaxPerSecond { get; init; }
     }
 
     public sealed class EpisodeSummary
@@ -261,16 +263,19 @@ public static class FaceFrameReplayAnalyzer
     {
         var shapes = new ShapeSummary[shapeCount];
         var values = new List<double>(rec.Frames.Count);
+        var slews = new List<double>(rec.Frames.Count);
         for (int i = 0; i < shapeCount; i++)
         {
             values.Clear();
+            slews.Clear();
             double sum = 0.0;
             double sumSq = 0.0;
             double max = 0.0;
             int active = 0;
             int strong = 0;
-            foreach (FaceFrameReplayPlayer.Frame frame in rec.Frames)
+            for (int f = 0; f < rec.Frames.Count; f++)
             {
+                FaceFrameReplayPlayer.Frame frame = rec.Frames[f];
                 if (i >= frame.Expressions.Length)
                 {
                     continue;
@@ -278,6 +283,16 @@ public static class FaceFrameReplayAnalyzer
 
                 double v = frame.Expressions[i];
                 values.Add(v);
+                if (f > 0 && i < rec.Frames[f - 1].Expressions.Length)
+                {
+                    // Per second, so a 21 Hz tracker and a 120 Hz module compare directly.
+                    double dtMs = frame.TimeMs - rec.Frames[f - 1].TimeMs;
+                    if (dtMs > 0.0 && dtMs <= options.MaxFrameGapMs)
+                    {
+                        slews.Add(Math.Abs(v - rec.Frames[f - 1].Expressions[i]) * 1000.0 / dtMs);
+                    }
+                }
+
                 sum += v;
                 sumSq += v * v;
                 if (v > max)
@@ -301,6 +316,8 @@ public static class FaceFrameReplayAnalyzer
             double mean = sum * inv;
             double[] sorted = [.. values];
             Array.Sort(sorted);
+            double[] sortedSlew = [.. slews];
+            Array.Sort(sortedSlew);
             shapes[i] = new ShapeSummary
             {
                 Index = i,
@@ -315,6 +332,8 @@ public static class FaceFrameReplayAnalyzer
                 Max = max,
                 ActiveFraction = active * inv,
                 StrongFraction = strong * inv,
+                SlewP99PerSecond = Percentile(sortedSlew, 0.99),
+                SlewMaxPerSecond = Percentile(sortedSlew, 1.0),
             };
         }
 
@@ -945,13 +964,14 @@ public static class FaceFrameReplayAnalyzer
             $"duration={FaceFrameReplayPlayer.FormatInvariant(a.DurationMs / 1000.0, 1)}s " +
             $"rate={FaceFrameReplayPlayer.FormatInvariant(a.EffectiveHz, 1)}Hz");
 
-        sb.AppendLine($"  {"shape",-24} {"mean",7} {"p50",6} {"p95",6} {"max",6} {"act%",6} {"str%",6}");
+        sb.AppendLine($"  {"shape",-24} {"mean",7} {"p50",6} {"p95",6} {"max",6} {"act%",6} {"str%",6} {"slew99",7} {"slewMx",7}");
         foreach (ShapeSummary s in a.Shapes.Where(s => s.ActiveFraction > 0.005 || s.Max > 0.05)
             .OrderByDescending(s => s.ActiveFraction))
         {
             sb.AppendLine(
                 $"  {s.Name,-24} {s.Mean,7:F3} {s.P50,6:F3} {s.P95,6:F3} {s.Max,6:F3} " +
-                $"{s.ActiveFraction * 100.0,6:F1} {s.StrongFraction * 100.0,6:F1}");
+                $"{s.ActiveFraction * 100.0,6:F1} {s.StrongFraction * 100.0,6:F1} " +
+                $"{s.SlewP99PerSecond,7:F2} {s.SlewMaxPerSecond,7:F2}");
         }
 
         sb.AppendLine($"  {"episodes",-24} {"n",5} {"/min",6} {"peakP95",8} {"durP50",7} {"onP50",6} {"offP50",7} {"gapP50",7}");
