@@ -207,9 +207,33 @@ TEST(ModuleSources, ComparesVersionStampsNumericallyThenOrdinally)
 	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("2026.8.4.0", "2026.10.1.0"));
 	// Same numeric core, differing build suffix: deterministic ordinal tiebreak.
 	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.8.21.0-ZZZZ", "2026.8.21.0-AAAA"));
-	// A parseable four-part stamp beats an unparseable one either way round.
+	// A version with numbers in it beats one without, either way round.
 	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.8.21.0-4ED2", "dev"));
 	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("dev", "2026.8.21.0-4ED2"));
+}
+
+// VRCFT registry modules use short versions. These used to fall through to a raw string compare,
+// which put 1.4 above 1.10 while the C# host loaded 1.10, so the app named a version that was not
+// the one running.
+TEST(ModuleSources, ComparesShortVersionsComponentWise)
+{
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("1.10", "1.4"));
+	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("1.4", "1.10"));
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2.0", "1.9.9.9"));
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("2026.8.4.0", "1.4"));
+	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("1.4", "2026.8.4.0"));
+	// Missing trailing components read as zero, so these differ only by their suffix.
+	EXPECT_FALSE(facetracking::InstalledVersionIsNewer("1.4", "1.4.0.0"));
+	EXPECT_TRUE(facetracking::InstalledVersionIsNewer("1.4.0.0", "1.4"));
+}
+
+TEST(ModuleSources, NamesTheInstallButtonAfterTheVersionChange)
+{
+	EXPECT_STREQ(facetracking::ModuleInstallButtonLabel("1.4", ""), "Install");
+	EXPECT_STREQ(facetracking::ModuleInstallButtonLabel("1.4", "1.4"), "Installed");
+	EXPECT_STREQ(facetracking::ModuleInstallButtonLabel("1.10", "1.4"), "Update");
+	EXPECT_STREQ(facetracking::ModuleInstallButtonLabel("1.4", "1.10"), "Downgrade");
+	EXPECT_STREQ(facetracking::ModuleInstallButtonLabel("2026.8.4.0", "2026.10.1.0"), "Downgrade");
 }
 
 TEST(ModuleSources, ShortensModuleTabLabel)

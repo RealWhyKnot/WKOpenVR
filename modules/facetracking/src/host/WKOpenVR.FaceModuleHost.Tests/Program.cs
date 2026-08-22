@@ -435,6 +435,22 @@ static Task OrdersVersionDirectoriesNumerically()
         .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
         .First();
     Require(Path.GetFileName(tie) == "2026.8.21.0-ZZZZ", $"tie picked {Path.GetFileName(tie)}");
+
+    // VRCFT registry modules use short versions. These cases are mirrored by
+    // ModuleSources.InstalledVersionIsNewer on the C++ side; the two must pick the same directory.
+    string[] shortVersions = [@"C:\m\1.4", @"C:\m\1.10"];
+    string shortPick = shortVersions
+        .OrderByDescending(SubprocessManager.VersionSortKey, StringComparer.Ordinal)
+        .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
+        .First();
+    Require(Path.GetFileName(shortPick) == "1.10", $"short picked {Path.GetFileName(shortPick)}");
+
+    string[] uneven = [@"C:\m\2.0", @"C:\m\1.9.9.9"];
+    string unevenPick = uneven
+        .OrderByDescending(SubprocessManager.VersionSortKey, StringComparer.Ordinal)
+        .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
+        .First();
+    Require(Path.GetFileName(unevenPick) == "2.0", $"uneven picked {Path.GetFileName(unevenPick)}");
     return Task.CompletedTask;
 }
 

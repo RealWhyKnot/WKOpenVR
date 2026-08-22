@@ -145,6 +145,10 @@ bool InstalledVersionIsNewer(const std::string& candidate, const std::string& in
 // Collapse a scan result to one entry per uuid, keeping the newest version of each.
 std::vector<InstalledModule> KeepNewestPerUuid(std::vector<InstalledModule> all);
 
+// Label for the action button on an available-module row. `installedVersion` is empty when the
+// module is not installed. Returns "Install", "Installed", "Update" or "Downgrade".
+const char* ModuleInstallButtonLabel(const std::string& offeredVersion, const std::string& installedVersion);
+
 // Installed modules as of the last scan; rescans the modules directory at most once a second.
 const std::vector<InstalledModule>& InstalledModulesCached();
 

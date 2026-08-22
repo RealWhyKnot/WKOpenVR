@@ -4,7 +4,6 @@
 #include "JsonUtil.h"
 #include "Logging.h"
 #include "PowerShellCommand.h"
-#include "UpdateNoticeLogic.h"
 #include "Win32Paths.h"
 #include "Win32Text.h"
 
@@ -15,9 +14,9 @@
 #pragma comment(lib, "bcrypt.lib")
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <cstring>
 #include <filesystem>
@@ -356,24 +355,58 @@ bool WriteModuleSettingsValues(const std::string& path, const picojson::object& 
 	return true;
 }
 
+namespace {
+
+// Must stay in step with SubprocessManager.VersionSortKey in the C# host, which decides which
+// installed version actually loads. Versions come in two shapes: build stamps ("2026.8.22.0-70FD")
+// and VRCFT registry versions ("1.4", "1.10"), so read however many dotted integers are there.
+std::vector<int> ParseVersionComponents(const std::string& raw)
+{
+	std::string s = raw;
+	if (!s.empty() && s[0] == 'v') s.erase(0, 1);
+	const size_t dash = s.find('-');
+	if (dash != std::string::npos) s.resize(dash);
+
+	std::vector<int> parts;
+	const char* p = s.c_str();
+	while (*p) {
+		char* end = nullptr;
+		const long value = std::strtol(p, &end, 10);
+		if (end == p || value < 0) break;
+		parts.push_back(static_cast<int>(value));
+		p = end;
+		if (*p != '.') break;
+		++p;
+	}
+	return parts;
+}
+
+} // namespace
+
 bool InstalledVersionIsNewer(const std::string& candidate, const std::string& incumbent)
 {
-	std::array<int, 4> c = {0, 0, 0, 0};
-	std::array<int, 4> i = {0, 0, 0, 0};
-	const bool cOk = openvr_pair::overlay::ParseVersionStamp(candidate, c);
-	const bool iOk = openvr_pair::overlay::ParseVersionStamp(incumbent, i);
-	if (cOk && iOk) {
-		for (size_t k = 0; k < c.size(); ++k) {
-			if (c[k] != i[k]) return c[k] > i[k];
-		}
-		// Same numeric core: fall through to the build-suffix tiebreak below.
-	}
-	else if (cOk != iOk) {
-		// A parseable stamp always beats one we cannot read (e.g. "1.4", "dev").
-		return cOk;
+	const std::vector<int> c = ParseVersionComponents(candidate);
+	const std::vector<int> i = ParseVersionComponents(incumbent);
+
+	// A readable version always beats one with no numbers in it at all ("dev").
+	if (c.empty() != i.empty()) return !c.empty();
+
+	const size_t n = std::max(c.size(), i.size());
+	for (size_t k = 0; k < n; ++k) {
+		const int cv = k < c.size() ? c[k] : 0;
+		const int iv = k < i.size() ? i[k] : 0;
+		if (cv != iv) return cv > iv;
 	}
 
+	// Same numeric core: order by the build suffix, as the host's tiebreak does.
 	return _stricmp(candidate.c_str(), incumbent.c_str()) > 0;
+}
+
+const char* ModuleInstallButtonLabel(const std::string& offeredVersion, const std::string& installedVersion)
+{
+	if (installedVersion.empty()) return "Install";
+	if (installedVersion == offeredVersion) return "Installed";
+	return InstalledVersionIsNewer(offeredVersion, installedVersion) ? "Update" : "Downgrade";
 }
 
 // The host activates exactly one version per module (the newest), so surfacing every installed

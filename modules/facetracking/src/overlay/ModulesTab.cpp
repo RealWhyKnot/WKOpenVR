@@ -369,7 +369,7 @@ static void DrawAvailableModulesSection(FacetrackingPlugin& plugin)
 			ImGui::TableSetColumnIndex(4);
 			const bool busy = plugin.SyncRunner().IsRunning();
 			const bool disabled = busy || sameVersionInstalled || sourceMissing;
-			const char* label = sameVersionInstalled ? "Installed" : installed ? "Update" : "Install";
+			const char* label = ModuleInstallButtonLabel(mod.version, installed ? installed->version : std::string{});
 			ImGui::BeginDisabled(disabled);
 			if (ImGui::SmallButton((std::string(label) + "##install_" + mod.uuid).c_str())) {
 				installSourceId = mod.source_id;
@@ -381,6 +381,9 @@ static void DrawAvailableModulesSection(FacetrackingPlugin& plugin)
 			}
 			else if (sourceMissing) {
 				TooltipForLastItem("The source for this cached module is no longer configured.");
+			}
+			else if (installed) {
+				TooltipForLastItem(("Replaces the installed " + installed->version + ".").c_str());
 			}
 			else {
 				TooltipForLastItem("Download and install this module.");
