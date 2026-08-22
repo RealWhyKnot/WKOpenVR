@@ -7,6 +7,7 @@
 #include "HeadMountTargetBinding.h"   // wkopenvr::headmount::HeadMountMatchesContinuousTarget
 #include "TrackingStyle.h"
 #include "TrackingStyleActions.h"
+#include "UiControls.h"
 #include "UserInterface.h" // IsVRReady
 
 #include <imgui/imgui.h>
@@ -189,16 +190,14 @@ void BuildTrackingStyleSetup(bool continuousCalibration)
 	if (ImGui::RadioButton("Off##lock_relative_position", !lockRelativeOn)) {
 		SetLockRelativePositionModeFromUi(false);
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Continuous calibration may re-solve the relative pose between reference and target.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem(
+	    "Continuous calibration may re-solve the relative pose between reference and target.");
 	ImGui::SameLine();
 	if (ImGui::RadioButton("On##lock_relative_position", lockRelativeOn)) {
 		SetLockRelativePositionModeFromUi(true);
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Freeze the calibrated relative pose. Useful when the target is rigidly attached.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem(
+	    "Freeze the calibrated relative pose. Useful when the target is rigidly attached.");
 
 	ImGui::Spacing();
 	const bool headsetStyle = TrackingStyleUsesHeadsetSynthesis(CalCtx.trackingStyle);

@@ -153,9 +153,7 @@ void DrawDriverSynthTimingPanel(HeadMountConfig& hm)
 		SaveProfile(CalCtx);
 		CCal_SendHeadMountConfig();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Restore the default fallback timing values.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem("Restore the default fallback timing values.");
 	ImGui::Unindent();
 }
 
@@ -176,11 +174,9 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 		openvr_pair::overlay::ui::PanelScope panel("Step 1: Head-mounted tracker", panelSize);
 
 		ImGui::TextWrapped("Uses the active continuous target as the lighthouse tracker attached to your headset.");
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip(
-			    "Start continuous calibration with the headset-mounted lighthouse tracker selected as the target.\n"
-			    "This tab binds to that target automatically, so you do not have to pick the same tracker twice.");
-		}
+		openvr_pair::overlay::ui::TooltipForLastItem(
+		    "Start continuous calibration with the headset-mounted lighthouse tracker selected as the target.\n"
+		    "This tab binds to that target automatically, so you do not have to pick the same tracker twice.");
 
 		ImGui::Spacing();
 
@@ -269,10 +265,9 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 				SaveProfile(CalCtx);
 				CCal_SendHeadMountConfig();
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Speed-adaptive low-pass on headset position while the head-mounted tracker\n"
-				                  "drives it. Higher = steadier at rest; real head motion stays responsive. 0 = off.");
-			}
+			openvr_pair::overlay::ui::TooltipForLastItem(
+			    "Speed-adaptive low-pass on headset position while the head-mounted tracker\n"
+			    "drives it. Higher = steadier at rest; real head motion stays responsive. 0 = off.");
 			int lockedRotationSmoothing = (int)hm.lockedHeadsetRotationSmoothing;
 			ImGui::SetNextItemWidth(200.0f);
 			const char* rotSmoothFmt = lockedRotationSmoothing > 0 ? "%d" : "off";
@@ -283,10 +278,9 @@ void CCal_DrawHeadMountSection(const ImVec2& panelSize)
 				SaveProfile(CalCtx);
 				CCal_SendHeadMountConfig();
 			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Speed-adaptive low-pass on headset rotation while the head-mounted tracker\n"
-				                  "drives it. Lower values reduce rotational lag. 0 = off.");
-			}
+			openvr_pair::overlay::ui::TooltipForLastItem(
+			    "Speed-adaptive low-pass on headset rotation while the head-mounted tracker\n"
+			    "drives it. Lower values reduce rotational lag. 0 = off.");
 			DrawDriverSynthTimingPanel(hm);
 		}
 

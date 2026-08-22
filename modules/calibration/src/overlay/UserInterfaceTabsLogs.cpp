@@ -176,8 +176,6 @@ void CCal_DrawDevToolsPanel()
 			Metrics::EnsureLogFileReady(replayCsv ? "replay_csv_enabled" : "replay_csv_disabled");
 		}
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Write per-tick calibration rows that can be replayed locally.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem("Write per-tick calibration rows that can be replayed locally.");
 }
 #endif

@@ -167,12 +167,11 @@ void CCal_BasicInfo()
 			    if (ImGui::Button("Restart sampling", ImVec2(-FLT_MIN, 0.0f))) {
 				    DebugApplyRandomOffset();
 			    }
-			    if (ImGui::IsItemHovered()) {
-				    ImGui::SetTooltip("Discards the current incremental estimate and forces continuous calibration to "
-				                      "recollect samples from scratch.\n"
-				                      "Use this if the calibration looks off and you want a fresh search instead of "
-				                      "nudging from the current estimate.");
-			    }
+			    openvr_pair::overlay::ui::TooltipForLastItem(
+			        "Discards the current incremental estimate and forces continuous calibration to "
+			        "recollect samples from scratch.\n"
+			        "Use this if the calibration looks off and you want a fresh search instead of "
+			        "nudging from the current estimate.");
 
 			    ImGui::TableSetColumnIndex(1);
 			    // Toggle button: while paused, the calibration tick is expected to
@@ -191,11 +190,10 @@ void CCal_BasicInfo()
 			    if (paused) {
 				    ImGui::PopStyleColor(3);
 			    }
-			    if (ImGui::IsItemHovered()) {
-				    ImGui::SetTooltip("Freeze the live calibration offset without ending continuous mode.\n"
-				                      "Useful when something looks momentarily wrong and you want to investigate "
-				                      "before the solver self-corrects.");
-			    }
+			    openvr_pair::overlay::ui::TooltipForLastItem(
+			        "Freeze the live calibration offset without ending continuous mode.\n"
+			        "Useful when something looks momentarily wrong and you want to investigate "
+			        "before the solver self-corrects.");
 
 			    ImGui::EndTable();
 		    }

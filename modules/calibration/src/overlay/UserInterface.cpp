@@ -498,18 +498,15 @@ static void OneShot_DrawSettings()
 	if (ImGui::Button("Run setup wizard")) {
 		spacecal::wizard::Open();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Re-run the first-run setup wizard. Useful after changing your hardware\n"
-		                  "(adding/removing a tracking system) or if you want to start fresh.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem(
+	    "Re-run the first-run setup wizard. Useful after changing your hardware\n"
+	    "(adding/removing a tracking system) or if you want to start fresh.");
 	ImGui::SameLine();
 	if (ImGui::Button("Reset settings")) {
 		CalCtx.ResetConfig();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Reset all settings (jitter / speed / lock / etc.) to defaults.\n"
-		                  "Does NOT clear your calibrated profile -- only the tunables.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem("Reset all settings (jitter / speed / lock / etc.) to defaults.\n"
+	                                             "Does NOT clear your calibrated profile -- only the tunables.");
 	ImGui::EndGroupPanel();
 }
 

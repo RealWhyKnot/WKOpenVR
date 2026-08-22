@@ -121,11 +121,10 @@ void DrawCoverageBars()
 	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, rotColor);
 	ImGui::ProgressBar(rotDiv, ImVec2(-1.0f, 0.0f), rotLabel);
 	ImGui::PopStyleColor();
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Rotation coverage: the widest angle between any two sampled tracker rotations.\n"
-		                  "Twist the tracker through ~90 degrees at some point to fill this bar.\n"
-		                  "Green = enough variety for a clean calibration.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem(
+	    "Rotation coverage: the widest angle between any two sampled tracker rotations.\n"
+	    "Twist the tracker through ~90 degrees at some point to fill this bar.\n"
+	    "Green = enough variety for a clean calibration.");
 
 	if (trDiv < kTrGoodThreshold || rotDiv < kRotGoodThreshold) {
 		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
@@ -152,9 +151,7 @@ void DrawOneShotCoverage()
 		CancelCalibration("ui_oneshot_progress");
 		ImGui::CloseCurrentPopup();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Stop this calibration run and discard the samples collected so far.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem("Stop this calibration run and discard the samples collected so far.");
 }
 
 } // namespace

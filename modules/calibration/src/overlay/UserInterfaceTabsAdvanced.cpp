@@ -116,13 +116,12 @@ static void DrawDiagnosticsPanel(ImVec2 panelSize)
 			    ImGui::TextDisabled("HMD long-stalls: %d (last: %.0fs ago)", s_stallPurgeCount,
 			                        now - s_lastStallPurgeTime);
 		    }
-		    if (ImGui::IsItemHovered()) {
-			    ImGui::SetTooltip("HMD long-stall: the headset stopped reporting fresh poses for ~1.5 seconds or more\n"
-			                      "(SteamVR hiccup, tracking loss, headset taken off). Diagnostic counter only --\n"
-			                      "calibration is no longer disturbed during a stall (rolling sample buffer ages out\n"
-			                      "stale samples naturally on recovery). Frequent long-stalls suggest a tracking-\n"
-			                      "environment problem (lighting, USB bandwidth, etc).");
-		    }
+		    openvr_pair::overlay::ui::TooltipForLastItem(
+		        "HMD long-stall: the headset stopped reporting fresh poses for ~1.5 seconds or more\n"
+		        "(SteamVR hiccup, tracking loss, headset taken off). Diagnostic counter only --\n"
+		        "calibration is no longer disturbed during a stall (rolling sample buffer ages out\n"
+		        "stale samples naturally on recovery). Frequent long-stalls suggest a tracking-\n"
+		        "environment problem (lighting, USB bandwidth, etc).");
 	    },
 	    panelSize);
 }
@@ -168,12 +167,10 @@ void CCal_DrawSettings()
 	if (kInContinuous) {
 		ImGui::BeginGroupPanel("Diagnostics", panel_size);
 		ImGui::Checkbox("Ignore outliers", &CalCtx.ignoreOutliers);
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip(
-			    "Drop sample pairs whose rotation axis disagrees with the consensus before the LS solve.\n"
-			    "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
-			    "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
-		}
+		openvr_pair::overlay::ui::TooltipForLastItem(
+		    "Drop sample pairs whose rotation axis disagrees with the consensus before the LS solve.\n"
+		    "Default on.  Turn off only if you suspect the outlier rejector is throwing out good samples\n"
+		    "(e.g. genuinely jittery motion the cosine-similarity test mistakes for outliers).");
 		if (openvr_pair::overlay::ui::CheckboxWithTooltip(
 		        "Require varied motion##enforce_minimum_rotation_variance", &CalCtx.enforceMinimumRotationVariance,
 		        "Only collect a sample when your head orientation differs enough from the samples\n"
@@ -219,26 +216,23 @@ void CCal_DrawSettings()
 				if (ImGui::RadioButton(" Fast          ", speed == CalibrationContext::FAST)) {
 					SetContinuousSpeed(CalibrationContext::FAST);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("100-sample buffer. Fastest convergence, most sensitive to noise.\n"
-					                  "Good for clean lighthouse setups and tracker-on-HMD mounts.");
-				}
+				openvr_pair::overlay::ui::TooltipForLastItem(
+				    "100-sample buffer. Fastest convergence, most sensitive to noise.\n"
+				    "Good for clean lighthouse setups and tracker-on-HMD mounts.");
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Slow          ", speed == CalibrationContext::SLOW)) {
 					SetContinuousSpeed(CalibrationContext::SLOW);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("250-sample buffer. Smoother result at the cost of slower response.\n"
-					                  "Good for typical mixed setups.");
-				}
+				openvr_pair::overlay::ui::TooltipForLastItem(
+				    "250-sample buffer. Smoother result at the cost of slower response.\n"
+				    "Good for typical mixed setups.");
 				ImGui::NextColumn();
 				if (ImGui::RadioButton(" Very Slow     ", speed == CalibrationContext::VERY_SLOW)) {
 					SetContinuousSpeed(CalibrationContext::VERY_SLOW);
 				}
-				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("500-sample buffer. Maximum smoothing, slowest convergence.\n"
-					                  "For noisy / reflective rooms or drift-prone IMU trackers.");
-				}
+				openvr_pair::overlay::ui::TooltipForLastItem(
+				    "500-sample buffer. Maximum smoothing, slowest convergence.\n"
+				    "For noisy / reflective rooms or drift-prone IMU trackers.");
 				ImGui::Columns(1);
 
 				ImGui::EndGroupPanel();
@@ -423,18 +417,15 @@ void CCal_DrawSettings()
 	if (ImGui::Button("Reset settings")) {
 		CalCtx.ResetConfig();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Reset all settings (jitter / speed / lock / etc.) to defaults.\n"
-		                  "Does NOT clear your calibrated profile -- only the tunables.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem("Reset all settings (jitter / speed / lock / etc.) to defaults.\n"
+	                                             "Does NOT clear your calibrated profile -- only the tunables.");
 	ImGui::SameLine();
 	if (ImGui::Button("Run setup wizard")) {
 		spacecal::wizard::Open();
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Re-run the first-run setup wizard. Useful after changing your hardware\n"
-		                  "(adding/removing a tracking system) or if you want to start fresh.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem(
+	    "Re-run the first-run setup wizard. Useful after changing your hardware\n"
+	    "(adding/removing a tracking system) or if you want to start fresh.");
 	ImGui::SameLine();
 	if (ImGui::Button("Clear head-tracker offset")) {
 		CalCtx.headMount.offsetCalibrated = false;
@@ -443,10 +434,9 @@ void CCal_DrawSettings()
 		CalCtx.NoteHeadMountOffsetChanged();
 		SaveProfile(CalCtx);
 	}
-	if (ImGui::IsItemHovered()) {
-		ImGui::SetTooltip("Clear the stored headset<->head-tracker offset (manual or auto-captured).\n"
-		                  "Use if the offset was set wrong; re-run the offset wizard to set a new one.");
-	}
+	openvr_pair::overlay::ui::TooltipForLastItem(
+	    "Clear the stored headset<->head-tracker offset (manual or auto-captured).\n"
+	    "Use if the offset was set wrong; re-run the offset wizard to set a new one.");
 	ImGui::EndGroupPanel();
 
 	// Section: Contributors credits
