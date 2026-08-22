@@ -30,6 +30,12 @@ static constexpr float kOpenTauMs = 70.f;  // opening (eye reopening) -- cosmeti
 static constexpr uint32_t kOursEyeWideLeft = 8;
 static constexpr uint32_t kOursEyeWideRight = 9;
 
+// Upstream slots for the same shapes (UnifiedExpressions order): OSC publish
+// reads EyeWide from upstream_expressions, so a force-closed override must zero
+// both arrays or the VRChat EyeLid blend keeps a residual opening.
+static constexpr uint32_t kUpstreamEyeWideRight = 2;
+static constexpr uint32_t kUpstreamEyeWideLeft = 3;
+
 EyelidSync::EyelidSync()
     : wink_start_qpc_(0), wink_stable_(false), smooth_l_(0.5f), smooth_r_(0.5f), smooth_init_(false), last_qpc_(0),
       qpc_freq_{}
@@ -63,6 +69,22 @@ float EyelidSync::ApplyCloseKnee(float openness, uint8_t strength)
 	const float t = s * 0.5f;
 	const float out = (openness - t) / (1.f - t);
 	return std::max(0.f, std::min(1.f, out));
+}
+
+void EyelidSync::ApplyForceClosed(protocol::FaceTrackingFrameBody& frame)
+{
+	frame.eye_openness_l = 0.f;
+	frame.eye_openness_r = 0.f;
+	frame.eye_gaze_l[0] = 0.f;
+	frame.eye_gaze_l[1] = 0.f;
+	frame.eye_gaze_l[2] = -1.f;
+	frame.eye_gaze_r[0] = 0.f;
+	frame.eye_gaze_r[1] = 0.f;
+	frame.eye_gaze_r[2] = -1.f;
+	frame.expressions[kOursEyeWideLeft] = 0.f;
+	frame.expressions[kOursEyeWideRight] = 0.f;
+	frame.upstream_expressions[kUpstreamEyeWideLeft] = 0.f;
+	frame.upstream_expressions[kUpstreamEyeWideRight] = 0.f;
 }
 
 LARGE_INTEGER EyelidSync::QpcFreq() const

@@ -333,7 +333,13 @@ namespace protocol {
 // FaceCalibrationCommand are gone and the RequestSetFaceCalibrationCommand
 // slot is retired (ordinal reserved). Requires a paired overlay+driver
 // install.
-const uint32_t Version = 43;
+//
+// v44 (2026-07-20): face-tracking force-eyes-closed override. FaceTrackingConfig
+// gains eye_force_closed (one new byte). When set, the driver clamps both eyes
+// to fully closed (openness 0, neutral forward gaze, eye-wide shapes zeroed)
+// after the rest of the eye pipeline, suppressing blinks, winks, and gaze
+// motion. Requires a paired overlay+driver install.
+const uint32_t Version = 44;
 
 // Maximum length of a tracking-system-name string (e.g., "lighthouse", "oculus",
 // "Pimax Crystal HMD"). 32 bytes is more than enough for known systems and keeps

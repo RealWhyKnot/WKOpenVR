@@ -216,6 +216,7 @@ FacetrackingProfile Decode(const picojson::value& v)
 	getBool("eye_close_assist_enabled", p.eye_close_assist_enabled);
 	getInt("eye_close_assist_strength", p.eye_close_assist_strength);
 	p.eye_close_assist_strength = std::clamp(p.eye_close_assist_strength, 0, 100);
+	getBool("eye_force_closed", p.eye_force_closed);
 	getBool("mouth_close_compensation_enabled", p.mouth_close_compensation_enabled);
 	getBool("smile_mouth_open_assist_enabled", p.smile_mouth_open_assist_enabled);
 	getInt("smile_mouth_open_strength", p.smile_mouth_open_strength);
@@ -264,6 +265,7 @@ std::string Encode(const FacetrackingProfile& p)
 	obj["openness_smoothing"] = picojson::value((double)p.openness_smoothing);
 	obj["eye_close_assist_enabled"] = picojson::value(p.eye_close_assist_enabled);
 	obj["eye_close_assist_strength"] = picojson::value((double)p.eye_close_assist_strength);
+	obj["eye_force_closed"] = picojson::value(p.eye_force_closed);
 	obj["mouth_close_compensation_enabled"] = picojson::value(p.mouth_close_compensation_enabled);
 	obj["smile_mouth_open_assist_enabled"] = picojson::value(p.smile_mouth_open_assist_enabled);
 	obj["smile_mouth_open_strength"] = picojson::value((double)p.smile_mouth_open_strength);

@@ -64,6 +64,36 @@ TEST(EyelidCloseKnee, RescalesAboveKneeAndIsMonotonic)
 	}
 }
 
+TEST(EyelidForceClosed, ZeroesOpennessGazeAndEyeWide)
+{
+	protocol::FaceTrackingFrameBody f = MakeFrame(0.9f, 0.7f);
+	f.eye_gaze_l[0] = 0.3f;
+	f.eye_gaze_l[1] = -0.2f;
+	f.eye_gaze_l[2] = -0.9f;
+	f.eye_gaze_r[0] = -0.3f;
+	f.eye_gaze_r[1] = 0.2f;
+	f.eye_gaze_r[2] = -0.9f;
+	f.expressions[8] = 0.6f;          // ours EyeWideLeft
+	f.expressions[9] = 0.5f;          // ours EyeWideRight
+	f.upstream_expressions[3] = 0.6f; // upstream EyeWideLeft
+	f.upstream_expressions[2] = 0.5f; // upstream EyeWideRight
+
+	facetracking::EyelidSync::ApplyForceClosed(f);
+
+	EXPECT_FLOAT_EQ(f.eye_openness_l, 0.0f);
+	EXPECT_FLOAT_EQ(f.eye_openness_r, 0.0f);
+	EXPECT_FLOAT_EQ(f.eye_gaze_l[0], 0.0f);
+	EXPECT_FLOAT_EQ(f.eye_gaze_l[1], 0.0f);
+	EXPECT_FLOAT_EQ(f.eye_gaze_l[2], -1.0f);
+	EXPECT_FLOAT_EQ(f.eye_gaze_r[0], 0.0f);
+	EXPECT_FLOAT_EQ(f.eye_gaze_r[1], 0.0f);
+	EXPECT_FLOAT_EQ(f.eye_gaze_r[2], -1.0f);
+	EXPECT_FLOAT_EQ(f.expressions[8], 0.0f);
+	EXPECT_FLOAT_EQ(f.expressions[9], 0.0f);
+	EXPECT_FLOAT_EQ(f.upstream_expressions[3], 0.0f);
+	EXPECT_FLOAT_EQ(f.upstream_expressions[2], 0.0f);
+}
+
 TEST(EyelidSync, StrengthZeroIsNoOp)
 {
 	facetracking::EyelidSync sync;

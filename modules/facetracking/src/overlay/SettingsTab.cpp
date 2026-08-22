@@ -79,6 +79,12 @@ void DrawSettingsTab(FacetrackingPlugin& plugin)
 
 	if (!p.eye_close_assist_enabled) ImGui::EndDisabled();
 
+	if (CheckboxWithTooltip("Force eyes closed", &p.eye_force_closed,
+	                        "Holds both eyes fully closed and stops blinking,\n"
+	                        "winks, and eye movement while enabled.")) {
+		plugin.PushConfigToDriver();
+	}
+
 	// ---- Expression Corrections ----
 	DrawSectionHeading("Expression Corrections");
 

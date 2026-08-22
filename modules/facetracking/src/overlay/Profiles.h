@@ -66,6 +66,10 @@ struct FacetrackingProfile
 	bool eye_close_assist_enabled = false;
 	int eye_close_assist_strength = 60; // 0..100
 
+	// Hard override: holds both eyes fully closed and suppresses blinking,
+	// winks, and gaze motion while set. Off by default.
+	bool eye_force_closed = false;
+
 	// Avatar-expression shaping. These are preference controls, not baseline
 	// compatibility behaviour, so new profiles keep them disabled.
 	bool mouth_close_compensation_enabled = false;

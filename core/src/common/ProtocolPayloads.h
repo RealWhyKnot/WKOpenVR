@@ -368,6 +368,11 @@ struct FaceTrackingConfig
 	uint8_t eye_close_assist_enabled;
 	uint8_t eye_close_assist_strength;
 
+	// v44: force eyes closed. When enabled the driver hard-sets both eyes to
+	// fully closed with a neutral forward gaze after all other eye transforms,
+	// so blinks, winks, and gaze motion are suppressed until it is turned off.
+	uint8_t eye_force_closed;
+
 	// OSC target. Driver forwards these to the host over the host control
 	// pipe; the host owns the UDP socket. Default 127.0.0.1:9000 (VRChat).
 	uint16_t osc_port;

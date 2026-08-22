@@ -44,6 +44,12 @@ public:
 	// before Apply() so a real wink stays asymmetric. Exposed static for tests.
 	static float ApplyCloseKnee(float openness, uint8_t strength);
 
+	// Hard override: sets both eyes fully closed with a neutral forward gaze and
+	// zeroes the eye-wide shapes (ours and upstream), so blinks, winks, and gaze
+	// motion cannot reach the outputs. Run as the last eye transform of a frame
+	// so smoothing/sync cannot reopen the eyes. Exposed static for tests.
+	static void ApplyForceClosed(protocol::FaceTrackingFrameBody& frame);
+
 private:
 	// Wink-dwell timer: QPC tick at which the current asymmetric state started.
 	// 0 means no asymmetric state is in progress.

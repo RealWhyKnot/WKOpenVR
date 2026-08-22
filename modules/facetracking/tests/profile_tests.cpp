@@ -109,6 +109,26 @@ TEST(FacetrackingProfiles, EyeCloseAssistDefaultsOffAndRoundTrips)
 	std::filesystem::remove_all(temp, ec);
 }
 
+TEST(FacetrackingProfiles, EyeForceClosedDefaultsOffAndRoundTrips)
+{
+	FacetrackingProfile defaults;
+	EXPECT_FALSE(defaults.eye_force_closed);
+
+	auto temp = MakeProfileTempDir();
+	ScopedEnvVar overrideLocalLow(L"WKOPENVR_LOCALAPPDATA_OVERRIDE", temp.wstring());
+
+	FacetrackingProfileStore store;
+	store.current.eye_force_closed = true;
+	ASSERT_TRUE(store.Save());
+
+	FacetrackingProfileStore loaded;
+	ASSERT_TRUE(loaded.Load());
+	EXPECT_TRUE(loaded.current.eye_force_closed);
+
+	std::error_code ec;
+	std::filesystem::remove_all(temp, ec);
+}
+
 TEST(FacetrackingProfiles, AvatarShapeTuningRoundTripsSparseValues)
 {
 	auto temp = MakeProfileTempDir();

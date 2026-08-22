@@ -284,6 +284,7 @@ void FacetrackingPlugin::PushConfigToDriver()
 		cfg.openness_smoothing = static_cast<uint8_t>(p.openness_smoothing);
 		cfg.eye_close_assist_enabled = p.eye_close_assist_enabled ? 1 : 0;
 		cfg.eye_close_assist_strength = static_cast<uint8_t>(std::clamp(p.eye_close_assist_strength, 0, 100));
+		cfg.eye_force_closed = p.eye_force_closed ? 1 : 0;
 		{
 			const int mouth = std::clamp(p.smile_mouth_open_strength, 0, 100);
 			const int brow = std::clamp(p.eyelid_brow_sync_strength, 0, 100);

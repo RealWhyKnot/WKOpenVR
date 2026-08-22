@@ -714,6 +714,13 @@ private:
 
 			const bool eye_valid = (frame.flags & 0x1u) != 0;
 			const bool expr_valid = (frame.flags & 0x2u) != 0;
+
+			// Force eyes closed: hard override applied after every other eye
+			// transform (assist, sync, smoothing) so none of them can reopen
+			// the eyes or reintroduce gaze motion while the toggle is on.
+			if (cfg.eye_force_closed && eye_valid) {
+				facetracking::EyelidSync::ApplyForceClosed(frame);
+			}
 			if (expr_valid) {
 				latest_shape_values_valid_ = true;
 				latest_shape_values_frame_ = frames_read_;
