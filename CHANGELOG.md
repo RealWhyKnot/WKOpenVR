@@ -104,6 +104,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **app:** Run the desktop backend while SteamVR is absent (282341f)
 - **driver:** Host desktop-capable modules behind the same pipes without vrserver (dd71e82)
 - **core:** Declare desktop-capable modules in the registry and pass the resources dir (5fdc395)
+- **facetracking:** Add a force-eyes-closed override (ffa641c)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
@@ -183,6 +184,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **calibration:** Remove recovery, liveness, base-station drift, and auto-lock detector layers (7c38536)
 - **calibration:** Remove geometry-shift detector and quality-rejection breaker (c0c2978)
 - **facetracking:** Let callers supply the OSC transport (cb7bade)
+- **calibration:** Route plain hover tooltips through the shared UI helper (1df234d)
+- **common:** Share the module log-file opener and timestamp helper (726ea51)
+- **common:** Share ASCII string, file-exists, and UTF-8 helpers (43c5b28)
+- **common:** Add WriteFileAtomic and migrate hand-rolled temp-rename writers (aec5c45)
 
 ### Fixed
 - **calibration:** Gate head tracker offset solve (00d21bd)
