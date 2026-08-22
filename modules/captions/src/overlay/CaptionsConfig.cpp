@@ -120,15 +120,5 @@ void SaveCaptionsConfig(const CaptionsConfig& cfg)
 	appendf("speech_model=%u\n", static_cast<unsigned>(cfg.speech_model));
 	appendf("input_device=%s\n", cfg.input_device.c_str());
 
-	std::wstring tmpPath = path + L".tmp";
-	HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (h == INVALID_HANDLE_VALUE) return;
-	DWORD written = 0;
-	BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
-	CloseHandle(h);
-	if (!ok || written != (DWORD)body.size()) {
-		DeleteFileW(tmpPath.c_str());
-		return;
-	}
-	MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+	(void)openvr_pair::common::WriteFileAtomic(path, body);
 }

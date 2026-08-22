@@ -20,7 +20,8 @@ add_executable(common_helpers_tests
 	test_host_hot_reload.cpp
 	test_powershell_command.cpp
 	test_recording_envelope.cpp
-	test_win32_command_line.cpp)
+	test_win32_command_line.cpp
+	test_win32_paths.cpp)
 
 target_include_directories(common_helpers_tests PRIVATE
 	${CMAKE_SOURCE_DIR}/core/src/common

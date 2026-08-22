@@ -142,26 +142,6 @@ bool PathIsUnderUpdaterDir(const std::wstring& path)
 	return _wcsnicmp(candidate.c_str(), root.c_str(), root.size()) == 0;
 }
 
-bool WriteTextFileAtomic(const std::wstring& path, const std::string& body)
-{
-	const std::wstring tmp = path + L".tmp";
-	HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (h == INVALID_HANDLE_VALUE) return false;
-	DWORD written = 0;
-	BOOL ok = WriteFile(h, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
-	FlushFileBuffers(h);
-	CloseHandle(h);
-	if (!ok || written != static_cast<DWORD>(body.size())) {
-		DeleteFileW(tmp.c_str());
-		return false;
-	}
-	if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-		DeleteFileW(tmp.c_str());
-		return false;
-	}
-	return true;
-}
-
 std::string HttpGet(const wchar_t* host, const wchar_t* path, std::string& err)
 {
 	HINTERNET hSession =
@@ -625,7 +605,7 @@ bool WritePending(const PendingFile& pending)
 {
 	const std::wstring path = PendingPath();
 	if (path.empty()) return false;
-	return WriteTextFileAtomic(path, PendingFileBody(pending));
+	return openvr_pair::common::WriteFileAtomic(path, PendingFileBody(pending), true);
 }
 
 bool TryLoadPending(PendingFile& pending)

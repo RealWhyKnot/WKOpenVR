@@ -309,39 +309,10 @@ bool ProfileStore::Save(const DeviceProfile& profile, const char* reason)
 	}
 
 	std::wstring path = dir + L"\\" + openvr_pair::common::Utf8ToWide(FilenameForHash(profile.serial_hash));
-	std::wstring tmpPath = path + L".tmp";
-
-	// Write to a temp file first so a crash mid-write never corrupts the
-	// existing profile. MoveFileExW with WRITE_THROUGH makes the rename
-	// durable before we return success.
-	HANDLE hFile =
-	    CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile == INVALID_HANDLE_VALUE) {
+	if (!openvr_pair::common::WriteFileAtomic(path, preBody, true)) {
 		++stats_.failed_writes;
-		LOG("[profiles] failed to open tmp '%s' for write (err=%lu)", openvr_pair::common::WideToUtf8(tmpPath).c_str(),
+		LOG("[profiles] atomic write failed '%s' (err=%lu)", openvr_pair::common::WideToUtf8(path).c_str(),
 		    GetLastError());
-		return false;
-	}
-
-	const std::string& body = preBody;
-	DWORD written = 0;
-	BOOL ok = WriteFile(hFile, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
-	if (ok) ok = FlushFileBuffers(hFile);
-	CloseHandle(hFile);
-
-	if (!ok || written != static_cast<DWORD>(body.size())) {
-		++stats_.failed_writes;
-		LOG("[profiles] write/flush failed for tmp '%s' (err=%lu)", openvr_pair::common::WideToUtf8(tmpPath).c_str(),
-		    GetLastError());
-		DeleteFileW(tmpPath.c_str());
-		return false;
-	}
-
-	if (!MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-		++stats_.failed_writes;
-		LOG("[profiles] atomic rename failed '%s' -> '%s' (err=%lu)", openvr_pair::common::WideToUtf8(tmpPath).c_str(),
-		    openvr_pair::common::WideToUtf8(path).c_str(), GetLastError());
-		DeleteFileW(tmpPath.c_str());
 		return false;
 	}
 

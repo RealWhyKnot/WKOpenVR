@@ -46,21 +46,7 @@ void WriteAudioInputFile(const std::string& deviceId)
 	std::wstring dir = openvr_pair::common::WkOpenVrSubdirectoryPath(L"captions", true);
 	if (dir.empty()) return;
 	std::wstring path = dir + L"\\audio_input.txt";
-	std::wstring tmp = path + L".tmp";
-
-	HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (h == INVALID_HANDLE_VALUE) return;
-	DWORD written = 0;
-	BOOL ok = TRUE;
-	if (!deviceId.empty()) {
-		ok = WriteFile(h, deviceId.data(), (DWORD)deviceId.size(), &written, nullptr);
-	}
-	CloseHandle(h);
-	if (!ok) {
-		DeleteFileW(tmp.c_str());
-		return;
-	}
-	MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+	(void)openvr_pair::common::WriteFileAtomic(path, deviceId);
 }
 
 } // namespace

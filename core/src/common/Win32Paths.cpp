@@ -162,4 +162,24 @@ int64_t FileLastWriteTime(const std::wstring& path)
 	return static_cast<int64_t>(stamp.QuadPart);
 }
 
+bool WriteFileAtomic(const std::wstring& path, std::string_view body, bool writeThrough)
+{
+	const std::wstring tmp = path + L".tmp";
+	HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE) return false;
+	DWORD written = 0;
+	BOOL ok = WriteFile(h, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
+	if (ok && writeThrough) ok = FlushFileBuffers(h);
+	DWORD err = GetLastError();
+	CloseHandle(h);
+	if (ok && written == static_cast<DWORD>(body.size())) {
+		const DWORD flags = MOVEFILE_REPLACE_EXISTING | (writeThrough ? MOVEFILE_WRITE_THROUGH : 0);
+		if (MoveFileExW(tmp.c_str(), path.c_str(), flags)) return true;
+		err = GetLastError();
+	}
+	DeleteFileW(tmp.c_str());
+	SetLastError(err);
+	return false;
+}
+
 } // namespace openvr_pair::common

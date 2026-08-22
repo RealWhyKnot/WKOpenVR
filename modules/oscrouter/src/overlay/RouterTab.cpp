@@ -93,27 +93,9 @@ static bool WriteProfileSendPort(int port)
 	obj["send_port"] = picojson::value(static_cast<double>(port));
 	std::string body = picojson::value(obj).serialize(true);
 
-	std::wstring tmpPath = path + L".tmp";
-	HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (h == INVALID_HANDLE_VALUE) {
-		openvr_pair::common::DiagnosticLog("oscrouter", "profile write failed: CreateFile err=%lu path='%s'",
-		                                   GetLastError(), openvr_pair::common::WideToUtf8(tmpPath).c_str());
-		return false;
-	}
-	DWORD written = 0;
-	BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
-	CloseHandle(h);
-	if (!ok || written != (DWORD)body.size()) {
-		openvr_pair::common::DiagnosticLog(
-		    "oscrouter", "profile write failed: WriteFile ok=%d written=%lu expected=%zu path='%s'", ok ? 1 : 0,
-		    written, body.size(), openvr_pair::common::WideToUtf8(tmpPath).c_str());
-		DeleteFileW(tmpPath.c_str());
-		return false;
-	}
-	if (!MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-		openvr_pair::common::DiagnosticLog("oscrouter", "profile write failed: MoveFileEx err=%lu path='%s'",
-		                                   GetLastError(), openvr_pair::common::WideToUtf8(path).c_str());
-		DeleteFileW(tmpPath.c_str());
+	if (!openvr_pair::common::WriteFileAtomic(path, body)) {
+		openvr_pair::common::DiagnosticLog("oscrouter", "profile write failed: err=%lu path='%s'", GetLastError(),
+		                                   openvr_pair::common::WideToUtf8(path).c_str());
 		return false;
 	}
 	openvr_pair::common::DiagnosticLog("oscrouter", "profile write send_port=%d", port);

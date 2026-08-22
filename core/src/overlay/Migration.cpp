@@ -202,24 +202,11 @@ static void MigrateFtOscPort()
 				orObj["send_port"] = picojson::value(static_cast<double>(oldPort));
 				std::string body = picojson::value(orObj).serialize(true);
 
-				std::wstring tmpPath = orPath + L".tmp";
-				HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
-				                       nullptr);
-				if (h == INVALID_HANDLE_VALUE) {
-					fprintf(stderr, "[Migration] Failed to write oscrouter.json.tmp\n");
+				if (openvr_pair::common::WriteFileAtomic(orPath, body)) {
+					fprintf(stderr, "[Migration] Migrated FT osc_port=%d into oscrouter.json send_port\n", oldPort);
 				}
 				else {
-					DWORD written = 0;
-					WriteFile(h, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
-					CloseHandle(h);
-					if (written == static_cast<DWORD>(body.size())) {
-						MoveFileExW(tmpPath.c_str(), orPath.c_str(), MOVEFILE_REPLACE_EXISTING);
-						fprintf(stderr, "[Migration] Migrated FT osc_port=%d into oscrouter.json send_port\n", oldPort);
-					}
-					else {
-						DeleteFileW(tmpPath.c_str());
-						fprintf(stderr, "[Migration] Partial write to oscrouter.json.tmp; not committed\n");
-					}
+					fprintf(stderr, "[Migration] Failed to write oscrouter.json (err=%lu)\n", GetLastError());
 				}
 			}
 		}
@@ -240,22 +227,11 @@ write_sentinel:
 		ftObj["osc_migrated_to_router"] = picojson::value(true);
 		std::string body = picojson::value(ftObj).serialize(true);
 
-		std::wstring tmpPath = ftPath + L".tmp";
-		HANDLE h =
-		    CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-		if (h == INVALID_HANDLE_VALUE) {
-			fprintf(stderr, "[Migration] Failed to write facetracking.json.tmp for sentinel\n");
-			return;
-		}
-		DWORD written = 0;
-		WriteFile(h, body.data(), static_cast<DWORD>(body.size()), &written, nullptr);
-		CloseHandle(h);
-		if (written == static_cast<DWORD>(body.size())) {
-			MoveFileExW(tmpPath.c_str(), ftPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+		if (openvr_pair::common::WriteFileAtomic(ftPath, body)) {
 			fprintf(stderr, "[Migration] FT OSC port migration sentinel written\n");
 		}
 		else {
-			DeleteFileW(tmpPath.c_str());
+			fprintf(stderr, "[Migration] Failed to write facetracking.json sentinel (err=%lu)\n", GetLastError());
 		}
 	}
 }

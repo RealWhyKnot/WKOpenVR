@@ -111,17 +111,6 @@ void SaveConfig(const SmoothingConfig& cfg)
 		appendf("tracker_smoothness.%s=%d\n", kv.first.c_str(), kv.second);
 	}
 
-	std::wstring tmpPath = path + L".tmp";
-	HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (h == INVALID_HANDLE_VALUE) return;
-	DWORD written = 0;
-	BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
-	CloseHandle(h);
-	if (!ok || written != (DWORD)body.size()) {
-		DeleteFileW(tmpPath.c_str());
-		return;
-	}
-	// Atomic replace. Logs nothing on failure -- the existing file is intact;
-	// the next SaveConfig will retry.
-	MoveFileExW(tmpPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+	// Logs nothing on failure: the existing file is intact and the next SaveConfig retries.
+	(void)openvr_pair::common::WriteFileAtomic(path, body);
 }
