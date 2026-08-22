@@ -141,6 +141,7 @@ target_include_directories(OpenVRPairOverlay PRIVATE
 
 target_link_libraries(OpenVRPairOverlay PRIVATE
 	openvr_pair_common
+	openvr_pair_driver_host
 	openvr_pair_overlay_ui
 	pair_imgui
 	pair_implot

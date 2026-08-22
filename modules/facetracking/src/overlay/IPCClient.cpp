@@ -8,7 +8,7 @@ openvr_pair::overlay::IpcClientConnectOptions Options()
 {
 	openvr_pair::overlay::IpcClientConnectOptions options;
 	options.pipeUnavailable = [](DWORD, const std::string&) {
-		return "FaceTracking driver unavailable. SteamVR is not running, "
+		return "FaceTracking driver unavailable. Neither SteamVR nor the desktop backend is hosting it, "
 		       "the WKOpenVR shared driver is not installed, or "
 		       "the FaceTracking feature is not enabled "
 		       "(enable_facetracking.flag missing from the driver's resources folder).";

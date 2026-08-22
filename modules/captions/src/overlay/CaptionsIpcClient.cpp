@@ -9,7 +9,7 @@ openvr_pair::overlay::IpcClientConnectOptions Options()
 {
 	openvr_pair::overlay::IpcClientConnectOptions options;
 	options.pipeUnavailable = [](DWORD, const std::string&) {
-		return "Captions driver unavailable. SteamVR is not running, "
+		return "Captions driver unavailable. Neither SteamVR nor the desktop backend is hosting it, "
 		       "the WKOpenVR shared driver is not installed, or "
 		       "the Captions feature is not enabled "
 		       "(enable_captions.flag missing from the driver's resources folder).";

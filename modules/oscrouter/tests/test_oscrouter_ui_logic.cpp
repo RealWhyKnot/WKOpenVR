@@ -2,10 +2,10 @@
 
 #include "OscRouterUiLogic.h"
 
-TEST(OscRouterUiLogic, ShowsWaitingBeforeSteamVrConnects)
+TEST(OscRouterUiLogic, ShowsWaitingBeforeABackendIsLive)
 {
 	EXPECT_EQ(oscrouter::ui::ResolveDriverPanelState(false, false, false),
-	          oscrouter::ui::DriverPanelState::WaitingForSteamVr);
+	          oscrouter::ui::DriverPanelState::WaitingForBackend);
 	EXPECT_FALSE(oscrouter::ui::ShouldAttemptLiveDriverIpc(false));
 }
 

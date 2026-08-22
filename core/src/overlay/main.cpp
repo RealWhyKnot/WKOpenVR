@@ -1,6 +1,8 @@
 #include "BuildChannel.h"
 #include "DebugLogging.h"
+#include "DesktopDriverHost.h"
 #include "DiagnosticsLog.h"
+#include "FeatureFlags.h"
 #include "FeaturePlugin.h"
 #include "FrameHitchLogic.h"
 #include "ManifestRegistration.h"
@@ -12,6 +14,7 @@
 #include "SafeModeRecovery.h"
 #include "ShellContext.h"
 #include "ShellUi.h"
+#include "SteamVrControl.h"
 #include "Theme.h"
 #include "UiHelpers.h"
 #include "UiResponsiveLogic.h"
@@ -257,6 +260,33 @@ private:
 	openvr_pair::overlay::FrameHitchGate gate_;
 };
 
+// Feature bits for every installed module, whether or not it can run on the
+// desktop; DesktopDriverHost::Start drops the ones that need SteamVR.
+uint32_t InstalledFeatureMask(const std::vector<std::unique_ptr<openvr_pair::overlay::FeaturePlugin>>& plugins,
+                              openvr_pair::overlay::ShellContext& context)
+{
+	uint32_t mask = 0;
+	for (const auto& plugin : plugins) {
+		if (!plugin->IsInstalled(context)) continue;
+		const auto* info = openvr_pair::common::modules::FindByFlagFileName(plugin->FlagFileName());
+		if (info) mask |= pairdriver::FeatureMaskForModule(info->id);
+	}
+	return mask;
+}
+
+std::string DescribeFeatureMask(uint32_t mask)
+{
+	size_t count = 0;
+	const auto* modules = openvr_pair::common::modules::All(&count);
+	std::string names;
+	for (size_t i = 0; i < count; ++i) {
+		if ((pairdriver::FeatureMaskForModule(modules[i].id) & mask) == 0) continue;
+		if (!names.empty()) names += ", ";
+		names += modules[i].display_name;
+	}
+	return names;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -483,6 +513,11 @@ int main(int argc, char** argv)
 	}
 
 	auto vrOverlay = std::make_unique<VrOverlayHost>();
+	DesktopDriverHost desktopHost;
+	const std::wstring driverResourcesDir =
+	    context.driverResourceDirs.empty() ? std::wstring() : context.driverResourceDirs.front();
+	double nextBackendPollSeconds = 0.0;
+	uint32_t attemptedDesktopMask = 0;
 	bool haveVrState = false;
 	bool prevActiveDashboardOverlay = false;
 	bool prevAnyDashboardVisible = false;
@@ -562,6 +597,33 @@ int main(int argc, char** argv)
 		const bool anyDashboardVisible = vrOverlay->AnyDashboardVisible();
 		const bool vrSurfaceVisible = activeDashboardOverlay;
 		context.vrConnected = vrOverlay->VrConnected();
+
+		// SteamVR owns the pipes whenever it is up, and the process appears
+		// seconds before VR_Init starts succeeding -- that gap is the handoff
+		// window, so the in-app host stands down on the process, not on the
+		// session. The ToolHelp snapshot is why this runs at 1 Hz.
+		if (glfwGetTime() >= nextBackendPollSeconds) {
+			nextBackendPollSeconds = glfwGetTime() + 1.0;
+			const bool vrServerUp = context.vrConnected || openvr_pair::common::steamvr_control::IsVrServerRunning();
+			if (vrServerUp && desktopHost.Running()) {
+				desktopHost.Stop();
+				attemptedDesktopMask = 0;
+				context.SetStatus("Desktop backend stopped: SteamVR is running.");
+			}
+			else if (!vrServerUp && !desktopHost.Running()) {
+				const uint32_t wanted = InstalledFeatureMask(plugins, context) & DesktopHostableMask();
+				if (wanted != 0 && wanted != attemptedDesktopMask) {
+					attemptedDesktopMask = wanted;
+					const uint32_t started = desktopHost.Start(wanted, driverResourcesDir);
+					if (started != 0) {
+						context.SetStatus("Desktop backend: running (" + DescribeFeatureMask(started) + ").");
+					}
+				}
+			}
+		}
+		context.desktopBackend = desktopHost.Running();
+		context.backendAvailable = context.vrConnected || context.desktopBackend;
+
 		context.activeDashboardOverlay = activeDashboardOverlay;
 		context.anyDashboardVisible = anyDashboardVisible;
 		context.primaryDashboardDevice = vrOverlay->PrimaryDashboardDevice();
@@ -755,6 +817,7 @@ int main(int argc, char** argv)
 		openvr_pair::common::DiagnosticLog("overlay", "plugin_shutdown name='%s'", (*it)->Name());
 		(*it)->OnShutdown(context);
 	}
+	desktopHost.Stop();
 	if (steamVrQuitRequested) {
 		const UpdateInstallState install = openvr_pair::overlay::GetUpdateNoticeState().install;
 		if (install.queuedForSteamVrExit && install.phase == UpdateInstallPhase::Ready) {

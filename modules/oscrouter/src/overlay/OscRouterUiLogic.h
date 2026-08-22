@@ -4,27 +4,27 @@ namespace oscrouter::ui {
 
 enum class DriverPanelState
 {
-	WaitingForSteamVr,
+	WaitingForBackend,
 	WaitingForDriver,
 	Active,
 	Problem,
 };
 
-inline DriverPanelState ResolveDriverPanelState(bool vrConnected, bool statsOpen, bool driverWaitElapsed)
+inline DriverPanelState ResolveDriverPanelState(bool backendAvailable, bool statsOpen, bool driverWaitElapsed)
 {
-	if (!vrConnected) return DriverPanelState::WaitingForSteamVr;
+	if (!backendAvailable) return DriverPanelState::WaitingForBackend;
 	if (statsOpen) return DriverPanelState::Active;
 	return driverWaitElapsed ? DriverPanelState::Problem : DriverPanelState::WaitingForDriver;
 }
 
-inline bool ShouldAttemptLiveDriverIpc(bool vrConnected)
+inline bool ShouldAttemptLiveDriverIpc(bool backendAvailable)
 {
-	return vrConnected;
+	return backendAvailable;
 }
 
-inline bool ShouldRetryLiveDriverIpc(bool vrConnected, bool ipcConnected, bool retryDue)
+inline bool ShouldRetryLiveDriverIpc(bool backendAvailable, bool ipcConnected, bool retryDue)
 {
-	return vrConnected && !ipcConnected && retryDue;
+	return backendAvailable && !ipcConnected && retryDue;
 }
 
 } // namespace oscrouter::ui

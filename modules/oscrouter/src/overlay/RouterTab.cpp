@@ -123,14 +123,14 @@ static bool WriteProfileSendPort(int port)
 bool RouterTab::EnsureIpc(openvr_pair::overlay::ShellContext& ctx)
 {
 	if (ipc_.IsConnected()) return true;
-	if (!oscrouter::ui::ShouldAttemptLiveDriverIpc(ctx.vrConnected)) {
+	if (!oscrouter::ui::ShouldAttemptLiveDriverIpc(ctx.backendAvailable)) {
 		nextIpcConnectAttempt_ = {};
 		return false;
 	}
 
 	const auto now = std::chrono::steady_clock::now();
 	const bool retryDue = nextIpcConnectAttempt_.time_since_epoch().count() == 0 || now >= nextIpcConnectAttempt_;
-	if (!oscrouter::ui::ShouldRetryLiveDriverIpc(ctx.vrConnected, ipc_.IsConnected(), retryDue)) {
+	if (!oscrouter::ui::ShouldRetryLiveDriverIpc(ctx.backendAvailable, ipc_.IsConnected(), retryDue)) {
 		return false;
 	}
 	nextIpcConnectAttempt_ = now + std::chrono::seconds(1);
@@ -148,7 +148,7 @@ bool RouterTab::EnsureIpc(openvr_pair::overlay::ShellContext& ctx)
 
 void RouterTab::Tick(openvr_pair::overlay::ShellContext& ctx)
 {
-	if (!ctx.vrConnected) {
+	if (!ctx.backendAvailable) {
 		statsReader_.Close();
 		if (ipc_.IsConnected()) ipc_.Close();
 		lastStats_ = {};
@@ -203,7 +203,7 @@ void RouterTab::Draw(openvr_pair::overlay::ShellContext& ctx)
 		SendPortChanged(ctx, portEdit_);
 	}
 	openvr_pair::overlay::ui::TooltipOnHover("Outbound OSC target port. Edits write to profiles\\oscrouter.json\n"
-	                                         "and push to the live driver immediately when SteamVR is running.");
+	                                         "and push to the live driver immediately when one is running.");
 
 	ImGui::Spacing();
 	DrawConnectedModules(ctx);
@@ -211,11 +211,11 @@ void RouterTab::Draw(openvr_pair::overlay::ShellContext& ctx)
 	const bool driverWaitElapsed = driverWaitStarted_.time_since_epoch().count() != 0 &&
 	                               (std::chrono::steady_clock::now() - driverWaitStarted_) >= std::chrono::seconds(5);
 	const auto panelState =
-	    oscrouter::ui::ResolveDriverPanelState(ctx.vrConnected, statsReader_.IsOpen(), driverWaitElapsed);
+	    oscrouter::ui::ResolveDriverPanelState(ctx.backendAvailable, statsReader_.IsOpen(), driverWaitElapsed);
 
-	if (panelState == oscrouter::ui::DriverPanelState::WaitingForSteamVr) {
+	if (panelState == oscrouter::ui::DriverPanelState::WaitingForBackend) {
 		openvr_pair::overlay::ui::DrawWaitingBanner(
-		    "Waiting for SteamVR -- OSC Router connects when the driver is live.");
+		    "Waiting for SteamVR or the desktop backend -- OSC Router needs one of them live.");
 		return;
 	}
 	if (panelState == oscrouter::ui::DriverPanelState::WaitingForDriver) {
@@ -387,8 +387,8 @@ void RouterTab::SendPortChanged(openvr_pair::overlay::ShellContext& ctx, int new
 	EnsureIpc(ctx);
 	if (!ipc_.IsConnected()) {
 		portPushedToDriver_ = false;
-		openvr_pair::common::DiagnosticLog("oscrouter", "send port live push deferred port=%d vr_connected=%d", newPort,
-		                                   ctx.vrConnected ? 1 : 0);
+		openvr_pair::common::DiagnosticLog("oscrouter", "send port live push deferred port=%d backend_available=%d",
+		                                   newPort, ctx.backendAvailable ? 1 : 0);
 		return;
 	}
 	portPushedToDriver_ = PushLivePortConfig(newPort);
@@ -401,7 +401,8 @@ void RouterTab::TrySendTestPublish(openvr_pair::overlay::ShellContext& ctx)
 
 	if (!ipc_.IsConnected()) {
 		snprintf(testStatus_, sizeof(testStatus_),
-		         ctx.vrConnected ? "Not connected to driver. Is OSC Router enabled?" : "Waiting for SteamVR.");
+		         ctx.backendAvailable ? "Not connected to driver. Is OSC Router enabled?"
+		                              : "Waiting for SteamVR or the desktop backend.");
 		return;
 	}
 

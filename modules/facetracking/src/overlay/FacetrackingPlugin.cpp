@@ -718,7 +718,7 @@ void FacetrackingPlugin::DrawTab(openvr_pair::overlay::ShellContext& ctx)
 
 	openvr_pair::overlay::ShellFooterStatus footer;
 	footer.driverConnected = ipc_.IsConnected();
-	footer.vrConnected = ctx.vrConnected;
+	footer.vrConnected = ctx.backendAvailable;
 	footer.driverLabel = "FaceTracking driver";
 	footer.buildStamp = FACETRACKING_BUILD_STAMP;
 	openvr_pair::overlay::DrawShellFooter(footer);

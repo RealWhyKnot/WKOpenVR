@@ -3,11 +3,13 @@
 #include "DiagnosticsLog.h"
 #include "DriverModule.h"
 #include "FeatureFlags.h"
+#include "IPCServer.h"
 #include "Logging.h"
 #include "ModuleRegistry.h"
 
 #include <cstdarg>
 #include <exception>
+#include <vector>
 
 namespace module_registry = openvr_pair::common::modules;
 
@@ -37,21 +39,36 @@ uint32_t DesktopHostableMask()
 	return mask;
 }
 
-DesktopDriverHost::~DesktopDriverHost()
+struct DesktopDriverHost::Impl final : IpcRequestSink
 {
-	Stop();
-}
+	struct Hosted
+	{
+		std::unique_ptr<DriverModule> module;
+		std::unique_ptr<IPCServer> server;
+	};
 
-uint32_t DesktopDriverHost::Start(uint32_t featureMask, const std::wstring& resourcesDir)
+	std::vector<Hosted> hosted;
+	uint32_t activeMask = 0;
+	bool running = false;
+
+	uint32_t Start(uint32_t featureMask, const std::wstring& resourcesDir);
+	void Stop();
+
+	bool HandleIpcRequest(uint32_t featureMask, const protocol::Request& request,
+	                      protocol::Response& response) override;
+};
+
+uint32_t DesktopDriverHost::Impl::Start(uint32_t featureMask, const std::wstring& resourcesDir)
 {
-	if (running_) return activeMask_;
+	if (running) return activeMask;
 
 	const uint32_t wanted = featureMask & DesktopHostableMask();
 	LOG("desktop host starting requested_mask=0x%08x hostable_mask=0x%08x", (unsigned)featureMask, (unsigned)wanted);
 	DriverModuleContext context{nullptr, nullptr, wanted, resourcesDir};
 
-	// Modules are constructed before any pipe opens: a server thread iterating
-	// hosted_ while Start() is still appending would race the reallocation.
+	// Every module is constructed before any pipe opens: a server thread
+	// walking `hosted` while this loop is still appending would race the
+	// vector's reallocation.
 	auto activate = [&](std::unique_ptr<DriverModule> module) {
 		if (!module) return;
 		const uint32_t moduleMask = module->FeatureMask();
@@ -72,8 +89,8 @@ uint32_t DesktopDriverHost::Start(uint32_t featureMask, const std::wstring& reso
 			LOG("desktop host module '%s' failed to initialize", module->Name());
 			return;
 		}
-		activeMask_ |= moduleMask;
-		hosted_.push_back({std::move(module), nullptr});
+		activeMask |= moduleMask;
+		hosted.push_back({std::move(module), nullptr});
 	};
 
 	// OscRouter first: the other modules publish through it during Init.
@@ -87,33 +104,33 @@ uint32_t DesktopDriverHost::Start(uint32_t featureMask, const std::wstring& reso
 	activate(captions::CreateDriverModule());
 #endif
 
-	for (Hosted& entry : hosted_) {
+	for (Hosted& entry : hosted) {
 		const char* pipe = entry.module->PipeName();
 		if (!pipe || !*pipe) continue;
 		entry.server = std::make_unique<IPCServer>(this, pipe, entry.module->FeatureMask());
 		entry.server->Run();
 	}
 
-	running_ = !hosted_.empty();
-	LOG("desktop host started modules=%zu active_mask=0x%08x", hosted_.size(), (unsigned)activeMask_);
-	return activeMask_;
+	running = !hosted.empty();
+	LOG("desktop host started modules=%zu active_mask=0x%08x", hosted.size(), (unsigned)activeMask);
+	return activeMask;
 }
 
-void DesktopDriverHost::Stop()
+void DesktopDriverHost::Impl::Stop()
 {
-	if (hosted_.empty()) {
-		running_ = false;
-		activeMask_ = 0;
+	if (hosted.empty()) {
+		running = false;
+		activeMask = 0;
 		return;
 	}
-	LOG("desktop host stopping modules=%zu", hosted_.size());
+	LOG("desktop host stopping modules=%zu", hosted.size());
 
 	// Every pipe closes before any module is destroyed: IPCServer::Stop joins
 	// its thread, so no dispatch can still be inside a module afterwards.
-	for (Hosted& entry : hosted_) {
+	for (Hosted& entry : hosted) {
 		if (entry.server) entry.server->Stop();
 	}
-	for (auto it = hosted_.rbegin(); it != hosted_.rend(); ++it) {
+	for (auto it = hosted.rbegin(); it != hosted.rend(); ++it) {
 		it->server.reset();
 		try {
 			it->module->Shutdown();
@@ -125,21 +142,21 @@ void DesktopDriverHost::Stop()
 			LOG("desktop host module shutdown threw an unknown exception");
 		}
 	}
-	hosted_.clear();
-	running_ = false;
-	activeMask_ = 0;
+	hosted.clear();
+	running = false;
+	activeMask = 0;
 	LOG("desktop host stopped");
 }
 
-bool DesktopDriverHost::HandleIpcRequest(uint32_t featureMask, const protocol::Request& request,
-                                         protocol::Response& response)
+bool DesktopDriverHost::Impl::HandleIpcRequest(uint32_t featureMask, const protocol::Request& request,
+                                               protocol::Response& response)
 {
 	if (request.type == protocol::RequestHandshake) {
 		response.type = protocol::ResponseHandshake;
 		response.protocol.version = protocol::Version;
 		return true;
 	}
-	for (Hosted& entry : hosted_) {
+	for (Hosted& entry : hosted) {
 		if ((entry.module->FeatureMask() & featureMask) == 0) continue;
 		try {
 			if (entry.module->HandleRequest(request, response)) return true;
@@ -154,6 +171,33 @@ bool DesktopDriverHost::HandleIpcRequest(uint32_t featureMask, const protocol::R
 		}
 	}
 	return false;
+}
+
+DesktopDriverHost::DesktopDriverHost() : impl_(std::make_unique<Impl>()) {}
+
+DesktopDriverHost::~DesktopDriverHost()
+{
+	impl_->Stop();
+}
+
+uint32_t DesktopDriverHost::Start(uint32_t featureMask, const std::wstring& resourcesDir)
+{
+	return impl_->Start(featureMask, resourcesDir);
+}
+
+void DesktopDriverHost::Stop()
+{
+	impl_->Stop();
+}
+
+bool DesktopDriverHost::Running() const
+{
+	return impl_->running;
+}
+
+uint32_t DesktopDriverHost::ActiveMask() const
+{
+	return impl_->activeMask;
 }
 
 // The driver DLL's Logging.cpp cannot link into the app: it defines the same

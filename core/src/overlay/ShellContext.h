@@ -16,6 +16,11 @@ struct ShellContext
 	double statusClearAtSeconds = 0.0;
 	std::string desktopDefaultModuleFlagFileName;
 	bool vrConnected = false;
+	// The app hosts the desktop-capable modules itself while SteamVR is down.
+	// Tabs that need a live driver -- not VR specifically -- gate on
+	// backendAvailable; tabs that need poses or hooks still gate on vrConnected.
+	bool desktopBackend = false;
+	bool backendAvailable = false;
 	bool activeDashboardOverlay = false;
 	bool anyDashboardVisible = false;
 	uint32_t primaryDashboardDevice = 0xFFFFFFFFu;
