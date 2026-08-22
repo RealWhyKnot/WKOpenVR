@@ -343,6 +343,42 @@ TEST(FaceOscPublisher, ClampsLegacyAndCurrentExpressionOutput)
 	EXPECT_FLOAT_EQ(v2JawX->value, 1.0f);
 }
 
+// A brow raise usually drives inner or outer, not both. Averaging the pair capped a full one-sided
+// raise at 0.5 on a parameter whose range runs to 1.0, so half the avatar's travel was unreachable.
+TEST(FaceOscPublisher, BrowExpressionUsesFullRangeForOneSidedRaise)
+{
+	ClearPublishedOscFloats();
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x2u;
+	frame.upstream_expressions[10] = 1.0f; // BrowOuterUpRight only.
+	frame.upstream_expressions[9] = 1.0f;  // BrowInnerUpLeft only.
+
+	facetracking::PublishFaceFrameOsc(frame);
+
+	const PublishedOscFloat* right = FindPublishedOscFloat("/avatar/parameters/v2/BrowExpressionRight");
+	const PublishedOscFloat* left = FindPublishedOscFloat("/avatar/parameters/v2/BrowExpressionLeft");
+	ASSERT_NE(right, nullptr);
+	ASSERT_NE(left, nullptr);
+	EXPECT_FLOAT_EQ(right->value, 1.0f);
+	EXPECT_FLOAT_EQ(left->value, 1.0f);
+}
+
+// The lowerer still subtracts, so the parameter stays bipolar around a neutral 0.
+TEST(FaceOscPublisher, BrowExpressionGoesNegativeOnLower)
+{
+	ClearPublishedOscFloats();
+	protocol::FaceTrackingFrameBody frame{};
+	frame.flags = 0x2u;
+	frame.upstream_expressions[6] = 1.0f; // BrowLowererRight.
+	frame.upstream_expressions[4] = 1.0f; // BrowPinchRight.
+
+	facetracking::PublishFaceFrameOsc(frame);
+
+	const PublishedOscFloat* right = FindPublishedOscFloat("/avatar/parameters/v2/BrowExpressionRight");
+	ASSERT_NE(right, nullptr);
+	EXPECT_FLOAT_EQ(right->value, -1.0f);
+}
+
 TEST(FaceOscPublisher, ClampsEyeOutputHighSide)
 {
 	ClearPublishedOscFloats();

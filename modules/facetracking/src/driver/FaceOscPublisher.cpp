@@ -552,10 +552,13 @@ static OscCounts PublishCurrentVrcft(const protocol::FaceTrackingFrameBody& fram
 	                 Avg2(Upstream(frame, U_BrowInnerUpLeft), Upstream(frame, U_BrowInnerUpRight)));
 	PublishFtV2Float(counts, "BrowOuterUp",
 	                 Avg2(Upstream(frame, U_BrowOuterUpLeft), Upstream(frame, U_BrowOuterUpRight)));
+	// Averaging halved the raise whenever only one of inner/outer was driven, which is the common
+	// case: a full outer-only raise reached 0.5 instead of 1.0. Both inputs are already clamped to
+	// [0,1], so the strongest one is the excursion.
 	const float browExpressionRight =
-	    std::min(1.0f, Avg2(Upstream(frame, U_BrowInnerUpRight), Upstream(frame, U_BrowOuterUpRight))) - browDownRight;
+	    std::max(Upstream(frame, U_BrowInnerUpRight), Upstream(frame, U_BrowOuterUpRight)) - browDownRight;
 	const float browExpressionLeft =
-	    std::min(1.0f, Avg2(Upstream(frame, U_BrowInnerUpLeft), Upstream(frame, U_BrowOuterUpLeft))) - browDownLeft;
+	    std::max(Upstream(frame, U_BrowInnerUpLeft), Upstream(frame, U_BrowOuterUpLeft)) - browDownLeft;
 	PublishFtV2Float(counts, "BrowExpressionRight", browExpressionRight);
 	PublishFtV2Float(counts, "BrowExpressionLeft", browExpressionLeft);
 	PublishFtV2Float(counts, "BrowExpression", Avg2(browExpressionRight, browExpressionLeft));
