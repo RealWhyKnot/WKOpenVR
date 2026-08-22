@@ -100,6 +100,10 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Edit module settings from the Modules tab (e699658)
 - **facetracking:** Report per-shape slew in replay analysis (c717d7c)
 - **facetracking:** Give each installed module its own settings tab (62413c9)
+- **app:** Mark VR-only modules in the tab strip on desktop (0b7a466)
+- **app:** Run the desktop backend while SteamVR is absent (282341f)
+- **driver:** Host desktop-capable modules behind the same pipes without vrserver (dd71e82)
+- **core:** Declare desktop-capable modules in the registry and pass the resources dir (5fdc395)
 
 ### Changed
 - **calibration:** Split guardian setup ui (0e96267)
