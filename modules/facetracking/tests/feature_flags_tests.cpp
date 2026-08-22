@@ -34,4 +34,15 @@ TEST(FeatureFlags, EmptyMaskStaysInert)
 	EXPECT_EQ(flags, 0u);
 }
 
+// The app composes the desktop host's mask from the installed module set rather than through
+// ComposeFeatureFlags, so the router implication has to hold on a raw mask too.
+TEST(FeatureFlags, ImplicationsHoldOnARawMask)
+{
+	EXPECT_NE(pairdriver::ApplyFeatureImplications(pairdriver::kFeatureFaceTracking) & pairdriver::kFeatureOscRouter,
+	          0u);
+	EXPECT_NE(pairdriver::ApplyFeatureImplications(pairdriver::kFeatureCaptions) & pairdriver::kFeatureOscRouter, 0u);
+	EXPECT_EQ(pairdriver::ApplyFeatureImplications(pairdriver::kFeatureCalibration), pairdriver::kFeatureCalibration);
+	EXPECT_EQ(pairdriver::ApplyFeatureImplications(0u), 0u);
+}
+
 } // namespace

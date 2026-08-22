@@ -3,6 +3,7 @@
 #include "FeaturePlugin.h"
 #include "ShellFooter.h"
 #include "ShellSettings.h"
+#include "DesktopBackendPolicy.h"
 #include "ShellUiLogic.h"
 #include "UpdateNoticeLogic.h"
 #include "UiCore.h"
@@ -435,4 +436,65 @@ TEST(ShellUi, MarksVrOnlyTabsWhileSteamVrIsDown)
 	EXPECT_EQ(ShellTabLabel("Space Calibrator", true, false), "Space Calibrator");
 	EXPECT_EQ(ShellTabLabel("Face Tracking", false, true), "Face Tracking");
 	EXPECT_EQ(ShellTabLabel(nullptr, false, false), " (VR)");
+}
+
+namespace {
+constexpr uint32_t kRouterBit = 1u << 4;
+constexpr uint32_t kFaceBit = 1u << 3;
+} // namespace
+
+TEST(DesktopBackendPolicy, StartsOnceAndThenStaysPut)
+{
+	openvr_pair::overlay::DesktopBackendState state;
+	const uint32_t wanted = kRouterBit | kFaceBit;
+
+	EXPECT_TRUE(openvr_pair::overlay::DesktopBackendShouldStart(state, wanted, 0u, 0.0));
+	openvr_pair::overlay::DesktopBackendRecordStart(state, wanted, wanted, 0.0);
+
+	EXPECT_FALSE(openvr_pair::overlay::DesktopBackendShouldStop(state, wanted));
+	EXPECT_FALSE(openvr_pair::overlay::DesktopBackendShouldStart(state, wanted, wanted, 1.0));
+}
+
+// Toggling a module in the Modules tab used to do nothing until the app restarted.
+TEST(DesktopBackendPolicy, RebuildsWhenTheWantedMaskChanges)
+{
+	openvr_pair::overlay::DesktopBackendState state;
+	openvr_pair::overlay::DesktopBackendRecordStart(state, kRouterBit | kFaceBit, kRouterBit | kFaceBit, 0.0);
+
+	EXPECT_TRUE(openvr_pair::overlay::DesktopBackendShouldStop(state, kRouterBit));
+	state = {};
+	EXPECT_TRUE(openvr_pair::overlay::DesktopBackendShouldStart(state, kRouterBit, kRouterBit | kFaceBit, 1.0));
+}
+
+// SteamVR coming up drops the wanted mask to zero: stop, and do not start anything again.
+TEST(DesktopBackendPolicy, StandsDownForSteamVr)
+{
+	openvr_pair::overlay::DesktopBackendState state;
+	openvr_pair::overlay::DesktopBackendRecordStart(state, kRouterBit, kRouterBit, 0.0);
+
+	EXPECT_TRUE(openvr_pair::overlay::DesktopBackendShouldStop(state, 0u));
+	state = {};
+	EXPECT_FALSE(openvr_pair::overlay::DesktopBackendShouldStart(state, 0u, 0u, 1.0));
+}
+
+TEST(DesktopBackendPolicy, RetriesAShortStartOnABoundedBudget)
+{
+	openvr_pair::overlay::DesktopBackendState state;
+	const uint32_t wanted = kRouterBit | kFaceBit;
+
+	// Attempt 1 brings up only the router: retry is due later, not immediately.
+	openvr_pair::overlay::DesktopBackendRecordStart(state, wanted, kRouterBit, 0.0);
+	EXPECT_FALSE(openvr_pair::overlay::DesktopBackendShouldStart(state, wanted, kRouterBit, 1.0));
+	EXPECT_TRUE(openvr_pair::overlay::DesktopBackendShouldStart(state, wanted, kRouterBit, 20.0));
+
+	openvr_pair::overlay::DesktopBackendRecordStart(state, wanted, kRouterBit, 20.0);
+	openvr_pair::overlay::DesktopBackendRecordStart(state, wanted, kRouterBit, 40.0);
+
+	// Budget spent: the partial host is left alone rather than restarted forever.
+	EXPECT_EQ(state.startAttempts, 3);
+	EXPECT_FALSE(openvr_pair::overlay::DesktopBackendShouldStart(state, wanted, kRouterBit, 1000.0));
+
+	// A fresh mask buys a fresh budget.
+	state = {};
+	EXPECT_TRUE(openvr_pair::overlay::DesktopBackendShouldStart(state, kRouterBit, 0u, 1000.0));
 }

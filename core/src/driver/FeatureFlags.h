@@ -38,6 +38,14 @@ constexpr uint32_t kFeatureOscRouter = 1u << 4;
 constexpr uint32_t kFeatureCaptions = 1u << 5;
 constexpr uint32_t kFeaturePhantom = 1u << 6;
 
+// Face tracking and captions publish through the OSC router, so the router runs whenever either
+// does. The SteamVR path and the in-app desktop host both compose their masks through this.
+constexpr uint32_t ApplyFeatureImplications(uint32_t flags)
+{
+	if (flags & (kFeatureFaceTracking | kFeatureCaptions)) flags |= kFeatureOscRouter;
+	return flags;
+}
+
 constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool inputHealth, bool faceTracking,
                                        bool oscRouter, bool captions, bool phantom)
 {
@@ -46,10 +54,10 @@ constexpr uint32_t ComposeFeatureFlags(bool calibration, bool smoothing, bool in
 	if (smoothing) flags |= kFeatureSmoothing;
 	if (inputHealth) flags |= kFeatureInputHealth;
 	if (faceTracking) flags |= kFeatureFaceTracking;
-	if (oscRouter || faceTracking || captions) flags |= kFeatureOscRouter;
+	if (oscRouter) flags |= kFeatureOscRouter;
 	if (captions) flags |= kFeatureCaptions;
 	if (phantom) flags |= kFeaturePhantom;
-	return flags;
+	return ApplyFeatureImplications(flags);
 }
 
 constexpr uint32_t FeatureMaskForModule(openvr_pair::common::modules::ModuleId id)

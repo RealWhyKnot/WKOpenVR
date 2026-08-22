@@ -1,5 +1,6 @@
 #include "BuildChannel.h"
 #include "DebugLogging.h"
+#include "DesktopBackendPolicy.h"
 #include "DesktopDriverHost.h"
 #include "DiagnosticsLog.h"
 #include "FeatureFlags.h"
@@ -271,7 +272,7 @@ uint32_t InstalledFeatureMask(const std::vector<std::unique_ptr<openvr_pair::ove
 		const auto* info = openvr_pair::common::modules::FindByFlagFileName(plugin->FlagFileName());
 		if (info) mask |= pairdriver::FeatureMaskForModule(info->id);
 	}
-	return mask;
+	return pairdriver::ApplyFeatureImplications(mask);
 }
 
 std::string DescribeFeatureMask(uint32_t mask)
@@ -517,7 +518,7 @@ int main(int argc, char** argv)
 	const std::wstring driverResourcesDir =
 	    context.driverResourceDirs.empty() ? std::wstring() : context.driverResourceDirs.front();
 	double nextBackendPollSeconds = 0.0;
-	uint32_t attemptedDesktopMask = 0;
+	openvr_pair::overlay::DesktopBackendState desktopBackendState;
 	bool haveVrState = false;
 	bool prevActiveDashboardOverlay = false;
 	bool prevAnyDashboardVisible = false;
@@ -603,21 +604,30 @@ int main(int argc, char** argv)
 		// window, so the in-app host stands down on the process, not on the
 		// session. The ToolHelp snapshot is why this runs at 1 Hz.
 		if (glfwGetTime() >= nextBackendPollSeconds) {
-			nextBackendPollSeconds = glfwGetTime() + 1.0;
+			const double nowSeconds = glfwGetTime();
+			nextBackendPollSeconds = nowSeconds + 1.0;
 			const bool vrServerUp = context.vrConnected || openvr_pair::common::steamvr_control::IsVrServerRunning();
-			if (vrServerUp && desktopHost.Running()) {
-				desktopHost.Stop();
-				attemptedDesktopMask = 0;
-				context.SetStatus("Desktop backend stopped: SteamVR is running.");
+			const uint32_t wanted = vrServerUp ? 0u : (InstalledFeatureMask(plugins, context) & DesktopHostableMask());
+
+			if (openvr_pair::overlay::DesktopBackendShouldStop(desktopBackendState, wanted)) {
+				if (desktopHost.Running()) desktopHost.Stop();
+				desktopBackendState = {};
+				if (vrServerUp) context.SetStatus("Desktop backend stopped: SteamVR is running.");
 			}
-			else if (!vrServerUp && !desktopHost.Running()) {
-				const uint32_t wanted = InstalledFeatureMask(plugins, context) & DesktopHostableMask();
-				if (wanted != 0 && wanted != attemptedDesktopMask) {
-					attemptedDesktopMask = wanted;
-					const uint32_t started = desktopHost.Start(wanted, driverResourcesDir);
-					if (started != 0) {
-						context.SetStatus("Desktop backend: running (" + DescribeFeatureMask(started) + ").");
-					}
+
+			if (openvr_pair::overlay::DesktopBackendShouldStart(desktopBackendState, wanted, desktopHost.ActiveMask(),
+			                                                    nowSeconds)) {
+				if (desktopHost.Running()) desktopHost.Stop();
+				const uint32_t started = desktopHost.Start(wanted, driverResourcesDir);
+				openvr_pair::overlay::DesktopBackendRecordStart(desktopBackendState, wanted, started, nowSeconds);
+				if (started == wanted) {
+					context.SetStatus("Desktop backend: running (" + DescribeFeatureMask(started) + ").");
+				}
+				else {
+					context.SetStatus("Desktop backend: " + DescribeFeatureMask(wanted & ~started) + " did not start.");
+					openvr_pair::common::DiagnosticLog(
+					    "overlay", "desktop_backend_incomplete wanted=0x%08x started=0x%08x attempt=%d", wanted,
+					    started, desktopBackendState.startAttempts);
 				}
 			}
 		}
