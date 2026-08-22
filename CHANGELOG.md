@@ -350,6 +350,7 @@ The `release.yml` body for each tag is composed mechanically from the slice betw
 - **facetracking:** Print gaze_len=none when no valid gaze frame was seen (65958a7)
 - **app:** Keep the desktop backend in step with the enabled modules (5b5bd8d)
 - **facetracking:** Order module versions the way the host picks them (c56418a)
+- **facetracking:** Give a one-sided brow raise the full BrowExpression range (eeab1ce)
 
 ---
 
