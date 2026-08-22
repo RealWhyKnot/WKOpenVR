@@ -901,16 +901,20 @@ private:
 					// families are sent unfiltered with dedup off, which can
 					// over-drive an avatar that maps both parameter families.
 					const bool diag_filter_active = osc_filter_.Active();
-					FT_LOG_DRV(
-					    "[facetracking][health] worst_oob=%u worst_nan=%u max_expr=%s:%.3f gaze_len=[%.3f..%.3f] "
-					    "filter_active=%d families=%s allowlist=%u status=%s",
-					    (unsigned)diag_max_oob_, (unsigned)diag_max_nan_,
-					    diag_max_expr_idx_ >= 0 ? facetracking::FaceExpressionOscName((uint32_t)diag_max_expr_idx_)
-					                            : "n/a",
-					    diag_max_expr_val_, diag_min_gaze_len_, diag_max_gaze_len_, (int)diag_filter_active,
-					    diag_filter_active ? "filtered" : "legacy+v2+vrcft(failopen,dedup-off)",
-					    (unsigned)osc_filter_.AllowedCount(),
-					    FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
+					// min > max only when no valid gaze frame landed this period.
+					char gaze_len[32] = "none";
+					if (diag_min_gaze_len_ <= diag_max_gaze_len_)
+						snprintf(gaze_len, sizeof(gaze_len), "[%.3f..%.3f]", diag_min_gaze_len_, diag_max_gaze_len_);
+					FT_LOG_DRV("[facetracking][health] worst_oob=%u worst_nan=%u max_expr=%s:%.3f gaze_len=%s "
+					           "filter_active=%d families=%s allowlist=%u status=%s",
+					           (unsigned)diag_max_oob_, (unsigned)diag_max_nan_,
+					           diag_max_expr_idx_ >= 0
+					               ? facetracking::FaceExpressionOscName((uint32_t)diag_max_expr_idx_)
+					               : "n/a",
+					           diag_max_expr_val_, gaze_len, (int)diag_filter_active,
+					           diag_filter_active ? "filtered" : "legacy+v2+vrcft(failopen,dedup-off)",
+					           (unsigned)osc_filter_.AllowedCount(),
+					           FaceOscAddressFilterLoadStatusName(osc_filter_.LastLoadStatus()));
 
 					ResetDebugPeriodCounters();
 					last_diag_log_ = diag_now;
